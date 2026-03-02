@@ -549,9 +549,12 @@ class DirectHardwareAdapter(AbstractAstroHardwareAdapter):
         idle_count = 0
         while time.monotonic() < deadline:
             time.sleep(1)
-            if self.mount.is_home():
-                self.logger.info("Mount homed successfully")
-                return True
+            try:
+                if self.mount.is_home():
+                    self.logger.info("Mount homed successfully")
+                    return True
+            except Exception:
+                self.logger.debug("is_home() check failed during homing poll", exc_info=True)
 
             poll_count += 1
             if poll_count > _GRACE_POLLS:
@@ -928,9 +931,7 @@ class DirectHardwareAdapter(AbstractAstroHardwareAdapter):
             return
 
         self.logger.info(f'Setting custom tracking rate: RA={ra_rate}"/s, Dec={dec_rate}"/s')
-        if hasattr(self.mount, "set_tracking_rate"):
-            self.mount.set_tracking_rate(ra_rate, dec_rate)  # type: ignore
-        else:
+        if not self.mount.set_custom_tracking_rates(ra_rate, dec_rate):
             self.logger.warning("Mount does not support custom tracking rates")
 
     def get_tracking_rate(self) -> tuple[float, float]:

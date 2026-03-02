@@ -104,6 +104,7 @@ class SafetyMonitor:
         self._watchdog_interval: float = 1.0
         self._watchdog_last_heartbeat: float = 0.0
         self._last_watchdog_action: SafetyAction = SafetyAction.SAFE
+        self._action_threads: list[threading.Thread] = []
 
     # ------------------------------------------------------------------
     # Operator stop  (convenience pass-throughs)
@@ -189,6 +190,10 @@ class SafetyMonitor:
         self._watchdog_stop.set()
         self._watchdog_thread.join(timeout=self._watchdog_interval + 2)
         self._watchdog_thread = None
+        for t in self._action_threads:
+            if t.is_alive():
+                t.join(timeout=10.0)
+        self._action_threads.clear()
         self._logger.info("Safety watchdog stopped")
 
     @property
@@ -236,7 +241,10 @@ class SafetyMonitor:
             except Exception:
                 self._logger.error("Corrective action from %r failed", check.name, exc_info=True)
 
-        threading.Thread(target=_action, daemon=True, name=f"safety-action-{check.name}").start()
+        t = threading.Thread(target=_action, daemon=True, name=f"safety-action-{check.name}")
+        self._action_threads = [t for t in self._action_threads if t.is_alive()]
+        t.start()
+        self._action_threads.append(t)
 
     # ------------------------------------------------------------------
     # Check lookup

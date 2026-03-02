@@ -36,6 +36,13 @@ class TimeHealthCheck(SafetyCheck):
             return SafetyAction.QUEUE_STOP
         return SafetyAction.SAFE
 
+    def check_proposed_action(self, action: str, **kwargs: object) -> bool:
+        health = self._time_monitor.get_current_health()
+        if health is not None and health.status == TimeStatus.CRITICAL and action in ("slew", "capture"):
+            self._logger.warning("Blocking %s — time sync is CRITICAL (offset %.0f ms)", action, health.offset_ms)
+            return False
+        return True
+
     def get_status(self) -> dict:
         health = self._time_monitor.get_current_health()
         result: dict = {"name": self.name}

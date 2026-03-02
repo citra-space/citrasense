@@ -1,9 +1,10 @@
-"""Cached mount state — single polling thread, lock-free reads for consumers.
+"""Cached mount state — single polling thread, fast reads for consumers.
 
 All periodic serial reads are consolidated into one 2 Hz thread that updates
-an atomic snapshot.  The web UI, CableWrapCheck, and any other status reader
-get mount state from the snapshot (zero serial I/O, zero blocking) while
-operational commands (slew, sync, abort, home) still go direct.
+an immutable snapshot behind a minimal lock.  The web UI, CableWrapCheck, and
+any other status reader get mount state from the snapshot (zero serial I/O,
+trivial contention) while operational commands (slew, sync, abort, home)
+still go direct.
 """
 
 from __future__ import annotations
