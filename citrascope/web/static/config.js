@@ -840,6 +840,25 @@ async function clearOperatorStop() {
 /**
  * Setup autofocus/alignment button event listeners (call once during init)
  */
+async function changeFilterPosition(position) {
+    try {
+        const response = await fetch('/api/adapter/filter/set', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ position: parseInt(position) })
+        });
+        const data = await response.json();
+        if (response.ok) {
+            createToast(`Filter changed to ${data.name}`, 'success', true);
+        } else {
+            createToast(data.error || 'Filter change failed', 'danger', false);
+        }
+    } catch (error) {
+        console.error('Filter change error:', error);
+        createToast('Failed to change filter', 'danger', false);
+    }
+}
+
 export function setupAutofocusButton() {
     window.triggerAutofocus = triggerAutofocus;
     window.triggerAlignment = triggerAlignment;
@@ -849,6 +868,7 @@ export function setupAutofocusButton() {
     window.resetCableWrap = resetCableWrap;
     window.emergencyStop = emergencyStop;
     window.clearOperatorStop = clearOperatorStop;
+    window.changeFilterPosition = changeFilterPosition;
 }
 
 /**

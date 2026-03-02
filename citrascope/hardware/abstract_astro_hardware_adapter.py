@@ -356,6 +356,25 @@ class AbstractAstroHardwareAdapter(ABC):
         """
         return False
 
+    def get_filter_position(self) -> int | None:
+        """Get the current filter wheel position (0-indexed).
+
+        Returns None if no filter wheel is present or position is unknown.
+        """
+        return None
+
+    def set_filter(self, filter_position: int) -> bool:
+        """Change to the specified filter position.
+
+        Adapters with a directly-controlled filter wheel should override this.
+        Adapters that delegate to external orchestrators (NINA, KStars) handle
+        filter changes inside their observation sequences and can leave this as-is.
+
+        Returns:
+            True if the change succeeded or no filter wheel is present (no-op).
+        """
+        return True
+
     def expose_camera(self, exposure_time: float, **kwargs) -> str:
         """Capture a single exposure with direct camera control.
 

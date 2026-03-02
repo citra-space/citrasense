@@ -181,6 +181,27 @@ class AbstractBaseTelescopeTask(ABC):
             self.logger.error(f"Task {task_id} upload failed - not retrying")
         self.daemon.task_manager.remove_task_from_all_stages(task_id)
 
+    def set_filter_for_task(self) -> None:
+        """Resolve the assigned filter for this task and command the hardware to switch.
+
+        No-op if the adapter has no filter wheel or the task has no filter assignment.
+        Raises RuntimeError if the assigned filter is missing/disabled or the wheel fails to move.
+        """
+        if not self.hardware_adapter.filter_map:
+            return
+
+        filters_to_use = self.hardware_adapter.select_filters_for_task(self.task, allow_no_filter=True)
+        if filters_to_use is None:
+            return
+
+        filter_id = next(iter(filters_to_use))
+        filter_name = filters_to_use[filter_id]["name"]
+
+        if not self.hardware_adapter.set_filter(filter_id):
+            raise RuntimeError(f"Failed to set filter '{filter_name}' (position {filter_id})")
+
+        self.logger.info(f"Filter set to '{filter_name}' (position {filter_id}) for task {self.task.id}")
+
     @abstractmethod
     def execute(self):
         pass

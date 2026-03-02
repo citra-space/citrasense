@@ -76,6 +76,8 @@ class SystemStatus(BaseModel):
     alignment_running: bool = False
     alignment_progress: str = ""
     last_alignment_timestamp: int | None = None
+    current_filter_position: int | None = None
+    current_filter_name: str | None = None
     safety_status: dict[str, Any] | None = None
 
 
@@ -718,6 +720,33 @@ class CitraScopeWebApp:
                 CITRASCOPE_LOGGER.error(f"Error syncing filters to backend: {e}", exc_info=True)
                 return JSONResponse({"error": str(e)}, status_code=500)
 
+        @self.app.post("/api/adapter/filter/set")
+        async def set_filter_position(body: dict[str, Any]):
+            """Command the filter wheel to move to a specific position."""
+            if not self.daemon or not self.daemon.hardware_adapter:
+                return JSONResponse({"error": "Hardware adapter not initialized"}, status_code=503)
+
+            adapter = self.daemon.hardware_adapter
+            if not adapter.filter_map:
+                return JSONResponse({"error": "No filter wheel available"}, status_code=404)
+
+            position = body.get("position")
+            if position is None or not isinstance(position, int):
+                return JSONResponse({"error": "position must be an integer"}, status_code=400)
+
+            if position not in adapter.filter_map:
+                return JSONResponse({"error": f"Invalid filter position: {position}"}, status_code=400)
+
+            try:
+                success = adapter.set_filter(position)
+                if success:
+                    name = adapter.filter_map[position].get("name", f"Filter {position}")
+                    return {"success": True, "position": position, "name": name}
+                return JSONResponse({"error": "Filter change failed"}, status_code=500)
+            except Exception as e:
+                CITRASCOPE_LOGGER.error(f"Error setting filter position: {e}", exc_info=True)
+                return JSONResponse({"error": str(e)}, status_code=500)
+
         @self.app.post("/api/adapter/autofocus")
         async def trigger_autofocus():
             """Request autofocus to run between tasks."""
@@ -1097,6 +1126,17 @@ class CitraScopeWebApp:
                     self.status.supports_direct_camera_control = False
 
                 self.status.supports_autofocus = adapter.supports_autofocus()
+
+                try:
+                    pos = adapter.get_filter_position()
+                    self.status.current_filter_position = pos
+                    if pos is not None and pos in adapter.filter_map:
+                        self.status.current_filter_name = adapter.filter_map[pos].get("name")
+                    else:
+                        self.status.current_filter_name = None
+                except Exception:
+                    self.status.current_filter_position = None
+                    self.status.current_filter_name = None
 
                 has_camera = getattr(adapter, "camera", None) is not None
                 self.status.supports_alignment = has_camera and mount is not None
