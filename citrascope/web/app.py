@@ -570,7 +570,7 @@ class CitraScopeWebApp:
 
             try:
                 filter_config = self.daemon.hardware_adapter.get_filter_config()
-                names_editable = hasattr(self.daemon.hardware_adapter, "update_filter_name")
+                names_editable = self.daemon.hardware_adapter.supports_filter_rename()
                 response: dict = {"filters": filter_config, "names_editable": names_editable}
                 if names_editable:
                     response["filter_name_options"] = FILTER_NAME_OPTIONS
@@ -690,7 +690,7 @@ class CitraScopeWebApp:
                                 {"error": f"Failed to update filter {filter_id_int} enabled state"}, status_code=500
                             )
 
-                    if "name" in validated and hasattr(self.daemon.hardware_adapter, "update_filter_name"):
+                    if "name" in validated and self.daemon.hardware_adapter.supports_filter_rename():
                         if not self.daemon.hardware_adapter.update_filter_name(str(filter_id_int), validated["name"]):
                             return JSONResponse(
                                 {"error": f"Failed to update filter {filter_id_int} name"}, status_code=500

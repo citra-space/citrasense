@@ -756,6 +756,9 @@ class DummyAdapter(AbstractAstroHardwareAdapter):
         """Dummy adapter supports filter management."""
         return True
 
+    def supports_filter_rename(self) -> bool:
+        return True
+
     def update_filter_name(self, filter_id: str, name: str) -> bool:
         """Rename a simulated filter position."""
         try:

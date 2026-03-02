@@ -356,6 +356,19 @@ class AbstractAstroHardwareAdapter(ABC):
         """
         return False
 
+    def supports_filter_rename(self) -> bool:
+        """Whether filter names can be edited by the user.
+
+        Override in adapters with directly-controlled filter wheels where the
+        user assigns filter names (e.g. DirectHardwareAdapter). Adapters that
+        read filter names from external orchestrators should leave this False.
+        """
+        return False
+
+    def update_filter_name(self, filter_id: str, name: str) -> bool:
+        """Rename a filter position. Only meaningful when supports_filter_rename() is True."""
+        return False
+
     def get_filter_position(self) -> int | None:
         """Get the current filter wheel position (0-indexed).
 

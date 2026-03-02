@@ -307,19 +307,24 @@ class DirectHardwareAdapter(AbstractAstroHardwareAdapter):
     def supports_filter_management(self) -> bool:
         return self.filter_wheel is not None
 
+    def supports_filter_rename(self) -> bool:
+        return self.filter_wheel is not None
+
     def update_filter_name(self, filter_id: str, name: str) -> bool:
         """Rename a filter position (only meaningful for direct-controlled wheels)."""
         try:
             fid = int(filter_id)
-            if fid in self.filter_map:
-                self.filter_map[fid]["name"] = name
-                if self.filter_wheel:
-                    names = self.filter_wheel.get_filter_names()
-                    if fid < len(names):
-                        names[fid] = name
-                        self.filter_wheel.set_filter_names(names)
-                return True
-            return False
+            if fid not in self.filter_map:
+                return False
+            # Update hardware first; roll back if it rejects the change
+            if self.filter_wheel:
+                names = self.filter_wheel.get_filter_names()
+                if fid < len(names):
+                    names[fid] = name
+                    if not self.filter_wheel.set_filter_names(names):
+                        return False
+            self.filter_map[fid]["name"] = name
+            return True
         except (ValueError, KeyError):
             return False
 
@@ -381,14 +386,17 @@ class DirectHardwareAdapter(AbstractAstroHardwareAdapter):
         # Connect optional devices
         if self.filter_wheel and not self.filter_wheel.connect():
             self.logger.warning("Failed to connect to filter wheel (optional)")
+            self.filter_wheel = None
 
         # Auto-detect integrated filter wheel if no standalone one configured
         if not self.filter_wheel and self.camera:
             integrated_fw = self.camera.get_integrated_filter_wheel()
             if integrated_fw:
-                integrated_fw.connect()
-                self.filter_wheel = integrated_fw
-                self.logger.info("Using camera's integrated filter wheel")
+                if integrated_fw.connect():
+                    self.filter_wheel = integrated_fw
+                    self.logger.info("Using camera's integrated filter wheel")
+                else:
+                    self.logger.warning("Failed to connect to camera's integrated filter wheel (optional)")
 
         # Populate filter_map from hardware filter wheel
         if self.filter_wheel:
@@ -726,7 +734,7 @@ class DirectHardwareAdapter(AbstractAstroHardwareAdapter):
                 duration=exposure_time,
                 gain=gain,
                 offset=offset,
-                binning=1,
+                binning=self.camera.get_default_binning(),
                 save_path=save_path,
             )
 
