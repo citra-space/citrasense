@@ -421,7 +421,7 @@ class DirectHardwareAdapter(AbstractAstroHardwareAdapter):
                 name = hw_names[i] if i < len(hw_names) else f"Filter {i + 1}"
                 self.filter_map[i] = {
                     "name": name,
-                    "focus_position": 0,
+                    "focus_position": None,
                     "enabled": True,
                 }
             else:
