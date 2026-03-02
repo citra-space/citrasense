@@ -80,8 +80,15 @@
             <div class="row g-3 mb-3">
                 <div class="col-12 col-md-6">
                     <div class="card bg-dark text-light border-secondary h-100">
-                        <div class="card-header">
+                        <div class="card-header d-flex align-items-center justify-content-between">
                             System Status
+                            <button class="btn btn-sm btn-danger"
+                                    x-show="$store.citrascope.wsConnected"
+                                    @click="emergencyStop()"
+                                    data-bs-toggle="tooltip" data-bs-theme="dark" data-bs-placement="bottom"
+                                    title="Stop mount, pause tasks, drain queue">
+                                <i class="bi bi-stop-circle-fill"></i> Stop
+                            </button>
                         </div>
                         <div class="card-body">
                             <div class="row mb-2">
@@ -91,6 +98,45 @@
                                         :class="$store.citrascope.wsConnected ? 'bg-success' : ($store.citrascope.wsReconnecting ? 'bg-warning text-dark' : 'bg-secondary')"
                                         :title="$store.citrascope.wsConnected ? 'Dashboard connected - receiving live updates' : ($store.citrascope.wsReconnecting ? 'Dashboard reconnecting' : 'Dashboard disconnected')"
                                         x-text="$store.citrascope.wsConnected ? 'Connected' : ($store.citrascope.wsReconnecting ? 'Reconnecting' : 'Connecting...')"></span>
+                                </div>
+                            </div>
+                            <div class="row mb-2"
+                                 x-data="{
+                                     get checks() { return $store.citrascope.status?.safety_status?.checks || []; },
+                                     get worst() {
+                                         const order = ['safe','warn','stop','emergency'];
+                                         let w = 'safe';
+                                         for (const c of this.checks) {
+                                             if (order.indexOf(c.action) > order.indexOf(w)) w = c.action;
+                                         }
+                                         return w;
+                                     },
+                                     get watchdog() { return $store.citrascope.status?.safety_status?.watchdog_alive; },
+                                     get tip() {
+                                         if (!this.checks.length) return 'No safety checks active';
+                                         const labels = { safe: '✓', warn: '⚠', stop: '⏸', emergency: '✖' };
+                                         const names = { operator_stop: 'Operator Stop', cable_wrap: 'Cable Wrap', disk_space: 'Disk Space', time_health: 'Time Health' };
+                                         let lines = this.checks.map(c =>
+                                             (labels[c.action] || '?') + ' ' + (names[c.name] || c.name)
+                                         );
+                                         if (this.watchdog === false) lines.push('✖ Watchdog offline');
+                                         return lines.join('\n');
+                                     }
+                                 }"
+                                 x-show="checks.length > 0">
+                                <div class="col-6 fw-semibold">
+                                    <span data-bs-toggle="tooltip" data-bs-theme="dark" data-bs-placement="top"
+                                          title="Safety monitor with watchdog thread. Checks hardware limits, disk space, and time health.">
+                                        Safety
+                                    </span>
+                                </div>
+                                <div class="col-6">
+                                    <span class="badge rounded-pill"
+                                          data-bs-toggle="tooltip" data-bs-theme="dark" data-bs-placement="bottom"
+                                          style="white-space: pre-line;"
+                                          :title="tip"
+                                          :class="worst === 'emergency' ? 'bg-danger' : worst === 'stop' ? 'bg-warning text-dark' : worst === 'warn' ? 'bg-warning text-dark' : (watchdog === false ? 'bg-secondary' : 'bg-success')"
+                                          x-text="worst === 'emergency' ? 'Emergency' : worst === 'stop' ? 'Hold' : worst === 'warn' ? 'Warning' : (watchdog === false ? 'Offline' : checks.length + ' checks OK')"></span>
                                 </div>
                             </div>
                             <div class="row mb-2">
@@ -207,18 +253,101 @@
                                 <div class="col-6" x-text="$store.citrascope.status?.hardware_adapter || '-'"></div>
                             </div>
                             <div class="row mb-2">
-                                <div class="col-6 fw-semibold">RA / DEC</div>
-                                <div class="col-6" x-text="($store.citrascope.status?.telescope_ra != null && $store.citrascope.status?.telescope_dec != null) ? ($store.citrascope.status.telescope_ra.toFixed(3) + '° / ' + $store.citrascope.status.telescope_dec.toFixed(3) + '°') : '-'"></div>
+                                <div class="col-6 fw-semibold">RA / Dec</div>
+                                <div class="col-6"
+                                     x-data="{
+                                         get ra() { return $store.citrascope.status?.telescope_ra; },
+                                         get dec() { return $store.citrascope.status?.telescope_dec; }
+                                     }"
+                                     x-text="(ra != null && dec != null) ? (ra.toFixed(3) + '\u00b0 / ' + dec.toFixed(3) + '\u00b0') : '-'">
+                                </div>
                             </div>
-                            <div class="row mb-2" x-show="$store.citrascope.status?.telescope_connected">
-                                <div class="col-6 fw-semibold">Mount Home</div>
+                            <div class="row mb-2">
+                                <div class="col-6 fw-semibold">Alt / Az</div>
+                                <div class="col-6 d-flex align-items-center gap-2"
+                                     x-data="{
+                                         get alt() { return $store.citrascope.status?.telescope_alt; },
+                                         get az() { return $store.citrascope.status?.telescope_az; },
+                                         get dotX() {
+                                             if (this.alt == null || this.az == null) return 14;
+                                             const a = (this.az / 360) * 2 * Math.PI;
+                                             const r = 13 * Math.max(0, 1 - this.alt / 90);
+                                             return 14 + r * Math.sin(a);
+                                         },
+                                         get dotY() {
+                                             if (this.alt == null || this.az == null) return 14;
+                                             const a = (this.az / 360) * 2 * Math.PI;
+                                             const r = 13 * Math.max(0, 1 - this.alt / 90);
+                                             return 14 - r * Math.cos(a);
+                                         }
+                                     }">
+                                    <svg width="28" height="28" viewBox="0 0 28 28"
+                                         x-show="alt != null && az != null"
+                                         style="flex-shrink: 0;"
+                                         data-bs-toggle="tooltip" data-bs-theme="dark" data-bs-placement="top"
+                                         title="Alt/Az polar — center is zenith, edge is horizon, N at top">
+                                        <circle cx="14" cy="14" r="13" fill="none" stroke="rgba(255,255,255,0.25)" stroke-width="1"/>
+                                        <circle cx="14" cy="14" r="8.67" fill="none" stroke="rgba(255,255,255,0.08)" stroke-width="0.5"/>
+                                        <circle cx="14" cy="14" r="4.33" fill="none" stroke="rgba(255,255,255,0.08)" stroke-width="0.5"/>
+                                        <line x1="14" y1="1" x2="14" y2="27" stroke="rgba(255,255,255,0.08)" stroke-width="0.5"/>
+                                        <line x1="1" y1="14" x2="27" y2="14" stroke="rgba(255,255,255,0.08)" stroke-width="0.5"/>
+                                        <text x="14" y="4" text-anchor="middle" fill="rgba(255,255,255,0.3)" font-size="3.5">N</text>
+                                        <text x="14" y="27" text-anchor="middle" fill="rgba(255,255,255,0.3)" font-size="3.5">S</text>
+                                        <text x="26" y="15.5" text-anchor="end" fill="rgba(255,255,255,0.3)" font-size="3.5">E</text>
+                                        <text x="2" y="15.5" text-anchor="start" fill="rgba(255,255,255,0.3)" font-size="3.5">W</text>
+                                        <circle r="2.5" fill="#22c55e" opacity="0.9"
+                                                :cx="dotX" :cy="dotY"/>
+                                    </svg>
+                                    <span x-text="(alt != null && az != null) ? (alt.toFixed(1) + '\u00b0 / ' + az.toFixed(1) + '\u00b0') : '-'"></span>
+                                    <span class="badge rounded-pill bg-warning text-dark ms-auto"
+                                          x-show="$store.citrascope.status?.telescope_connected && $store.citrascope.status?.mount_homing">
+                                        <span class="spinner-border spinner-border-sm me-1" style="width: .6rem; height: .6rem;"></span>
+                                        Homing...
+                                    </span>
+                                    <button class="btn btn-sm btn-outline-light ms-auto"
+                                            x-show="$store.citrascope.status?.telescope_connected && !$store.citrascope.status?.mount_homing"
+                                            @click="homeMount()"
+                                            data-bs-toggle="tooltip" data-bs-theme="dark" data-bs-placement="top"
+                                            title="Send mount to home position">
+                                        <i class="bi bi-house-door"></i>
+                                    </button>
+                                </div>
+                            </div>
+                            <!-- Cable Wrap status (visible when safety monitor has a cable_wrap check) -->
+                            <div class="row mb-2"
+                                 x-data="{ get cw() { return ($store.citrascope.status?.safety_status?.checks || []).find(c => c.name === 'cable_wrap'); } }"
+                                 x-show="cw">
+                                <div class="col-6 fw-semibold">
+                                    <span data-bs-toggle="tooltip" data-bs-theme="dark" data-bs-placement="top"
+                                          title="Cumulative cable rotation since last unwind. Soft limit pauses new tasks; hard limit aborts motion.">
+                                        Cable Wrap
+                                    </span>
+                                </div>
                                 <div class="col-6 d-flex align-items-center gap-2">
-                                    <span class="badge rounded-pill bg-warning text-dark"
-                                        x-show="$store.citrascope.status?.mount_homing">Homing...</span>
-                                    <button class="btn btn-sm btn-outline-light"
-                                        x-show="!$store.citrascope.status?.mount_homing"
-                                        @click="homeMount()">
-                                        <i class="bi bi-house-door"></i> Home
+                                    <div class="progress position-relative" style="height: 1.3rem; min-width: 80px; max-width: 120px;"
+                                         data-bs-toggle="tooltip" data-bs-theme="dark" data-bs-placement="top"
+                                         :title="'Soft ' + (cw?.soft_limit ?? 180) + '° / Hard ' + (cw?.hard_limit ?? 270) + '°'">
+                                        <div class="progress-bar"
+                                             :class="cw?.unwinding ? 'bg-info progress-bar-striped progress-bar-animated' : cw?.action === 'emergency' ? 'bg-danger' : cw?.action === 'stop' ? 'bg-warning' : 'bg-success'"
+                                             :style="'width:' + Math.min(100, (Math.abs(cw?.cumulative_deg ?? 0) / (cw?.hard_limit ?? 270)) * 100) + '%'">
+                                        </div>
+                                        <span class="position-absolute top-50 start-50 translate-middle small fw-semibold"
+                                              :class="(cw?.action === 'stop' && !cw?.unwinding) ? 'text-dark' : 'text-white'"
+                                              x-text="(cw?.cumulative_deg >= 0 ? '+' : '') + (cw?.cumulative_deg ?? 0) + '°'"></span>
+                                    </div>
+                                    <button class="btn btn-sm btn-outline-warning"
+                                            x-show="cw && !cw.unwinding && Math.abs(cw.cumulative_deg) > 5"
+                                            @click="triggerCableUnwind()"
+                                            data-bs-toggle="tooltip" data-bs-theme="dark" data-bs-placement="top"
+                                            title="Unwind cable by reversing mount rotation">
+                                        <i class="bi bi-arrow-counterclockwise"></i> Unwind
+                                    </button>
+                                    <button class="btn btn-sm btn-outline-secondary"
+                                            x-show="cw && !cw.unwinding && Math.abs(cw.cumulative_deg) > 0"
+                                            @click="resetCableWrap()"
+                                            data-bs-toggle="tooltip" data-bs-theme="dark" data-bs-placement="top"
+                                            title="Reset counter to 0° — use after manually straightening cables">
+                                        <i class="bi bi-0-circle"></i> Reset
                                     </button>
                                 </div>
                             </div>
@@ -261,6 +390,57 @@
 
             </div>
         </div>
+        <!-- Safety alerts — shown when any check is non-safe -->
+        <div class="container"
+             x-data="{ get alerts() {
+                 return ($store.citrascope.status?.safety_status?.checks || []).filter(c => c.action && c.action !== 'safe');
+             }}"
+             x-show="alerts.length > 0">
+            <div class="row g-3 mb-3">
+                <template x-for="alert in alerts" :key="alert.name">
+                    <div class="col-12">
+                        <div class="alert mb-0 d-flex align-items-center py-2"
+                             :class="alert.action === 'emergency' ? 'alert-danger' : 'alert-warning'" role="alert">
+                            <i class="bi me-2"
+                               :class="alert.action === 'emergency' ? 'bi-exclamation-triangle-fill' : 'bi-exclamation-circle-fill'"></i>
+                            <span>
+                                <strong x-text="alert.action === 'emergency' ? 'EMERGENCY' : (alert.action === 'stop' ? 'Safety Hold' : 'Warning')"></strong>
+                                &mdash;
+                                <template x-if="alert.name === 'operator_stop'">
+                                    <span>Operator stop active &mdash; all motion blocked.
+                                        <button class="btn btn-sm btn-outline-light ms-2"
+                                                @click="clearOperatorStop()">Clear Stop</button>
+                                    </span>
+                                </template>
+                                <template x-if="alert.name === 'cable_wrap'">
+                                    <span>Cable wrap at <span x-text="Math.abs(alert.cumulative_deg ?? 0)"></span>&deg;
+                                        (<span x-text="alert.action === 'emergency' ? 'hard limit' : 'soft limit'"></span> reached).
+                                        <template x-if="alert.unwinding">
+                                            <span class="fw-semibold">Unwinding in progress...</span>
+                                        </template>
+                                    </span>
+                                </template>
+                                <template x-if="alert.name === 'disk_space'">
+                                    <span>Low disk space
+                                        <template x-if="alert.free_mb != null">
+                                            (<span x-text="alert.free_mb >= 1000 ? (alert.free_mb / 1000).toFixed(1) + ' GB' : alert.free_mb + ' MB'"></span> free)
+                                        </template>
+                                        &mdash; <span x-text="alert.action === 'stop' ? 'imaging paused' : 'approaching limit'"></span>.
+                                    </span>
+                                </template>
+                                <template x-if="alert.name === 'time_health'">
+                                    <span>System clock drift is critical &mdash; observations may be inaccurate.</span>
+                                </template>
+                                <template x-if="!['operator_stop','cable_wrap','disk_space','time_health'].includes(alert.name)">
+                                    <span>Safety check "<span x-text="alert.name"></span>" triggered.</span>
+                                </template>
+                            </span>
+                        </div>
+                    </div>
+                </template>
+            </div>
+        </div>
+
         <div class="container">
             <!-- Active Tasks Card with Pipeline Stages -->
             <div class="row g-3 mb-3">

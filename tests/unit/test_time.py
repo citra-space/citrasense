@@ -194,19 +194,20 @@ def test_time_monitor_check_time_sync():
     assert health.status == TimeStatus.OK
 
 
-def test_time_monitor_critical_triggers_callback():
+def test_time_monitor_critical_sets_status():
     from citrascope.time.time_monitor import TimeMonitor
 
     mock_source = MagicMock()
     mock_source.get_offset_ms.return_value = 9999.0
     mock_source.get_source_name.return_value = "ntp"
-    callback = MagicMock()
 
     with patch.object(TimeMonitor, "_detect_best_source", return_value=mock_source):
-        tm = TimeMonitor(check_interval_minutes=60, pause_threshold_ms=500.0, pause_callback=callback)
+        tm = TimeMonitor(check_interval_minutes=60, pause_threshold_ms=500.0)
         tm._check_time_sync()
 
-    callback.assert_called_once()
+    health = tm.get_current_health()
+    assert health is not None
+    assert health.status == TimeStatus.CRITICAL
 
 
 def test_time_monitor_check_failure_sets_unknown():

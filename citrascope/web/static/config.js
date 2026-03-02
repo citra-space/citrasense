@@ -294,6 +294,7 @@ async function saveConfiguration(event) {
         time_offset_pause_ms: parseFloat(formConfig.time_offset_pause_ms || 500),
         gps_location_updates_enabled: formConfig.gps_location_updates_enabled !== undefined ? formConfig.gps_location_updates_enabled : true,
         gps_update_interval_minutes: parseInt(formConfig.gps_update_interval_minutes || 5, 10),
+        task_processing_paused: formConfig.task_processing_paused !== undefined ? formConfig.task_processing_paused : false,
         processors_enabled: formConfig.processors_enabled !== undefined ? formConfig.processors_enabled : true,
         enabled_processors: formConfig.enabled_processors || {},
         host,
@@ -759,6 +760,78 @@ async function homeMount() {
 }
 
 /**
+ * Trigger cable unwind to resolve cable wrap buildup.
+ */
+async function triggerCableUnwind() {
+    try {
+        const response = await fetch('/api/mount/unwind', { method: 'POST' });
+        const data = await response.json();
+        if (response.ok) {
+            createToast('Cable unwind started — monitor progress in the Telescope card', 'success');
+        } else {
+            createToast(data.error || 'Cable unwind failed', 'danger', false);
+        }
+    } catch (error) {
+        console.error('Error triggering cable unwind:', error);
+        createToast('Failed to trigger cable unwind', 'danger', false);
+    }
+}
+
+/**
+ * Reset cable wrap counter to zero after operator verifies cables are straight.
+ */
+async function resetCableWrap() {
+    try {
+        const response = await fetch('/api/safety/cable-wrap/reset', { method: 'POST' });
+        const data = await response.json();
+        if (response.ok) {
+            createToast('Cable wrap counter reset to 0°', 'success');
+        } else {
+            createToast(data.error || 'Reset failed', 'danger', false);
+        }
+    } catch (error) {
+        console.error('Error resetting cable wrap:', error);
+        createToast('Failed to reset cable wrap', 'danger', false);
+    }
+}
+
+/**
+ * Emergency stop — halt mount, pause tasks, drain imaging queue.
+ */
+async function emergencyStop() {
+    try {
+        const response = await fetch('/api/emergency-stop', { method: 'POST' });
+        const data = await response.json();
+        if (response.ok) {
+            createToast(data.message || 'Emergency stop executed', 'warning', false);
+        } else {
+            createToast(data.error || 'Emergency stop failed', 'danger', false);
+        }
+    } catch (error) {
+        console.error('Emergency stop error:', error);
+        createToast('Failed to execute emergency stop', 'danger', false);
+    }
+}
+
+/**
+ * Clear the operator stop — allows motion to resume.
+ */
+async function clearOperatorStop() {
+    try {
+        const response = await fetch('/api/safety/operator-stop/clear', { method: 'POST' });
+        const data = await response.json();
+        if (response.ok) {
+            createToast(data.message || 'Operator stop cleared', 'success', true);
+        } else {
+            createToast(data.error || 'Failed to clear operator stop', 'danger', false);
+        }
+    } catch (error) {
+        console.error('Clear operator stop error:', error);
+        createToast('Failed to clear operator stop', 'danger', false);
+    }
+}
+
+/**
  * Setup autofocus/alignment button event listeners (call once during init)
  */
 export function setupAutofocusButton() {
@@ -766,6 +839,10 @@ export function setupAutofocusButton() {
     window.triggerAlignment = triggerAlignment;
     window.manualSync = manualSync;
     window.homeMount = homeMount;
+    window.triggerCableUnwind = triggerCableUnwind;
+    window.resetCableWrap = resetCableWrap;
+    window.emergencyStop = emergencyStop;
+    window.clearOperatorStop = clearOperatorStop;
 }
 
 /**

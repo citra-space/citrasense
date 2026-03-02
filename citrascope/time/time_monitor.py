@@ -1,8 +1,6 @@
 """Time synchronization monitoring thread for CitraScope."""
 
 import threading
-import time
-from collections.abc import Callable
 from typing import TYPE_CHECKING, Optional
 
 from citrascope.logging import CITRASCOPE_LOGGER
@@ -17,16 +15,16 @@ class TimeMonitor:
     """
     Background thread that monitors system clock synchronization.
 
-    Periodically checks clock offset against NTP servers,
-    logs warnings/errors based on drift severity, and notifies callback
-    when critical drift requires pausing observations.
+    Periodically checks clock offset against NTP servers and logs
+    warnings/errors based on drift severity.  Enforcement (pausing
+    task processing, blocking slews) is handled by ``TimeHealthCheck``
+    in the SafetyMonitor framework.
     """
 
     def __init__(
         self,
         check_interval_minutes: int = 5,
         pause_threshold_ms: float = 500.0,
-        pause_callback: Callable[[TimeHealth], None] | None = None,
         gps_monitor: Optional["GPSMonitor"] = None,
     ):
         """
@@ -34,13 +32,11 @@ class TimeMonitor:
 
         Args:
             check_interval_minutes: Minutes between time sync checks
-            pause_threshold_ms: Threshold in ms that triggers task pause
-            pause_callback: Callback function when threshold exceeded
+            pause_threshold_ms: Threshold in ms that determines CRITICAL status
             gps_monitor: Optional GPS monitor to get GPS metadata from
         """
         self.check_interval_minutes = check_interval_minutes
         self.pause_threshold_ms = pause_threshold_ms
-        self.pause_callback = pause_callback
         self.gps_monitor = gps_monitor
 
         # Detect and initialize best available time source
@@ -53,7 +49,6 @@ class TimeMonitor:
 
         # Current health status
         self._current_health: TimeHealth | None = None
-        self._last_critical_notification = 0.0
 
     def start(self) -> None:
         """Start the time monitoring thread."""
@@ -153,10 +148,6 @@ class TimeMonitor:
             # Log based on status
             self._log_health_status(health)
 
-            # Notify callback if critical
-            if health.should_pause_observations():
-                self._handle_critical_drift(health)
-
         except Exception as e:
             CITRASCOPE_LOGGER.error(f"Time sync check failed: {e}", exc_info=True)
             # Create unknown status on error
@@ -184,23 +175,3 @@ class TimeMonitor:
                 f"CRITICAL time drift: offset {offset_str} exceeds {self.pause_threshold_ms}ms threshold. "
                 "Task processing will be paused."
             )
-
-    def _handle_critical_drift(self, health: TimeHealth) -> None:
-        """
-        Handle critical time drift by notifying callback.
-
-        Args:
-            health: Current time health status
-        """
-        # Rate-limit notifications (max once per 5 minutes)
-        now = time.time()
-        if now - self._last_critical_notification < 300:
-            return
-
-        self._last_critical_notification = now
-
-        if self.pause_callback is not None:
-            try:
-                self.pause_callback(health)
-            except Exception as e:
-                CITRASCOPE_LOGGER.error(f"Pause callback failed: {e}", exc_info=True)

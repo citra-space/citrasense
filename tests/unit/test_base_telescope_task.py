@@ -2,6 +2,8 @@
 
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from citrascope.tasks.task import Task
 
 
@@ -309,3 +311,48 @@ class TestOnUploadComplete:
         ct = self._make_concrete()
         ct._on_upload_complete("task-1", False)
         ct.daemon.task_manager.record_task_failed.assert_called_once()
+
+
+class TestCancellation:
+    def _make_concrete(self):
+        from citrascope.tasks.scope.base_telescope_task import AbstractBaseTelescopeTask
+
+        class ConcreteTask(AbstractBaseTelescopeTask):
+            def execute(self):
+                pass
+
+        daemon = _make_daemon()
+        return ConcreteTask(MagicMock(), MagicMock(), MagicMock(), _make_task_dict(), daemon)
+
+    def test_cancel_sets_flag(self):
+        ct = self._make_concrete()
+        assert ct.is_cancelled is False
+        ct.cancel()
+        assert ct.is_cancelled is True
+
+    def test_point_to_lead_exits_on_cancel_before_slew(self):
+        ct = self._make_concrete()
+        ct.cancel()
+        with pytest.raises(RuntimeError, match=r"(?i)cancelled"):
+            ct.point_to_lead_position({"most_recent_elset": {"tle": ["a", "b"]}})
+
+    def test_point_to_lead_exits_on_cancel_during_slew(self):
+        ct = self._make_concrete()
+
+        call_count = 0
+
+        def moving_then_cancel():
+            nonlocal call_count
+            call_count += 1
+            if call_count >= 2:
+                ct.cancel()
+            return True
+
+        ct.hardware_adapter.telescope_is_moving.side_effect = moving_then_cancel
+        ct.hardware_adapter.point_telescope = MagicMock()
+
+        with patch.object(
+            ct, "estimate_lead_position", return_value=(MagicMock(degrees=10.0), MagicMock(degrees=20.0), 1.0)
+        ):
+            with pytest.raises(RuntimeError, match=r"(?i)cancelled"):
+                ct.point_to_lead_position({"most_recent_elset": {"tle": ["a", "b"]}})

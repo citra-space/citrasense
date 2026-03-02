@@ -20,7 +20,7 @@ jobs:
         with:
           python-version: '3.12'
       - name: Install ruff
-        run: pip install ruff
+        run: pip install ruff==0.15.2
       - name: Run ruff
         run: ruff check citrascope/ tests/
 

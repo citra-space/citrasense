@@ -69,6 +69,7 @@ def mock_daemon(mock_settings):
     d.hardware_adapter.supports_autofocus.return_value = True
     d.hardware_adapter.get_filter_config.return_value = {0: {"name": "L", "enabled": True}}
     d.hardware_adapter.get_missing_dependencies.return_value = []
+    d.hardware_adapter.mount.cached_state = None
     d.task_manager = MagicMock()
     d.task_manager.current_task_id = None
     d.task_manager.task_heap = []
@@ -287,6 +288,62 @@ def test_pause_no_daemon():
         app = CitraScopeWebApp(daemon=None)
     c = TestClient(app.app)
     assert c.post("/api/tasks/pause").status_code == 503
+
+
+# ---------------------------------------------------------------------------
+# Emergency stop
+# ---------------------------------------------------------------------------
+
+
+def test_emergency_stop(client, mock_daemon):
+    mock_daemon.task_manager.clear_pending_tasks.return_value = 2
+    resp = client.post("/api/emergency-stop")
+    assert resp.status_code == 202
+    data = resp.json()
+    assert data["success"] is True
+    assert "2" in data["message"]
+    mock_daemon.safety_monitor.activate_operator_stop.assert_called_once()
+    mock_daemon.task_manager.pause.assert_called_once()
+    mock_daemon.task_manager.clear_pending_tasks.assert_called_once()
+    assert mock_daemon.settings.task_processing_paused is True
+    mock_daemon.settings.save.assert_called_once()
+
+
+def test_emergency_stop_no_daemon():
+    with patch("citrascope.web.app.StaticFiles"):
+        app = CitraScopeWebApp(daemon=None)
+    c = TestClient(app.app)
+    assert c.post("/api/emergency-stop").status_code == 503
+
+
+def test_emergency_stop_no_task_manager(mock_daemon):
+    """Mount halt and operator stop still fire even without a task manager."""
+    mock_daemon.task_manager = None
+    with patch("citrascope.web.app.StaticFiles"):
+        app = CitraScopeWebApp(daemon=mock_daemon)
+    c = TestClient(app.app)
+    resp = c.post("/api/emergency-stop")
+    assert resp.status_code == 202
+    assert mock_daemon.settings.task_processing_paused is True
+    mock_daemon.safety_monitor.activate_operator_stop.assert_called_once()
+
+
+def test_clear_operator_stop(client, mock_daemon):
+    resp = client.post("/api/safety/operator-stop/clear")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["success"] is True
+    mock_daemon.safety_monitor.clear_operator_stop.assert_called_once()
+    mock_daemon.task_manager.resume.assert_called_once()
+    assert mock_daemon.settings.task_processing_paused is False
+    mock_daemon.settings.save.assert_called_once()
+
+
+def test_clear_operator_stop_no_daemon():
+    with patch("citrascope.web.app.StaticFiles"):
+        app = CitraScopeWebApp(daemon=None)
+    c = TestClient(app.app)
+    assert c.post("/api/safety/operator-stop/clear").status_code == 503
 
 
 # ---------------------------------------------------------------------------

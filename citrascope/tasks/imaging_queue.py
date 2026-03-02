@@ -1,6 +1,7 @@
 """Background imaging queue for telescope operations."""
 
 from collections.abc import Callable
+from typing import Any
 
 from citrascope.tasks.base_work_queue import BaseWorkQueue
 
@@ -46,6 +47,11 @@ class ImagingQueue(BaseWorkQueue):
             }
         )
 
+    def _cancel_current_item(self, item: dict[str, Any]) -> None:
+        tt = item.get("telescope_task_instance")
+        if tt is not None:
+            tt.cancel()
+
     def _execute_work(self, item):
         """Execute telescope imaging operation."""
         task_id = item["task_id"]
@@ -54,16 +60,12 @@ class ImagingQueue(BaseWorkQueue):
 
         self.logger.info(f"[ImagingWorker] Imaging task {task_id}")
 
-        # Ensure task is in imaging stage (important for retries)
         self.task_manager.update_task_stage(task_id, "imaging")
 
-        # Clear any stale status messages from previous attempts
         if task:
             task.set_status_msg("Starting imaging...")
 
-        # Execute the telescope observation
         observation_succeeded = telescope_task.execute()
-
         return (observation_succeeded, None)
 
     def _on_success(self, item, result):

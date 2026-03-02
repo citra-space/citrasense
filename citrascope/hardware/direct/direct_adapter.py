@@ -23,6 +23,7 @@ from citrascope.hardware.devices.device_registry import (
 from citrascope.hardware.devices.filter_wheel import AbstractFilterWheel
 from citrascope.hardware.devices.focuser import AbstractFocuser
 from citrascope.hardware.devices.mount import AbstractMount
+from citrascope.hardware.devices.mount.mount_state_cache import MountStateCache
 
 
 class DirectHardwareAdapter(AbstractAstroHardwareAdapter):
@@ -55,6 +56,7 @@ class DirectHardwareAdapter(AbstractAstroHardwareAdapter):
         super().__init__(images_dir, **kwargs)
         self.logger = logger
         self.location_service: Any | None = None
+        self._mount_cache: MountStateCache | None = None
 
         # Track dependency issues for reporting
         self._dependency_issues: list[dict[str, str]] = []
@@ -338,6 +340,11 @@ class DirectHardwareAdapter(AbstractAstroHardwareAdapter):
                 success = False
             else:
                 self._sync_mount_site_and_time()
+                cache = MountStateCache(self.mount)
+                cache.refresh_static()
+                cache.start()
+                self.mount._state_cache = cache  # type: ignore[attr-defined]
+                self._mount_cache = cache
         else:
             self.logger.info("No mount configured (static camera mode)")
 
@@ -399,25 +406,6 @@ class DirectHardwareAdapter(AbstractAstroHardwareAdapter):
             self.mount.unpark()
             self.logger.info("Mount was parked — unparked for operation")
 
-        # Home the mount if needed.  In alt-az mode the mount can't convert
-        # RA/Dec → Alt/Az without a calibrated azimuth reference, so every
-        # GoTo will fail with e6 ("Outside limits") until homing completes.
-        # The AM5 uses absolute encoders; :hC# triggers a physical slew to
-        # the home index — typically takes only a few seconds.
-        if not self.mount.is_home():
-            self.logger.info("Mount not homed — initiating find-home (required for GoTo)")
-            self.mount.find_home()
-            deadline = time.monotonic() + 60
-            while time.monotonic() < deadline:
-                time.sleep(1)
-                if self.mount.is_home():
-                    self.logger.info("Mount homed successfully")
-                    break
-            else:
-                self.logger.warning("Homing did not complete within 60 s — GoTo may fail")
-        else:
-            self.logger.info("Mount already homed")
-
         # Configure altitude limits for full-sky access.
         # Set values BEFORE enabling so we don't accidentally enforce
         # restrictive defaults.  On firmware 1.1.2 the :GL/:SL limit
@@ -446,7 +434,10 @@ class DirectHardwareAdapter(AbstractAstroHardwareAdapter):
         """Disconnect from all hardware devices."""
         self.logger.info("Disconnecting from direct hardware devices...")
 
-        # Disconnect all devices
+        if self._mount_cache:
+            self._mount_cache.stop()
+            self._mount_cache = None
+
         if self.camera:
             self.camera.disconnect()
 
@@ -518,7 +509,72 @@ class DirectHardwareAdapter(AbstractAstroHardwareAdapter):
         if not self.mount or not self.mount.is_connected():
             self.logger.warning("No mount connected — cannot home")
             return False
+        if self._safety_monitor and not self._safety_monitor.is_action_safe("home"):
+            from citrascope.safety.safety_monitor import SafetyError
+
+            raise SafetyError("Homing blocked by safety monitor")
         return self.mount.find_home()
+
+    def home_if_needed(self) -> bool:
+        """Home the mount if not already homed, blocking until complete.
+
+        In alt-az mode the mount can't convert RA/Dec to Alt/Az without a
+        calibrated azimuth reference, so GoTo will fail until homing completes.
+        The AM5 uses absolute encoders; :hC# triggers a physical slew to the
+        home index — typically takes only a few seconds.
+
+        This is called after connect() and after the SafetyMonitor is online,
+        so the CableWrapCheck is actively observing during the homing slew.
+        """
+        if not self.mount or not self.mount.is_connected():
+            self.logger.info("No mount connected — skipping home")
+            return True
+        if self.mount.is_home():
+            self.logger.info("Mount already homed")
+            return True
+
+        if self._safety_monitor and not self._safety_monitor.is_action_safe("home"):
+            from citrascope.safety.safety_monitor import SafetyError
+
+            raise SafetyError("Homing blocked by safety monitor")
+
+        self.logger.info("Mount not homed — initiating find-home (required for GoTo)")
+        self.mount.find_home()
+
+        _TIMEOUT_S = 60
+        _GRACE_POLLS = 5
+        _IDLE_THRESHOLD = 3
+        deadline = time.monotonic() + _TIMEOUT_S
+        poll_count = 0
+        idle_count = 0
+        while time.monotonic() < deadline:
+            time.sleep(1)
+            try:
+                if self.mount.is_home():
+                    self.logger.info("Mount homed successfully")
+                    return True
+            except Exception:
+                self.logger.debug("is_home() check failed during homing poll", exc_info=True)
+
+            poll_count += 1
+            if poll_count > _GRACE_POLLS:
+                try:
+                    still_moving = self.mount.is_slewing()
+                except Exception:
+                    still_moving = True
+                if not still_moving:
+                    idle_count += 1
+                    if idle_count >= _IDLE_THRESHOLD:
+                        self.logger.warning(
+                            "Mount stopped without reaching home (poll %d) — homing interrupted",
+                            poll_count,
+                        )
+                        return False
+                else:
+                    idle_count = 0
+
+        self.logger.warning("Homing did not complete within %d s — GoTo may fail", _TIMEOUT_S)
+        return False
 
     def is_mount_homed(self) -> bool:
         if not self.mount or not self.mount.is_connected():
@@ -533,12 +589,18 @@ class DirectHardwareAdapter(AbstractAstroHardwareAdapter):
     def set_mount_horizon_limit(self, degrees: int) -> bool:
         if not self.mount or not self.mount.is_connected():
             return False
-        return self.mount.set_horizon_limit(degrees)
+        ok = self.mount.set_horizon_limit(degrees)
+        if ok and self._mount_cache:
+            self._mount_cache.refresh_limits()
+        return ok
 
     def set_mount_overhead_limit(self, degrees: int) -> bool:
         if not self.mount or not self.mount.is_connected():
             return False
-        return self.mount.set_overhead_limit(degrees)
+        ok = self.mount.set_overhead_limit(degrees)
+        if ok and self._mount_cache:
+            self._mount_cache.refresh_limits()
+        return ok
 
     def get_scope_radec(self) -> tuple[float, float]:
         """Get current telescope RA/Dec position.
@@ -869,9 +931,7 @@ class DirectHardwareAdapter(AbstractAstroHardwareAdapter):
             return
 
         self.logger.info(f'Setting custom tracking rate: RA={ra_rate}"/s, Dec={dec_rate}"/s')
-        if hasattr(self.mount, "set_tracking_rate"):
-            self.mount.set_tracking_rate(ra_rate, dec_rate)  # type: ignore
-        else:
+        if not self.mount.set_custom_tracking_rates(ra_rate, dec_rate):
             self.logger.warning("Mount does not support custom tracking rates")
 
     def get_tracking_rate(self) -> tuple[float, float]:
@@ -893,14 +953,15 @@ class DirectHardwareAdapter(AbstractAstroHardwareAdapter):
         expected_ra_deg: float | None = None,
         expected_dec_deg: float | None = None,
     ) -> None:
-        if not self.mount:
-            return
-        self.mount.sync_to_radec(solved_ra_deg, solved_dec_deg)
+        # Intentional no-op: async plate solves from the processing queue
+        # arrive after the mount has potentially moved on to the next task.
+        # Syncing stale coordinates corrupts the pointing model.
+        # Mount syncs happen only through the explicit AlignmentManager path.
         if expected_ra_deg is not None and expected_dec_deg is not None:
             error = self.angular_distance(solved_ra_deg, solved_dec_deg, expected_ra_deg, expected_dec_deg)
-            self.logger.info(f"Mount synced from plate solve (pointing error: {error * 60:.1f} arcmin)")
-        else:
-            self.logger.info(f"Mount synced from plate solve to RA={solved_ra_deg:.4f}°, Dec={solved_dec_deg:.4f}°")
+            self.logger.info(
+                "Plate solve result: pointing error %.1f arcmin (not syncing — use alignment instead)", error * 60
+            )
 
     def perform_alignment(self, target_ra: float, target_dec: float) -> bool:
         """Plate-solve at the current position and sync the mount.

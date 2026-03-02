@@ -149,7 +149,7 @@ class DummyApiClient(AbstractCitraApiClient):
     """
 
     # Simulated failure rate for testing retry logic (30% chance of upload failure)
-    UPLOAD_FAILURE_RATE = 0.3
+    UPLOAD_FAILURE_RATE = 0.1
 
     def __init__(self, logger=None):
         """Initialize dummy API client with in-memory data."""
@@ -424,11 +424,12 @@ class DummyApiClient(AbstractCitraApiClient):
                 future_passes.append((rise_dt, sat_id, rise_dt, set_dt))
                 break
 
-        # Build immediate tasks staggered 60s apart so they don't all image at once
+        # Build immediate tasks staggered 15s apart for steady throughput
         immediate_tasks: list[dict] = []
         _FIRST_TASK_DELAY_S = 10
+        _TASK_STAGGER_S = 15
         for idx, (sat_id, alt_deg) in enumerate(immediate_sats):
-            task_start = now + timedelta(seconds=_FIRST_TASK_DELAY_S + 60 * idx)
+            task_start = now + timedelta(seconds=_FIRST_TASK_DELAY_S + _TASK_STAGGER_S * idx)
             task_stop = task_start + timedelta(seconds=60)
             immediate_tasks.append(self._make_task(sat_id, task_start, task_stop, telescope, ground_station))
             cat = self._satellite_catalog.get(sat_id, {})
@@ -437,7 +438,7 @@ class DummyApiClient(AbstractCitraApiClient):
                     "DummyApiClient: %s visible now at %.1f° — task in %ds",
                     cat.get("name", sat_id),
                     alt_deg,
-                    _FIRST_TASK_DELAY_S + 60 * idx,
+                    _FIRST_TASK_DELAY_S + _TASK_STAGGER_S * idx,
                 )
 
         # Immediate tasks first, then future passes sorted by start time

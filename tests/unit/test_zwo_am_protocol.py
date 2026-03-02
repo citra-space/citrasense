@@ -411,15 +411,15 @@ class TestZwoAmResponseParser:
         assert result is not None
         assert "overhead" in result.lower()
 
-    def test_parse_goto_mount_busy(self):
+    def test_parse_goto_in_standby(self):
         result = ZwoAmResponseParser.parse_goto_response("3#")
         assert result is not None
-        assert "busy" in result.lower()
+        assert "standby" in result.lower()
 
-    def test_parse_goto_e3_mount_busy(self):
+    def test_parse_goto_e3_in_standby(self):
         result = ZwoAmResponseParser.parse_goto_response("e3#")
         assert result is not None
-        assert "busy" in result.lower()
+        assert "standby" in result.lower()
 
     def test_parse_goto_e6_outside_limits(self):
         result = ZwoAmResponseParser.parse_goto_response("e6#")
@@ -432,14 +432,38 @@ class TestZwoAmResponseParser:
         assert ZwoAmResponseParser.parse_goto_response("e2#") is not None
         assert "overhead" in ZwoAmResponseParser.parse_goto_response("e2#").lower()  # type: ignore[union-attr]
         assert ZwoAmResponseParser.parse_goto_response("e3#") is not None
-        assert "busy" in ZwoAmResponseParser.parse_goto_response("e3#").lower()  # type: ignore[union-attr]
+        assert "standby" in ZwoAmResponseParser.parse_goto_response("e3#").lower()  # type: ignore[union-attr]
         assert ZwoAmResponseParser.parse_goto_response("e5#") is not None
         assert "aligned" in ZwoAmResponseParser.parse_goto_response("e5#").lower()  # type: ignore[union-attr]
+
+    def test_parse_goto_sync_success(self):
+        assert ZwoAmResponseParser.parse_goto_response("N/A#") is None
 
     def test_parse_goto_unknown(self):
         result = ZwoAmResponseParser.parse_goto_response("99#")
         assert result is not None
         assert "unknown" in result.lower()
+
+    # --- site coordinate ---
+
+    def test_parse_site_latitude(self):
+        result = ZwoAmResponseParser.parse_site_coordinate("+38*50:27#")
+        assert result is not None
+        assert abs(result - 38.8408) < 0.001
+
+    def test_parse_site_latitude_negative(self):
+        result = ZwoAmResponseParser.parse_site_coordinate("-33*52:00#")
+        assert result is not None
+        assert result < 0
+        assert abs(result - (-33.8667)) < 0.001
+
+    def test_parse_site_longitude(self):
+        result = ZwoAmResponseParser.parse_site_coordinate("+105*02:32#")
+        assert result is not None
+        assert abs(result - 105.0422) < 0.001
+
+    def test_parse_site_coordinate_garbage(self):
+        assert ZwoAmResponseParser.parse_site_coordinate("garbage") is None
 
     # --- status flags ---
 

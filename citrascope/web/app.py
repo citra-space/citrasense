@@ -38,6 +38,8 @@ class SystemStatus(BaseModel):
     hardware_adapter: str = "unknown"
     telescope_ra: float | None = None
     telescope_dec: float | None = None
+    telescope_az: float | None = None
+    telescope_alt: float | None = None
     ground_station_id: str | None = None
     ground_station_name: str | None = None
     ground_station_url: str | None = None
@@ -56,6 +58,7 @@ class SystemStatus(BaseModel):
     supports_alignment: bool = False
     supports_autofocus: bool = False
     supports_manual_sync: bool = False
+    mount_at_home: bool = False
     mount_homing: bool = False
     mount_horizon_limit: int | None = None
     mount_overhead_limit: int | None = None
@@ -63,6 +66,7 @@ class SystemStatus(BaseModel):
     alignment_running: bool = False
     alignment_progress: str = ""
     last_alignment_timestamp: int | None = None
+    safety_status: dict[str, Any] | None = None
 
 
 class HardwareConfig(BaseModel):
@@ -242,6 +246,7 @@ class CitraScopeWebApp:
                 "time_offset_pause_ms": settings.time_offset_pause_ms,
                 "gps_location_updates_enabled": settings.gps_location_updates_enabled,
                 "gps_update_interval_minutes": settings.gps_update_interval_minutes,
+                "task_processing_paused": settings.task_processing_paused,
                 "processors_enabled": settings.processors_enabled,
                 "enabled_processors": settings.enabled_processors,
                 "app_url": app_url,
@@ -493,6 +498,8 @@ class CitraScopeWebApp:
                 return JSONResponse({"error": "Task manager not available"}, status_code=503)
 
             self.daemon.task_manager.pause()
+            self.daemon.settings.task_processing_paused = True
+            self.daemon.settings.save()
             await self.broadcast_status()
 
             return {"status": "paused", "message": "Task processing paused"}
@@ -504,6 +511,8 @@ class CitraScopeWebApp:
                 return JSONResponse({"error": "Task manager not available"}, status_code=503)
 
             self.daemon.task_manager.resume()
+            self.daemon.settings.task_processing_paused = False
+            self.daemon.settings.save()
             await self.broadcast_status()
 
             return {"status": "active", "message": "Task processing resumed"}
@@ -774,7 +783,6 @@ class CitraScopeWebApp:
             try:
                 success = mount.sync_to_radec(ra_f, dec_f)
                 if success:
-                    CITRASCOPE_LOGGER.info(f"Manual mount sync to RA={ra_f:.4f}°, Dec={dec_f:.4f}°")
                     return {"success": True, "message": f"Mount synced to RA={ra_f:.4f}°, Dec={dec_f:.4f}°"}
                 else:
                     return JSONResponse({"error": "Mount sync returned failure"}, status_code=500)
@@ -812,6 +820,125 @@ class CitraScopeWebApp:
                 return {"horizon_limit": h_limit, "overhead_limit": o_limit}
             except Exception as e:
                 return JSONResponse({"error": str(e)}, status_code=500)
+
+        @self.app.get("/api/safety/status")
+        async def get_safety_status():
+            """Return status of all safety checks."""
+            if not self.daemon or not self.daemon.safety_monitor:
+                return {"checks": [], "watchdog_alive": False, "watchdog_last_heartbeat": 0}
+            try:
+                return self.daemon.safety_monitor.get_status()
+            except Exception as e:
+                CITRASCOPE_LOGGER.error(f"Error getting safety status: {e}", exc_info=True)
+                return JSONResponse({"error": str(e)}, status_code=500)
+
+        @self.app.post("/api/mount/unwind")
+        async def trigger_cable_unwind():
+            """Manually trigger cable unwind in a background thread."""
+            if not self.daemon or not self.daemon.safety_monitor:
+                return JSONResponse({"error": "Safety monitor not available"}, status_code=503)
+
+            import threading
+
+            from citrascope.safety.cable_wrap_check import CableWrapCheck
+
+            chk = self.daemon.safety_monitor.get_check("cable_wrap")
+            if not isinstance(chk, CableWrapCheck):
+                return JSONResponse({"error": "No cable wrap check configured"}, status_code=404)
+            if chk.is_unwinding:
+                return JSONResponse({"error": "Unwind already in progress"}, status_code=409)
+            threading.Thread(target=chk.execute_action, daemon=True, name="cable-unwind").start()
+            return JSONResponse({"success": True, "message": "Cable unwind started"}, status_code=202)
+
+        @self.app.post("/api/safety/cable-wrap/reset")
+        async def reset_cable_wrap():
+            """Reset cable wrap counter to zero (operator confirms cables are straight)."""
+            if not self.daemon or not self.daemon.safety_monitor:
+                return JSONResponse({"error": "Safety monitor not available"}, status_code=503)
+
+            from citrascope.safety.cable_wrap_check import CableWrapCheck
+
+            chk = self.daemon.safety_monitor.get_check("cable_wrap")
+            if not isinstance(chk, CableWrapCheck):
+                return JSONResponse({"error": "No cable wrap check configured"}, status_code=404)
+            if chk.is_unwinding:
+                return JSONResponse({"error": "Cannot reset during unwind"}, status_code=409)
+            chk.reset()
+            CITRASCOPE_LOGGER.info("Cable wrap counter reset by operator")
+            return {"success": True, "message": "Cable wrap counter reset to 0°"}
+
+        @self.app.post("/api/emergency-stop")
+        async def emergency_stop():
+            """Stop mount, pause task processing, and drain imaging queue."""
+            if not self.daemon:
+                return JSONResponse({"error": "Daemon not available"}, status_code=503)
+
+            import threading
+
+            # Activate safety check — watchdog will enforce continuously
+            if self.daemon.safety_monitor:
+                self.daemon.safety_monitor.activate_operator_stop()
+
+            cleared = 0
+            tm = self.daemon.task_manager
+            if tm:
+                tm.pause()
+                cleared = tm.clear_pending_tasks()
+            if self.daemon.settings:
+                self.daemon.settings.task_processing_paused = True
+                self.daemon.settings.save()
+
+            # Immediate mount halt in background thread (serial I/O can't
+            # run on the async event loop).  The watchdog provides ongoing
+            # enforcement at 1 Hz; this gives sub-second first response.
+            daemon = self.daemon
+
+            def _halt_mount():
+                mount = getattr(daemon.hardware_adapter, "mount", None) if daemon.hardware_adapter else None
+                if not mount:
+                    return
+                try:
+                    mount.abort_slew()
+                    mount.stop_tracking()
+                except Exception:
+                    CITRASCOPE_LOGGER.error("Error halting mount during emergency stop", exc_info=True)
+
+            threading.Thread(target=_halt_mount, daemon=True, name="emergency-stop").start()
+
+            CITRASCOPE_LOGGER.warning(
+                "EMERGENCY STOP by operator — processing paused, %d imaging tasks cleared, mount halt issued",
+                cleared,
+            )
+            return JSONResponse(
+                {
+                    "success": True,
+                    "message": f"Emergency stop: mount halt issued, {cleared} queued task(s) cleared",
+                },
+                status_code=202,
+            )
+
+        @self.app.post("/api/safety/operator-stop/clear")
+        async def clear_operator_stop():
+            """Clear the operator stop — allows motion to resume.
+
+            Also reverses the pause that emergency_stop applied so
+            task processing can pick up where it left off.
+            """
+            if not self.daemon:
+                return JSONResponse({"error": "Daemon not available"}, status_code=503)
+            if not self.daemon.safety_monitor:
+                return JSONResponse({"error": "Safety monitor not available"}, status_code=503)
+            self.daemon.safety_monitor.clear_operator_stop()
+
+            tm = self.daemon.task_manager
+            if tm:
+                tm.resume()
+            if self.daemon.settings:
+                self.daemon.settings.task_processing_paused = False
+                self.daemon.settings.save()
+
+            CITRASCOPE_LOGGER.info("Operator stop cleared via web UI — task processing resumed")
+            return {"success": True, "message": "Operator stop cleared — motion may resume"}
 
         @self.app.post("/api/mount/limits")
         async def set_mount_limits(request: dict[str, Any]):
@@ -908,50 +1035,49 @@ class CitraScopeWebApp:
             self.status.hardware_adapter = self.daemon.settings.hardware_adapter
 
             if hasattr(self.daemon, "hardware_adapter") and self.daemon.hardware_adapter:
+                adapter = self.daemon.hardware_adapter
+                mount = getattr(adapter, "mount", None)
+
                 # Check telescope connection status
                 try:
-                    self.status.telescope_connected = self.daemon.hardware_adapter.is_telescope_connected()
+                    self.status.telescope_connected = adapter.is_telescope_connected()
                     if self.status.telescope_connected:
-                        # If connected, try to get position
-                        ra, dec = self.daemon.hardware_adapter.get_telescope_direction()
-                        self.status.telescope_ra = ra
-                        self.status.telescope_dec = dec
+                        snap = mount.cached_state if mount is not None else None
+                        if snap is not None:
+                            self.status.telescope_ra = snap.ra_deg
+                            self.status.telescope_dec = snap.dec_deg
+                            self.status.telescope_az = snap.az_deg
+                            self.status.telescope_alt = snap.alt_deg
+                        else:
+                            ra, dec = adapter.get_telescope_direction()
+                            self.status.telescope_ra = ra
+                            self.status.telescope_dec = dec
                 except Exception:
                     self.status.telescope_connected = False
 
                 # Check camera connection status
                 try:
-                    self.status.camera_connected = self.daemon.hardware_adapter.is_camera_connected()
+                    self.status.camera_connected = adapter.is_camera_connected()
                 except Exception:
                     self.status.camera_connected = False
 
                 # Check adapter capabilities
                 try:
-                    self.status.supports_direct_camera_control = (
-                        self.daemon.hardware_adapter.supports_direct_camera_control()
-                    )
+                    self.status.supports_direct_camera_control = adapter.supports_direct_camera_control()
                 except Exception:
                     self.status.supports_direct_camera_control = False
 
-                self.status.supports_autofocus = self.daemon.hardware_adapter.supports_autofocus()
+                self.status.supports_autofocus = adapter.supports_autofocus()
 
-                adapter = self.daemon.hardware_adapter
                 has_camera = getattr(adapter, "camera", None) is not None
-                mount = getattr(adapter, "mount", None)
-                has_mount = mount is not None
-                self.status.supports_alignment = has_camera and has_mount
-                try:
-                    self.status.supports_manual_sync = has_mount and mount.get_mount_info().get("supports_sync", False)
-                except Exception:
-                    self.status.supports_manual_sync = False
+                self.status.supports_alignment = has_camera and mount is not None
 
-                if self.status.telescope_connected:
-                    try:
-                        h_limit, o_limit = adapter.get_mount_limits()
-                        self.status.mount_horizon_limit = h_limit
-                        self.status.mount_overhead_limit = o_limit
-                    except Exception:
-                        pass
+                if mount is not None and mount.cached_state is not None:
+                    self.status.supports_manual_sync = mount.cached_mount_info.get("supports_sync", False)
+                    self.status.mount_at_home = mount.cached_state.is_at_home
+                    h_limit, o_limit = mount.cached_limits
+                    self.status.mount_horizon_limit = h_limit
+                    self.status.mount_overhead_limit = o_limit
 
             if hasattr(self.daemon, "task_manager") and self.daemon.task_manager:
                 task_manager = self.daemon.task_manager
@@ -1076,6 +1202,15 @@ class CitraScopeWebApp:
                 if self.status.pipeline_stats is None:
                     self.status.pipeline_stats = {}
                 self.status.pipeline_stats["processors"] = self.daemon.processor_registry.get_processor_stats()
+
+            # Safety monitor status
+            if hasattr(self.daemon, "safety_monitor") and self.daemon.safety_monitor:
+                try:
+                    self.status.safety_status = self.daemon.safety_monitor.get_status()
+                except Exception:
+                    self.status.safety_status = None
+            else:
+                self.status.safety_status = None
 
             self.status.last_update = datetime.now().isoformat()
 

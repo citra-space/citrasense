@@ -117,6 +117,9 @@ class CitraScopeSettings:
         self.gps_location_updates_enabled: bool = config.get("gps_location_updates_enabled", True)
         self.gps_update_interval_minutes: int = config.get("gps_update_interval_minutes", 5)
 
+        # Task processing state (persisted so pause survives restarts)
+        self.task_processing_paused: bool = config.get("task_processing_paused", False)
+
         # MSI Processor configuration
         # Note: Individual processor enable/disable is handled via enabled_processors dict (already exists)
         self.elset_refresh_interval_hours: float = config.get("elset_refresh_interval_hours", 6)
@@ -179,6 +182,7 @@ class CitraScopeSettings:
             "gps_update_interval_minutes": self.gps_update_interval_minutes,
             "processors_enabled": self.processors_enabled,
             "enabled_processors": self.enabled_processors,
+            "task_processing_paused": self.task_processing_paused,
             "elset_refresh_interval_hours": self.elset_refresh_interval_hours,
         }
 

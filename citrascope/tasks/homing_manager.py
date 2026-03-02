@@ -13,6 +13,8 @@ if TYPE_CHECKING:
 
 _HOME_POLL_INTERVAL_S = 1.0
 _HOME_TIMEOUT_S = 120.0
+_GRACE_POLLS = 5  # polls before we start checking for premature stops
+_IDLE_THRESHOLD = 3  # consecutive idle polls to declare homing interrupted
 
 
 class HomingManager:
@@ -96,7 +98,13 @@ class HomingManager:
         return True
 
     def _execute(self) -> None:
-        """Send find-home and poll until the mount reports at-home."""
+        """Send find-home and poll until the mount reports at-home.
+
+        After a grace period for motion to start, we also watch for the
+        mount stopping without reaching home (e.g. safety abort during a
+        cable-wrap emergency).  This prevents the UI from showing a
+        homing spinner for the full timeout when the slew was interrupted.
+        """
         with self._lock:
             self._running = True
             self._progress = "Homing..."
@@ -108,6 +116,8 @@ class HomingManager:
                 return
 
             deadline = time.monotonic() + _HOME_TIMEOUT_S
+            poll_count = 0
+            idle_count = 0
             while time.monotonic() < deadline:
                 try:
                     at_home = self.hardware_adapter.is_telescope_connected() and self.hardware_adapter.is_mount_homed()
@@ -116,6 +126,24 @@ class HomingManager:
                 if at_home:
                     self.logger.info("Mount homing complete — encoder position established")
                     return
+
+                poll_count += 1
+                if poll_count > _GRACE_POLLS:
+                    try:
+                        still_moving = self.hardware_adapter.telescope_is_moving()
+                    except Exception:
+                        still_moving = True
+                    if not still_moving:
+                        idle_count += 1
+                        if idle_count >= _IDLE_THRESHOLD:
+                            self.logger.warning(
+                                "Mount stopped without reaching home (poll %d) — homing interrupted",
+                                poll_count,
+                            )
+                            return
+                    else:
+                        idle_count = 0
+
                 time.sleep(_HOME_POLL_INTERVAL_S)
 
             self.logger.error("Mount homing timed out after %.0fs", _HOME_TIMEOUT_S)

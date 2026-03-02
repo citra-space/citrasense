@@ -16,6 +16,8 @@ class StaticTelescopeTask(AbstractBaseTelescopeTask):
             if strategy == ObservationStrategy.MANUAL:
                 self.task.set_status_msg("Slewing to target...")
                 self.point_to_lead_position(satellite_data)
+                if self.is_cancelled:
+                    return False
                 self.task.set_status_msg("Exposing image (2s)...")
                 filepaths = self.hardware_adapter.take_image(self.task.id, 2.0)
 

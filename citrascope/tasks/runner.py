@@ -69,9 +69,10 @@ class TaskManager:
         self.heap_lock = threading.RLock()
         self._stop_event = threading.Event()
         self.current_task_id = None  # Track currently executing task
-        # Task processing control (always starts active)
-        self._processing_active = True
+        # Task processing control (restored from settings)
+        self._processing_active = not settings.task_processing_paused
         self._processing_lock = threading.Lock()
+        self._last_safety_action: object = None
         self.autofocus_manager = AutofocusManager(
             self.logger,
             self.hardware_adapter,
@@ -297,6 +298,11 @@ class TaskManager:
 
     def task_runner(self):
         while not self._stop_event.is_set():
+            # Safety evaluation runs first — before any managers or tasks.
+            if self._evaluate_safety():
+                self._stop_event.wait(1)
+                continue
+
             # Operator-requested maintenance runs regardless of pause state.
             self.homing_manager.check_and_execute()
             self.alignment_manager.check_and_execute()
@@ -356,6 +362,52 @@ class TaskManager:
 
             self._stop_event.wait(1)
 
+    def _evaluate_safety(self) -> bool:
+        """Run safety monitor evaluation; return True if the loop should yield."""
+        safety_monitor = getattr(self.daemon, "safety_monitor", None)
+        if not safety_monitor:
+            return False
+
+        from citrascope.safety.safety_monitor import SafetyAction
+
+        try:
+            action, triggered_check = safety_monitor.evaluate()
+        except Exception:
+            self.logger.error("Safety monitor evaluation failed — yielding task loop", exc_info=True)
+            return True
+
+        if action == SafetyAction.EMERGENCY:
+            try:
+                self.hardware_adapter.abort_slew()
+            except Exception:
+                pass
+            if triggered_check:
+                is_new = self._last_safety_action != SafetyAction.EMERGENCY
+                if is_new:
+                    self.logger.critical("Executing safety action from %r", triggered_check.name)
+                    try:
+                        triggered_check.execute_action()
+                    except Exception:
+                        self.logger.error("Safety corrective action failed", exc_info=True)
+            self._last_safety_action = action
+            return True
+
+        if action == SafetyAction.QUEUE_STOP:
+            if self.imaging_queue.is_idle():
+                if triggered_check:
+                    is_new = self._last_safety_action != SafetyAction.QUEUE_STOP
+                    if is_new:
+                        self.logger.warning("Executing safety action from %r (queue idle)", triggered_check.name)
+                        try:
+                            triggered_check.execute_action()
+                        except Exception:
+                            self.logger.error("Safety corrective action failed", exc_info=True)
+            self._last_safety_action = action
+            return True
+
+        self._last_safety_action = action
+        return False
+
     def _create_telescope_task(self, task: Task):
         """Create appropriate telescope task instance for the given task."""
         # For now, use StaticTelescopeTask
@@ -390,6 +442,16 @@ class TaskManager:
             if not next_tasks:
                 summary += "No tasks scheduled."
             return summary
+
+    def clear_pending_tasks(self) -> int:
+        """Drain the task heap and imaging queue. Returns total items removed."""
+        with self.heap_lock:
+            count = len(self.task_heap)
+            self.task_heap.clear()
+            self.task_ids.clear()
+            self.task_dict.clear()
+        count += self.imaging_queue.clear()
+        return count
 
     def pause(self) -> bool:
         """Pause task processing. Returns new state (False)."""

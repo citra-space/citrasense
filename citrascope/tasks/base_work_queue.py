@@ -29,6 +29,13 @@ class BaseWorkQueue(ABC):
         # Retry tracking (per-stage)
         self.retry_counts: dict[str, int] = {}
         self.last_failure: dict[str, float] = {}
+        self._pending_timers: list[threading.Timer] = []
+        self._timer_lock = threading.Lock()
+        self._clear_epoch: int = 0
+
+        # In-flight work item tracking (used by clear() to cancel active work)
+        self._current_item_lock = threading.Lock()
+        self._current_item: dict[str, Any] | None = None
 
         # Lifetime counters — increments are GIL-safe for simple int in CPython;
         # the lock exists to give atomic multi-field snapshots in get_stats().
@@ -70,6 +77,13 @@ class BaseWorkQueue(ABC):
             item: Work item dictionary
         """
         pass
+
+    def _cancel_current_item(self, item: dict[str, Any]) -> None:  # noqa: B027
+        """Cancel an in-flight work item during clear().
+
+        Override in subclasses to perform item-specific cancellation
+        (e.g. aborting a telescope task).  Default is a no-op.
+        """
 
     def _update_retry_status(self, item: dict[str, Any], backoff: float, retry_count: int, max_retries: int):
         """Update task status message for retry."""
@@ -147,15 +161,18 @@ class BaseWorkQueue(ABC):
         scheduled_time = time.time() + backoff
         self._set_retry_scheduled_time(item, scheduled_time)
 
-        # Schedule resubmission (clear scheduled time and update status when resubmitted)
         def resubmit():
+            with self._timer_lock:
+                if timer in self._pending_timers:
+                    self._pending_timers.remove(timer)
             self._set_retry_scheduled_time(item, None)
-            # Update status to show we're no longer waiting, but about to retry
             self._update_status_on_resubmit(item)
             self.work_queue.put(item)
 
         timer = threading.Timer(backoff, resubmit)
         timer.daemon = True
+        with self._timer_lock:
+            self._pending_timers.append(timer)
         timer.start()
 
     def _worker_loop(self):
@@ -168,29 +185,32 @@ class BaseWorkQueue(ABC):
 
                 task_id = item["task_id"]
 
+                with self._current_item_lock:
+                    self._current_item = item
                 try:
-                    # Mark task as being actively executed
                     self._set_executing(item, True)
                     self.total_attempts += 1
+                    epoch = self._clear_epoch
 
                     success, result = self._execute_work(item)
 
-                    # Mark task as no longer executing
                     self._set_executing(item, False)
 
-                    if success:
-                        self.total_successes += 1
-                        # Clean up retry tracking
+                    if self._clear_epoch != epoch:
+                        self.logger.info(f"Task {task_id} result discarded (queue cleared during execution)")
                         self.retry_counts.pop(task_id, None)
                         self.last_failure.pop(task_id, None)
-                        self._set_retry_scheduled_time(item, None)  # Clear retry scheduled time on success
+                        self._on_permanent_failure(item)
+                    elif success:
+                        self.total_successes += 1
+                        self.retry_counts.pop(task_id, None)
+                        self.last_failure.pop(task_id, None)
+                        self._set_retry_scheduled_time(item, None)
                         self._on_success(item, result)
                     else:
-                        # Work failed
                         if self._should_retry(task_id):
                             self._schedule_retry(item)
                         else:
-                            # Permanent failure
                             self.total_permanent_failures += 1
                             self.logger.error(
                                 f"Task {task_id} permanently failed after "
@@ -201,23 +221,64 @@ class BaseWorkQueue(ABC):
                             self._on_permanent_failure(item)
 
                 except Exception as e:
-                    # Mark task as no longer executing (even on exception)
                     self._set_executing(item, False)
 
-                    self.logger.error(f"Worker error for {task_id}: {e}", exc_info=True)
-                    if self._should_retry(task_id):
-                        self._schedule_retry(item)
-                    else:
-                        self.total_permanent_failures += 1
+                    if self._clear_epoch != epoch:
+                        self.logger.info(f"Task {task_id} discarded after exception (queue cleared)")
                         self.retry_counts.pop(task_id, None)
                         self.last_failure.pop(task_id, None)
                         self._on_permanent_failure(item)
+                    else:
+                        self.logger.error(f"Worker error for {task_id}: {e}", exc_info=True)
+                        if self._should_retry(task_id):
+                            self._schedule_retry(item)
+                        else:
+                            self.total_permanent_failures += 1
+                            self.retry_counts.pop(task_id, None)
+                            self.last_failure.pop(task_id, None)
+                            self._on_permanent_failure(item)
 
                 finally:
+                    with self._current_item_lock:
+                        self._current_item = None
                     self.work_queue.task_done()
 
             except queue.Empty:
                 continue
+
+    def clear(self) -> int:
+        """Cancel in-flight work, drain pending items, cancel retry timers,
+        and suppress in-flight retries.
+
+        After clear(), any currently-executing task that fails will go straight
+        to _on_permanent_failure instead of scheduling another retry.
+        """
+        self._clear_epoch += 1
+
+        with self._current_item_lock:
+            if self._current_item is not None:
+                self._cancel_current_item(self._current_item)
+
+        with self._timer_lock:
+            for t in self._pending_timers:
+                t.cancel()
+            self._pending_timers.clear()
+
+        # Max out retry counts so _should_retry() returns False for any
+        # in-flight task that completes after this point.
+        max_retries = self.settings.max_task_retries
+        for task_id in list(self.retry_counts):
+            self.retry_counts[task_id] = max_retries
+
+        count = 0
+        while True:
+            try:
+                self.work_queue.get_nowait()
+                self.work_queue.task_done()
+                count += 1
+            except queue.Empty:
+                break
+        return count
 
     def is_idle(self) -> bool:
         """Return True if no items are queued or being actively worked on."""

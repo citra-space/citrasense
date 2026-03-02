@@ -1,5 +1,6 @@
 """Unit tests for BaseWorkQueue, ImagingQueue, and ProcessingQueue."""
 
+import threading
 import time
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -128,9 +129,87 @@ def test_poison_pill_stops_worker():
     q.stop()
 
 
+def test_clear_cancels_pending_retry_timers():
+    q = StubQueue(execute_fn=lambda item: (False, None), max_retries=3, initial_delay=60, max_delay=120)
+    q.start()
+    q.work_queue.put({"task_id": "t1", "task": MagicMock()})
+    time.sleep(0.5)
+
+    assert len(q._pending_timers) == 1
+    timer = q._pending_timers[0]
+
+    q.clear()
+    # cancel() prevents the callback; timer thread may take a moment to exit
+    assert timer.finished.is_set()
+    assert len(q._pending_timers) == 0
+    q.stop()
+
+
+def test_clear_maxes_retry_counts():
+    q = StubQueue(max_retries=5)
+    q.retry_counts["t1"] = 1
+    q.retry_counts["t2"] = 0
+    q.clear()
+    assert q.retry_counts["t1"] == 5
+    assert q.retry_counts["t2"] == 5
+
+
+def test_clear_epoch_discards_in_flight_result():
+    """After clear(), an in-flight task's result is discarded via epoch check."""
+    barrier = threading.Event()
+
+    def slow_fail(item):
+        barrier.wait(5)
+        return (False, None)
+
+    q = StubQueue(execute_fn=slow_fail, max_retries=3, initial_delay=0.1, max_delay=0.2)
+    q.start()
+    q.work_queue.put({"task_id": "t1", "task": MagicMock()})
+    time.sleep(0.1)
+
+    q.clear()
+    barrier.set()
+    time.sleep(0.5)
+    q.stop()
+
+    assert "t1" in q.failure_items
+    assert len(q.success_items) == 0
+
+
 # ---------------------------------------------------------------------------
 # ImagingQueue
 # ---------------------------------------------------------------------------
+
+
+def test_imaging_queue_clear_cancels_in_flight_task():
+    from citrascope.tasks.imaging_queue import ImagingQueue
+
+    cancel_event = threading.Event()
+
+    class FakeTelescopeTask:
+        def execute(self):
+            cancel_event.wait(5)
+            return True
+
+        def cancel(self):
+            cancel_event.set()
+
+    iq = ImagingQueue(
+        num_workers=1,
+        settings=MagicMock(max_task_retries=3, initial_retry_delay_seconds=1, max_retry_delay_seconds=10),
+        logger=MagicMock(),
+        api_client=MagicMock(),
+        task_manager=MagicMock(),
+    )
+    iq.start()
+    iq.submit("t1", MagicMock(), FakeTelescopeTask(), MagicMock())
+    time.sleep(0.2)
+
+    assert iq._current_item is not None
+    iq.clear()
+    assert cancel_event.is_set()
+    time.sleep(0.3)
+    iq.stop()
 
 
 def test_imaging_queue_submit():

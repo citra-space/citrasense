@@ -1,6 +1,9 @@
+from __future__ import annotations
+
 import atexit
 import signal
 import time
+from pathlib import Path
 
 from citrascope.api.citra_api_client import AbstractCitraApiClient, CitraApiClient
 from citrascope.api.dummy_api_client import DummyApiClient
@@ -14,7 +17,6 @@ from citrascope.logging._citrascope_logger import setup_file_logging
 from citrascope.processors.processor_registry import ProcessorRegistry
 from citrascope.settings.citrascope_settings import CitraScopeSettings
 from citrascope.tasks.runner import TaskManager
-from citrascope.time.time_health import TimeHealth
 from citrascope.time.time_monitor import TimeMonitor
 from citrascope.web.server import CitraScopeWebServer
 
@@ -44,6 +46,7 @@ class CitraScopeDaemon:
         self.location_service = None
         self.ground_station = None
         self.telescope_record = None
+        self.safety_monitor = None
         self.configuration_error: str | None = None
         self._stop_requested = False
         self._shutdown_done = False
@@ -121,6 +124,10 @@ class CitraScopeDaemon:
                 self.task_manager.stop()
                 self.task_manager = None
 
+            if self.safety_monitor:
+                self.safety_monitor.stop_watchdog()
+                self.safety_monitor = None
+
             if self.time_monitor:
                 self.time_monitor.stop()
                 self.time_monitor = None
@@ -177,7 +184,6 @@ class CitraScopeDaemon:
             self.time_monitor = TimeMonitor(
                 check_interval_minutes=self.settings.time_check_interval_minutes,
                 pause_threshold_ms=self.settings.time_offset_pause_ms,
-                pause_callback=self._on_time_drift_pause,
                 gps_monitor=self.location_service.gps_monitor if self.location_service else None,
             )
             self.time_monitor.start()
@@ -265,7 +271,7 @@ class CitraScopeDaemon:
             if self.location_service:
                 self.hardware_adapter.set_location_service(self.location_service)
 
-            # connect to hardware server
+            # connect to hardware server (serial handshake + config — no motion)
             CITRASCOPE_LOGGER.info(f"Connecting to hardware with {type(self.hardware_adapter).__name__}...")
             if not self.hardware_adapter.connect():
                 error_msg = f"Failed to connect to hardware adapter: {type(self.hardware_adapter).__name__}"
@@ -282,6 +288,16 @@ class CitraScopeDaemon:
             self._save_filter_config()
             # Sync discovered filters to backend on startup
             self._sync_filters_to_backend()
+
+            # Safety monitor MUST be online before any mount motion.
+            # connect() above establishes the serial link and syncs site/time
+            # but does NOT home.  home_if_needed() below triggers the first
+            # physical slew — by then, CableWrapCheck is already observing.
+            self._initialize_safety_monitor()
+
+            # Home the mount (now safety-gated and monitored)
+            if not self.hardware_adapter.home_if_needed():
+                CITRASCOPE_LOGGER.warning("Mount homing failed or timed out — GoTo may not work")
 
             # Create TaskManager (now owns all queues and stage tracking)
             self.task_manager = TaskManager(
@@ -320,6 +336,89 @@ class CitraScopeDaemon:
             error_msg = f"Error initializing telescope: {e!s}"
             CITRASCOPE_LOGGER.error(error_msg, exc_info=True)
             return False, error_msg
+
+    def _initialize_safety_monitor(self) -> None:
+        """Create SafetyMonitor with applicable checks and wire to hardware."""
+        from citrascope.safety.cable_wrap_check import CableWrapCheck
+        from citrascope.safety.disk_space_check import DiskSpaceCheck
+        from citrascope.safety.safety_monitor import SafetyMonitor
+        from citrascope.safety.time_health_check import TimeHealthCheck
+
+        assert self.hardware_adapter is not None
+
+        checks: list = []
+
+        # Cable wrap check — only for adapters with a direct mount
+        cable_check: CableWrapCheck | None = None
+        needs_startup_unwind = False
+        mount = getattr(self.hardware_adapter, "mount", None)
+        if mount is not None:
+            import platformdirs
+
+            from citrascope.safety.cable_wrap_check import HARD_LIMIT_DEG
+
+            data_dir = Path(platformdirs.user_data_dir("citrascope", appauthor="citrascope"))
+            state_file = data_dir / "cable_wrap_state.json"
+            cable_check = CableWrapCheck(CITRASCOPE_LOGGER, mount, state_file=state_file)
+            cable_check.start()
+
+            if abs(cable_check._cumulative_deg) >= HARD_LIMIT_DEG:
+                CITRASCOPE_LOGGER.warning(
+                    "Persisted cable wrap at %.1f° exceeds hard limit (%.1f°) — will unwind after safety gate is wired",
+                    cable_check._cumulative_deg,
+                    HARD_LIMIT_DEG,
+                )
+                needs_startup_unwind = True
+
+            checks.append(cable_check)
+
+        # Disk space check
+        checks.append(DiskSpaceCheck(CITRASCOPE_LOGGER, self.hardware_adapter.images_dir))
+
+        # Time health check
+        if self.time_monitor:
+            checks.append(TimeHealthCheck(CITRASCOPE_LOGGER, self.time_monitor))
+
+        def abort_callback() -> None:
+            try:
+                mount = getattr(self.hardware_adapter, "mount", None)
+                if not mount:
+                    return
+                snap = mount.cached_state
+                if snap is not None and not snap.is_slewing:
+                    return
+                mount.abort_slew()
+            except Exception:
+                pass
+
+        self.safety_monitor = SafetyMonitor(CITRASCOPE_LOGGER, checks, abort_callback=abort_callback)
+        self.hardware_adapter.set_safety_monitor(self.safety_monitor)
+
+        # Wire safety gate so cable unwind respects operator stop.
+        # Must check operator_stop directly — is_action_safe() would ask
+        # cable_wrap itself, which returns False while _unwinding is True.
+        # IMPORTANT: this must happen BEFORE any execute_action() call so
+        # the unwind can be interrupted by operator stop.
+        op_stop = self.safety_monitor.operator_stop
+        if cable_check is not None:
+            cable_check.safety_gate = lambda: not op_stop.is_active
+
+        self.safety_monitor.start_watchdog()
+        CITRASCOPE_LOGGER.info("Safety monitor started with %d check(s)", len(checks))
+
+        # Now that the safety gate is wired, attempt the startup unwind.
+        if needs_startup_unwind and cable_check is not None:
+            CITRASCOPE_LOGGER.info("Starting deferred cable unwind (safety gate active)")
+            cable_check.execute_action()
+            if cable_check._consecutive_unwind_failures > 0:
+                cable_check._intervention_required = True
+                CITRASCOPE_LOGGER.critical(
+                    "Startup unwind did not converge (%.1f° remaining) — "
+                    "manual intervention required before the system can "
+                    "operate. Use web UI to reset after physically "
+                    "verifying cables.",
+                    cable_check._cumulative_deg,
+                )
 
     def _save_filter_config(self):
         """Save filter configuration from adapter to settings if supported.
@@ -402,31 +501,6 @@ class CitraScopeDaemon:
             return False
         return self.task_manager.autofocus_manager.is_requested()
 
-    def _on_time_drift_pause(self, health: TimeHealth) -> None:
-        """
-        Callback invoked when time drift exceeds pause threshold.
-
-        Automatically pauses task processing to prevent observations with
-        inaccurate timestamps. User must manually resume after fixing time sync.
-
-        Args:
-            health: Current time health status
-        """
-        if not self.task_manager:
-            return
-
-        CITRASCOPE_LOGGER.critical(
-            f"Time drift exceeded threshold: {health.offset_ms:+.1f}ms. "
-            "Pausing task processing to prevent inaccurate observations."
-        )
-
-        # Pause task processing
-        self.task_manager.pause()
-        CITRASCOPE_LOGGER.warning(
-            "Task processing paused due to time sync issues. "
-            "Fix NTP configuration and manually resume via web interface."
-        )
-
     def run(self):
         assert self.web_server is not None
         # atexit ensures cleanup runs even if the process is killed abruptly
@@ -479,16 +553,41 @@ class CitraScopeDaemon:
         self._shutdown_done = True
 
         CITRASCOPE_LOGGER.info("Shutting down...")
+
+        # 1. Stop sources of new motion
         if self.task_manager:
             self.task_manager.stop()
         if self.time_monitor:
             self.time_monitor.stop()
+
+        # 2. Abort any residual motion
+        if self.hardware_adapter:
+            try:
+                mount = getattr(self.hardware_adapter, "mount", None)
+                if mount:
+                    mount.abort_slew()
+            except Exception:
+                pass
+
+        # 3. Stop safety (watchdog last — it was guarding steps 1-2)
+        if self.safety_monitor:
+            from citrascope.safety.cable_wrap_check import CableWrapCheck
+
+            cable_check = self.safety_monitor.get_check("cable_wrap")
+            if isinstance(cable_check, CableWrapCheck):
+                cable_check.join_unwind(timeout=10.0)
+                cable_check.stop()
+            self.safety_monitor.stop_watchdog()
+
+        # 4. Disconnect hardware
         if self.hardware_adapter:
             try:
                 CITRASCOPE_LOGGER.info("Disconnecting hardware...")
                 self.hardware_adapter.disconnect()
             except Exception as e:
                 CITRASCOPE_LOGGER.warning(f"Error disconnecting hardware: {e}")
+
+        # 5. Stop web server
         if self.web_server:
             CITRASCOPE_LOGGER.info("Stopping web server...")
             if self.web_server.web_log_handler:

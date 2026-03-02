@@ -75,16 +75,19 @@ ZWO-proprietary commands (use these instead)::
     :SOa#  → 1/0      Set current position as home
     :NSC#  → 1/0      Clear multi-star alignment data
 
-GoTo (``:MS#``) error codes::
+GoTo (``:MS#``) and Sync (``:CM#``) error codes
+(ZWO-specific — differs from standard OnStepX mapping)::
 
   0       Success (bare 0, NO # terminator — special case!)
+  N/A     Sync success (``:CM#`` only — ``N/A#`` terminated)
   1 / e1  Below horizon
   2 / e2  Above overhead limit
-  3 / e3  Mount busy
-  4 / e4  Position unreachable
-  5 / e5  Not aligned
+  3 / e3  In standby (motors disabled)
+  4 / e4  Parked
+  5 / e5  Not aligned (coordinate transform not initialised)
   6 / e6  Outside limits (general)
   7 / e7  Pier side limit (needs meridian flip)
+  8 / e8  In motion (already slewing or guiding)
 """
 
 from __future__ import annotations
@@ -585,25 +588,62 @@ class ZwoAmResponseParser:
             return None
 
     @staticmethod
+    def parse_site_coordinate(response: str) -> float | None:
+        """Parse a site latitude/longitude DMS response to decimal degrees.
+
+        `:Gt#` returns ``sDD*MM:SS#``, `:Gg#` returns ``sDDD*MM:SS#``.
+        Both use the same signed-DMS format as Dec responses.
+        """
+        parsed = ZwoAmResponseParser.parse_dec(response)
+        if parsed is None:
+            return None
+        degrees, minutes, seconds = parsed
+        sign = -1.0 if degrees < 0 or (degrees == 0 and str(response).lstrip().startswith("-")) else 1.0
+        return sign * (abs(degrees) + minutes / 60.0 + seconds / 3600.0)
+
+    @staticmethod
     def parse_goto_response(response: str) -> str | None:
-        """Parse GoTo response.  Returns ``None`` on success, error string otherwise."""
+        """Parse GoTo / Sync response.  Returns ``None`` on success, error string otherwise.
+
+        ZWO AM5 error codes (differs from standard OnStepX mapping):
+
+        ====  ==============================  ================================
+        Code  ZWO meaning                     Standard OnStepX meaning
+        ====  ==============================  ================================
+        1     Below horizon                   Below horizon
+        2     Above overhead limit            Above overhead limit
+        3     In standby                      In standby
+        4     Parked                          Parked
+        5     **Not aligned**                 Goto in progress (CE_SLEW_IN_SLEW)
+        6     Outside limits                  Outside limits
+        7     Pier side limit                 Hardware fault
+        8     In motion                       In motion
+        ====  ==============================  ================================
+
+        The ``e``-prefixed variants (``e5``, ``e6``, etc.) are equivalent to
+        the bare digit forms.  ``:CM#`` returns ``N/A#`` on success.
+        """
         trimmed = response.strip().rstrip("#")
+        if trimmed == "N/A":
+            return None
         _errors = {
             "0": None,
             "1": "Object below horizon",
             "2": "Above overhead limit",
-            "3": "Mount busy",
-            "4": "Position unreachable",
+            "3": "In standby (motors disabled)",
+            "4": "Parked",
             "5": "Not aligned",
             "6": "Outside limits",
             "7": "Pier side limit",
+            "8": "In motion",
             "e1": "Object below horizon",
             "e2": "Above overhead limit",
-            "e3": "Mount busy",
-            "e4": "Position unreachable",
+            "e3": "In standby (motors disabled)",
+            "e4": "Parked",
             "e5": "Not aligned",
             "e6": "Outside limits",
             "e7": "Pier side limit",
+            "e8": "In motion",
         }
         return _errors.get(trimmed, f"Unknown goto error: {trimmed}")
 

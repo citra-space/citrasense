@@ -2,13 +2,13 @@
 
 import datetime
 import logging
+import math
+import threading
 import time
 from collections.abc import Callable
 from pathlib import Path
 
-import astropy.units as u
 import numpy as np
-from astropy.coordinates import SkyCoord
 from astropy.io import fits
 from astropy.wcs import WCS
 from scipy.ndimage import gaussian_filter
@@ -18,6 +18,287 @@ from citrascope.hardware.abstract_astro_hardware_adapter import (
     ObservationStrategy,
     SettingSchemaEntry,
 )
+from citrascope.hardware.devices.mount.abstract_mount import AbstractMount
+from citrascope.hardware.devices.mount.mount_state_cache import MountStateCache
+
+# Default observer location — Pikes Peak, matches DummyApiClient.
+_OBSERVER_LAT_DEG = 38.8409
+_OBSERVER_LON_DEG = -105.0423
+
+
+def _current_lst_deg() -> float:
+    """Approximate Local Sidereal Time in degrees for the default observer."""
+    now = datetime.datetime.now(datetime.timezone.utc)
+    j2000 = datetime.datetime(2000, 1, 1, 12, 0, 0, tzinfo=datetime.timezone.utc)
+    d = (now - j2000).total_seconds() / 86400.0
+    ut_h = now.hour + now.minute / 60.0 + now.second / 3600.0
+    return (100.46 + 0.985647 * d + _OBSERVER_LON_DEG + 15.0 * ut_h) % 360.0
+
+
+def _radec_to_altaz(ra_deg: float, dec_deg: float) -> tuple[float, float]:
+    """Approximate RA/Dec → (Az, Alt) for the default observer at the current time."""
+    lat = math.radians(_OBSERVER_LAT_DEG)
+    lst_deg = _current_lst_deg()
+
+    ha = math.radians((lst_deg - ra_deg) % 360.0)
+    dec = math.radians(dec_deg)
+
+    sin_alt = math.sin(dec) * math.sin(lat) + math.cos(dec) * math.cos(lat) * math.cos(ha)
+    alt = math.asin(max(-1.0, min(1.0, sin_alt)))
+
+    cos_alt = math.cos(alt)
+    if cos_alt < 1e-10:
+        return 0.0, math.degrees(alt)
+    cos_az = (math.sin(dec) - math.sin(alt) * math.sin(lat)) / (cos_alt * math.cos(lat) + 1e-10)
+    az_raw = math.degrees(math.acos(max(-1.0, min(1.0, cos_az))))
+    az = (360.0 - az_raw) if math.sin(ha) > 0 else az_raw
+
+    return az, math.degrees(alt)
+
+
+def _radec_to_az(ra_deg: float, dec_deg: float) -> float:
+    """Approximate RA/Dec → Azimuth for the default observer at the current time."""
+    return _radec_to_altaz(ra_deg, dec_deg)[0]
+
+
+def _altaz_to_radec(az_deg: float, alt_deg: float) -> tuple[float, float]:
+    """Approximate Az/Alt → (RA, Dec) for the default observer at the current time."""
+    lat = math.radians(_OBSERVER_LAT_DEG)
+    az = math.radians(az_deg)
+    alt = math.radians(alt_deg)
+
+    sin_dec = math.sin(alt) * math.sin(lat) + math.cos(alt) * math.cos(lat) * math.cos(az)
+    dec = math.asin(max(-1.0, min(1.0, sin_dec)))
+
+    cos_dec = math.cos(dec)
+    if cos_dec < 1e-10:
+        return _current_lst_deg(), math.degrees(dec)
+
+    cos_ha = (math.sin(alt) - math.sin(dec) * math.sin(lat)) / (cos_dec * math.cos(lat) + 1e-10)
+    ha_abs = math.degrees(math.acos(max(-1.0, min(1.0, cos_ha))))
+    ha = ha_abs if az_deg > 180.0 else -ha_abs
+
+    ra = (_current_lst_deg() - ha) % 360.0
+    return ra, math.degrees(dec)
+
+
+class _DummyMount(AbstractMount):
+    """Simulated alt-az mount with realistic azimuth behaviour.
+
+    - **Slews** compute a real target azimuth from RA/Dec + observer location
+      + current sidereal time, so cable-wrap accumulates bidirectionally.
+    - **Tracking** drifts the azimuth at a configurable rate (sidereal-ish)
+      so cumulative wrap grows slowly even between slews.
+    - **Directional motion** (``start_move`` / ``stop_move``) shifts azimuth
+      at a fixed rate per ``get_azimuth()`` call, supporting the cable-unwind loop.
+    """
+
+    _SLEW_RATE_DEG_PER_S = 6.0
+    _MOVE_RATE_DEG_PER_S = 16.0
+    _TRACKING_DRIFT_DEG_PER_S = 0.005
+
+    def __init__(self, logger: logging.Logger) -> None:
+        super().__init__(logger)
+        self._ra: float = _current_lst_deg()
+        self._dec: float = _OBSERVER_LAT_DEG
+        az, alt = _radec_to_altaz(self._ra, self._dec)
+        self._base_az: float = az
+        self._alt: float = alt
+        self._ref_time: float = time.monotonic()
+        self._slewing = False
+        self._tracking = True
+        self._parked = False
+        self._homed = False
+        self._moving_dir: str | None = None
+        self._abort_event = threading.Event()
+
+    # -- AbstractHardwareDevice ------------------------------------------------
+
+    @classmethod
+    def get_friendly_name(cls) -> str:
+        return "Dummy Mount"
+
+    @classmethod
+    def get_dependencies(cls) -> dict[str, str | list[str]]:
+        return {"packages": [], "install_extra": ""}
+
+    @classmethod
+    def get_settings_schema(cls) -> list[SettingSchemaEntry]:
+        return []
+
+    def connect(self) -> bool:
+        return True
+
+    def disconnect(self) -> None:
+        pass
+
+    def is_connected(self) -> bool:
+        return True
+
+    # -- AbstractMount core ----------------------------------------------------
+
+    def slew_to_radec(self, ra: float, dec: float) -> bool:
+        """Simulate a slew by sweeping azimuth at a realistic rate.
+
+        Uses shortest-arc to determine direction, then advances azimuth
+        via start_move/stop_move so the cable wrap check sees gradual
+        accumulation during the transit.  The sleep is interruptible via
+        abort_slew() so the safety monitor can cut a slew short.
+        """
+        self._homed = False
+        self._abort_event.clear()
+        target_az, target_alt = _radec_to_altaz(ra, dec)
+
+        self._snap_az()
+        current_az = self._base_az % 360.0
+        delta = ((target_az - current_az + 180.0) % 360.0) - 180.0
+
+        aborted = False
+        if abs(delta) > 1.0:
+            self._slewing = True
+            direction = "east" if delta > 0 else "west"
+            self.start_move(direction)
+            wait_s = abs(delta) / self._SLEW_RATE_DEG_PER_S
+            aborted = self._abort_event.wait(wait_s)
+            self.stop_move(direction)
+            self._slewing = False
+
+        if aborted:
+            self.logger.info("Slew aborted mid-transit")
+            return False
+
+        self._ra = ra
+        self._dec = dec
+        self._base_az = target_az
+        self._alt = target_alt
+        self._ref_time = time.monotonic()
+        return True
+
+    def is_slewing(self) -> bool:
+        return self._slewing
+
+    def abort_slew(self) -> None:
+        self._abort_event.set()
+        self._slewing = False
+        self._snap_az()
+        self._moving_dir = None
+        self._ra, self._dec = _altaz_to_radec(self._base_az % 360.0, self._alt)
+
+    def get_radec(self) -> tuple[float, float]:
+        if self._moving_dir is not None:
+            az = self.get_azimuth()
+            if az is not None:
+                return _altaz_to_radec(az, self._alt)
+        return self._ra, self._dec
+
+    def start_tracking(self, rate: str | None = "sidereal") -> bool:
+        self._snap_az()
+        self._tracking = True
+        return True
+
+    def stop_tracking(self) -> bool:
+        self._snap_az()
+        self._tracking = False
+        return True
+
+    def is_tracking(self) -> bool:
+        return self._tracking
+
+    def park(self) -> bool:
+        self._parked = True
+        self._base_az = 0.0
+        self._ref_time = time.monotonic()
+        return True
+
+    def unpark(self) -> bool:
+        self._parked = False
+        return True
+
+    def is_parked(self) -> bool:
+        return self._parked
+
+    def get_mount_info(self) -> dict:
+        return {"name": "Dummy Mount", "supports_sync": True}
+
+    _HOME_AZ = 0.0
+
+    # -- Homing ----------------------------------------------------------------
+
+    def find_home(self) -> bool:
+        """Simulate homing by slewing back toward az=0 via continuous motion.
+
+        Uses start_move/stop_move so the cable wrap check sees the azimuth
+        sweeping through intermediate positions, just like a real mount.
+        Returns True once the mount reaches the home position.
+        """
+        self._snap_az()
+        current_az = self._base_az % 360.0
+        delta = ((self._HOME_AZ - current_az + 180.0) % 360.0) - 180.0
+
+        if abs(delta) < 1.0:
+            self._finish_home()
+            return True
+
+        self._abort_event.clear()
+        direction = "east" if delta > 0 else "west"
+        self.start_move(direction)
+
+        travel_needed = abs(delta)
+        wait_s = travel_needed / self._MOVE_RATE_DEG_PER_S
+        aborted = self._abort_event.wait(wait_s + 0.05)
+
+        self.stop_move(direction)
+        if aborted:
+            self.logger.info("Homing aborted mid-transit")
+            return False
+        self._finish_home()
+        return True
+
+    def _finish_home(self) -> None:
+        self._base_az = self._HOME_AZ
+        self._alt = 90.0 - abs(_OBSERVER_LAT_DEG)
+        self._ra, self._dec = _altaz_to_radec(self._HOME_AZ, self._alt)
+        self._ref_time = time.monotonic()
+        self._tracking = False
+        self._homed = True
+
+    def is_home(self) -> bool:
+        return self._homed
+
+    # -- Safety-related overrides ---------------------------------------------
+
+    def get_mount_mode(self) -> str:
+        return "altaz"
+
+    def get_azimuth(self) -> float | None:
+        dt = time.monotonic() - self._ref_time
+        if self._moving_dir is not None:
+            sign = -1.0 if self._moving_dir in ("west", "south") else 1.0
+            rate = self._SLEW_RATE_DEG_PER_S if self._slewing else self._MOVE_RATE_DEG_PER_S
+            return (self._base_az + sign * rate * dt) % 360.0
+        if self._tracking:
+            return (self._base_az + self._TRACKING_DRIFT_DEG_PER_S * dt) % 360.0
+        return self._base_az % 360.0
+
+    def get_altitude(self) -> float | None:
+        return self._alt
+
+    def start_move(self, direction: str, rate: int = 7) -> bool:
+        self._snap_az()
+        self._moving_dir = direction
+        return True
+
+    def stop_move(self, direction: str) -> bool:
+        self._snap_az()
+        self._moving_dir = None
+        self._ra, self._dec = _altaz_to_radec(self._base_az % 360.0, self._alt)
+        return True
+
+    def _snap_az(self) -> None:
+        """Commit the current computed azimuth as the new base, resetting the reference clock."""
+        self._base_az = self.get_azimuth() or self._base_az
+        self._ref_time = time.monotonic()
+
 
 # Synthetic camera constants — consistent across take_image() and the WCS header
 # so the image geometry is self-describing.
@@ -57,10 +338,10 @@ class DummyAdapter(AbstractAstroHardwareAdapter):
         self._connected = False
         self._telescope_connected = False
         self._camera_connected = False
-        self._current_ra = 0.0  # degrees
-        self._current_dec = 0.0  # degrees
         self._is_moving = False
         self._tracking_rate = (15.041, 0.0)  # arcsec/sec (sidereal rate)
+        self.mount = _DummyMount(logger)
+        self._mount_cache: MountStateCache | None = None
 
         # Set by the daemon after connecting, mirrors the real telescope_record from the API.
         # When present, take_image() derives sensor dimensions and pixel scale from it.
@@ -109,12 +390,20 @@ class DummyAdapter(AbstractAstroHardwareAdapter):
         self._connected = True
         self._telescope_connected = True
         self._camera_connected = True
+        cache = MountStateCache(self.mount)
+        cache.refresh_static()
+        cache.start()
+        self.mount._state_cache = cache  # type: ignore[attr-defined]
+        self._mount_cache = cache
         self.logger.info("DummyAdapter: Connected successfully")
         return True
 
     def disconnect(self):
         """Simulate disconnection."""
         self.logger.info("DummyAdapter: Disconnecting...")
+        if self._mount_cache:
+            self._mount_cache.stop()
+            self._mount_cache = None
         self._connected = False
         self._telescope_connected = False
         self._camera_connected = False
@@ -142,19 +431,52 @@ class DummyAdapter(AbstractAstroHardwareAdapter):
         """Simulate telescope slew."""
         self.logger.info(f"DummyAdapter: Slewing to RA={ra:.4f}°, Dec={dec:.4f}°")
         self._is_moving = True
-        self._simulate_delay()
-        self._current_ra = ra
-        self._current_dec = dec
+        success = self.mount.slew_to_radec(ra, dec)
         self._is_moving = False
+        if not success:
+            raise RuntimeError("Slew aborted by safety monitor")
         self.logger.info("DummyAdapter: Slew complete")
 
     def get_telescope_direction(self) -> tuple[float, float]:
-        """Return current fake telescope position."""
-        return (self._current_ra, self._current_dec)
+        """Return current telescope position from the simulated mount."""
+        return self.mount.get_radec()
+
+    def abort_slew(self) -> None:
+        self.mount.abort_slew()
 
     def telescope_is_moving(self) -> bool:
         """Check if fake telescope is moving."""
         return self._is_moving
+
+    def home_if_needed(self) -> bool:
+        if self.mount.is_home():
+            self.logger.info("DummyAdapter: Mount already homed")
+            return True
+        if self._safety_monitor and not self._safety_monitor.is_action_safe("home"):
+            from citrascope.safety.safety_monitor import SafetyError
+
+            raise SafetyError("Homing blocked by safety monitor")
+        self.logger.info("DummyAdapter: Homing mount (safety-monitored)...")
+        self._is_moving = True
+        self.mount.find_home()
+        self._is_moving = False
+        self.logger.info("DummyAdapter: Mount homed")
+        return True
+
+    def home_mount(self) -> bool:
+        if self._safety_monitor and not self._safety_monitor.is_action_safe("home"):
+            from citrascope.safety.safety_monitor import SafetyError
+
+            raise SafetyError("Homing blocked by safety monitor")
+        self.logger.info("DummyAdapter: Homing mount...")
+        self._is_moving = True
+        self.mount.find_home()
+        self._is_moving = False
+        self.logger.info("DummyAdapter: Mount homed")
+        return True
+
+    def is_mount_homed(self) -> bool:
+        return self.mount.is_home()
 
     def select_camera(self, device_name: str) -> bool:
         """Simulate camera selection."""
@@ -172,9 +494,10 @@ class DummyAdapter(AbstractAstroHardwareAdapter):
         filepath = self.images_dir / filename
         filepath.parent.mkdir(parents=True, exist_ok=True)
 
+        ra, dec = self.mount.get_radec()
         image_data, wcs = self._generate_starfield(
-            self._current_ra,
-            self._current_dec,
+            ra,
+            dec,
             exposure_duration_seconds,
             seed=timestamp,
         )
@@ -261,6 +584,10 @@ class DummyAdapter(AbstractAstroHardwareAdapter):
         image += rng.normal(0.0, _DUMMY_READ_NOISE / _DUMMY_GAIN, image.shape)
 
         # --- Render each catalog star as a Gaussian PSF ----------------------
+        if len(star_ras) == 0:
+            self.logger.debug("DummyAdapter: No catalog stars in FOV — returning noise-only image")
+            return np.clip(image, 0, 65535).astype(np.uint16), wcs
+
         psf_sigma = _DUMMY_PSF_SIGMA_PX
         stamp_r = max(int(5 * psf_sigma), 15)
 
@@ -306,45 +633,66 @@ class DummyAdapter(AbstractAstroHardwareAdapter):
         image = np.clip(image, 0, 65535).astype(np.uint16)
         return image, wcs
 
+    _pixelemon_star_table: np.ndarray | None = None
+
+    @classmethod
+    def _load_star_table(cls) -> np.ndarray:
+        """Load the Tycho-2 star table from Pixelemon's bundled catalog (cached)."""
+        if cls._pixelemon_star_table is not None:
+            return cls._pixelemon_star_table
+        import pixelemon  # type: ignore[import-untyped]
+
+        cat_path = Path(pixelemon.__file__).parent / "tyc_db_to_40_deg.npz"
+        if not cat_path.exists():
+            raise FileNotFoundError(f"Pixelemon star catalog not found at {cat_path}")
+        table: np.ndarray = np.load(str(cat_path))["star_table"]
+        cls._pixelemon_star_table = table
+        return table
+
     def _fetch_catalog_stars(
         self,
         ra: float,
         dec: float,
         fov_deg: float,
     ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-        """Query Tycho-2 via Vizier for stars in the current FOV.
+        """Query Pixelemon's local Tycho-2 catalog for stars in the current FOV.
 
-        Raises on failure — we never fall back to random stars because the
-        whole point of the DummyAdapter is to produce realistic images.
+        Uses the same star database that Tetra3 uses for plate solving, so
+        synthetic images are solvable without any network access.
 
         Returns:
             Tuple of (ras_deg, decs_deg, mags) as float arrays.
         """
-        from astroquery.vizier import Vizier  # type: ignore[import-untyped]
+        star_table = self._load_star_table()
 
-        v = Vizier(columns=["RAmdeg", "DEmdeg", "VTmag"], row_limit=5000)
-        result = v.query_region(  # type: ignore[attr-defined]
-            SkyCoord(ra=ra, dec=dec, unit="deg"),
-            width=fov_deg * u.deg,  # type: ignore[attr-defined]
-            height=fov_deg * u.deg,  # type: ignore[attr-defined]
-            catalog="I/259/tyc2",
-        )
-        if not result:
-            raise RuntimeError(f"Tycho-2 query returned no results for RA={ra:.3f}, Dec={dec:.3f}, FOV={fov_deg:.2f}°")
+        # star_table columns: [ra_rad, dec_rad, ux, uy, uz, mag]
+        all_ra_deg = np.degrees(star_table[:, 0])
+        all_dec_deg = np.degrees(star_table[:, 1])
+        all_mag = star_table[:, 5]
 
-        tbl = result[0]
-        mask = tbl["VTmag"] < _DUMMY_MAG_LIMIT
-        ras = np.array(tbl["RAmdeg"][mask], dtype=float)
-        decs = np.array(tbl["DEmdeg"][mask], dtype=float)
-        mags = np.array(tbl["VTmag"][mask], dtype=float)
+        # Coarse box filter (cheap) then angular distance refinement.
+        # The RA tolerance must be widened by 1/cos(dec) near the poles.
+        cos_dec = max(math.cos(math.radians(dec)), 0.05)
+        ra_tol = fov_deg / cos_dec
+        dec_tol = fov_deg
+
+        d_ra = np.abs((all_ra_deg - ra + 180.0) % 360.0 - 180.0)
+        d_dec = np.abs(all_dec_deg - dec)
+        box = (d_ra < ra_tol) & (d_dec < dec_tol) & (all_mag < _DUMMY_MAG_LIMIT)
+
+        ras = all_ra_deg[box]
+        decs = all_dec_deg[box]
+        mags = all_mag[box]
 
         if len(ras) == 0:
-            raise RuntimeError(
-                f"No Tycho-2 stars brighter than V={_DUMMY_MAG_LIMIT} " f"around RA={ra:.3f}, Dec={dec:.3f}"
+            self.logger.warning(
+                f"DummyAdapter: No catalog stars brighter than V={_DUMMY_MAG_LIMIT} "
+                f"around RA={ra:.3f}, Dec={dec:.3f} — generating empty field"
             )
+            return np.array([]), np.array([]), np.array([])
 
         self.logger.debug(
-            f"DummyAdapter: Tycho-2 returned {len(ras)} stars "
+            f"DummyAdapter: Local Tycho-2 returned {len(ras)} stars "
             f"(Vmag < {_DUMMY_MAG_LIMIT}) around RA={ra:.3f}, Dec={dec:.3f}"
         )
         return ras, decs, mags
@@ -362,9 +710,7 @@ class DummyAdapter(AbstractAstroHardwareAdapter):
         """Simulate plate solving alignment."""
         self.logger.info(f"DummyAdapter: Performing alignment to RA={target_ra}°, Dec={target_dec}°")
         self._simulate_delay()
-        # Simulate small correction
-        self._current_ra = target_ra + 0.001
-        self._current_dec = target_dec + 0.001
+        self.mount.slew_to_radec(target_ra + 0.001, target_dec + 0.001)
         self.logger.info("DummyAdapter: Alignment successful")
         return True
 

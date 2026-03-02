@@ -123,6 +123,11 @@ class AlignmentManager:
 
             from citrascope.processors.builtin.plate_solver_processor import PlateSolverProcessor
 
+            safety_monitor = getattr(self.daemon, "safety_monitor", None)
+            if safety_monitor and not safety_monitor.is_action_safe("capture"):
+                self.logger.warning("Alignment aborted — safety monitor blocked capture")
+                return
+
             exposure_s = self._get_exposure_seconds()
             self._set_progress(f"Exposing ({exposure_s:.0f}s)...")
             self.logger.info(f"Alignment: taking {exposure_s:.0f}s exposure...")

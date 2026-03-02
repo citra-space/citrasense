@@ -1,8 +1,14 @@
 """Abstract mount device interface."""
 
+from __future__ import annotations
+
 from abc import abstractmethod
+from typing import TYPE_CHECKING
 
 from citrascope.hardware.devices.abstract_hardware_device import AbstractHardwareDevice
+
+if TYPE_CHECKING:
+    from citrascope.hardware.devices.mount.mount_state_cache import MountSnapshot
 
 
 class AbstractMount(AbstractHardwareDevice):
@@ -10,6 +16,11 @@ class AbstractMount(AbstractHardwareDevice):
 
     Provides a common interface for controlling equatorial and alt-az mounts.
     All RA/Dec coordinates are in **degrees** (project convention).
+
+    When a ``MountStateCache`` is attached (via ``_state_cache``), the
+    ``cached_state``, ``cached_mount_info``, and ``cached_limits`` properties
+    expose its data.  The adapter creates and attaches the cache — consumers
+    never see it directly.
     """
 
     # ------------------------------------------------------------------
@@ -291,3 +302,76 @@ class AbstractMount(AbstractHardwareDevice):
             True if the mount is at (or has found) its home position
         """
         return False
+
+    # ------------------------------------------------------------------
+    # Safety-related optional methods — used by SafetyMonitor for cable
+    # wrap protection.  Mounts that don't support these are silently
+    # excluded from azimuth-based safety checks.
+    # ------------------------------------------------------------------
+
+    def get_azimuth(self) -> float | None:
+        """Get current mount azimuth in degrees (0-360).
+
+        Used by CableWrapCheck to track cumulative azimuth rotation
+        in alt-az mode.
+
+        Returns:
+            Azimuth in degrees, or None if unsupported.
+        """
+        return None
+
+    def get_altitude(self) -> float | None:
+        """Get current mount altitude in degrees.
+
+        Returns:
+            Altitude in degrees (0-90 above horizon), or None if unsupported.
+        """
+        return None
+
+    def start_move(self, direction: str, rate: int = 7) -> bool:
+        """Start continuous motion in a cardinal direction.
+
+        Used for directional cable unwinding where explicit CW/CCW
+        control is required (GoTo takes shortest path which may worsen wrap).
+
+        Args:
+            direction: One of ``"north"``, ``"south"``, ``"east"``, ``"west"``
+            rate: Slew rate 0-9 (0 slowest, 9 fastest). Default 7 is moderate.
+
+        Returns:
+            True if motion started, False if unsupported.
+        """
+        return False
+
+    def stop_move(self, direction: str) -> bool:
+        """Stop continuous motion in a cardinal direction.
+
+        Args:
+            direction: One of ``"north"``, ``"south"``, ``"east"``, ``"west"``
+
+        Returns:
+            True if stop issued, False if unsupported.
+        """
+        return False
+
+    # ------------------------------------------------------------------
+    # Cached state — populated by MountStateCache (attached by adapter)
+    # ------------------------------------------------------------------
+
+    @property
+    def cached_state(self) -> MountSnapshot | None:
+        """Latest cached position/status snapshot, or None if no cache."""
+        cache = getattr(self, "_state_cache", None)
+        return cache.snapshot if cache is not None else None
+
+    @property
+    def cached_mount_info(self) -> dict:
+        """Cached mount info (model, capabilities). Empty dict if no cache."""
+        cache = getattr(self, "_state_cache", None)
+        return cache.mount_info if cache is not None else {}
+
+    @property
+    def cached_limits(self) -> tuple[int | None, int | None]:
+        """Cached altitude limits. (None, None) if no cache."""
+        cache = getattr(self, "_state_cache", None)
+        return cache.limits if cache is not None else (None, None)
