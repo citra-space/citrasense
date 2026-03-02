@@ -301,6 +301,25 @@ class DirectHardwareAdapter(AbstractAstroHardwareAdapter):
     def set_location_service(self, location_service) -> None:
         self.location_service = location_service
 
+    def supports_filter_management(self) -> bool:
+        return self.filter_wheel is not None
+
+    def update_filter_name(self, filter_id: str, name: str) -> bool:
+        """Rename a filter position (only meaningful for direct-controlled wheels)."""
+        try:
+            fid = int(filter_id)
+            if fid in self.filter_map:
+                self.filter_map[fid]["name"] = name
+                if self.filter_wheel:
+                    names = self.filter_wheel.get_filter_names()
+                    if fid < len(names):
+                        names[fid] = name
+                        self.filter_wheel.set_filter_names(names)
+                return True
+            return False
+        except (ValueError, KeyError):
+            return False
+
     def get_observation_strategy(self) -> ObservationStrategy:
         """Get the observation strategy for direct control.
 
@@ -360,6 +379,18 @@ class DirectHardwareAdapter(AbstractAstroHardwareAdapter):
         if self.filter_wheel and not self.filter_wheel.connect():
             self.logger.warning("Failed to connect to filter wheel (optional)")
 
+        # Auto-detect integrated filter wheel if no standalone one configured
+        if not self.filter_wheel and self.camera:
+            integrated_fw = self.camera.get_integrated_filter_wheel()
+            if integrated_fw:
+                integrated_fw.connect()
+                self.filter_wheel = integrated_fw
+                self.logger.info("Using camera's integrated filter wheel")
+
+        # Populate filter_map from hardware filter wheel
+        if self.filter_wheel:
+            self._populate_filter_map_from_hardware()
+
         if self.focuser and not self.focuser.connect():
             self.logger.warning("Failed to connect to focuser (optional)")
 
@@ -367,6 +398,27 @@ class DirectHardwareAdapter(AbstractAstroHardwareAdapter):
             self.logger.info("All required devices connected successfully")
 
         return success
+
+    def _populate_filter_map_from_hardware(self) -> None:
+        """Sync filter_map with hardware filter wheel, preserving user config."""
+        assert self.filter_wheel is not None
+        hw_names = self.filter_wheel.get_filter_names()
+        hw_count = self.filter_wheel.get_filter_count()
+
+        for i in range(hw_count):
+            if i not in self.filter_map:
+                name = hw_names[i] if i < len(hw_names) else f"Filter {i + 1}"
+                self.filter_map[i] = {
+                    "name": name,
+                    "focus_position": 0,
+                    "enabled": True,
+                }
+            else:
+                existing = self.filter_map[i]
+                if existing.get("name", "").startswith("Filter ") and i < len(hw_names):
+                    existing["name"] = hw_names[i]
+
+        self.logger.info(f"Filter map: {self.filter_map}")
 
     def _sync_mount_site_and_time(self) -> None:
         """Push site location, time, and operational config to the mount.

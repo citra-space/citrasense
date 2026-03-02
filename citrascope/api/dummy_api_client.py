@@ -479,25 +479,41 @@ class DummyApiClient(AbstractCitraApiClient):
         """Expand filter names to spectral specs."""
         if self.logger:
             self.logger.debug(f"DummyApiClient: expand_filters({filter_names})")
+        # Wavelengths match soicat/models/citra/_filter_library.py exactly
         known_filters = {
-            "Red": (635.0, 120.0),
+            "Red": (630.0, 100.0),
             "Green": (530.0, 100.0),
-            "Blue": (450.0, 100.0),
+            "Blue": (470.0, 100.0),
             "Clear": (550.0, 300.0),
             "Luminance": (550.0, 300.0),
             "Ha": (656.3, 7.0),
-            "OIII": (500.7, 7.0),
-            "SII": (671.6, 7.0),
+            "Hb": (486.1, 10.0),
+            "OIII": (500.7, 10.0),
+            "SII": (672.4, 10.0),
+            "U": (365.0, 66.0),
+            "B": (445.0, 94.0),
+            "V": (551.0, 88.0),
+            "R": (658.0, 138.0),
+            "I": (806.0, 149.0),
+            "sloan_u": (354.0, 57.0),
+            "sloan_g": (477.0, 137.0),
+            "sloan_r": (623.0, 137.0),
+            "sloan_i": (763.0, 153.0),
+            "sloan_z": (913.0, 95.0),
         }
         filters = []
         for name in filter_names:
-            wavelength, bandwidth = known_filters.get(name, (550.0, 100.0))
+            # Case-insensitive lookup to match real API behavior
+            match = known_filters.get(name)
+            if not match:
+                match = next((v for k, v in known_filters.items() if k.lower() == name.lower()), None)
+            wavelength, bandwidth = match if match else (550.0, 100.0)
             filters.append(
                 {
                     "name": name,
                     "central_wavelength_nm": wavelength,
                     "bandwidth_nm": bandwidth,
-                    "is_known": name in known_filters,
+                    "is_known": match is not None,
                 }
             )
         return {"filters": filters}

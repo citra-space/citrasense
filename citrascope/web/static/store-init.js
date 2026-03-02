@@ -4,6 +4,7 @@
  */
 import * as formatters from './formatters.js';
 import * as components from './components.js';
+import { FILTER_COLORS } from './filters.js';
 
 (() => {
     document.addEventListener('alpine:init', () => {
@@ -32,6 +33,9 @@ import * as components from './components.js';
             savedAdapter: null,
             enabledFilters: [],
             filterConfigVisible: false,
+            filterNamesEditable: false,
+            filterNameOptions: [],
+            filterColors: FILTER_COLORS,
             filterAdapterChangeMessageVisible: false,
             currentSection: 'monitoring',
             version: '',

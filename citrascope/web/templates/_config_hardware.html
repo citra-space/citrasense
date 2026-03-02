@@ -150,8 +150,32 @@
                                                                     <input type="checkbox" class="form-check-input filter-enabled-checkbox"
                                                                         :data-filter-id="filterId" x-model="$store.citrascope.filters[filterId].enabled">
                                                                 </td>
-                                                                <td>
-                                                                    <span class="badge" :style="badgeStyle" x-text="filter.name"></span>
+                                                                <td x-data="{ customName: '' }">
+                                                                    <div x-show="$store.citrascope.filterNamesEditable">
+                                                                        <div class="d-flex align-items-center gap-2">
+                                                                            <span class="rounded-circle d-inline-block flex-shrink-0"
+                                                                                :style="{ width: '12px', height: '12px', minWidth: '12px', backgroundColor: $store.citrascope.filterColors[$store.citrascope.filters[filterId].name] || '#777' }"></span>
+                                                                            <select class="form-select form-select-sm"
+                                                                                :data-filter-id="filterId"
+                                                                                :value="$store.citrascope.filterNameOptions.some(g => g.names.includes($store.citrascope.filters[filterId].name)) ? $store.citrascope.filters[filterId].name : '__custom__'"
+                                                                                @change="if ($event.target.value === '__custom__') { customName = $store.citrascope.filters[filterId].name; } else { $store.citrascope.filters[filterId].name = $event.target.value; }">
+                                                                                <template x-for="group in $store.citrascope.filterNameOptions" :key="group.group">
+                                                                                    <optgroup :label="group.group">
+                                                                                        <template x-for="fname in group.names" :key="fname">
+                                                                                            <option :value="fname" x-text="fname"></option>
+                                                                                        </template>
+                                                                                    </optgroup>
+                                                                                </template>
+                                                                                <option value="__custom__">Custom...</option>
+                                                                            </select>
+                                                                        </div>
+                                                                        <input x-show="!$store.citrascope.filterNameOptions.some(g => g.names.includes($store.citrascope.filters[filterId].name))"
+                                                                            type="text" class="form-control form-control-sm mt-1"
+                                                                            placeholder="Custom filter name"
+                                                                            x-model="customName"
+                                                                            @input="$store.citrascope.filters[filterId].name = customName">
+                                                                    </div>
+                                                                    <span x-show="!$store.citrascope.filterNamesEditable" class="badge" :style="badgeStyle" x-text="filter.name"></span>
                                                                 </td>
                                                                 <td>
                                                                     <input type="number" class="form-control form-control-sm filter-focus-input"

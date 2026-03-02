@@ -390,6 +390,17 @@ class DummyAdapter(AbstractAstroHardwareAdapter):
         self._connected = True
         self._telescope_connected = True
         self._camera_connected = True
+
+        if not self.filter_map:
+            self.filter_map = {
+                0: {"name": "Luminance", "focus_position": 9000, "enabled": True},
+                1: {"name": "Red", "focus_position": 9050, "enabled": True},
+                2: {"name": "Green", "focus_position": 9040, "enabled": True},
+                3: {"name": "Blue", "focus_position": 9060, "enabled": True},
+                4: {"name": "Ha", "focus_position": 9100, "enabled": False},
+            }
+            self.logger.info(f"DummyAdapter: Populated {len(self.filter_map)} simulated filters")
+
         cache = MountStateCache(self.mount)
         cache.refresh_static()
         cache.start()
@@ -744,6 +755,17 @@ class DummyAdapter(AbstractAstroHardwareAdapter):
     def supports_filter_management(self) -> bool:
         """Dummy adapter supports filter management."""
         return True
+
+    def update_filter_name(self, filter_id: str, name: str) -> bool:
+        """Rename a simulated filter position."""
+        try:
+            fid = int(filter_id)
+            if fid in self.filter_map:
+                self.filter_map[fid]["name"] = name
+                return True
+            return False
+        except (ValueError, KeyError):
+            return False
 
     def supports_direct_camera_control(self) -> bool:
         """Dummy adapter supports direct camera control."""

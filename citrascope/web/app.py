@@ -24,6 +24,16 @@ from citrascope.hardware.adapter_registry import get_adapter_schema as get_schem
 from citrascope.hardware.adapter_registry import list_adapters
 from citrascope.logging import CITRASCOPE_LOGGER
 
+# Standard astronomical filter names for the editable filter name dropdown.
+# Mirrors the canonical names from the Citra API's filter library so that
+# task assignment matching works without typos.
+FILTER_NAME_OPTIONS = [
+    {"group": "Broadband", "names": ["Luminance", "Red", "Green", "Blue", "Clear"]},
+    {"group": "Johnson-Cousins", "names": ["U", "B", "V", "R", "I"]},
+    {"group": "Sloan", "names": ["sloan_u", "sloan_g", "sloan_r", "sloan_i", "sloan_z"]},
+    {"group": "Narrowband", "names": ["Ha", "Hb", "OIII", "SII"]},
+]
+
 
 class SystemStatus(BaseModel):
     """Current system status."""
@@ -557,7 +567,11 @@ class CitraScopeWebApp:
 
             try:
                 filter_config = self.daemon.hardware_adapter.get_filter_config()
-                return {"filters": filter_config}
+                names_editable = hasattr(self.daemon.hardware_adapter, "update_filter_name")
+                response: dict = {"filters": filter_config, "names_editable": names_editable}
+                if names_editable:
+                    response["filter_name_options"] = FILTER_NAME_OPTIONS
+                return response
             except Exception as e:
                 CITRASCOPE_LOGGER.error(f"Error getting filter config: {e}", exc_info=True)
                 return JSONResponse({"error": str(e)}, status_code=500)
@@ -605,7 +619,7 @@ class CitraScopeWebApp:
                     if filter_id_int not in filter_config:
                         return JSONResponse({"error": f"Filter ID {filter_id} not found"}, status_code=404)
 
-                    validated_update = {"filter_id_int": filter_id_int}
+                    validated_update: dict[str, int | str | bool] = {"filter_id_int": filter_id_int}
 
                     # Validate focus_position if provided
                     if "focus_position" in update:
@@ -626,6 +640,15 @@ class CitraScopeWebApp:
                         if not isinstance(enabled, bool):
                             return JSONResponse({"error": f"enabled at index {idx} must be a boolean"}, status_code=400)
                         validated_update["enabled"] = enabled
+
+                    # Validate name if provided
+                    if "name" in update:
+                        name = update["name"]
+                        if not isinstance(name, str) or not name.strip():
+                            return JSONResponse(
+                                {"error": f"name at index {idx} must be a non-empty string"}, status_code=400
+                            )
+                        validated_update["name"] = name.strip()
 
                     validated_updates.append(validated_update)
 
@@ -662,6 +685,12 @@ class CitraScopeWebApp:
                         ):
                             return JSONResponse(
                                 {"error": f"Failed to update filter {filter_id_int} enabled state"}, status_code=500
+                            )
+
+                    if "name" in validated and hasattr(self.daemon.hardware_adapter, "update_filter_name"):
+                        if not self.daemon.hardware_adapter.update_filter_name(str(filter_id_int), validated["name"]):
+                            return JSONResponse(
+                                {"error": f"Failed to update filter {filter_id_int} name"}, status_code=500
                             )
 
                 # Phase 3: Save once after all updates

@@ -488,6 +488,8 @@ async function loadFilterConfig() {
 
         if (response.ok && data.filters) {
             store.filterConfigVisible = true;
+            store.filterNamesEditable = data.names_editable || false;
+            store.filterNameOptions = data.filter_name_options || [];
 
             // Update enabled filters display on dashboard (Alpine store)
             updateStoreEnabledFilters(data.filters);
@@ -535,11 +537,15 @@ async function saveModifiedFilters() {
         const focusPosition = parseInt(filter.focus_position);
         if (Number.isNaN(focusPosition) || focusPosition < 0) continue;
 
-        filterUpdates.push({
+        const update = {
             filter_id: filterId,
             focus_position: focusPosition,
             enabled: filter.enabled !== undefined ? filter.enabled : true
-        });
+        };
+        if (store.filterNamesEditable && filter.name) {
+            update.name = filter.name;
+        }
+        filterUpdates.push(update);
     }
 
     if (filterUpdates.length === 0) return { success: 0, failed: 0 };
