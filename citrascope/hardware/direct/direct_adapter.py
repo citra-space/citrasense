@@ -2,6 +2,7 @@
 
 import logging
 import time
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any, cast
 
@@ -175,6 +176,12 @@ class DirectHardwareAdapter(AbstractAstroHardwareAdapter):
         self._current_filter_position: int | None = None
         self._current_focus_position: int | None = None
 
+        # Autofocus tuning (adapter-level settings)
+        self._af_step_size: int = int(kwargs.get("autofocus_step_size", 500))
+        self._af_num_steps: int = int(kwargs.get("autofocus_num_steps", 5))
+        self._af_exposure: float = float(kwargs.get("autofocus_exposure", 3.0))
+        self._af_crop: float = float(kwargs.get("autofocus_crop", 0.5))
+
         self.logger.info("DirectHardwareAdapter initialized with:")
         self.logger.info(f"  Camera: {camera_type}")
         if mount_type:
@@ -299,6 +306,58 @@ class DirectHardwareAdapter(AbstractAstroHardwareAdapter):
         focuser_type = kwargs.get("focuser_type")
         if focuser_type and focuser_type in focuser_devices:
             _prefix_schema(get_device_schema("focuser", focuser_type), "focuser_")
+
+        # Autofocus tuning — shown whenever a focuser is configured
+        if focuser_type:
+            schema.extend(
+                [
+                    {
+                        "name": "autofocus_step_size",
+                        "friendly_name": "AF Step Size",
+                        "type": "int",
+                        "default": 500,
+                        "description": "Focuser steps between each autofocus sample",
+                        "required": False,
+                        "min": 10,
+                        "max": 5000,
+                        "group": "Autofocus",
+                    },
+                    {
+                        "name": "autofocus_num_steps",
+                        "friendly_name": "AF Steps Per Side",
+                        "type": "int",
+                        "default": 5,
+                        "description": "Number of samples on each side of centre (total = 2N+1)",
+                        "required": False,
+                        "min": 2,
+                        "max": 15,
+                        "group": "Autofocus",
+                    },
+                    {
+                        "name": "autofocus_exposure",
+                        "friendly_name": "AF Exposure Time",
+                        "type": "float",
+                        "default": 3.0,
+                        "description": "Exposure duration in seconds per autofocus sample",
+                        "required": False,
+                        "min": 0.5,
+                        "max": 30.0,
+                        "group": "Autofocus",
+                    },
+                    {
+                        "name": "autofocus_crop",
+                        "friendly_name": "AF Crop Ratio",
+                        "type": "float",
+                        "default": 0.5,
+                        "description": "Fraction of image centre to analyse (0.1–1.0)",
+                        "required": False,
+                        "min": 0.1,
+                        "max": 1.0,
+                        "group": "Autofocus",
+                    },
+                ]
+            )
+
         return cast(list[SettingSchemaEntry], schema)
 
     def set_location_service(self, location_service) -> None:
@@ -835,6 +894,91 @@ class DirectHardwareAdapter(AbstractAstroHardwareAdapter):
         if not self.focuser:
             return None
         return self.focuser.get_position()
+
+    def supports_autofocus(self) -> bool:
+        """Autofocus is available when both a camera and focuser are connected."""
+        return (
+            self.camera is not None
+            and self.camera.is_connected()
+            and self.focuser is not None
+            and self.focuser.is_connected()
+        )
+
+    def do_autofocus(
+        self,
+        target_ra: float | None = None,
+        target_dec: float | None = None,
+        on_progress: Callable[[str], None] | None = None,
+    ) -> None:
+        """Run V-curve autofocus for each enabled filter.
+
+        Slews to target (if mount available and coordinates given),
+        then sweeps the focuser at each filter to find optimal focus.
+        """
+        from citrascope.hardware.direct.autofocus import run_autofocus
+
+        assert self.camera is not None
+        assert self.focuser is not None
+
+        report = on_progress or (lambda _msg: None)
+
+        # Slew to target star if we have a mount and coordinates
+        if target_ra is not None and target_dec is not None and self.mount:
+            report("Slewing to autofocus target...")
+            self._do_point_telescope(target_ra, target_dec)
+
+        # Determine which filters to autofocus
+        enabled_filters = {fid: fdata for fid, fdata in self.filter_map.items() if fdata.get("enabled", True)}
+
+        # Retrieve autofocus tuning from adapter settings
+        af_step = int(self._af_step_size)
+        af_steps = int(self._af_num_steps)
+        af_exp = float(self._af_exposure)
+        af_crop = float(self._af_crop)
+
+        if not enabled_filters or not self.filter_wheel:
+            # No filters — single autofocus run on whatever's in the optical path
+            report("Running autofocus (no filter wheel)...")
+            best = run_autofocus(
+                camera=self.camera,
+                focuser=self.focuser,
+                images_dir=self.images_dir,
+                step_size=af_step,
+                num_steps=af_steps,
+                exposure_time=af_exp,
+                crop_ratio=af_crop,
+                on_progress=on_progress,
+                logger=self.logger,
+            )
+            self.logger.info(f"Autofocus result: position {best}")
+            return
+
+        total_filters = len(enabled_filters)
+        for idx, (fid, fdata) in enumerate(enabled_filters.items(), 1):
+            fname = fdata.get("name", f"Filter {fid}")
+            report(f"Filter {idx}/{total_filters}: {fname}")
+            self.logger.info(f"Autofocusing filter '{fname}' (position {fid})")
+
+            if not self.set_filter(fid):
+                self.logger.error(f"Failed to switch to filter {fid}, skipping")
+                continue
+
+            best = run_autofocus(
+                camera=self.camera,
+                focuser=self.focuser,
+                images_dir=self.images_dir,
+                step_size=af_step,
+                num_steps=af_steps,
+                exposure_time=af_exp,
+                crop_ratio=af_crop,
+                on_progress=on_progress,
+                logger=self.logger,
+            )
+
+            self.filter_map[fid]["focus_position"] = best
+            self.logger.info(f"Filter '{fname}' focus position: {best}")
+
+        report("Autofocus complete for all filters")
 
     def get_sensor_temperature(self) -> float | None:
         """Get camera sensor temperature.

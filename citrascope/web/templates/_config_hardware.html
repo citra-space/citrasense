@@ -335,7 +335,7 @@
                                                     x-model="$store.citrascope.config.autofocus_target_preset">
                                                     <template x-for="preset in $store.citrascope.autofocusPresets" :key="preset.key">
                                                         <option :value="preset.key"
-                                                            x-text="preset.name + ' (' + preset.designation + ', mag ' + preset.mag.toFixed(1) + ')'"></option>
+                                                            x-text="preset.mag != null ? preset.name + ' (' + preset.designation + ', mag ' + preset.mag.toFixed(1) + ')' : preset.name + ' (' + preset.designation + ')'"></option>
                                                     </template>
                                                     <option value="custom">Custom RA/Dec</option>
                                                 </select>
