@@ -242,19 +242,22 @@ class DirectHardwareAdapter(AbstractAstroHardwareAdapter):
                 }
             )
 
-        if filter_wheel_options:
-            schema.append(
-                {
-                    "name": "filter_wheel_type",
-                    "friendly_name": "Filter Wheel Type",
-                    "type": "str",
-                    "default": "",
-                    "description": "Type of filter wheel device (leave empty if none)",
-                    "required": False,
-                    "options": filter_wheel_options,
-                    "group": "Filter Wheel",
-                }
-            )
+        all_fw_options: list[dict[str, str]] = [
+            {"value": "", "label": "None (or use camera's integrated wheel)"},
+            *filter_wheel_options,
+        ]
+        schema.append(
+            {
+                "name": "filter_wheel_type",
+                "friendly_name": "Filter Wheel Type",
+                "type": "str",
+                "default": "",
+                "description": "Leave empty to auto-detect an integrated filter wheel from the camera",
+                "required": False,
+                "options": all_fw_options,
+                "group": "Filter Wheel",
+            }
+        )
 
         if focuser_options:
             schema.append(
