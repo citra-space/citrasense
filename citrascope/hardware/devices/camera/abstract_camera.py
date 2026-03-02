@@ -1,9 +1,15 @@
 """Abstract camera device interface."""
 
+from __future__ import annotations
+
 from abc import abstractmethod
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from citrascope.hardware.devices.abstract_hardware_device import AbstractHardwareDevice
+
+if TYPE_CHECKING:
+    from citrascope.hardware.devices.filter_wheel import AbstractFilterWheel
 
 
 class AbstractCamera(AbstractHardwareDevice):
@@ -89,6 +95,10 @@ class AbstractCamera(AbstractHardwareDevice):
         """
         pass
 
+    def get_default_binning(self) -> int:
+        """Return the camera's default binning setting (e.g., 1 for 1x1, 2 for 2x2)."""
+        return 1
+
     def is_hyperspectral(self) -> bool:
         """Indicates whether this camera captures hyperspectral data.
 
@@ -99,6 +109,16 @@ class AbstractCamera(AbstractHardwareDevice):
             bool: True if hyperspectral camera, False otherwise (default)
         """
         return False
+
+    def get_integrated_filter_wheel(self) -> AbstractFilterWheel | None:
+        """Return an integrated filter wheel if the camera has one built in.
+
+        Override in subclasses where the filter wheel is physically part of
+        the camera and shares its control handle (e.g. Moravian Cx/Gx).
+        DirectHardwareAdapter calls this after camera connect to auto-detect
+        integrated filter wheels without requiring separate user configuration.
+        """
+        return None
 
     def get_preferred_file_extension(self) -> str:
         """Get the preferred file extension for saved images.

@@ -14,6 +14,8 @@ class StaticTelescopeTask(AbstractBaseTelescopeTask):
             strategy = self.hardware_adapter.get_observation_strategy()
 
             if strategy == ObservationStrategy.MANUAL:
+                self.task.set_status_msg("Setting filter...")
+                self.set_filter_for_task()
                 self.task.set_status_msg("Slewing to target...")
                 self.point_to_lead_position(satellite_data)
                 if self.is_cancelled:

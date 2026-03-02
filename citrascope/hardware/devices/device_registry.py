@@ -29,6 +29,11 @@ CAMERA_DEVICES: dict[str, dict[str, str]] = {
         "class_name": "UsbCamera",
         "description": "USB Camera via OpenCV (guide cameras, planetary cameras, etc.)",
     },
+    "moravian": {
+        "module": "citrascope.hardware.devices.camera.moravian_camera",
+        "class_name": "MoravianCamera",
+        "description": "Moravian Instruments Camera (Gx/Cx series)",
+    },
     # Future cameras:
     # "zwo": {...},
     # "ascom": {...},
@@ -50,6 +55,11 @@ MOUNT_DEVICES: dict[str, dict[str, str]] = {
 
 # Registry of available filter wheel devices
 FILTER_WHEEL_DEVICES: dict[str, dict[str, str]] = {
+    "moravian": {
+        "module": "citrascope.hardware.devices.filter_wheel.moravian_filter_wheel",
+        "class_name": "MoravianFilterWheel",
+        "description": "Moravian Instruments Filter Wheel (External)",
+    },
     # Future filter wheels:
     # "zwo": {...},
     # "ascom": {...},

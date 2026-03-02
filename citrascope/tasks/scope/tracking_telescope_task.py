@@ -9,6 +9,13 @@ class TrackingTelescopeTask(AbstractBaseTelescopeTask):
         if not satellite_data or satellite_data.get("most_recent_elset") is None:
             raise ValueError("Could not fetch valid satellite data or TLE.")
 
+        self.task.set_status_msg("Setting filter...")
+        try:
+            self.set_filter_for_task()
+        except RuntimeError as e:
+            self.logger.error(f"Filter change failed for task {self.task.id}: {e}")
+            return False
+
         self.task.set_status_msg("Slewing to target...")
         try:
             self.point_to_lead_position(satellite_data)

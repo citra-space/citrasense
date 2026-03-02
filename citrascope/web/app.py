@@ -24,6 +24,16 @@ from citrascope.hardware.adapter_registry import get_adapter_schema as get_schem
 from citrascope.hardware.adapter_registry import list_adapters
 from citrascope.logging import CITRASCOPE_LOGGER
 
+# Standard astronomical filter names for the editable filter name dropdown.
+# Mirrors the canonical names from the Citra API's filter library so that
+# task assignment matching works without typos.
+FILTER_NAME_OPTIONS = [
+    {"group": "Broadband", "names": ["Luminance", "Red", "Green", "Blue", "Clear"]},
+    {"group": "Johnson-Cousins", "names": ["U", "B", "V", "R", "I"]},
+    {"group": "Sloan", "names": ["sloan_u", "sloan_g", "sloan_r", "sloan_i", "sloan_z"]},
+    {"group": "Narrowband", "names": ["Ha", "Hb", "OIII", "SII"]},
+]
+
 
 class SystemStatus(BaseModel):
     """Current system status."""
@@ -66,6 +76,9 @@ class SystemStatus(BaseModel):
     alignment_running: bool = False
     alignment_progress: str = ""
     last_alignment_timestamp: int | None = None
+    camera_temperature: float | None = None
+    current_filter_position: int | None = None
+    current_filter_name: str | None = None
     safety_status: dict[str, Any] | None = None
 
 
@@ -557,7 +570,11 @@ class CitraScopeWebApp:
 
             try:
                 filter_config = self.daemon.hardware_adapter.get_filter_config()
-                return {"filters": filter_config}
+                names_editable = self.daemon.hardware_adapter.supports_filter_rename()
+                response: dict = {"filters": filter_config, "names_editable": names_editable}
+                if names_editable:
+                    response["filter_name_options"] = FILTER_NAME_OPTIONS
+                return response
             except Exception as e:
                 CITRASCOPE_LOGGER.error(f"Error getting filter config: {e}", exc_info=True)
                 return JSONResponse({"error": str(e)}, status_code=500)
@@ -605,7 +622,7 @@ class CitraScopeWebApp:
                     if filter_id_int not in filter_config:
                         return JSONResponse({"error": f"Filter ID {filter_id} not found"}, status_code=404)
 
-                    validated_update = {"filter_id_int": filter_id_int}
+                    validated_update: dict[str, int | str | bool] = {"filter_id_int": filter_id_int}
 
                     # Validate focus_position if provided
                     if "focus_position" in update:
@@ -626,6 +643,15 @@ class CitraScopeWebApp:
                         if not isinstance(enabled, bool):
                             return JSONResponse({"error": f"enabled at index {idx} must be a boolean"}, status_code=400)
                         validated_update["enabled"] = enabled
+
+                    # Validate name if provided
+                    if "name" in update:
+                        name = update["name"]
+                        if not isinstance(name, str) or not name.strip():
+                            return JSONResponse(
+                                {"error": f"name at index {idx} must be a non-empty string"}, status_code=400
+                            )
+                        validated_update["name"] = name.strip()
 
                     validated_updates.append(validated_update)
 
@@ -664,6 +690,12 @@ class CitraScopeWebApp:
                                 {"error": f"Failed to update filter {filter_id_int} enabled state"}, status_code=500
                             )
 
+                    if "name" in validated and self.daemon.hardware_adapter.supports_filter_rename():
+                        if not self.daemon.hardware_adapter.update_filter_name(str(filter_id_int), validated["name"]):
+                            return JSONResponse(
+                                {"error": f"Failed to update filter {filter_id_int} name"}, status_code=500
+                            )
+
                 # Phase 3: Save once after all updates
                 self.daemon._save_filter_config()
 
@@ -687,6 +719,33 @@ class CitraScopeWebApp:
                 return {"success": True, "message": "Filters synced to backend"}
             except Exception as e:
                 CITRASCOPE_LOGGER.error(f"Error syncing filters to backend: {e}", exc_info=True)
+                return JSONResponse({"error": str(e)}, status_code=500)
+
+        @self.app.post("/api/adapter/filter/set")
+        async def set_filter_position(body: dict[str, Any]):
+            """Command the filter wheel to move to a specific position."""
+            if not self.daemon or not self.daemon.hardware_adapter:
+                return JSONResponse({"error": "Hardware adapter not initialized"}, status_code=503)
+
+            adapter = self.daemon.hardware_adapter
+            if not adapter.filter_map:
+                return JSONResponse({"error": "No filter wheel available"}, status_code=404)
+
+            position = body.get("position")
+            if position is None or not isinstance(position, int):
+                return JSONResponse({"error": "position must be an integer"}, status_code=400)
+
+            if position not in adapter.filter_map:
+                return JSONResponse({"error": f"Invalid filter position: {position}"}, status_code=400)
+
+            try:
+                success = adapter.set_filter(position)
+                if success:
+                    name = adapter.filter_map[position].get("name", f"Filter {position}")
+                    return {"success": True, "position": position, "name": name}
+                return JSONResponse({"error": "Filter change failed"}, status_code=500)
+            except Exception as e:
+                CITRASCOPE_LOGGER.error(f"Error setting filter position: {e}", exc_info=True)
                 return JSONResponse({"error": str(e)}, status_code=500)
 
         @self.app.post("/api/adapter/autofocus")
@@ -1058,8 +1117,14 @@ class CitraScopeWebApp:
                 # Check camera connection status
                 try:
                     self.status.camera_connected = adapter.is_camera_connected()
+                    camera = getattr(adapter, "camera", None)
+                    if self.status.camera_connected and camera is not None:
+                        self.status.camera_temperature = camera.get_temperature()
+                    else:
+                        self.status.camera_temperature = None
                 except Exception:
                     self.status.camera_connected = False
+                    self.status.camera_temperature = None
 
                 # Check adapter capabilities
                 try:
@@ -1068,6 +1133,17 @@ class CitraScopeWebApp:
                     self.status.supports_direct_camera_control = False
 
                 self.status.supports_autofocus = adapter.supports_autofocus()
+
+                try:
+                    pos = adapter.get_filter_position()
+                    self.status.current_filter_position = pos
+                    if pos is not None and pos in adapter.filter_map:
+                        self.status.current_filter_name = adapter.filter_map[pos].get("name")
+                    else:
+                        self.status.current_filter_name = None
+                except Exception:
+                    self.status.current_filter_position = None
+                    self.status.current_filter_name = None
 
                 has_camera = getattr(adapter, "camera", None) is not None
                 self.status.supports_alignment = has_camera and mount is not None

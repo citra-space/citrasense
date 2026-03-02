@@ -106,8 +106,7 @@ class TestDeviceDependencies:
             assert isinstance(deps["packages"], list)
             assert isinstance(deps["install_extra"], str)
 
-            # Packages should be non-empty list of strings
-            assert len(deps["packages"]) > 0
+            # Packages should be a list of strings (may be empty for native-library-only drivers)
             for pkg in deps["packages"]:
                 assert isinstance(pkg, str)
                 assert len(pkg) > 0
@@ -219,11 +218,16 @@ class TestDependencyCheckOutput:
     """Test dependency check output formatting."""
 
     def test_install_command_format(self):
-        """Verify install commands are properly formatted."""
+        """Verify install commands are properly formatted for cameras with pip deps."""
         for camera_name in CAMERA_DEVICES.keys():
             camera_class = get_camera_class(camera_name)
-            result = check_dependencies(camera_class)
+            deps = camera_class.get_dependencies()
 
+            # Native-library-only drivers (no pip packages) don't have a pip install cmd
+            if not deps["packages"] and not deps["install_extra"]:
+                continue
+
+            result = check_dependencies(camera_class)
             cmd = result["install_cmd"]
             assert cmd.startswith("pip install")
             assert "citrascope" in cmd

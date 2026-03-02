@@ -151,6 +151,9 @@
                                 <div class="col-6 d-flex align-items-center gap-2">
                                     <span class="badge rounded-pill" :class="$store.citrascope.status?.camera_connected ? 'bg-success' : 'bg-danger'"
                                         x-text="$store.citrascope.status?.camera_connected ? 'Connected' : 'Disconnected'"></span>
+                                    <span class="badge bg-secondary rounded-pill"
+                                        x-show="$store.citrascope.status?.camera_temperature != null"
+                                        x-text="($store.citrascope.status?.camera_temperature?.toFixed(1) ?? '') + ' °C'"></span>
                                     <button class="btn btn-sm btn-outline-light"
                                         x-show="$store.citrascope.status?.camera_connected && $store.citrascope.status?.supports_direct_camera_control"
                                         @click="$store.citrascope.showCameraControl()">
@@ -366,7 +369,10 @@
                                         <span>-</span>
                                     </template>
                                     <template x-for="f in $store.citrascope.enabledFilters" :key="f.name">
-                                        <span class="badge me-1" :style="'background-color: ' + f.color + '; color: white;'" x-text="f.name"></span>
+                                        <span class="badge me-1"
+                                              :style="'background-color: ' + f.color + '; color: white;'
+                                                  + (f.name === $store.citrascope.status?.current_filter_name ? ' outline: 2px solid white; outline-offset: 1px;' : '')"
+                                              x-text="f.name"></span>
                                     </template>
                                 </div>
                             </div>
