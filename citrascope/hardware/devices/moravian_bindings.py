@@ -7,6 +7,15 @@ bound here -- extend as needed.
 The native library must be installed separately:
   https://www.gxccd.com/cat?id=156&lang=409
 
+macOS note: Gatekeeper will quarantine the downloaded dylib. Remove the
+quarantine attribute before first use::
+
+    sudo xattr -d com.apple.quarantine /path/to/libgxccd.dylib
+
+Alternatively, build libgxccd from source -- locally compiled libraries
+are not quarantined. This is a development-only concern; Linux deployments
+are unaffected.
+
 Based on the official Python example in libgxccd-*/example/test.py and the
 header at libgxccd-*/include/gxccd.h.
 """

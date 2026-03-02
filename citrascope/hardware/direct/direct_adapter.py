@@ -415,7 +415,8 @@ class DirectHardwareAdapter(AbstractAstroHardwareAdapter):
                 }
             else:
                 existing = self.filter_map[i]
-                if existing.get("name", "").startswith("Filter ") and i < len(hw_names):
+                existing_name = existing.get("name", "")
+                if i < len(hw_names) and (existing_name.startswith("Filter ") or existing_name == "Undefined"):
                     existing["name"] = hw_names[i]
 
         self.logger.info(f"Filter map: {self.filter_map}")
