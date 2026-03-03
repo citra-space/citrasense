@@ -87,6 +87,7 @@ class SystemStatus(BaseModel):
     focuser_moving: bool = False
     mount_tracking: bool = False
     mount_slewing: bool = False
+    supports_direct_mount_control: bool = False
     safety_status: dict[str, Any] | None = None
 
 
@@ -1345,6 +1346,10 @@ class CitraScopeWebApp:
                     self.status.supports_direct_camera_control = adapter.supports_direct_camera_control()
                 except Exception:
                     self.status.supports_direct_camera_control = False
+
+                self.status.supports_direct_mount_control = (
+                    mount is not None and hasattr(mount, "start_move") and self.status.telescope_connected
+                )
 
                 self.status.supports_autofocus = adapter.supports_autofocus()
 

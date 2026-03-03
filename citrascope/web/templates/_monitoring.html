@@ -391,8 +391,8 @@
                                 </div>
                             </div>
 
-                            <!-- Mount Controls (visible when telescope connected) -->
-                            <div x-show="$store.citrascope.status?.telescope_connected"
+                            <!-- Mount Controls (only for direct hardware adapters with a mount) -->
+                            <div x-show="$store.citrascope.status?.supports_direct_mount_control"
                                  x-data="{ jogRate: 5, gotoRa: '', gotoDec: '' }"
                                  class="mt-3 pt-3 border-top border-secondary">
 
