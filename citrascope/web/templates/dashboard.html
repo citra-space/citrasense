@@ -126,7 +126,10 @@
                 <div id="logAccordionCollapse" class="accordion-collapse collapse" aria-labelledby="logAccordionHeader"
                     data-bs-parent="#logAccordion">
                     <div class="accordion-body p-0 log-accordion-body">
-                        <div class="log-container p-3" id="logContainer" x-ref="logContainer">
+                        <div class="log-container p-3" id="logContainer" x-ref="logContainer"
+                             x-data="{ autoScroll: true }"
+                             @scroll="autoScroll = ($el.scrollTop + $el.clientHeight >= $el.scrollHeight - 30)"
+                             x-effect="if ($store.citrascope.logs.length && autoScroll) { $nextTick(() => $el.scrollTop = $el.scrollHeight) }">
                             <p class="text-muted-dark" x-show="$store.citrascope.logs.length === 0">No logs available</p>
                             <template x-for="(log, index) in $store.citrascope.logs" :key="index">
                                 <div x-data="logEntry(log)" class="log-entry">
