@@ -1391,8 +1391,7 @@ class CitraScopeWebApp:
                     self.status.focuser_temperature = None
                     self.status.focuser_moving = False
 
-                has_camera = getattr(adapter, "camera", None) is not None
-                self.status.supports_alignment = has_camera and mount is not None
+                self.status.supports_alignment = self.status.camera_connected and mount is not None
 
                 if mount is not None and mount.cached_state is not None:
                     self.status.supports_manual_sync = mount.cached_mount_info.get("supports_sync", False)

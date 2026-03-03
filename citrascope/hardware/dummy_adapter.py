@@ -149,7 +149,7 @@ class _DummyMount(AbstractMount):
         self._abort_event.clear()
         target_az, target_alt = _radec_to_altaz(ra, dec)
 
-        self._snap_az()
+        self._snap()
         current_az = self._base_az % 360.0
         delta = ((target_az - current_az + 180.0) % 360.0) - 180.0
 
@@ -180,24 +180,25 @@ class _DummyMount(AbstractMount):
     def abort_slew(self) -> None:
         self._abort_event.set()
         self._slewing = False
-        self._snap_az()
+        self._snap()
         self._moving_dir = None
         self._ra, self._dec = _altaz_to_radec(self._base_az % 360.0, self._alt)
 
     def get_radec(self) -> tuple[float, float]:
         if self._moving_dir is not None:
             az = self.get_azimuth()
-            if az is not None:
-                return _altaz_to_radec(az, self._alt)
+            alt = self.get_altitude()
+            if az is not None and alt is not None:
+                return _altaz_to_radec(az, alt)
         return self._ra, self._dec
 
     def start_tracking(self, rate: str | None = "sidereal") -> bool:
-        self._snap_az()
+        self._snap()
         self._tracking = True
         return True
 
     def stop_tracking(self) -> bool:
-        self._snap_az()
+        self._snap()
         self._tracking = False
         return True
 
@@ -231,7 +232,7 @@ class _DummyMount(AbstractMount):
         sweeping through intermediate positions, just like a real mount.
         Returns True once the mount reaches the home position.
         """
-        self._snap_az()
+        self._snap()
         current_az = self._base_az % 360.0
         delta = ((self._HOME_AZ - current_az + 180.0) % 360.0) - 180.0
 
@@ -272,8 +273,8 @@ class _DummyMount(AbstractMount):
 
     def get_azimuth(self) -> float | None:
         dt = time.monotonic() - self._ref_time
-        if self._moving_dir is not None:
-            sign = -1.0 if self._moving_dir in ("west", "south") else 1.0
+        if self._moving_dir in ("east", "west"):
+            sign = 1.0 if self._moving_dir == "east" else -1.0
             rate = self._SLEW_RATE_DEG_PER_S if self._slewing else self._MOVE_RATE_DEG_PER_S
             return (self._base_az + sign * rate * dt) % 360.0
         if self._tracking:
@@ -281,22 +282,37 @@ class _DummyMount(AbstractMount):
         return self._base_az % 360.0
 
     def get_altitude(self) -> float | None:
+        dt = time.monotonic() - self._ref_time
+        if self._moving_dir in ("north", "south"):
+            sign = 1.0 if self._moving_dir == "north" else -1.0
+            rate = self._SLEW_RATE_DEG_PER_S if self._slewing else self._MOVE_RATE_DEG_PER_S
+            return max(-90.0, min(90.0, self._alt + sign * rate * dt))
         return self._alt
 
     def start_move(self, direction: str, rate: int | None = None) -> bool:
-        self._snap_az()
+        self._snap()
         self._moving_dir = direction
         return True
 
     def stop_move(self, direction: str) -> bool:
-        self._snap_az()
+        self._snap()
         self._moving_dir = None
         self._ra, self._dec = _altaz_to_radec(self._base_az % 360.0, self._alt)
         return True
 
-    def _snap_az(self) -> None:
-        """Commit the current computed azimuth as the new base, resetting the reference clock."""
-        self._base_az = self.get_azimuth() or self._base_az
+    def _snap(self) -> None:
+        """Commit the current computed az/alt as the new base, resetting the reference clock."""
+        dt = time.monotonic() - self._ref_time
+        if self._moving_dir is not None:
+            rate = self._SLEW_RATE_DEG_PER_S if self._slewing else self._MOVE_RATE_DEG_PER_S
+            if self._moving_dir in ("north", "south"):
+                sign = 1.0 if self._moving_dir == "north" else -1.0
+                self._alt = max(-90.0, min(90.0, self._alt + sign * rate * dt))
+            else:
+                sign = 1.0 if self._moving_dir == "east" else -1.0
+                self._base_az = (self._base_az + sign * rate * dt) % 360.0
+        elif self._tracking:
+            self._base_az = (self._base_az + self._TRACKING_DRIFT_DEG_PER_S * dt) % 360.0
         self._ref_time = time.monotonic()
 
 
@@ -351,8 +367,8 @@ class _DummyFocuser:
 # so the image geometry is self-describing.
 _DUMMY_IMG_SIZE = 1024  # pixels per side
 _DUMMY_PIXEL_SCALE = 6.0  # arcsec/pixel  →  ~1.7° FOV  (wide enough for Tetra3)
-_DUMMY_SKY_BG = 500.0  # ADU sky background
-_DUMMY_READ_NOISE = 8.0  # electrons RMS
+_DUMMY_SKY_BG = 10.0  # ADU sky background
+_DUMMY_READ_NOISE = 1.0  # electrons RMS
 _DUMMY_GAIN = 1.5  # electrons/ADU
 _DUMMY_PSF_SIGMA_PX = 3.0 / 2.3548  # sigma from 3.0 px FWHM seeing
 _DUMMY_MAG_LIMIT = 14.0  # faintest catalog star to render (Vmag)
@@ -844,17 +860,13 @@ class DummyAdapter(AbstractAstroHardwareAdapter):
 
     def capture_preview(self, exposure_time: float, flip_horizontal: bool = False) -> str:
         """Return a synthetic preview image as a JPEG data URL."""
-        import numpy as np
+        import time
 
         from citrascope.web.preview import array_to_jpeg_data_url
 
-        # Synthetic gradient with random noise to simulate a camera frame
-        rng = np.random.default_rng()
-        h, w = 512, 512
-        y, x = np.mgrid[0:h, 0:w]
-        gradient = ((x + y) / (h + w) * 40000).astype(np.uint16)
-        noise = rng.integers(0, 2000, size=(h, w), dtype=np.uint16)
-        return array_to_jpeg_data_url(gradient + noise, flip_horizontal=flip_horizontal)
+        ra, dec = self.mount.get_radec()
+        image_data, _ = self._generate_starfield(ra, dec, exposure_time, seed=int(time.time() * 1000))
+        return array_to_jpeg_data_url(image_data, flip_horizontal=flip_horizontal)
 
     def expose_camera(self, exposure_seconds: float = 1.0) -> str:
         """Simulate manual camera exposure."""
