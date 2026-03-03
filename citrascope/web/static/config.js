@@ -912,12 +912,12 @@ async function abortFocuser() {
     }
 }
 
-async function mountMove(action, direction, rate) {
+async function mountMove(action, direction) {
     try {
         const response = await fetch('/api/mount/move', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ action, direction, rate })
+            body: JSON.stringify({ action, direction })
         });
         if (!response.ok) {
             const data = await response.json();
@@ -956,7 +956,9 @@ async function mountSetTracking(enabled) {
         });
         const data = await response.json();
         if (response.ok) {
-            createToast(enabled ? 'Tracking started' : 'Tracking stopped', 'info', true);
+            const store = Alpine.store('citrascope');
+            if (store.status) store.status.mount_tracking = enabled;
+            createToast(enabled ? 'Sidereal tracking started' : 'Tracking stopped', 'info', true);
         } else {
             createToast(data.error || 'Tracking command failed', 'danger', false);
         }

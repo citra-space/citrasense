@@ -51,13 +51,11 @@ import { FILTER_COLORS } from './filters.js';
             isCapturing: false,
             isAutofocusing: false,
             captureResult: null,
-            exposureDuration: 0.1,
-
             // Focus loop state
             isLooping: false,
             previewDataUrl: null,
             loopCount: 0,
-            previewExposure: 1.0,
+            previewExposure: 0.01,
 
             // Spread all formatter functions from shared module
             ...formatters,
@@ -78,8 +76,8 @@ import { FILTER_COLORS } from './filters.js';
 
             // Store methods
             async captureImage() {
-                if (Number.isNaN(this.exposureDuration) || this.exposureDuration <= 0) {
-                    // Import createToast from config.js
+                const duration = this.previewExposure;
+                if (Number.isNaN(duration) || duration <= 0) {
                     const { createToast } = await import('./config.js');
                     createToast('Invalid exposure duration', 'danger', false);
                     return;
@@ -90,7 +88,7 @@ import { FILTER_COLORS } from './filters.js';
                     const response = await fetch('/api/camera/capture', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ duration: this.exposureDuration })
+                        body: JSON.stringify({ duration })
                     });
                     const data = await response.json();
 
@@ -146,18 +144,6 @@ import { FILTER_COLORS } from './filters.js';
                     alert('Error toggling automated scheduling');
                     this.status.automated_scheduling = !enabled;
                 }
-            },
-
-            showCameraControl() {
-                this.captureResult = null;
-                this.previewDataUrl = null;
-                this.loopCount = 0;
-                const modal = new bootstrap.Modal(document.getElementById('cameraControlModal'));
-                modal.show();
-
-                // Stop focus loop if the modal is closed
-                const el = document.getElementById('cameraControlModal');
-                el.addEventListener('hidden.bs.modal', () => { this.stopFocusLoop(); }, { once: true });
             },
 
             async capturePreview() {

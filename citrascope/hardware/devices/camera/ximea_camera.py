@@ -300,7 +300,7 @@ class XimeaHyperspectralCamera(AbstractCamera):
 
         assert self._camera is not None
 
-        self.logger.info(
+        self.logger.debug(
             f"Starting hyperspectral exposure: {duration}s, "
             f"gain={gain if gain is not None else self.default_gain}dB, "
             f"binning={binning}x{binning}"

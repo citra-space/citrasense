@@ -283,7 +283,7 @@ class _DummyMount(AbstractMount):
     def get_altitude(self) -> float | None:
         return self._alt
 
-    def start_move(self, direction: str, rate: int = 7) -> bool:
+    def start_move(self, direction: str, rate: int | None = None) -> bool:
         self._snap_az()
         self._moving_dir = direction
         return True
