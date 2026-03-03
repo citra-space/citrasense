@@ -9,6 +9,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, TypedDict
 
 if TYPE_CHECKING:
+    import threading
+
     from citrascope.safety.safety_monitor import SafetyMonitor
 
 
@@ -22,6 +24,7 @@ class SettingSchemaEntry(TypedDict, total=False):
     placeholder: str  # Placeholder text for UI inputs
     min: float  # Minimum value for numeric types
     max: float  # Maximum value for numeric types
+    step: float  # Step increment for numeric inputs (HTML step attribute)
     pattern: str  # Regex pattern for string validation
     options: list[str]  # List of valid options for select/dropdown inputs
     group: str  # Group name for organizing settings in UI (e.g., 'Camera', 'Mount', 'Advanced')
@@ -33,12 +36,12 @@ class FilterConfig(TypedDict):
 
     Attributes:
         name: Human-readable filter name (e.g., 'Luminance', 'Red', 'Ha')
-        focus_position: Focuser position for this filter in steps
+        focus_position: Focuser position for this filter in steps, or None if unset
         enabled: Whether this filter is enabled for observations (default: True)
     """
 
     name: str
-    focus_position: int
+    focus_position: int | None
     enabled: bool
 
 
@@ -323,6 +326,7 @@ class AbstractAstroHardwareAdapter(ABC):
         target_ra: float | None = None,
         target_dec: float | None = None,
         on_progress: Callable[[str], None] | None = None,
+        cancel_event: threading.Event | None = None,
     ) -> None:
         """Perform autofocus routine for all filters.
 
@@ -334,6 +338,7 @@ class AbstractAstroHardwareAdapter(ABC):
             target_ra: RA of the slew target in degrees (J2000), or None for adapter default
             target_dec: Dec of the slew target in degrees (J2000), or None for adapter default
             on_progress: Optional callback(str) to report progress updates
+            cancel_event: If set, the routine should abort at the next safe point.
 
         Raises:
             NotImplementedError: If the adapter doesn't support autofocus
@@ -424,6 +429,23 @@ class AbstractAstroHardwareAdapter(ABC):
             bool: True if the adapter supports expose_camera() and manual captures
         """
         return False
+
+    def capture_preview(self, exposure_time: float) -> str:
+        """Take an ephemeral preview exposure and return a JPEG data URL.
+
+        No files are written to disk. Used by the live focus loop in the UI.
+        Only implemented by adapters that support direct camera control.
+
+        Args:
+            exposure_time: Exposure duration in seconds.
+
+        Returns:
+            ``"data:image/jpeg;base64,..."`` string.
+
+        Raises:
+            NotImplementedError: If this adapter does not support preview.
+        """
+        raise NotImplementedError
 
     def is_hyperspectral(self) -> bool:
         """Indicates whether this adapter uses a hyperspectral camera.
@@ -527,12 +549,12 @@ class AbstractAstroHardwareAdapter(ABC):
             for filter_id, filter_data in self.filter_map.items()
         }
 
-    def update_filter_focus(self, filter_id: str, focus_position: int) -> bool:
+    def update_filter_focus(self, filter_id: str, focus_position: int | None) -> bool:
         """Update the focus position for a specific filter.
 
         Args:
             filter_id: Filter ID as string
-            focus_position: New focus position in steps
+            focus_position: New focus position in steps, or None to clear
 
         Returns:
             bool: True if update was successful, False otherwise

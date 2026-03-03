@@ -38,6 +38,7 @@ class AutofocusManager:
         self._running = False
         self._progress = ""
         self._lock = threading.Lock()
+        self._cancel_event = threading.Event()
 
     def request(self) -> bool:
         """Request autofocus to run at next safe point between tasks."""
@@ -47,17 +48,24 @@ class AutofocusManager:
             return True
 
     def cancel(self) -> bool:
-        """Cancel pending autofocus request if still queued.
+        """Cancel autofocus whether it is queued or actively running.
 
         Returns:
-            True if autofocus was cancelled, False if nothing to cancel.
+            True if something was cancelled, False if nothing to cancel.
         """
         with self._lock:
             was_requested = self._requested
+            is_running = self._running
             self._requested = False
-            if was_requested:
-                self.logger.info("Autofocus request cancelled")
-            return was_requested
+
+        if is_running:
+            self._cancel_event.set()
+            self.logger.info("Autofocus cancellation requested (run in progress)")
+            return True
+        if was_requested:
+            self.logger.info("Autofocus request cancelled")
+            return True
+        return False
 
     def is_requested(self) -> bool:
         """Check if autofocus is currently requested/queued."""
@@ -153,6 +161,7 @@ class AutofocusManager:
 
     def _execute(self) -> None:
         """Execute autofocus routine and update timestamp on both success and failure."""
+        self._cancel_event.clear()
         with self._lock:
             self._running = True
             self._progress = "Starting..."
@@ -163,6 +172,7 @@ class AutofocusManager:
                 target_ra=target_ra,
                 target_dec=target_dec,
                 on_progress=self._set_progress,
+                cancel_event=self._cancel_event,
             )
 
             if self.hardware_adapter.supports_filter_management():

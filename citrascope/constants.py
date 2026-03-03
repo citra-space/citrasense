@@ -28,6 +28,14 @@ DEFAULT_WEB_PORT = 24872  # "CITRA" on phone keypad
 # RA/Dec in degrees (J2000). Ordered roughly by year-round utility.
 # ============================================================================
 AUTOFOCUS_TARGET_PRESETS = {
+    "current": {
+        "name": "Current position",
+        "designation": "No slew",
+        "ra": None,
+        "dec": None,
+        "mag": None,
+        "description": "Focus where the telescope is currently pointing (no slew)",
+    },
     "mirach": {
         "name": "Mirach",
         "designation": "Beta Andromedae",

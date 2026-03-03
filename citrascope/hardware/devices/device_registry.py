@@ -67,9 +67,11 @@ FILTER_WHEEL_DEVICES: dict[str, dict[str, str]] = {
 
 # Registry of available focuser devices
 FOCUSER_DEVICES: dict[str, dict[str, str]] = {
-    # Future focusers:
-    # "moonlite": {...},
-    # "ascom": {...},
+    "zwo_eaf": {
+        "module": "citrascope.hardware.devices.focuser.zwo_eaf",
+        "class_name": "ZwoEafFocuser",
+        "description": "ZWO Electronic Automatic Focuser (EAF)",
+    },
 }
 
 

@@ -351,6 +351,11 @@ class TestAbstractCameraIntegratedFilterWheel:
             def is_connected(self):
                 return True
 
+            def capture_array(self, duration, gain=None, offset=None, binning=1):
+                import numpy as np
+
+                return np.zeros((10, 10), dtype=np.uint16)
+
             def take_exposure(self, duration, gain=None, offset=None, binning=1, save_path=None):
                 return Path("/tmp/test.fits")
 

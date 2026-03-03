@@ -14,6 +14,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
+import numpy as np
+
 from citrascope.hardware.abstract_astro_hardware_adapter import SettingSchemaEntry
 from citrascope.hardware.devices.camera import AbstractCamera
 from citrascope.hardware.devices.filter_wheel import AbstractFilterWheel
@@ -352,14 +354,13 @@ class MoravianCamera(AbstractCamera):
 
     # -- Exposure --
 
-    def take_exposure(
+    def capture_array(
         self,
         duration: float,
         gain: int | None = None,
         offset: int | None = None,
         binning: int = 1,
-        save_path: Path | None = None,
-    ) -> Path:
+    ) -> np.ndarray:
         if not self.is_connected():
             raise RuntimeError("Camera not connected")
         assert self._gxccd is not None
@@ -381,18 +382,30 @@ class MoravianCamera(AbstractCamera):
         while not cam.image_ready():
             time.sleep(0.05)
 
-        # Read 16-bit image
         binned_w = w // binning
         binned_h = h // binning
         buf_size = binned_w * 2 * binned_h
         buf = create_string_buffer(buf_size)
         cam.read_image(buf, buf_size)
 
+        return np.frombuffer(bytes(buf), dtype=np.uint16).reshape((binned_h, binned_w))
+
+    def take_exposure(
+        self,
+        duration: float,
+        gain: int | None = None,
+        offset: int | None = None,
+        binning: int = 1,
+        save_path: Path | None = None,
+    ) -> Path:
+        data = self.capture_array(duration, gain, offset, binning)
+
         if save_path is None:
             ts = time.strftime("%Y%m%d_%H%M%S")
             save_path = Path(f"moravian_{ts}.fits")
 
-        self._save_fits(bytes(buf), binned_w, binned_h, duration, gain_val, binning, save_path)
+        gain_val = gain if gain is not None else self._default_gain
+        self._save_fits(data.tobytes(), data.shape[1], data.shape[0], duration, gain_val, binning, save_path)
         self.logger.info(f"Image saved to {save_path}")
         return save_path
 

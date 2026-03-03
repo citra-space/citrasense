@@ -482,10 +482,10 @@ class CitraScopeDaemon:
         return True, None
 
     def cancel_autofocus(self) -> bool:
-        """Cancel pending autofocus request if queued.
+        """Cancel autofocus whether it is queued or actively running.
 
         Returns:
-            bool: True if autofocus was cancelled, False if nothing to cancel.
+            bool: True if something was cancelled, False if nothing to cancel.
         """
         if not self.task_manager:
             return False

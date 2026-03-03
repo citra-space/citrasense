@@ -5,6 +5,8 @@ import time
 from pathlib import Path
 from typing import cast
 
+import numpy as np
+
 from citrascope.hardware.abstract_astro_hardware_adapter import SettingSchemaEntry
 from citrascope.hardware.devices.camera import AbstractCamera
 
@@ -172,6 +174,38 @@ class RaspberryPiHQCamera(AbstractCamera):
         """
         return self._connected and self._camera is not None
 
+    def capture_array(
+        self,
+        duration: float,
+        gain: int | None = None,
+        offset: int | None = None,
+        binning: int = 1,
+    ) -> np.ndarray:
+        if not self.is_connected():
+            raise RuntimeError("Camera not connected")
+        if self._camera is None:
+            raise RuntimeError("Camera instance is None")
+
+        try:
+            actual_gain = gain if gain is not None else self.default_gain
+            exposure_us = int(duration * 1_000_000)
+
+            self.logger.info(f"Taking {duration}s exposure, gain={actual_gain}")
+            self._camera.set_controls({"ExposureTime": exposure_us, "AnalogueGain": float(actual_gain)})
+
+            request = self._camera.capture_request()
+            image_data = request.make_array("main")
+            request.release()
+
+            if binning > 1:
+                image_data = self._apply_binning(image_data, binning)
+
+            return np.asarray(image_data)
+
+        except Exception as e:
+            self.logger.error(f"Failed to capture image: {e}")
+            raise RuntimeError(f"Image capture failed: {e}") from e
+
     def take_exposure(
         self,
         duration: float,
@@ -180,73 +214,23 @@ class RaspberryPiHQCamera(AbstractCamera):
         binning: int = 1,
         save_path: Path | None = None,
     ) -> Path:
-        """Capture an exposure.
-
-        Args:
-            duration: Exposure time in seconds
-            gain: Camera gain (1.0-16.0), uses default if None
-            offset: Not used for RPi HQ camera
-            binning: Binning factor (1, 2, or 4) - applied during image processing
-            save_path: Path to save the image
-
-        Returns:
-            Path to the saved image
-
-        Raises:
-            RuntimeError: If camera not connected or capture fails
-        """
-        if not self.is_connected():
-            raise RuntimeError("Camera not connected")
-
-        if self._camera is None:
-            raise RuntimeError("Camera instance is None")
+        image_data = self.capture_array(duration, gain, offset, binning)
 
         if save_path is None:
             timestamp = time.strftime("%Y%m%d_%H%M%S")
             save_path = Path(f"/tmp/rpi_hq_{timestamp}.{self.output_format}")
 
-        try:
-            # Set camera controls
-            actual_gain = gain if gain is not None else self.default_gain
-            exposure_us = int(duration * 1_000_000)  # Convert to microseconds
+        if self.output_format == "fits":
+            self._save_as_fits(image_data, save_path)
+        elif self.output_format == "png":
+            self._save_as_png(image_data, save_path)
+        elif self.output_format == "jpg":
+            self._save_as_jpg(image_data, save_path)
+        elif self.output_format == "raw":
+            self._save_as_raw(image_data, save_path)
 
-            self.logger.info(f"Taking {duration}s exposure, gain={actual_gain}")
-
-            # Configure exposure settings
-            self._camera.set_controls(
-                {
-                    "ExposureTime": exposure_us,
-                    "AnalogueGain": float(actual_gain),
-                }
-            )
-
-            # Capture image
-            request = self._camera.capture_request()
-
-            # Get the image data
-            image_data = request.make_array("main")
-            request.release()
-
-            # Apply binning if requested
-            if binning > 1:
-                image_data = self._apply_binning(image_data, binning)
-
-            # Save based on format
-            if self.output_format == "fits":
-                self._save_as_fits(image_data, save_path)
-            elif self.output_format == "png":
-                self._save_as_png(image_data, save_path)
-            elif self.output_format == "jpg":
-                self._save_as_jpg(image_data, save_path)
-            elif self.output_format == "raw":
-                self._save_as_raw(image_data, save_path)
-
-            self.logger.info(f"Image saved to {save_path}")
-            return save_path
-
-        except Exception as e:
-            self.logger.error(f"Failed to capture image: {e}")
-            raise RuntimeError(f"Image capture failed: {e}") from e
+        self.logger.info(f"Image saved to {save_path}")
+        return save_path
 
     def abort_exposure(self):
         """Abort current exposure.

@@ -300,6 +300,53 @@ class _DummyMount(AbstractMount):
         self._ref_time = time.monotonic()
 
 
+class _DummyFocuser:
+    """Simulated focuser for DummyAdapter. Mimics AbstractFocuser without inheriting it."""
+
+    def __init__(self, logger: logging.Logger) -> None:
+        self._logger = logger
+        self._position: int = 25000
+        self._max_position: int = 100000
+        self._connected = True
+        self._moving = False
+
+    def is_connected(self) -> bool:
+        return self._connected
+
+    def get_position(self) -> int | None:
+        return self._position
+
+    def get_max_position(self) -> int | None:
+        return self._max_position
+
+    def get_temperature(self) -> float | None:
+        return 18.5
+
+    def is_moving(self) -> bool:
+        return self._moving
+
+    def move_absolute(self, position: int) -> bool:
+        if position < 0 or position > self._max_position:
+            self._logger.error(f"DummyFocuser: position {position} out of range")
+            return False
+        self._position = position
+        return True
+
+    def move_relative(self, offset: int) -> bool:
+        target = self._position + offset
+        if target < 0 or target > self._max_position:
+            self._logger.error(f"DummyFocuser: relative move to {target} out of range (0–{self._max_position})")
+            return False
+        self._position = target
+        return True
+
+    def abort_move(self) -> None:
+        self._moving = False
+
+    def disconnect(self) -> None:
+        self._connected = False
+
+
 # Synthetic camera constants — consistent across take_image() and the WCS header
 # so the image geometry is self-describing.
 _DUMMY_IMG_SIZE = 1024  # pixels per side
@@ -342,6 +389,7 @@ class DummyAdapter(AbstractAstroHardwareAdapter):
         self._tracking_rate = (15.041, 0.0)  # arcsec/sec (sidereal rate)
         self.mount = _DummyMount(logger)
         self._mount_cache: MountStateCache | None = None
+        self.focuser = _DummyFocuser(logger)
 
         # Set by the daemon after connecting, mirrors the real telescope_record from the API.
         # When present, take_image() derives sensor dimensions and pixel scale from it.
@@ -734,6 +782,7 @@ class DummyAdapter(AbstractAstroHardwareAdapter):
         target_ra: float | None = None,
         target_dec: float | None = None,
         on_progress: Callable[[str], None] | None = None,
+        cancel_event: threading.Event | None = None,
     ) -> None:
         """Simulate autofocus routine."""
         if target_ra is not None and target_dec is not None:
@@ -744,9 +793,15 @@ class DummyAdapter(AbstractAstroHardwareAdapter):
         filters = [f for f in self.filter_map.values() if f.get("enabled", True)] if self.filter_map else []
         total = len(filters) or 1
         for idx, f in enumerate(filters or [{"name": "Default"}], 1):
+            if cancel_event and cancel_event.is_set():
+                self.logger.info("DummyAdapter: Autofocus cancelled")
+                raise RuntimeError("Autofocus cancelled")
             if on_progress:
                 on_progress(f"Filter {idx}/{total}: {f['name']} — focusing...")
             self._simulate_delay(1.0)
+            if cancel_event and cancel_event.is_set():
+                self.logger.info("DummyAdapter: Autofocus cancelled")
+                raise RuntimeError("Autofocus cancelled")
             if on_progress:
                 on_progress(f"Filter {idx}/{total}: {f['name']} — done")
 
@@ -770,9 +825,36 @@ class DummyAdapter(AbstractAstroHardwareAdapter):
         except (ValueError, KeyError):
             return False
 
+    def set_focus(self, position: int) -> bool:
+        """Move simulated focuser to absolute position."""
+        if not self.focuser:
+            return False
+        self.logger.info(f"DummyAdapter: Moving focuser to {position}")
+        return self.focuser.move_absolute(position)
+
+    def get_focus_position(self) -> int | None:
+        """Get simulated focuser position."""
+        if not self.focuser:
+            return None
+        return self.focuser.get_position()
+
     def supports_direct_camera_control(self) -> bool:
         """Dummy adapter supports direct camera control."""
         return True
+
+    def capture_preview(self, exposure_time: float) -> str:
+        """Return a synthetic preview image as a JPEG data URL."""
+        import numpy as np
+
+        from citrascope.web.preview import array_to_jpeg_data_url
+
+        # Synthetic gradient with random noise to simulate a camera frame
+        rng = np.random.default_rng()
+        h, w = 512, 512
+        y, x = np.mgrid[0:h, 0:w]
+        gradient = ((x + y) / (h + w) * 40000).astype(np.uint16)
+        noise = rng.integers(0, 2000, size=(h, w), dtype=np.uint16)
+        return array_to_jpeg_data_url(gradient + noise)
 
     def expose_camera(self, exposure_seconds: float = 1.0) -> str:
         """Simulate manual camera exposure."""

@@ -5,6 +5,8 @@ import time
 from pathlib import Path
 from typing import cast
 
+import numpy as np
+
 from citrascope.hardware.abstract_astro_hardware_adapter import SettingSchemaEntry
 from citrascope.hardware.devices.camera import AbstractCamera
 
@@ -281,26 +283,13 @@ class XimeaHyperspectralCamera(AbstractCamera):
         """
         return self._is_connected and self._camera is not None
 
-    def take_exposure(
+    def capture_array(
         self,
         duration: float,
         gain: int | None = None,
         offset: int | None = None,
         binning: int = 1,
-        save_path: Path | None = None,
-    ) -> Path:
-        """Capture a hyperspectral image exposure.
-
-        Args:
-            duration: Exposure duration in seconds
-            gain: Camera gain in dB (if None, use default)
-            offset: Not used for Ximea cameras
-            binning: Pixel binning factor (1=no binning, 2=2x2, etc.)
-            save_path: Optional path to save the image
-
-        Returns:
-            Path to the saved image file
-        """
+    ) -> np.ndarray:
         if not self.is_connected():
             raise RuntimeError("Camera not connected")
 
@@ -317,87 +306,57 @@ class XimeaHyperspectralCamera(AbstractCamera):
             f"binning={binning}x{binning}"
         )
 
-        # Configure exposure parameters (xiAPI expects microseconds)
         exposure_us = duration * 1000000.0
-        self.logger.debug(f"Setting exposure to {int(exposure_us)} microseconds ({duration}s)")
         self._camera.set_exposure(int(exposure_us))
-        actual_exposure = self._camera.get_exposure()
-        self.logger.debug(f"Exposure set and verified: {actual_exposure} microseconds")
+        self._last_exposure_us = self._camera.get_exposure()
 
-        # Store for FITS metadata
-        self._last_exposure_us = actual_exposure
-
-        # Set gain (use default if not specified)
         gain_to_use = gain if gain is not None else self.default_gain
         try:
-            # Check if camera supports gain and get valid range
             min_gain = self._camera.get_gain_minimum()
             max_gain = self._camera.get_gain_maximum()
-
-            # Clamp gain to valid range
             if gain_to_use < min_gain or gain_to_use > max_gain:
                 self.logger.warning(
-                    f"Requested gain {gain_to_use} dB is outside valid range "
-                    f"[{min_gain}, {max_gain}] dB. Clamping to valid range."
+                    f"Requested gain {gain_to_use} dB outside valid range " f"[{min_gain}, {max_gain}] dB. Clamping."
                 )
                 gain_to_use = max(min_gain, min(gain_to_use, max_gain))
-
-            self.logger.debug(f"Setting gain to {gain_to_use} dB (range: {min_gain}-{max_gain} dB)")
             self._camera.set_gain(float(gain_to_use))
-            actual_gain = self._camera.get_gain()
-            self.logger.debug(f"Gain set and verified: {actual_gain} dB")
-
-            # Store for FITS metadata
-            self._last_gain_db = actual_gain
+            self._last_gain_db = self._camera.get_gain()
         except Exception as e:
-            self.logger.warning(f"Could not set gain: {e}. Continuing with current camera gain setting.")
+            self.logger.warning(f"Could not set gain: {e}. Continuing with current setting.")
 
         if binning > 1:
-            self.logger.debug(f"Setting downsampling to {binning}x{binning}")
             self._camera.set_downsampling(str(binning))
-            actual_binning = self._camera.get_downsampling()
-            self.logger.debug(f"Downsampling set and verified: {actual_binning}")
 
-        # Create image buffer
         img = xiapi.Image()
-
-        # Start acquisition
-        self.logger.debug("Starting camera acquisition...")
         self._camera.start_acquisition()
-        self.logger.debug("Acquisition started")
 
         try:
-            # Get image (timeout in milliseconds: exposure time + 5 second buffer)
             timeout_ms = int((exposure_us / 1000.0) + 5000)
-            self.logger.debug(f"Waiting for image with timeout of {timeout_ms}ms...")
-            start_time = time.time()
             self._camera.get_image(img, timeout=timeout_ms)
-            capture_time = time.time() - start_time
-            self.logger.debug(f"Image captured in {capture_time:.2f}s")
-            self.logger.debug(f"Image size: {img.width}x{img.height}, format: {img.frm}")
-
-            # Generate save path
-            if save_path is None:
-                timestamp = time.strftime("%Y%m%d_%H%M%S")
-                save_path = Path(f"ximea_hyperspectral_{timestamp}.tiff")
-
-            # Save image (data structure depends on data_mode setting)
-            self.logger.debug(f"Saving image to: {save_path}")
-            self._save_hyperspectral_image(img, save_path)
-
-            self.logger.info(f"Hyperspectral image saved to: {save_path}")
-            return save_path
-
+            data: np.ndarray = img.get_image_data_numpy()
+            return data
         finally:
-            # Stop acquisition
-            self.logger.debug("Stopping acquisition...")
             self._camera.stop_acquisition()
-            self.logger.debug("Acquisition stopped")
-
-            # Reset binning if changed
             if binning > 1:
-                self.logger.debug("Resetting downsampling to 1")
                 self._camera.set_downsampling("1")
+
+    def take_exposure(
+        self,
+        duration: float,
+        gain: int | None = None,
+        offset: int | None = None,
+        binning: int = 1,
+        save_path: Path | None = None,
+    ) -> Path:
+        data = self.capture_array(duration, gain, offset, binning)
+
+        if save_path is None:
+            timestamp = time.strftime("%Y%m%d_%H%M%S")
+            save_path = Path(f"ximea_hyperspectral_{timestamp}.tiff")
+
+        self._save_hyperspectral_data(data, save_path)
+        self.logger.info(f"Hyperspectral image saved to: {save_path}")
+        return save_path
 
     def abort_exposure(self):
         """Abort the current exposure if one is in progress."""
@@ -558,19 +517,13 @@ class XimeaHyperspectralCamera(AbstractCamera):
 
         return info
 
-    def _save_hyperspectral_image(self, img, save_path: Path):
-        """Save hyperspectral image data.
+    def _save_hyperspectral_data(self, data: np.ndarray, save_path: Path) -> None:
+        """Save hyperspectral image data from a numpy array.
 
         Args:
-            img: Ximea image object
+            data: 2-D numpy array of raw pixel data
             save_path: Path to save the image
         """
-        import numpy as np
-
-        # Get image data as numpy array
-        data = img.get_image_data_numpy()
-
-        # Process based on data_mode setting
         if self.data_mode == "datacube":
             # Create 3D datacube by demosaicing the spectral mosaic
             datacube = self._demosaic_to_datacube(data)

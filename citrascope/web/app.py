@@ -1,5 +1,6 @@
 """FastAPI web application for CitraScope monitoring and configuration."""
 
+import asyncio
 import json
 import time
 from datetime import datetime, timezone
@@ -79,6 +80,11 @@ class SystemStatus(BaseModel):
     camera_temperature: float | None = None
     current_filter_position: int | None = None
     current_filter_name: str | None = None
+    focuser_connected: bool = False
+    focuser_position: int | None = None
+    focuser_max_position: int | None = None
+    focuser_temperature: float | None = None
+    focuser_moving: bool = False
     safety_status: dict[str, Any] | None = None
 
 
@@ -622,20 +628,23 @@ class CitraScopeWebApp:
                     if filter_id_int not in filter_config:
                         return JSONResponse({"error": f"Filter ID {filter_id} not found"}, status_code=404)
 
-                    validated_update: dict[str, int | str | bool] = {"filter_id_int": filter_id_int}
+                    validated_update: dict[str, int | str | bool | None] = {"filter_id_int": filter_id_int}
 
-                    # Validate focus_position if provided
+                    # Validate focus_position if provided (null clears it)
                     if "focus_position" in update:
                         focus_position = update["focus_position"]
-                        if not isinstance(focus_position, int):
+                        if focus_position is None:
+                            validated_update["focus_position"] = None
+                        elif not isinstance(focus_position, int):
                             return JSONResponse(
-                                {"error": f"focus_position at index {idx} must be an integer"}, status_code=400
+                                {"error": f"focus_position at index {idx} must be an integer or null"}, status_code=400
                             )
-                        if focus_position < 0 or focus_position > 65535:
+                        elif focus_position < 0 or focus_position > 65535:
                             return JSONResponse(
                                 {"error": f"focus_position at index {idx} must be between 0 and 65535"}, status_code=400
                             )
-                        validated_update["focus_position"] = focus_position
+                        else:
+                            validated_update["focus_position"] = focus_position
 
                     # Validate enabled if provided
                     if "enabled" in update:
@@ -748,6 +757,69 @@ class CitraScopeWebApp:
                 CITRASCOPE_LOGGER.error(f"Error setting filter position: {e}", exc_info=True)
                 return JSONResponse({"error": str(e)}, status_code=500)
 
+        @self.app.post("/api/focuser/move")
+        async def focuser_move(body: dict[str, Any]):
+            """Move the focuser to an absolute position or by relative steps.
+
+            Jog moves are fire-and-forget: the command is issued and the
+            endpoint returns immediately.  The UI tracks position via the
+            status poll.  Issuing a move while the focuser is already moving
+            stops the previous move first.
+            """
+            if not self.daemon or not self.daemon.hardware_adapter:
+                return JSONResponse({"error": "Hardware adapter not initialized"}, status_code=503)
+
+            focuser = getattr(self.daemon.hardware_adapter, "focuser", None)
+            if focuser is None or not hasattr(focuser, "is_connected") or not focuser.is_connected():
+                return JSONResponse({"error": "No focuser connected"}, status_code=404)
+
+            absolute = body.get("position")
+            relative = body.get("relative")
+
+            try:
+                if await asyncio.to_thread(focuser.is_moving):
+                    await asyncio.to_thread(focuser.abort_move)
+                    await asyncio.sleep(0.1)
+
+                if absolute is not None:
+                    if not isinstance(absolute, int):
+                        return JSONResponse({"error": "position must be an integer"}, status_code=400)
+                    if not await asyncio.to_thread(focuser.move_absolute, absolute):
+                        return JSONResponse({"error": "Move failed"}, status_code=500)
+                    pos = await asyncio.to_thread(focuser.get_position)
+                    return {"success": True, "position": pos}
+
+                if relative is not None:
+                    if not isinstance(relative, int):
+                        return JSONResponse({"error": "relative must be an integer"}, status_code=400)
+                    if not await asyncio.to_thread(focuser.move_relative, relative):
+                        return JSONResponse({"error": "Move failed"}, status_code=500)
+                    pos = await asyncio.to_thread(focuser.get_position)
+                    return {"success": True, "position": pos}
+
+            except Exception as e:
+                CITRASCOPE_LOGGER.error(f"Focuser move error: {e}", exc_info=True)
+                return JSONResponse({"error": str(e)}, status_code=500)
+
+            return JSONResponse({"error": "Provide 'position' (absolute) or 'relative' (steps)"}, status_code=400)
+
+        @self.app.post("/api/focuser/abort")
+        async def focuser_abort():
+            """Stop focuser movement."""
+            if not self.daemon or not self.daemon.hardware_adapter:
+                return JSONResponse({"error": "Hardware adapter not initialized"}, status_code=503)
+
+            focuser = getattr(self.daemon.hardware_adapter, "focuser", None)
+            if focuser is None or not hasattr(focuser, "is_connected") or not focuser.is_connected():
+                return JSONResponse({"error": "No focuser connected"}, status_code=404)
+
+            try:
+                focuser.abort_move()
+                return {"success": True, "position": focuser.get_position()}
+            except Exception as e:
+                CITRASCOPE_LOGGER.error(f"Focuser abort error: {e}", exc_info=True)
+                return JSONResponse({"error": str(e)}, status_code=500)
+
         @self.app.post("/api/adapter/autofocus")
         async def trigger_autofocus():
             """Request autofocus to run between tasks."""
@@ -769,7 +841,7 @@ class CitraScopeWebApp:
 
         @self.app.post("/api/adapter/autofocus/cancel")
         async def cancel_autofocus():
-            """Cancel pending autofocus request."""
+            """Cancel autofocus — works whether queued or actively running."""
             if not self.daemon:
                 return JSONResponse({"error": "Daemon not available"}, status_code=503)
 
@@ -1063,6 +1135,43 @@ class CitraScopeWebApp:
                 CITRASCOPE_LOGGER.error(f"Error during test capture: {e}", exc_info=True)
                 return JSONResponse({"error": str(e)}, status_code=500)
 
+        @self.app.post("/api/camera/preview")
+        async def camera_preview(request: dict[str, Any]):
+            """Take an ephemeral preview exposure and return a JPEG data URL."""
+            if not self.daemon:
+                return JSONResponse({"error": "Daemon not available"}, status_code=503)
+            if not self.daemon.hardware_adapter:
+                return JSONResponse({"error": "Hardware adapter not available"}, status_code=503)
+            if not self.daemon.hardware_adapter.supports_direct_camera_control():
+                return JSONResponse(
+                    {"error": "Hardware adapter does not support direct camera control"}, status_code=400
+                )
+
+            try:
+                duration = request.get("duration", 1.0)
+                if not isinstance(duration, (int, float)):
+                    return JSONResponse({"error": "duration must be a number"}, status_code=400)
+                duration = float(duration)
+                if duration <= 0:
+                    return JSONResponse({"error": "Exposure duration must be positive"}, status_code=400)
+                if duration > 30:
+                    return JSONResponse({"error": "Preview exposure must be 30 seconds or less"}, status_code=400)
+
+                adapter = self.daemon.hardware_adapter
+                image_data = await asyncio.to_thread(adapter.capture_preview, duration)
+                return {"image_data": image_data}
+
+            except NotImplementedError:
+                return JSONResponse({"error": "Preview not supported by this adapter"}, status_code=400)
+            except RuntimeError as e:
+                if "already in progress" in str(e):
+                    return JSONResponse({"error": "busy"}, status_code=409)
+                CITRASCOPE_LOGGER.error(f"Error during preview capture: {e}", exc_info=True)
+                return JSONResponse({"error": str(e)}, status_code=500)
+            except Exception as e:
+                CITRASCOPE_LOGGER.error(f"Error during preview capture: {e}", exc_info=True)
+                return JSONResponse({"error": str(e)}, status_code=500)
+
         @self.app.websocket("/ws")
         async def websocket_endpoint(websocket: WebSocket):
             """WebSocket endpoint for real-time updates."""
@@ -1144,6 +1253,33 @@ class CitraScopeWebApp:
                 except Exception:
                     self.status.current_filter_position = None
                     self.status.current_filter_name = None
+
+                # Check focuser status
+                focuser = getattr(adapter, "focuser", None)
+                if focuser is not None and hasattr(focuser, "is_connected") and focuser.is_connected():
+                    self.status.focuser_connected = True
+                    try:
+                        self.status.focuser_position = focuser.get_position()
+                    except Exception:
+                        self.status.focuser_position = None
+                    try:
+                        self.status.focuser_max_position = focuser.get_max_position()
+                    except Exception:
+                        self.status.focuser_max_position = None
+                    try:
+                        self.status.focuser_temperature = focuser.get_temperature()
+                    except Exception:
+                        self.status.focuser_temperature = None
+                    try:
+                        self.status.focuser_moving = focuser.is_moving()
+                    except Exception:
+                        self.status.focuser_moving = False
+                else:
+                    self.status.focuser_connected = False
+                    self.status.focuser_position = None
+                    self.status.focuser_max_position = None
+                    self.status.focuser_temperature = None
+                    self.status.focuser_moving = False
 
                 has_camera = getattr(adapter, "camera", None) is not None
                 self.status.supports_alignment = has_camera and mount is not None

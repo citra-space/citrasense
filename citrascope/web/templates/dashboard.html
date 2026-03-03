@@ -200,48 +200,97 @@
                     <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
                 </div>
                 <div class="modal-body">
-                    <div class="row g-3">
-                        <div class="col-12">
-                            <label for="exposureDuration" class="form-label">Exposure Duration (seconds)</label>
-                            <input type="number" class="form-control" x-model.number="$store.citrascope.exposureDuration" min="0.001" max="300" step="0.001">
-                            <small class="text-muted">Range: 0.001 to 300 seconds</small>
+                    <!-- Live Preview Section -->
+                    <div class="mb-3">
+                        <h6 class="d-flex align-items-center gap-2">
+                            <i class="bi bi-eye"></i> Live Preview
+                            <span class="badge bg-secondary rounded-pill ms-auto"
+                                  x-show="$store.citrascope.loopCount > 0"
+                                  x-text="'Frame ' + $store.citrascope.loopCount"></span>
+                            <span class="badge bg-success rounded-pill"
+                                  x-show="$store.citrascope.isLooping">
+                                <span class="spinner-border spinner-border-sm me-1" style="width: .5rem; height: .5rem;"></span>
+                                Live
+                            </span>
+                        </h6>
+
+                        <!-- Preview image -->
+                        <div class="text-center mb-3 position-relative"
+                             style="min-height: 120px; background: #111; border-radius: .375rem; overflow: hidden;">
+                            <template x-if="!$store.citrascope.previewDataUrl">
+                                <div class="d-flex align-items-center justify-content-center text-muted"
+                                     style="min-height: 120px;">
+                                    <span>No preview yet — take a snapshot or start the focus loop</span>
+                                </div>
+                            </template>
+                            <template x-if="$store.citrascope.previewDataUrl">
+                                <img :src="$store.citrascope.previewDataUrl"
+                                     alt="Camera preview"
+                                     class="img-fluid"
+                                     style="max-height: 500px; width: auto;">
+                            </template>
+                        </div>
+
+                        <!-- Preview controls -->
+                        <div class="row g-2 align-items-end">
+                            <div class="col-auto">
+                                <label class="form-label small mb-1">Exposure (s)</label>
+                                <input type="number" class="form-control form-control-sm" style="width: 90px;"
+                                       x-model.number="$store.citrascope.previewExposure"
+                                       min="0.01" max="30" step="0.1"
+                                       :disabled="$store.citrascope.isLooping">
+                            </div>
+                            <div class="col-auto">
+                                <button class="btn btn-sm btn-outline-light"
+                                        :disabled="$store.citrascope.isCapturing || $store.citrascope.isLooping"
+                                        @click="$store.citrascope.singlePreview()">
+                                    <i class="bi bi-camera"></i> Snapshot
+                                </button>
+                            </div>
+                            <div class="col-auto">
+                                <button class="btn btn-sm"
+                                        :class="$store.citrascope.isLooping ? 'btn-danger' : 'btn-success'"
+                                        @click="$store.citrascope.isLooping ? $store.citrascope.stopFocusLoop() : $store.citrascope.startFocusLoop()">
+                                    <i class="bi" :class="$store.citrascope.isLooping ? 'bi-stop-fill' : 'bi-play-fill'"></i>
+                                    <span x-text="$store.citrascope.isLooping ? 'Stop Loop' : 'Focus Loop'"></span>
+                                </button>
+                            </div>
                         </div>
                     </div>
 
-                    <!-- Capture Result Area -->
-                    <div x-show="$store.citrascope.captureResult" class="mt-3">
-                        <hr class="border-secondary">
-                        <h6>Latest Capture</h6>
-                        <div class="alert alert-success mb-2">
-                            <strong>Filename:</strong> <span x-text="$store.citrascope.captureResult?.filename"></span><br>
-                            <strong>Format:</strong> <span x-text="$store.citrascope.captureResult?.format || 'Unknown'"></span>
-                        </div>
+                    <hr class="border-secondary">
 
-                        <!-- Image Preview (only for PNG/JPG) -->
-                        <div x-show="$store.citrascope.captureResult && ['PNG', 'JPG', 'JPEG'].includes($store.citrascope.captureResult.format)" class="mt-3">
-                            <img :src="'/images/' + $store.citrascope.captureResult?.filename"
-                                 alt="Captured image"
-                                 class="img-fluid rounded border border-secondary"
-                                 style="max-height: 400px; width: auto; display: block; margin: 0 auto;">
+                    <!-- Capture to Disk Section -->
+                    <details>
+                        <summary class="mb-2"><h6 class="d-inline"><i class="bi bi-save"></i> Capture to Disk</h6></summary>
+                        <div class="row g-3">
+                            <div class="col-12">
+                                <label for="exposureDuration" class="form-label">Exposure Duration (seconds)</label>
+                                <input type="number" class="form-control" x-model.number="$store.citrascope.exposureDuration" min="0.001" max="300" step="0.001">
+                                <small class="text-muted">Range: 0.001 to 300 seconds. Saves full FITS file.</small>
+                            </div>
                         </div>
-                    </div>
-
-                    <!-- Images Directory -->
-                    <div class="mt-3">
-                        <hr class="border-secondary">
-                        <h6>Images Directory</h6>
-                        <p class="text-muted small mb-1">All captured images are saved to:</p>
-                        <p><a :href="'file://' + ($store.citrascope.config?.images_dir_path || '#')" x-text="$store.citrascope.config?.images_dir_path || 'Not set'" class="text-break"></a></p>
-                    </div>
+                        <div class="mt-2">
+                            <button type="button" class="btn btn-primary btn-sm" :disabled="$store.citrascope.isCapturing || $store.citrascope.isLooping" @click="$store.citrascope.captureImage()">
+                                <span x-text="$store.citrascope.isCapturing ? 'Capturing...' : 'Capture to Disk'"></span>
+                                <span x-show="$store.citrascope.isCapturing" class="spinner-border spinner-border-sm ms-2" role="status"></span>
+                            </button>
+                        </div>
+                        <div x-show="$store.citrascope.captureResult" class="mt-2">
+                            <div class="alert alert-success mb-2 py-2">
+                                <strong>Filename:</strong> <span x-text="$store.citrascope.captureResult?.filename"></span>
+                                <strong class="ms-2">Format:</strong> <span x-text="$store.citrascope.captureResult?.format || 'Unknown'"></span>
+                            </div>
+                        </div>
+                        <div class="mt-2">
+                            <p class="text-muted small mb-0">Images saved to:
+                                <a :href="'file://' + ($store.citrascope.config?.images_dir_path || '#')" x-text="$store.citrascope.config?.images_dir_path || 'Not set'" class="text-break"></a>
+                            </p>
+                        </div>
+                    </details>
                 </div>
                 <div class="modal-footer border-secondary">
                     <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
-                    <button type="button" class="btn btn-primary" :disabled="$store.citrascope.isCapturing" @click="$store.citrascope.captureImage()">
-                        <span x-text="$store.citrascope.isCapturing ? 'Capturing...' : 'Capture'"></span>
-                        <span x-show="$store.citrascope.isCapturing" class="spinner-border spinner-border-sm ms-2" role="status">
-                            <span class="visually-hidden">Capturing...</span>
-                        </span>
-                    </button>
                 </div>
             </div>
         </div>

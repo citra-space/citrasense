@@ -53,6 +53,12 @@ import { FILTER_COLORS } from './filters.js';
             captureResult: null,
             exposureDuration: 0.1,
 
+            // Focus loop state
+            isLooping: false,
+            previewDataUrl: null,
+            loopCount: 0,
+            previewExposure: 1.0,
+
             // Spread all formatter functions from shared module
             ...formatters,
 
@@ -143,9 +149,86 @@ import { FILTER_COLORS } from './filters.js';
             },
 
             showCameraControl() {
-                this.captureResult = null; // Reset capture result when opening modal
+                this.captureResult = null;
+                this.previewDataUrl = null;
+                this.loopCount = 0;
                 const modal = new bootstrap.Modal(document.getElementById('cameraControlModal'));
                 modal.show();
+
+                // Stop focus loop if the modal is closed
+                const el = document.getElementById('cameraControlModal');
+                el.addEventListener('hidden.bs.modal', () => { this.stopFocusLoop(); }, { once: true });
+            },
+
+            async capturePreview() {
+                try {
+                    const response = await fetch('/api/camera/preview', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ duration: this.previewExposure })
+                    });
+                    if (response.status === 409) {
+                        // Camera busy with previous capture — wait and retry
+                        if (this.isLooping) {
+                            setTimeout(() => this.capturePreview(), 250);
+                        }
+                        return;
+                    }
+                    const data = await response.json();
+                    if (response.ok && data.image_data) {
+                        this.previewDataUrl = data.image_data;
+                        this.loopCount++;
+                    } else {
+                        const { createToast } = await import('./config.js');
+                        createToast(data.error || 'Preview failed', 'danger', false);
+                        this.isLooping = false;
+                        return;
+                    }
+                } catch (error) {
+                    console.error('Preview error:', error);
+                    this.isLooping = false;
+                    return;
+                }
+
+                if (this.isLooping) {
+                    requestAnimationFrame(() => this.capturePreview());
+                }
+            },
+
+            startFocusLoop() {
+                if (this.isLooping) return;
+                this.isLooping = true;
+                this.loopCount = 0;
+                this.capturePreview();
+            },
+
+            stopFocusLoop() {
+                this.isLooping = false;
+            },
+
+            async singlePreview() {
+                if (this.isLooping) return;
+                this.isCapturing = true;
+                try {
+                    const response = await fetch('/api/camera/preview', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ duration: this.previewExposure })
+                    });
+                    const data = await response.json();
+                    if (response.ok && data.image_data) {
+                        this.previewDataUrl = data.image_data;
+                        this.loopCount++;
+                    } else {
+                        const { createToast } = await import('./config.js');
+                        createToast(data.error || 'Preview failed', 'danger', false);
+                    }
+                } catch (error) {
+                    const { createToast } = await import('./config.js');
+                    createToast('Preview failed: ' + error.message, 'danger', false);
+                } finally {
+                    this.isCapturing = false;
+                }
             },
 
             async showVersionModal() {

@@ -75,9 +75,9 @@
                                                                            :data-field="field.name" :data-type="field.type"
                                                                            :placeholder="field.placeholder || ''"
                                                                            :min="field.min" :max="field.max"
-                                                                           :step="field.type === 'float' ? 'any' : '1'"
+                                                                           :step="field.step || (field.type === 'float' ? 'any' : '1')"
                                                                            :required="field.required"
-                                                                           x-model="field.value" @input="handleChange">
+                                                                           x-model.lazy="field.value" @change="handleChange">
                                                                 </template>
 
                                                                 <!-- Text input -->
@@ -147,80 +147,174 @@
                                         </div>
                                     </div>
 
-                                    <div class="row">
-                                        <!-- Filter List Column -->
-                                        <div class="col-12" :class="$store.citrascope.status?.supports_autofocus ? 'col-md-6' : ''">
-                                            <h6 class="mb-2">Filters</h6>
-                                            <div id="filterTableContainer">
-                                                <table class="table table-dark table-sm">
-                                                    <thead>
-                                                        <tr>
-                                                            <th>Enabled</th>
-                                                            <th>Name</th>
-                                                            <th>Focus Position</th>
-                                                        </tr>
-                                                    </thead>
-                                                    <tbody>
-                                                        <template x-for="[filterId, filter] in Object.entries($store.citrascope.filters || {})" :key="filterId">
-                                                            <tr x-data="filterRow(filter, filterId)">
-                                                                <td>
-                                                                    <input type="checkbox" class="form-check-input filter-enabled-checkbox"
-                                                                        :data-filter-id="filterId" x-model="$store.citrascope.filters[filterId].enabled">
-                                                                </td>
-                                                                <td x-data="{ customName: '', isCustom: !$store.citrascope.filterNameOptions.some(g => g.names.includes($store.citrascope.filters[filterId].name)) }"
-                                                                    x-init="if (isCustom) customName = $store.citrascope.filters[filterId].name">
-                                                                    <div x-show="$store.citrascope.filterNamesEditable">
-                                                                        <div class="d-flex align-items-center gap-2">
-                                                                            <span class="rounded-circle d-inline-block flex-shrink-0"
-                                                                                :style="{ width: '12px', height: '12px', minWidth: '12px', backgroundColor: $store.citrascope.filterColors[$store.citrascope.filters[filterId].name] || '#777' }"></span>
-                                                                            <select class="form-select form-select-sm"
-                                                                                :data-filter-id="filterId"
-                                                                                :value="isCustom ? '__custom__' : $store.citrascope.filters[filterId].name"
-                                                                                @change="if ($event.target.value === '__custom__') { isCustom = true; customName = $store.citrascope.filters[filterId].name; } else { isCustom = false; $store.citrascope.filters[filterId].name = $event.target.value; }">
-                                                                                <template x-for="group in $store.citrascope.filterNameOptions" :key="group.group">
-                                                                                    <optgroup :label="group.group">
-                                                                                        <template x-for="fname in group.names" :key="fname">
-                                                                                            <option :value="fname" x-text="fname"></option>
-                                                                                        </template>
-                                                                                    </optgroup>
+                                    <div id="filterTableContainer">
+                                        <table class="table table-dark table-sm">
+                                            <thead>
+                                                <tr>
+                                                    <th>Enabled</th>
+                                                    <th>Name</th>
+                                                    <th>Focus Position</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody>
+                                                <template x-for="[filterId, filter] in Object.entries($store.citrascope.filters || {})" :key="filterId">
+                                                    <tr x-data="filterRow(filter, filterId)">
+                                                        <td>
+                                                            <input type="checkbox" class="form-check-input filter-enabled-checkbox"
+                                                                :data-filter-id="filterId" x-model="$store.citrascope.filters[filterId].enabled">
+                                                        </td>
+                                                        <td x-data="{ customName: '', isCustom: !$store.citrascope.filterNameOptions.some(g => g.names.includes($store.citrascope.filters[filterId].name)) }"
+                                                            x-init="if (isCustom) customName = $store.citrascope.filters[filterId].name">
+                                                            <div x-show="$store.citrascope.filterNamesEditable">
+                                                                <div class="d-flex align-items-center gap-2">
+                                                                    <span class="rounded-circle d-inline-block flex-shrink-0"
+                                                                        :style="{ width: '12px', height: '12px', minWidth: '12px', backgroundColor: $store.citrascope.filterColors[$store.citrascope.filters[filterId].name] || '#777' }"></span>
+                                                                    <select class="form-select form-select-sm"
+                                                                        :data-filter-id="filterId"
+                                                                        :value="isCustom ? '__custom__' : $store.citrascope.filters[filterId].name"
+                                                                        @change="if ($event.target.value === '__custom__') { isCustom = true; customName = $store.citrascope.filters[filterId].name; } else { isCustom = false; $store.citrascope.filters[filterId].name = $event.target.value; }">
+                                                                        <template x-for="group in $store.citrascope.filterNameOptions" :key="group.group">
+                                                                            <optgroup :label="group.group">
+                                                                                <template x-for="fname in group.names" :key="fname">
+                                                                                    <option :value="fname" x-text="fname"></option>
                                                                                 </template>
-                                                                                <option value="__custom__">Custom...</option>
-                                                                            </select>
-                                                                        </div>
-                                                                        <input x-show="isCustom"
-                                                                            type="text" class="form-control form-control-sm mt-1"
-                                                                            placeholder="Custom filter name"
-                                                                            x-model="customName"
-                                                                            @input="$store.citrascope.filters[filterId].name = customName">
-                                                                    </div>
-                                                                    <span x-show="!$store.citrascope.filterNamesEditable" class="badge" :style="badgeStyle" x-text="filter.name"></span>
-                                                                </td>
-                                                                <td>
-                                                                    <input type="number" class="form-control form-control-sm filter-focus-input"
-                                                                        :data-filter-id="filterId" x-model.number="$store.citrascope.filters[filterId].focus_position" min="0" step="1">
-                                                                </td>
-                                                            </tr>
-                                                        </template>
-                                                    </tbody>
-                                                </table>
-                                                <div class="text-muted small" x-show="Object.keys($store.citrascope.filters || {}).length === 0">
-                                                    No filters configured. Connect to hardware to discover filters.
+                                                                            </optgroup>
+                                                                        </template>
+                                                                        <option value="__custom__">Custom...</option>
+                                                                    </select>
+                                                                </div>
+                                                                <input x-show="isCustom"
+                                                                    type="text" class="form-control form-control-sm mt-1"
+                                                                    placeholder="Custom filter name"
+                                                                    x-model="customName"
+                                                                    @input="$store.citrascope.filters[filterId].name = customName">
+                                                            </div>
+                                                            <span x-show="!$store.citrascope.filterNamesEditable" class="badge" :style="badgeStyle" x-text="filter.name"></span>
+                                                        </td>
+                                                        <td>
+                                                            <input type="number" class="form-control form-control-sm filter-focus-input"
+                                                                :data-filter-id="filterId" x-model.number="$store.citrascope.filters[filterId].focus_position" min="0" step="1">
+                                                        </td>
+                                                    </tr>
+                                                </template>
+                                            </tbody>
+                                        </table>
+                                        <div class="text-muted small" x-show="Object.keys($store.citrascope.filters || {}).length === 0">
+                                            No filters configured. Connect to hardware to discover filters.
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- Focus Card (manual + autofocus) -->
+                            <div x-show="$store.citrascope.status?.focuser_connected || $store.citrascope.status?.supports_autofocus"
+                                 class="card bg-dark border-secondary mb-3"
+                                 x-data="{ stepSize: 100 }">
+                                <div class="card-header d-flex justify-content-between align-items-center">
+                                    <h6 class="mb-0"><i class="bi bi-arrows-expand me-1"></i>Focus</h6>
+                                    <div class="d-flex align-items-center gap-3">
+                                        <small class="text-muted font-monospace"
+                                               x-show="$store.citrascope.status?.focuser_temperature != null"
+                                               x-text="$store.citrascope.status?.focuser_temperature?.toFixed(1) + ' °C'"></small>
+                                        <small class="text-muted font-monospace"
+                                               x-show="$store.citrascope.status?.focuser_position != null"
+                                               x-text="'Position: ' + $store.citrascope.status?.focuser_position"></small>
+                                    </div>
+                                </div>
+                                <div class="card-body">
+                                    <div class="row g-3">
+                                        <!-- Manual Focus Column -->
+                                        <div x-show="$store.citrascope.status?.focuser_connected"
+                                             class="col-12" :class="$store.citrascope.status?.supports_autofocus ? 'col-md-7' : ''">
+                                            <h6 class="mb-2">Manual</h6>
+                                            <div class="d-flex align-items-center gap-2">
+                                                <button type="button" class="btn btn-sm btn-outline-secondary"
+                                                        :disabled="$store.citrascope.status?.focuser_moving"
+                                                        @click="window.moveFocuserRelative(-stepSize * 10)"
+                                                        title="In (coarse)">
+                                                    <i class="bi bi-chevron-double-left"></i>
+                                                </button>
+                                                <button type="button" class="btn btn-sm btn-outline-secondary"
+                                                        :disabled="$store.citrascope.status?.focuser_moving"
+                                                        @click="window.moveFocuserRelative(-stepSize)"
+                                                        title="In (fine)">
+                                                    <i class="bi bi-chevron-left"></i>
+                                                </button>
+
+                                                <div class="input-group input-group-sm" style="width: 140px;">
+                                                    <input type="number" class="form-control text-center"
+                                                           x-model.number="stepSize" min="1" step="1">
+                                                    <span class="input-group-text">steps</span>
                                                 </div>
+
+                                                <button type="button" class="btn btn-sm btn-outline-secondary"
+                                                        :disabled="$store.citrascope.status?.focuser_moving"
+                                                        @click="window.moveFocuserRelative(stepSize)"
+                                                        title="Out (fine)">
+                                                    <i class="bi bi-chevron-right"></i>
+                                                </button>
+                                                <button type="button" class="btn btn-sm btn-outline-secondary"
+                                                        :disabled="$store.citrascope.status?.focuser_moving"
+                                                        @click="window.moveFocuserRelative(stepSize * 10)"
+                                                        title="Out (coarse)">
+                                                    <i class="bi bi-chevron-double-right"></i>
+                                                </button>
+
+                                                <button type="button" class="btn btn-sm btn-outline-danger"
+                                                        x-show="$store.citrascope.status?.focuser_moving"
+                                                        @click="window.abortFocuser()"
+                                                        title="Stop">
+                                                    <i class="bi bi-stop-fill"></i>
+                                                </button>
+                                            </div>
+                                            <div class="d-flex gap-1 mt-1">
+                                                <button class="btn btn-sm btn-outline-secondary py-0 px-2" style="font-size: 0.7rem;"
+                                                        @click="stepSize = 10">10</button>
+                                                <button class="btn btn-sm btn-outline-secondary py-0 px-2" style="font-size: 0.7rem;"
+                                                        @click="stepSize = 50">50</button>
+                                                <button class="btn btn-sm btn-outline-secondary py-0 px-2" style="font-size: 0.7rem;"
+                                                        @click="stepSize = 100">100</button>
+                                                <button class="btn btn-sm btn-outline-secondary py-0 px-2" style="font-size: 0.7rem;"
+                                                        @click="stepSize = 500">500</button>
+                                                <button class="btn btn-sm btn-outline-secondary py-0 px-2" style="font-size: 0.7rem;"
+                                                        @click="stepSize = 1000">1k</button>
+                                            </div>
+
+                                            <div class="mt-3" x-data="{ targetPos: $store.citrascope.status?.focuser_position ?? 0 }">
+                                                <label class="form-label small text-muted">Go To Position</label>
+                                                <div class="d-flex align-items-center gap-2">
+                                                    <input type="number" class="form-control form-control-sm"
+                                                           x-model.number="targetPos" min="0"
+                                                           :max="$store.citrascope.status?.focuser_max_position || 999999">
+                                                    <button type="button" class="btn btn-sm btn-outline-primary text-nowrap"
+                                                            :disabled="$store.citrascope.status?.focuser_moving"
+                                                            @click="window.moveFocuserAbsolute(targetPos)">
+                                                        Go
+                                                    </button>
+                                                </div>
+                                                <small class="text-muted"
+                                                       x-show="$store.citrascope.status?.focuser_max_position"
+                                                       x-text="'Range: 0 – ' + ($store.citrascope.status?.focuser_max_position?.toLocaleString() ?? '?')"></small>
+                                            </div>
+
+                                            <div class="mt-2 text-info small" x-show="$store.citrascope.status?.focuser_moving">
+                                                <span class="spinner-border spinner-border-sm me-1" role="status"></span>
+                                                Moving...
                                             </div>
                                         </div>
 
                                         <!-- Autofocus Column -->
-                                        <div class="col-12 col-md-6" x-show="$store.citrascope.status?.supports_autofocus">
+                                        <div x-show="$store.citrascope.status?.supports_autofocus"
+                                             class="col-12" :class="$store.citrascope.status?.focuser_connected ? 'col-md-5' : ''">
                                             <h6 class="mb-2">Autofocus</h6>
                                             <div class="mb-3">
                                                 <button type="button" class="btn btn-sm w-100"
-                                                    :class="$store.citrascope.status?.autofocus_running ? 'btn-outline-info' : ($store.citrascope.status?.autofocus_requested ? 'btn-outline-warning' : 'btn-outline-primary')"
-                                                    :disabled="$store.citrascope.status?.autofocus_running"
+                                                    :class="$store.citrascope.status?.autofocus_running ? 'btn-outline-danger' : ($store.citrascope.status?.autofocus_requested ? 'btn-outline-warning' : 'btn-outline-primary')"
                                                     @click="window.triggerAutofocus()">
                                                     <template x-if="$store.citrascope.status?.autofocus_running">
                                                         <span>
-                                                            <span class="spinner-border spinner-border-sm me-1" role="status"></span>
-                                                            Autofocusing...
+                                                            <i class="bi bi-stop-fill me-1"></i>
+                                                            Cancel Autofocus
                                                         </span>
                                                     </template>
                                                     <template x-if="!$store.citrascope.status?.autofocus_running">
@@ -240,7 +334,7 @@
                                                     x-model="$store.citrascope.config.autofocus_target_preset">
                                                     <template x-for="preset in $store.citrascope.autofocusPresets" :key="preset.key">
                                                         <option :value="preset.key"
-                                                            x-text="preset.name + ' (' + preset.designation + ', mag ' + preset.mag.toFixed(1) + ')'"></option>
+                                                            x-text="preset.mag != null ? preset.name + ' (' + preset.designation + ', mag ' + preset.mag.toFixed(1) + ')' : preset.name + ' (' + preset.designation + ')'"></option>
                                                     </template>
                                                     <option value="custom">Custom RA/Dec</option>
                                                 </select>

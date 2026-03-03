@@ -5,6 +5,8 @@ import time
 from pathlib import Path
 from typing import cast
 
+import numpy as np
+
 from citrascope.hardware.abstract_astro_hardware_adapter import SettingSchemaEntry
 from citrascope.hardware.devices.camera import AbstractCamera
 
@@ -253,6 +255,37 @@ class UsbCamera(AbstractCamera):
         """
         return self._connected and self._camera is not None and self._camera.isOpened()
 
+    def capture_array(
+        self,
+        duration: float,
+        gain: int | None = None,
+        offset: int | None = None,
+        binning: int = 1,
+    ) -> np.ndarray:
+        if not self.is_connected():
+            raise RuntimeError("Camera not connected")
+        assert self._camera is not None
+        assert self._cv2_module is not None
+
+        try:
+            self.logger.info("Capturing USB camera frame...")
+            ret, frame = self._camera.read()
+            if not ret or frame is None:
+                raise RuntimeError("Failed to capture frame from USB camera")
+
+            if binning > 1:
+                height, width = frame.shape[:2]
+                new_size = (width // binning, height // binning)
+                frame = self._cv2_module.resize(frame, new_size, interpolation=self._cv2_module.INTER_AREA)
+
+            return np.asarray(frame)
+
+        except RuntimeError:
+            raise
+        except Exception as e:
+            self.logger.error(f"Failed to capture image: {e}")
+            raise RuntimeError(f"Image capture failed: {e}") from e
+
     def take_exposure(
         self,
         duration: float,
@@ -261,64 +294,25 @@ class UsbCamera(AbstractCamera):
         binning: int = 1,
         save_path: Path | None = None,
     ) -> Path:
-        """Capture an exposure (frame).
-
-        Args:
-            duration: Ignored for USB cameras (captures single frame)
-            gain: Not supported by most USB cameras via OpenCV
-            offset: Not supported by USB cameras via OpenCV
-            binning: Binning factor - applied via software resize
-            save_path: Path to save the image
-
-        Returns:
-            Path to the saved image
-
-        Raises:
-            RuntimeError: If camera not connected or capture fails
-        """
-        if not self.is_connected():
-            raise RuntimeError("Camera not connected")
-
-        assert self._camera is not None
         assert self._cv2_module is not None
+        frame = self.capture_array(duration, gain, offset, binning)
 
         if save_path is None:
             timestamp = time.strftime("%Y%m%d_%H%M%S")
             save_path = Path(f"/tmp/usb_camera_{timestamp}.{self.output_format}")
 
-        try:
-            self.logger.info("Capturing USB camera frame...")
+        file_extension = save_path.suffix.lower().lstrip(".")
+        format_to_use = file_extension if file_extension in ["fits", "png", "jpg", "jpeg"] else self.output_format
 
-            # Capture frame
-            ret, frame = self._camera.read()
+        if format_to_use == "fits":
+            self._save_as_fits(frame, save_path)
+        elif format_to_use == "png":
+            self._cv2_module.imwrite(str(save_path), frame)
+        elif format_to_use in ["jpg", "jpeg"]:
+            self._cv2_module.imwrite(str(save_path), frame, [self._cv2_module.IMWRITE_JPEG_QUALITY, 95])
 
-            if not ret or frame is None:
-                raise RuntimeError("Failed to capture frame from USB camera")
-
-            # Apply binning if requested
-            if binning > 1:
-                height, width = frame.shape[:2]
-                new_size = (width // binning, height // binning)
-                frame = self._cv2_module.resize(frame, new_size, interpolation=self._cv2_module.INTER_AREA)
-
-            # Determine format from file extension (if save_path provided) or configured output_format
-            file_extension = save_path.suffix.lower().lstrip(".")
-            format_to_use = file_extension if file_extension in ["fits", "png", "jpg", "jpeg"] else self.output_format
-
-            # Save based on format
-            if format_to_use == "fits":
-                self._save_as_fits(frame, save_path)
-            elif format_to_use == "png":
-                self._cv2_module.imwrite(str(save_path), frame)
-            elif format_to_use in ["jpg", "jpeg"]:
-                self._cv2_module.imwrite(str(save_path), frame, [self._cv2_module.IMWRITE_JPEG_QUALITY, 95])
-
-            self.logger.info(f"Image saved to {save_path}")
-            return save_path
-
-        except Exception as e:
-            self.logger.error(f"Failed to capture image: {e}")
-            raise RuntimeError(f"Image capture failed: {e}") from e
+        self.logger.info(f"Image saved to {save_path}")
+        return save_path
 
     def abort_exposure(self):
         """Abort current exposure.

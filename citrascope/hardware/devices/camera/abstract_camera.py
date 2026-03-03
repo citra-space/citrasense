@@ -6,6 +6,8 @@ from abc import abstractmethod
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+import numpy as np
+
 from citrascope.hardware.devices.abstract_hardware_device import AbstractHardwareDevice
 
 if TYPE_CHECKING:
@@ -20,6 +22,30 @@ class AbstractCamera(AbstractHardwareDevice):
     """
 
     @abstractmethod
+    def capture_array(
+        self,
+        duration: float,
+        gain: int | None = None,
+        offset: int | None = None,
+        binning: int = 1,
+    ) -> np.ndarray:
+        """Acquire raw pixel data as a 2-D numpy array. No file I/O.
+
+        This is the fundamental acquisition primitive. ``take_exposure``
+        calls this internally and then saves the result to disk.
+
+        Args:
+            duration: Exposure duration in seconds
+            gain: Camera gain setting (device-specific units)
+            offset: Camera offset/black level setting
+            binning: Pixel binning factor (1=no binning, 2=2x2, etc.)
+
+        Returns:
+            2-D numpy array of pixel data (uint8 or uint16).
+        """
+        ...
+
+    @abstractmethod
     def take_exposure(
         self,
         duration: float,
@@ -28,7 +54,7 @@ class AbstractCamera(AbstractHardwareDevice):
         binning: int = 1,
         save_path: Path | None = None,
     ) -> Path:
-        """Capture an image exposure.
+        """Capture an image exposure and save to disk.
 
         Args:
             duration: Exposure duration in seconds
@@ -40,7 +66,7 @@ class AbstractCamera(AbstractHardwareDevice):
         Returns:
             Path to the saved image file
         """
-        pass
+        ...
 
     @abstractmethod
     def abort_exposure(self):

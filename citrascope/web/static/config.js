@@ -534,8 +534,8 @@ async function saveModifiedFilters() {
     // Collect all filter updates from store
     const filterUpdates = [];
     for (const [filterId, filter] of Object.entries(filters)) {
-        const focusPosition = parseInt(filter.focus_position);
-        if (Number.isNaN(focusPosition) || focusPosition < 0) continue;
+        const rawFocus = parseInt(filter.focus_position);
+        const focusPosition = (Number.isNaN(rawFocus) || rawFocus < 0) ? null : rawFocus;
 
         const update = {
             filter_id: filterId,
@@ -600,10 +600,9 @@ async function saveModifiedFilters() {
  */
 async function triggerAutofocus() {
     const store = Alpine.store('citrascope');
-    const isCancel = store.status?.autofocus_requested;
+    const shouldCancel = store.status?.autofocus_requested || store.status?.autofocus_running;
 
-    if (isCancel) {
-        // Cancel autofocus
+    if (shouldCancel) {
         try {
             const response = await fetch('/api/adapter/autofocus/cancel', {
                 method: 'POST'
@@ -859,6 +858,60 @@ async function changeFilterPosition(position) {
     }
 }
 
+async function moveFocuserRelative(steps) {
+    try {
+        const response = await fetch('/api/focuser/move', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ relative: parseInt(steps) })
+        });
+        const data = await response.json();
+        if (!response.ok) {
+            createToast(data.error || 'Focuser move failed', 'danger', false);
+        }
+    } catch (error) {
+        console.error('Focuser move error:', error);
+        createToast('Failed to move focuser', 'danger', false);
+    }
+}
+
+async function moveFocuserAbsolute(position) {
+    try {
+        const response = await fetch('/api/focuser/move', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ position: parseInt(position) })
+        });
+        const data = await response.json();
+        if (response.ok) {
+            createToast(`Focuser moved to ${data.position}`, 'success', true);
+        } else {
+            createToast(data.error || 'Focuser move failed', 'danger', false);
+        }
+    } catch (error) {
+        console.error('Focuser move error:', error);
+        createToast('Failed to move focuser', 'danger', false);
+    }
+}
+
+async function abortFocuser() {
+    try {
+        const response = await fetch('/api/focuser/abort', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' }
+        });
+        const data = await response.json();
+        if (response.ok) {
+            createToast('Focuser stopped', 'warning', true);
+        } else {
+            createToast(data.error || 'Failed to stop focuser', 'danger', false);
+        }
+    } catch (error) {
+        console.error('Focuser abort error:', error);
+        createToast('Failed to stop focuser', 'danger', false);
+    }
+}
+
 export function setupAutofocusButton() {
     window.triggerAutofocus = triggerAutofocus;
     window.triggerAlignment = triggerAlignment;
@@ -869,6 +922,9 @@ export function setupAutofocusButton() {
     window.emergencyStop = emergencyStop;
     window.clearOperatorStop = clearOperatorStop;
     window.changeFilterPosition = changeFilterPosition;
+    window.moveFocuserRelative = moveFocuserRelative;
+    window.moveFocuserAbsolute = moveFocuserAbsolute;
+    window.abortFocuser = abortFocuser;
 }
 
 /**
