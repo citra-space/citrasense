@@ -1239,6 +1239,10 @@ class CitraScopeWebApp:
                     {"error": "Hardware adapter does not support direct camera control"}, status_code=400
                 )
 
+            task_manager = self.daemon.task_manager if hasattr(self.daemon, "task_manager") else None
+            if task_manager and task_manager.is_processing_active():
+                return JSONResponse({"error": "Camera unavailable — task processing is active"}, status_code=409)
+
             try:
                 duration = request.get("duration", 1.0)
                 if not isinstance(duration, (int, float)):

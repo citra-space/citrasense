@@ -511,18 +511,19 @@
                                                :disabled="$store.citrascope.isLooping">
                                     </div>
                                     <button class="btn btn-sm btn-outline-light"
-                                            :disabled="$store.citrascope.isCapturing || $store.citrascope.isLooping"
+                                            :disabled="$store.citrascope.isCapturing || $store.citrascope.isLooping || $store.citrascope.isImagingTaskActive"
                                             @click="$store.citrascope.singlePreview()">
                                         <i class="bi bi-camera"></i> Snap
                                     </button>
                                     <button class="btn btn-sm"
                                             :class="$store.citrascope.isLooping ? 'btn-danger' : 'btn-success'"
+                                            :disabled="!$store.citrascope.isLooping && $store.citrascope.isImagingTaskActive"
                                             @click="$store.citrascope.isLooping ? $store.citrascope.stopFocusLoop() : $store.citrascope.startFocusLoop()">
                                         <i class="bi" :class="$store.citrascope.isLooping ? 'bi-stop-fill' : 'bi-play-fill'"></i>
                                         <span x-text="$store.citrascope.isLooping ? 'Stop' : 'Loop'"></span>
                                     </button>
                                     <button class="btn btn-sm btn-outline-secondary"
-                                            :disabled="$store.citrascope.isCapturing || $store.citrascope.isLooping"
+                                            :disabled="$store.citrascope.isCapturing || $store.citrascope.isLooping || $store.citrascope.isImagingTaskActive"
                                             @click="$store.citrascope.captureImage()"
                                             data-bs-toggle="tooltip" data-bs-theme="dark" title="Capture to FITS using current exposure">
                                         <i class="bi bi-save"></i>
@@ -534,6 +535,9 @@
                                             data-bs-toggle="tooltip" data-bs-theme="dark" title="Flip preview horizontally (corrects diagonal mirror)">
                                         <i class="bi bi-symmetry-vertical"></i>
                                     </button>
+                                    <span class="text-warning small" x-show="$store.citrascope.isImagingTaskActive" x-cloak>
+                                        <i class="bi bi-exclamation-triangle-fill"></i> Processing active
+                                    </span>
                                 </div>
                             </div>
 

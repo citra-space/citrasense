@@ -148,7 +148,15 @@ import { FILTER_COLORS } from './filters.js';
                 }
             },
 
+            get isImagingTaskActive() {
+                return this.status?.processing_active === true;
+            },
+
             async capturePreview() {
+                if (this.isImagingTaskActive) {
+                    this.isLooping = false;
+                    return;
+                }
                 try {
                     const response = await fetch('/api/camera/preview', {
                         method: 'POST',
@@ -184,7 +192,7 @@ import { FILTER_COLORS } from './filters.js';
             },
 
             startFocusLoop() {
-                if (this.isLooping) return;
+                if (this.isLooping || this.isImagingTaskActive) return;
                 this.isLooping = true;
                 this.loopCount = 0;
                 this.capturePreview();
