@@ -757,7 +757,7 @@ class DirectHardwareAdapter(AbstractAstroHardwareAdapter):
     def supports_direct_camera_control(self) -> bool:
         return True
 
-    def capture_preview(self, exposure_time: float) -> str:
+    def capture_preview(self, exposure_time: float, flip_horizontal: bool = False) -> str:
         if not self.camera:
             raise RuntimeError("Camera not initialized")
         if not self._preview_lock.acquire(blocking=False):
@@ -770,7 +770,7 @@ class DirectHardwareAdapter(AbstractAstroHardwareAdapter):
                 duration=exposure_time,
                 binning=self.camera.get_default_binning(),
             )
-            return array_to_jpeg_data_url(data)
+            return array_to_jpeg_data_url(data, flip_horizontal=flip_horizontal)
         finally:
             self._preview_lock.release()
 

@@ -75,6 +75,8 @@ import { FILTER_COLORS } from './filters.js';
             },
 
             // Store methods
+            previewFlipH: false,
+
             async captureImage() {
                 const duration = this.previewExposure;
                 if (Number.isNaN(duration) || duration <= 0) {
@@ -151,7 +153,7 @@ import { FILTER_COLORS } from './filters.js';
                     const response = await fetch('/api/camera/preview', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ duration: this.previewExposure })
+                        body: JSON.stringify({ duration: this.previewExposure, flip_horizontal: this.previewFlipH })
                     });
                     if (response.status === 409) {
                         // Camera busy with previous capture — wait and retry
@@ -199,7 +201,7 @@ import { FILTER_COLORS } from './filters.js';
                     const response = await fetch('/api/camera/preview', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ duration: this.previewExposure })
+                        body: JSON.stringify({ duration: this.previewExposure, flip_horizontal: this.previewFlipH })
                     });
                     const data = await response.json();
                     if (response.ok && data.image_data) {

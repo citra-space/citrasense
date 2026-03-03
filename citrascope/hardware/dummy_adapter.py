@@ -842,7 +842,7 @@ class DummyAdapter(AbstractAstroHardwareAdapter):
         """Dummy adapter supports direct camera control."""
         return True
 
-    def capture_preview(self, exposure_time: float) -> str:
+    def capture_preview(self, exposure_time: float, flip_horizontal: bool = False) -> str:
         """Return a synthetic preview image as a JPEG data URL."""
         import numpy as np
 
@@ -854,7 +854,7 @@ class DummyAdapter(AbstractAstroHardwareAdapter):
         y, x = np.mgrid[0:h, 0:w]
         gradient = ((x + y) / (h + w) * 40000).astype(np.uint16)
         noise = rng.integers(0, 2000, size=(h, w), dtype=np.uint16)
-        return array_to_jpeg_data_url(gradient + noise)
+        return array_to_jpeg_data_url(gradient + noise, flip_horizontal=flip_horizontal)
 
     def expose_camera(self, exposure_seconds: float = 1.0) -> str:
         """Simulate manual camera exposure."""

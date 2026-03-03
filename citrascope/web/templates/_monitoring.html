@@ -528,6 +528,12 @@
                                         <i class="bi bi-save"></i>
                                         <span x-text="$store.citrascope.isCapturing ? 'Saving...' : 'Save'"></span>
                                     </button>
+                                    <button class="btn btn-sm"
+                                            :class="$store.citrascope.previewFlipH ? 'btn-info' : 'btn-outline-secondary'"
+                                            @click="$store.citrascope.previewFlipH = !$store.citrascope.previewFlipH"
+                                            data-bs-toggle="tooltip" data-bs-theme="dark" title="Flip preview horizontally (corrects diagonal mirror)">
+                                        <i class="bi bi-symmetry-vertical"></i>
+                                    </button>
                                 </div>
                             </div>
 

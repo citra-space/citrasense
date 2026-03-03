@@ -19,6 +19,7 @@ def array_to_jpeg_data_url(
     quality: int = 85,
     percentile_lo: float = 2.0,
     percentile_hi: float = 98.0,
+    flip_horizontal: bool = False,
 ) -> str:
     """Auto-stretch a 2-D pixel array and encode as a JPEG data URL.
 
@@ -27,11 +28,15 @@ def array_to_jpeg_data_url(
         quality: JPEG quality (1-100).
         percentile_lo: Low clip percentile for stretch.
         percentile_hi: High clip percentile for stretch.
+        flip_horizontal: Mirror left/right (corrects for diagonal mirrors
+            in the optical path).
 
     Returns:
         ``"data:image/jpeg;base64,..."`` string ready for ``<img src=...>``.
     """
     arr = np.asarray(data, dtype=np.float64)
+    if flip_horizontal:
+        arr = np.fliplr(arr)
 
     # For multi-channel images, stretch on luminance but keep all channels
     if arr.ndim == 3:

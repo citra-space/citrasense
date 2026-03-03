@@ -1250,7 +1250,8 @@ class CitraScopeWebApp:
                     return JSONResponse({"error": "Preview exposure must be 30 seconds or less"}, status_code=400)
 
                 adapter = self.daemon.hardware_adapter
-                image_data = await asyncio.to_thread(adapter.capture_preview, duration)
+                flip_h = bool(request.get("flip_horizontal", False))
+                image_data = await asyncio.to_thread(adapter.capture_preview, duration, flip_h)
                 return {"image_data": image_data}
 
             except NotImplementedError:
