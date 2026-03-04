@@ -453,13 +453,18 @@ class TaskManager:
     def clear_pending_tasks(self) -> int:
         """Cancel in-flight imaging and clear stage tracking.
 
+        Returns the number of queued imaging items drained.  Any in-flight
+        imaging task is also cancelled and will be marked as failed by the
+        imaging worker's normal failure path.
+
         The task heap, task_ids, and task_dict are intentionally preserved —
         tm.pause() already prevents the runner from popping new tasks, and
         on resume the heap re-enters the imaging pipeline naturally.
         """
         with self._stage_lock:
+            cleared = self.imaging_queue.clear()
             self.imaging_tasks.clear()
-        return self.imaging_queue.clear()
+        return cleared
 
     def pause(self) -> bool:
         """Pause task processing. Returns new state (False)."""
