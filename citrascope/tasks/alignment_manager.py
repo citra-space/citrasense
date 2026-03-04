@@ -138,6 +138,7 @@ class AlignmentManager:
                 return
 
             self._set_progress("Plate solving...")
+            self.logger.info(f"Alignment: plate solving {image_path}...")
             location_service = getattr(self.daemon, "location_service", None)
             result = PlateSolverProcessor.solve(Path(image_path), telescope_record, location_service=location_service)
 
@@ -146,9 +147,15 @@ class AlignmentManager:
                 return
 
             solved_ra, solved_dec = result
+            self.logger.info(f"Alignment: solved RA={solved_ra:.4f}°, Dec={solved_dec:.4f}°")
+
             self._set_progress("Syncing mount...")
+            current_ra, current_dec = mount.get_radec()
             mount.sync_to_radec(solved_ra, solved_dec)
-            self.logger.info(f"Alignment successful: synced to RA={solved_ra:.4f}°, Dec={solved_dec:.4f}°")
+            self.logger.info(
+                f"Alignment successful: mount synced "
+                f"(offset RA={solved_ra - current_ra:+.4f}°, Dec={solved_dec - current_dec:+.4f}°)"
+            )
 
         except Exception as e:
             self.logger.error(f"Alignment failed: {e!s}", exc_info=True)
