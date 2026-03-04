@@ -78,8 +78,8 @@ class KStarsDBusAdapter(AbstractAstroHardwareAdapter):
         self.bus: dbus.SessionBus | None = None
         self.kstars: dbus.Interface | None = None
         self.ekos: dbus.Interface | None = None
-        self.mount: dbus.Interface | None = None
-        self.camera: dbus.Interface | None = None
+        self._ekos_mount: dbus.Interface | None = None
+        self._ekos_camera: dbus.Interface | None = None
         self.scheduler: dbus.Interface | None = None
 
     @classmethod
@@ -206,7 +206,7 @@ class KStarsDBusAdapter(AbstractAstroHardwareAdapter):
         Raises:
             RuntimeError: If mount is not connected or slew fails
         """
-        if not self.mount:
+        if not self._ekos_mount:
             raise RuntimeError("Mount interface not connected. Call connect() first.")
 
         try:
@@ -216,7 +216,7 @@ class KStarsDBusAdapter(AbstractAstroHardwareAdapter):
             self.logger.info(f"Slewing telescope to RA={ra_hours:.4f}h ({ra:.4f}°), Dec={dec:.4f}°")
 
             # Call the slew method via DBus
-            success = self.mount.slew(ra_hours, dec)
+            success = self._ekos_mount.slew(ra_hours, dec)
 
             if not success:
                 raise RuntimeError(f"Mount slew command failed for RA={ra_hours}h, Dec={dec}°")
@@ -752,7 +752,7 @@ class KStarsDBusAdapter(AbstractAstroHardwareAdapter):
             # Get Mount interface
             try:
                 mount_obj = self.bus.get_object(self.bus_name, "/KStars/Ekos/Mount")
-                self.mount = dbus.Interface(mount_obj, dbus_interface="org.kde.kstars.Ekos.Mount")
+                self._ekos_mount = dbus.Interface(mount_obj, dbus_interface="org.kde.kstars.Ekos.Mount")
                 self.logger.info("Connected to Mount interface")
             except dbus.DBusException as e:
                 self.logger.warning(f"Mount interface not available: {e}")
@@ -760,7 +760,7 @@ class KStarsDBusAdapter(AbstractAstroHardwareAdapter):
             # Get Camera interface
             try:
                 camera_obj = self.bus.get_object(self.bus_name, "/KStars/Ekos/Camera")
-                self.camera = dbus.Interface(camera_obj, dbus_interface="org.kde.kstars.Ekos.Camera")
+                self._ekos_camera = dbus.Interface(camera_obj, dbus_interface="org.kde.kstars.Ekos.Camera")
                 self.logger.info("Connected to Camera interface")
             except dbus.DBusException as e:
                 self.logger.warning(f"Camera interface not available: {e}")
@@ -919,7 +919,7 @@ class KStarsDBusAdapter(AbstractAstroHardwareAdapter):
 
     def is_telescope_connected(self) -> bool:
         """Check if telescope is connected and responsive."""
-        if not self.mount or not self.bus:
+        if not self._ekos_mount or not self.bus:
             return False
         try:
             # Actually test the connection by reading a property
@@ -932,7 +932,7 @@ class KStarsDBusAdapter(AbstractAstroHardwareAdapter):
 
     def is_camera_connected(self) -> bool:
         """Check if camera is connected and responsive."""
-        if not self.camera or not self.bus:
+        if not self._ekos_camera or not self.bus:
             return False
         try:
             # Actually test the connection by reading a property
@@ -959,7 +959,7 @@ class KStarsDBusAdapter(AbstractAstroHardwareAdapter):
         Raises:
             RuntimeError: If mount is not connected or position query fails
         """
-        if not self.mount:
+        if not self._ekos_mount:
             raise RuntimeError("Mount interface not connected. Call connect() first.")
 
         assert self.bus is not None
@@ -1000,7 +1000,7 @@ class KStarsDBusAdapter(AbstractAstroHardwareAdapter):
         Raises:
             RuntimeError: If mount is not connected or status query fails
         """
-        if not self.mount:
+        if not self._ekos_mount:
             raise RuntimeError("Mount interface not connected. Call connect() first.")
 
         assert self.bus is not None

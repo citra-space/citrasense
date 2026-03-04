@@ -18,6 +18,7 @@ from citrascope.hardware.abstract_astro_hardware_adapter import (
     ObservationStrategy,
     SettingSchemaEntry,
 )
+from citrascope.hardware.devices.focuser.abstract_focuser import AbstractFocuser
 from citrascope.hardware.devices.mount.abstract_mount import AbstractMount
 from citrascope.hardware.devices.mount.mount_state_cache import MountStateCache
 
@@ -327,15 +328,31 @@ class _DummyMount(AbstractMount):
         self._ref_time = time.monotonic()
 
 
-class _DummyFocuser:
-    """Simulated focuser for DummyAdapter. Mimics AbstractFocuser without inheriting it."""
+class _DummyFocuser(AbstractFocuser):
+    """Simulated focuser for DummyAdapter."""
 
     def __init__(self, logger: logging.Logger) -> None:
-        self._logger = logger
+        super().__init__(logger)
         self._position: int = 25000
         self._max_position: int = 100000
         self._connected = True
         self._moving = False
+
+    @classmethod
+    def get_friendly_name(cls) -> str:
+        return "Dummy Focuser"
+
+    @classmethod
+    def get_dependencies(cls) -> dict[str, str | list[str]]:
+        return {"packages": [], "install_extra": ""}
+
+    @classmethod
+    def get_settings_schema(cls) -> list[SettingSchemaEntry]:
+        return []
+
+    def connect(self) -> bool:
+        self._connected = True
+        return True
 
     def is_connected(self) -> bool:
         return self._connected
@@ -354,15 +371,15 @@ class _DummyFocuser:
 
     def move_absolute(self, position: int) -> bool:
         if position < 0 or position > self._max_position:
-            self._logger.error(f"DummyFocuser: position {position} out of range")
+            self.logger.error(f"DummyFocuser: position {position} out of range")
             return False
         self._position = position
         return True
 
-    def move_relative(self, offset: int) -> bool:
-        target = self._position + offset
+    def move_relative(self, steps: int) -> bool:
+        target = self._position + steps
         if target < 0 or target > self._max_position:
-            self._logger.error(f"DummyFocuser: relative move to {target} out of range (0–{self._max_position})")
+            self.logger.error(f"DummyFocuser: relative move to {target} out of range (0–{self._max_position})")
             return False
         self._position = target
         return True
@@ -429,7 +446,7 @@ class DummyAdapter(AbstractAstroHardwareAdapter):
         return self._mount
 
     @property
-    def focuser(self) -> _DummyFocuser:
+    def focuser(self) -> AbstractFocuser:
         return self._focuser
 
     @classmethod

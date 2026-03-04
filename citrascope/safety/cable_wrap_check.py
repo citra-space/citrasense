@@ -268,20 +268,24 @@ class CableWrapCheck(SafetyCheck):
 
     def needs_startup_unwind(self) -> bool:
         """True if persisted cumulative rotation exceeds HARD_LIMIT_DEG."""
-        return abs(self._cumulative_deg) >= HARD_LIMIT_DEG
+        with self._lock:
+            return abs(self._cumulative_deg) >= HARD_LIMIT_DEG
 
     def did_last_unwind_fail(self) -> bool:
         """True if the most recent execute_action() did not converge."""
-        return self._consecutive_unwind_failures > 0
+        with self._lock:
+            return self._consecutive_unwind_failures > 0
 
     def mark_intervention_required(self) -> None:
         """Escalate to EMERGENCY until operator resets via web UI."""
-        self._intervention_required = True
+        with self._lock:
+            self._intervention_required = True
 
     @property
     def cumulative_deg(self) -> float:
         """Current cumulative azimuth rotation in degrees."""
-        return self._cumulative_deg
+        with self._lock:
+            return self._cumulative_deg
 
     @property
     def is_unwinding(self) -> bool:
