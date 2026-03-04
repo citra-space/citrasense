@@ -144,6 +144,9 @@ async function loadConfiguration() {
             if (config.keep_images === null || config.keep_images === undefined) {
                 config.keep_images = false; // Default to false
             }
+            if (config.keep_processing_output === null || config.keep_processing_output === undefined) {
+                config.keep_processing_output = false; // Default to false
+            }
             if (config.scheduled_autofocus_enabled === null || config.scheduled_autofocus_enabled === undefined) {
                 config.scheduled_autofocus_enabled = false; // Default to false
             }
@@ -287,6 +290,7 @@ async function saveConfiguration(event) {
         adapter_settings: adapterSettings, // Send flat settings for current adapter
         log_level: formConfig.log_level || 'INFO',
         keep_images: formConfig.keep_images || false,
+        keep_processing_output: formConfig.keep_processing_output || false,
         file_logging_enabled: formConfig.file_logging_enabled !== undefined ? formConfig.file_logging_enabled : true,
         scheduled_autofocus_enabled: formConfig.scheduled_autofocus_enabled || false,
         autofocus_interval_minutes: parseInt(formConfig.autofocus_interval_minutes || 60, 10),

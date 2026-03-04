@@ -53,6 +53,7 @@ class CitraScopeSettings:
         # Runtime settings (all loaded from config file, configurable via web UI)
         self.log_level: str = config.get("log_level", "INFO")
         self.keep_images: bool = config.get("keep_images", False)
+        self.keep_processing_output: bool = config.get("keep_processing_output", False)
 
         # Processor configuration
         self.processors_enabled: bool = config.get("processors_enabled", True)
@@ -162,6 +163,7 @@ class CitraScopeSettings:
             "adapter_settings": self._all_adapter_settings,
             "log_level": self.log_level,
             "keep_images": self.keep_images,
+            "keep_processing_output": self.keep_processing_output,
             "max_task_retries": self.max_task_retries,
             "initial_retry_delay_seconds": self.initial_retry_delay_seconds,
             "max_retry_delay_seconds": self.max_retry_delay_seconds,

@@ -105,8 +105,9 @@ class ProcessingQueue(BaseWorkQueue):
         if task_obj:
             task_obj.set_status_msg("Processing complete")
 
-        # Clean up working directory on success
-        self._cleanup_working_dir(task_id, item["context"].get("settings"))
+        settings = item["context"].get("settings")
+        if not settings or not settings.keep_processing_output:
+            self._cleanup_working_dir(task_id, settings)
 
         on_complete(task_id, result)
 
@@ -121,8 +122,9 @@ class ProcessingQueue(BaseWorkQueue):
         if task_obj:
             task_obj.set_status_msg("Processing permanently failed (uploading raw image)")
 
-        # Clean up working directory even on failure to avoid disk accumulation
-        self._cleanup_working_dir(task_id, item["context"].get("settings"))
+        settings = item["context"].get("settings")
+        if not settings or not settings.keep_processing_output:
+            self._cleanup_working_dir(task_id, settings)
 
         # Fail-open: notify with None result (will upload raw image)
         on_complete(task_id, None)

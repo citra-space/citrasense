@@ -250,6 +250,7 @@ class CitraScopeWebApp:
                 "adapter_settings": settings._all_adapter_settings,
                 "log_level": settings.log_level,
                 "keep_images": settings.keep_images,
+                "keep_processing_output": settings.keep_processing_output,
                 "file_logging_enabled": settings.file_logging_enabled,
                 "log_retention_days": settings.log_retention_days,
                 "max_task_retries": settings.max_task_retries,

@@ -94,13 +94,20 @@
                                     <small class="text-muted d-block mt-2">
                                         Process images before upload to extract readings and filter bad images
                                     </small>
+                                    <div class="form-check mt-3">
+                                        <input class="form-check-input" type="checkbox" id="keep_processing_output"
+                                               x-model="$store.citrascope.config.keep_processing_output">
+                                        <label class="form-check-label" for="keep_processing_output">
+                                            Keep processing output
+                                        </label>
+                                    </div>
+                                    <small class="text-muted d-block mt-2">
+                                        Retain intermediate files (source catalogs, plate solve artifacts) for inspection
+                                    </small>
                                     <div class="mt-3">
                                         <small class="text-muted">
                                             <i class="bi bi-folder me-1"></i>
                                             Working directory: <span class="text-secondary" x-text="$store.citrascope.config.processing_dir_path || 'Not configured'">Loading...</span>
-                                        </small>
-                                        <small class="text-muted d-block mt-1">
-                                            Temporary files for active tasks (auto-cleaned on success)
                                         </small>
                                     </div>
                                 </div>
@@ -297,9 +304,7 @@
                                             </label>
                                         </div>
                                         <small class="text-muted d-block mt-2">By default, images are deleted after upload unless this is enabled</small>
-                                    </div>
-                                    <div>
-                                        <small class="text-muted">
+                                        <small class="text-muted d-block">
                                             Images directory: <span class="text-secondary" x-text="$store.citrascope.config.images_dir_path || 'Loading...'">Loading...</span>
                                         </small>
                                     </div>
