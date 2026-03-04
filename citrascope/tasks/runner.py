@@ -328,7 +328,14 @@ class TaskManager:
                         with self.heap_lock:
                             if not (self.task_heap and self.task_heap[0][0] <= now):
                                 break
-                            _, _, tid, task = heapq.heappop(self.task_heap)
+                            _start_epoch, stop_epoch, tid, task = self.task_heap[0]
+                            if stop_epoch and stop_epoch < now:
+                                heapq.heappop(self.task_heap)
+                                self.task_ids.discard(tid)
+                                self.task_dict.pop(tid, None)
+                                self.logger.info(f"Skipping expired task {tid} (window closed)")
+                                continue
+                            heapq.heappop(self.task_heap)
                             self.task_ids.discard(tid)
 
                             self.logger.info(f"Starting task {tid} at {datetime.now().isoformat()}: {task}")
@@ -444,14 +451,15 @@ class TaskManager:
             return summary
 
     def clear_pending_tasks(self) -> int:
-        """Drain the task heap and imaging queue. Returns total items removed."""
-        with self.heap_lock:
-            count = len(self.task_heap)
-            self.task_heap.clear()
-            self.task_ids.clear()
-            self.task_dict.clear()
-        count += self.imaging_queue.clear()
-        return count
+        """Cancel in-flight imaging and clear stage tracking.
+
+        The task heap, task_ids, and task_dict are intentionally preserved —
+        tm.pause() already prevents the runner from popping new tasks, and
+        on resume the heap re-enters the imaging pipeline naturally.
+        """
+        with self._stage_lock:
+            self.imaging_tasks.clear()
+        return self.imaging_queue.clear()
 
     def pause(self) -> bool:
         """Pause task processing. Returns new state (False)."""

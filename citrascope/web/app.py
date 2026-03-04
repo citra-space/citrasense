@@ -1099,7 +1099,7 @@ class CitraScopeWebApp:
 
         @self.app.post("/api/emergency-stop")
         async def emergency_stop():
-            """Stop mount, pause task processing, and drain imaging queue."""
+            """Stop mount, pause task processing, cancel in-flight imaging."""
             if not self.daemon:
                 return JSONResponse({"error": "Daemon not available"}, status_code=503)
 
@@ -1109,11 +1109,11 @@ class CitraScopeWebApp:
             if self.daemon.safety_monitor:
                 self.daemon.safety_monitor.activate_operator_stop()
 
-            cleared = 0
+            cancelled = 0
             tm = self.daemon.task_manager
             if tm:
                 tm.pause()
-                cleared = tm.clear_pending_tasks()
+                cancelled = tm.clear_pending_tasks()
             if self.daemon.settings:
                 self.daemon.settings.task_processing_paused = True
                 self.daemon.settings.save()
@@ -1138,13 +1138,15 @@ class CitraScopeWebApp:
             threading.Thread(target=_halt_mount, daemon=True, name="emergency-stop").start()
 
             CITRASCOPE_LOGGER.warning(
-                "EMERGENCY STOP by operator — processing paused, %d imaging tasks cleared, mount halt issued",
-                cleared,
+                "EMERGENCY STOP by operator — processing paused, %d imaging task(s) cancelled, mount halt issued",
+                cancelled,
             )
             return JSONResponse(
                 {
                     "success": True,
-                    "message": f"Emergency stop: mount halt issued, {cleared} queued task(s) cleared",
+                    "message": (
+                        f"Emergency stop: mount halted, processing paused," f" {cancelled} imaging task(s) cancelled"
+                    ),
                 },
                 status_code=202,
             )

@@ -805,7 +805,7 @@ async function resetCableWrap() {
 }
 
 /**
- * Emergency stop — halt mount, pause tasks, drain imaging queue.
+ * Emergency stop — halt mount, pause tasks, cancel in-flight imaging.
  */
 async function emergencyStop() {
     try {
