@@ -388,14 +388,35 @@ def test_processing_queue_on_success():
     pq = ProcessingQueue(num_workers=1, settings=MagicMock(), logger=MagicMock())
     on_complete = MagicMock()
     task_obj = MagicMock()
+    mock_settings = MagicMock()
+    mock_settings.keep_processing_output = False
     item = {
         "task_id": "t1",
-        "context": {"task": task_obj, "settings": MagicMock()},
+        "context": {"task": task_obj, "settings": mock_settings},
         "on_complete": on_complete,
     }
-    with patch.object(pq, "_cleanup_working_dir"):
+    with patch.object(pq, "_cleanup_working_dir") as mock_cleanup:
         pq._on_success(item, "result")
+        mock_cleanup.assert_called_once_with("t1", mock_settings)
     task_obj.set_status_msg.assert_called_with("Processing complete")
+    on_complete.assert_called_once_with("t1", "result")
+
+
+def test_processing_queue_on_success_keeps_output():
+    from citrascope.tasks.processing_queue import ProcessingQueue
+
+    pq = ProcessingQueue(num_workers=1, settings=MagicMock(), logger=MagicMock())
+    on_complete = MagicMock()
+    mock_settings = MagicMock()
+    mock_settings.keep_processing_output = True
+    item = {
+        "task_id": "t1",
+        "context": {"task": MagicMock(), "settings": mock_settings},
+        "on_complete": on_complete,
+    }
+    with patch.object(pq, "_cleanup_working_dir") as mock_cleanup:
+        pq._on_success(item, "result")
+        mock_cleanup.assert_not_called()
     on_complete.assert_called_once_with("t1", "result")
 
 
@@ -405,11 +426,32 @@ def test_processing_queue_on_permanent_failure():
     pq = ProcessingQueue(num_workers=1, settings=MagicMock(), logger=MagicMock())
     on_complete = MagicMock()
     task_obj = MagicMock()
+    mock_settings = MagicMock()
+    mock_settings.keep_processing_output = False
     item = {
         "task_id": "t1",
-        "context": {"task": task_obj, "settings": MagicMock()},
+        "context": {"task": task_obj, "settings": mock_settings},
         "on_complete": on_complete,
     }
-    with patch.object(pq, "_cleanup_working_dir"):
+    with patch.object(pq, "_cleanup_working_dir") as mock_cleanup:
         pq._on_permanent_failure(item)
+        mock_cleanup.assert_called_once_with("t1", mock_settings)
+    on_complete.assert_called_once_with("t1", None)
+
+
+def test_processing_queue_on_permanent_failure_keeps_output():
+    from citrascope.tasks.processing_queue import ProcessingQueue
+
+    pq = ProcessingQueue(num_workers=1, settings=MagicMock(), logger=MagicMock())
+    on_complete = MagicMock()
+    mock_settings = MagicMock()
+    mock_settings.keep_processing_output = True
+    item = {
+        "task_id": "t1",
+        "context": {"task": MagicMock(), "settings": mock_settings},
+        "on_complete": on_complete,
+    }
+    with patch.object(pq, "_cleanup_working_dir") as mock_cleanup:
+        pq._on_permanent_failure(item)
+        mock_cleanup.assert_not_called()
     on_complete.assert_called_once_with("t1", None)
