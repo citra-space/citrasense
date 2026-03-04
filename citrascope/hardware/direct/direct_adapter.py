@@ -532,19 +532,16 @@ class DirectHardwareAdapter(AbstractAstroHardwareAdapter):
             self.mount.unpark()
             self.logger.info("Mount was parked — unparked for operation")
 
-        # Configure altitude limits for full-sky access.
-        # Set values BEFORE enabling so we don't accidentally enforce
-        # restrictive defaults.  On firmware 1.1.2 the :GL/:SL limit
-        # commands collide with Get/Set Local Time and silently fail.
+        # Altitude limits: software-enforced via AltitudeLimitCheck in the
+        # safety monitor (firmware limits broken on AM5 fw 1.1.2 where
+        # :GL/:SL commands collide with Get/Set Local Time).
+        # Log current state for diagnostics but don't try to configure.
         try:
-            upper_ok = self.mount.set_overhead_limit(90)
-            lower_ok = self.mount.set_horizon_limit(0)
-            if upper_ok and lower_ok:
-                self.mount.set_altitude_limits_enabled(True)
-            else:
-                self.logger.info("Altitude limit commands not supported on this firmware — using mount defaults")
+            limits_on = self.mount.get_altitude_limits_enabled()
+            lower, upper = self.mount.get_limits()
+            self.logger.info("Firmware altitude limits: enabled=%s lower=%s° upper=%s°", limits_on, lower, upper)
         except Exception:
-            self.logger.debug("Altitude limit configuration not supported", exc_info=True)
+            self.logger.info("Could not read firmware altitude limits", exc_info=True)
 
         # Meridian flip is only relevant in equatorial mode.
         # In alt-az (the default for satellite observation) there is no
