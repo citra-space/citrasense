@@ -101,7 +101,7 @@ class AbstractHardwareDevice(ABC):
         """
         from citrascope.hardware.probe_runner import run_hardware_probe
 
-        full_key = f"{cls.__name__}:{cache_key}"
+        full_key = f"{cls.__module__}.{cls.__qualname__}:{cache_key}"
 
         entry = cls._hardware_probe_cache.get(full_key)
         if entry is not None:
@@ -113,10 +113,11 @@ class AbstractHardwareDevice(ABC):
             probe_fn,
             timeout=timeout,
             fallback=fallback,
-            description=f"{cls.__name__} {cache_key} probe",
+            description=f"{cls.__qualname__} {cache_key} probe",
         )
 
-        cls._hardware_probe_cache[full_key] = (result, time.time())
+        if result is not fallback:
+            cls._hardware_probe_cache[full_key] = (result, time.time())
         return result
 
     @classmethod
@@ -125,7 +126,7 @@ class AbstractHardwareDevice(ABC):
 
         Useful for "Scan Hardware" buttons or after a reconnect.
         """
-        full_key = f"{cls.__name__}:{cache_key}"
+        full_key = f"{cls.__module__}.{cls.__qualname__}:{cache_key}"
         cls._hardware_probe_cache.pop(full_key, None)
 
     @abstractmethod

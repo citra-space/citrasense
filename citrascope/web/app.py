@@ -425,8 +425,9 @@ class CitraScopeWebApp:
 
                 self.daemon.settings.update_and_save(config)
 
-                # Trigger hot-reload in a thread so a slow adapter connect
-                # (e.g. dlopen on a hung USB device) doesn't block the event loop.
+                # Trigger hot-reload in a worker thread so slow adapter I/O
+                # doesn't block the event loop.  GIL-holding native calls
+                # (e.g. dlopen) are already subprocess-isolated inside probes.
                 success, error = await asyncio.to_thread(self.daemon.reload_configuration)
 
                 if success:

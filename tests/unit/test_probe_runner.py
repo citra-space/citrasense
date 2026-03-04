@@ -211,8 +211,10 @@ class TestCachedHardwareProbe:
                 timeout=5.0,
             )
 
-        assert AbstractHardwareDevice._hardware_probe_cache["MoravianCamera:default"][0] == ["moravian_result"]
-        assert AbstractHardwareDevice._hardware_probe_cache["ZwoEafFocuser:default"][0] == ["eaf_result"]
+        moravian_key = "citrascope.hardware.devices.camera.moravian_camera.MoravianCamera:default"
+        eaf_key = "citrascope.hardware.devices.focuser.zwo_eaf.ZwoEafFocuser:default"
+        assert AbstractHardwareDevice._hardware_probe_cache[moravian_key][0] == ["moravian_result"]
+        assert AbstractHardwareDevice._hardware_probe_cache[eaf_key][0] == ["eaf_result"]
 
     def test_cache_key_separates_probes(self):
         from citrascope.hardware.devices.camera.moravian_camera import MoravianCamera
@@ -241,8 +243,10 @@ class TestCachedHardwareProbe:
                 timeout=5.0,
             )
 
-        assert AbstractHardwareDevice._hardware_probe_cache["MoravianCamera:cameras"][0] == ["cameras"]
-        assert AbstractHardwareDevice._hardware_probe_cache["MoravianCamera:read_modes"][0] == ["modes"]
+        cameras_key = "citrascope.hardware.devices.camera.moravian_camera.MoravianCamera:cameras"
+        modes_key = "citrascope.hardware.devices.camera.moravian_camera.MoravianCamera:read_modes"
+        assert AbstractHardwareDevice._hardware_probe_cache[cameras_key][0] == ["cameras"]
+        assert AbstractHardwareDevice._hardware_probe_cache[modes_key][0] == ["modes"]
 
 
 # --- Device integration tests ---
@@ -280,7 +284,8 @@ class TestMoravianProbeIntegration:
 
         cached_cameras = [{"value": 42, "label": "Cached Camera"}]
         cached_modes = [{"value": 0, "label": "Mode 0"}]
-        AbstractHardwareDevice._hardware_probe_cache["MoravianCamera:default"] = (
+        key = "citrascope.hardware.devices.camera.moravian_camera.MoravianCamera:default"
+        AbstractHardwareDevice._hardware_probe_cache[key] = (
             (cached_cameras, cached_modes),
             time.time(),
         )
@@ -319,7 +324,8 @@ class TestEafProbeIntegration:
         from citrascope.hardware.devices.focuser.zwo_eaf import ZwoEafFocuser
 
         cached = [{"value": 7, "label": "Cached Focuser"}]
-        AbstractHardwareDevice._hardware_probe_cache["ZwoEafFocuser:default"] = (
+        key = "citrascope.hardware.devices.focuser.zwo_eaf.ZwoEafFocuser:default"
+        AbstractHardwareDevice._hardware_probe_cache[key] = (
             cached,
             time.time(),
         )
@@ -358,7 +364,8 @@ class TestUsbCameraProbeIntegration:
         from citrascope.hardware.devices.camera.usb_camera import UsbCamera
 
         cached = [{"value": 2, "label": "Cached USB Cam"}]
-        AbstractHardwareDevice._hardware_probe_cache["UsbCamera:default"] = (
+        key = "citrascope.hardware.devices.camera.usb_camera.UsbCamera:default"
+        AbstractHardwareDevice._hardware_probe_cache[key] = (
             cached,
             time.time(),
         )
@@ -369,10 +376,11 @@ class TestUsbCameraProbeIntegration:
     def test_clear_camera_cache_delegates(self):
         from citrascope.hardware.devices.camera.usb_camera import UsbCamera
 
-        AbstractHardwareDevice._hardware_probe_cache["UsbCamera:default"] = (
+        key = "citrascope.hardware.devices.camera.usb_camera.UsbCamera:default"
+        AbstractHardwareDevice._hardware_probe_cache[key] = (
             [{"value": 0, "label": "stale"}],
             time.time(),
         )
 
         UsbCamera.clear_camera_cache()
-        assert "UsbCamera:default" not in AbstractHardwareDevice._hardware_probe_cache
+        assert key not in AbstractHardwareDevice._hardware_probe_cache

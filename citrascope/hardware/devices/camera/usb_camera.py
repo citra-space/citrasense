@@ -36,15 +36,17 @@ def _probe_usb_cameras() -> list[dict[str, str | int]]:
         except ImportError:
             for index in range(10):
                 cap = cv2.VideoCapture(index)
-                if cap.isOpened():
-                    width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-                    height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-                    backend = cap.getBackendName() if hasattr(cap, "getBackendName") else ""
-                    backend_str = f" ({backend})" if backend else ""
-                    cameras.append({"value": index, "label": f"Camera {index} - {width}x{height}{backend_str}"})
+                try:
+                    if cap.isOpened():
+                        width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+                        height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+                        backend = cap.getBackendName() if hasattr(cap, "getBackendName") else ""
+                        backend_str = f" ({backend})" if backend else ""
+                        cameras.append({"value": index, "label": f"Camera {index} - {width}x{height}{backend_str}"})
+                    else:
+                        break
+                finally:
                     cap.release()
-                else:
-                    break
 
         if not cameras:
             cameras.append({"value": 0, "label": "Camera 0 (default)"})

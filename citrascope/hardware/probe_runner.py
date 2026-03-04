@@ -11,6 +11,7 @@ parent process.
 
 from __future__ import annotations
 
+import dataclasses
 import logging
 import multiprocessing
 import multiprocessing.connection
@@ -23,18 +24,27 @@ T = TypeVar("T")
 
 PROBE_TIMEOUT_SECONDS = 5.0
 
+_spawn_ctx = multiprocessing.get_context("spawn")
+
+
+@dataclasses.dataclass
+class _ProbeError:
+    """Sentinel sent by the subprocess when the probe raises."""
+
+    message: str
+
 
 def _subprocess_target(probe_fn: Callable[[], object], send_conn: multiprocessing.connection.Connection) -> None:
     """Entry point for the probe subprocess.
 
     Must be module-level (not a closure) so it can be pickled by the
-    ``spawn`` start method on macOS.
+    ``spawn`` start method.
     """
     try:
         result = probe_fn()
         send_conn.send(result)
     except Exception as exc:
-        send_conn.send(("__probe_error__", str(exc)))
+        send_conn.send(_ProbeError(str(exc)))
     finally:
         send_conn.close()
 
@@ -66,9 +76,9 @@ def run_hardware_probe(
     -------
     The probe result on success, or *fallback* on timeout / error.
     """
-    recv_conn, send_conn = multiprocessing.Pipe(duplex=False)
+    recv_conn, send_conn = _spawn_ctx.Pipe(duplex=False)
 
-    proc = multiprocessing.Process(target=_subprocess_target, args=(probe_fn, send_conn), daemon=True)
+    proc = _spawn_ctx.Process(target=_subprocess_target, args=(probe_fn, send_conn), daemon=True)
     proc.start()
     send_conn.close()
 
@@ -76,8 +86,8 @@ def run_hardware_probe(
         if recv_conn.poll(timeout):
             result = recv_conn.recv()
             proc.join(timeout=2)
-            if isinstance(result, tuple) and len(result) == 2 and result[0] == "__probe_error__":
-                logger.warning("%s raised: %s — using fallback", description, result[1])
+            if isinstance(result, _ProbeError):
+                logger.warning("%s raised: %s — using fallback", description, result.message)
                 return fallback
             return result  # type: ignore[return-value]
 
