@@ -1,9 +1,11 @@
 """Tests for e-stop clear_pending_tasks() and expired-task guard (#101)."""
 
 import heapq
+import threading
 import time
 from unittest.mock import MagicMock
 
+from citrascope.tasks.imaging_queue import ImagingQueue
 from citrascope.tasks.runner import TaskManager
 
 
@@ -187,3 +189,89 @@ class TestExpiredTaskGuard:
             popped.append(tid)
 
         assert "t1" in popped
+
+
+# ---------------------------------------------------------------------------
+# ImagingQueue._on_cancelled does NOT mark the task as failed on the API
+# ---------------------------------------------------------------------------
+
+
+class TestImagingCancelledNotFailed:
+    """E-stop cancelled imaging tasks should be retryable, not killed."""
+
+    def _make_imaging_queue(self):
+        settings = MagicMock()
+        settings.max_task_retries = 3
+        settings.initial_retry_delay_seconds = 1
+        settings.max_retry_delay_seconds = 10
+        logger = MagicMock()
+        api_client = MagicMock()
+        task_manager = MagicMock()
+        iq = ImagingQueue(
+            num_workers=0,
+            settings=settings,
+            logger=logger,
+            api_client=api_client,
+            task_manager=task_manager,
+        )
+        return iq, api_client, task_manager
+
+    def test_on_cancelled_does_not_mark_failed(self):
+        """_on_cancelled should NOT call mark_task_failed on the API."""
+        iq, api_client, task_manager = self._make_imaging_queue()
+        item = {
+            "task_id": "t1",
+            "task": _make_task("CancelMe"),
+            "on_complete": MagicMock(),
+        }
+
+        iq._on_cancelled(item)
+
+        api_client.mark_task_failed.assert_not_called()
+        task_manager.remove_task_from_all_stages.assert_called_once_with("t1")
+        item["on_complete"].assert_called_once_with("t1", success=False)
+
+    def test_on_permanent_failure_still_marks_failed(self):
+        """Genuine permanent failures should still hit the API."""
+        iq, api_client, task_manager = self._make_imaging_queue()
+        item = {
+            "task_id": "t2",
+            "task": _make_task("RealFail"),
+            "on_complete": MagicMock(),
+        }
+
+        iq._on_permanent_failure(item)
+
+        api_client.mark_task_failed.assert_called_once_with("t2")
+        task_manager.remove_task_from_all_stages.assert_called_once_with("t2")
+
+    def test_epoch_mismatch_routes_to_on_cancelled(self):
+        """When clear() bumps the epoch during execution, the worker should
+        call _on_cancelled (not _on_permanent_failure)."""
+        iq, api_client, _task_manager = self._make_imaging_queue()
+
+        completed = threading.Event()
+        on_complete = MagicMock(side_effect=lambda *a, **kw: completed.set())
+
+        iq._execute_work = MagicMock(side_effect=lambda item: (True, None))  # type: ignore[assignment]
+
+        item = {
+            "task_id": "t3",
+            "task": _make_task("EpochTest"),
+            "telescope_task_instance": MagicMock(),
+            "on_complete": on_complete,
+        }
+
+        iq.running = True
+        worker = threading.Thread(target=iq._worker_loop, daemon=True)
+        worker.start()
+
+        iq._clear_epoch += 1
+        iq.work_queue.put(item)
+
+        completed.wait(timeout=5)
+        iq.running = False
+        iq.work_queue.put(None)
+        worker.join(timeout=2)
+
+        api_client.mark_task_failed.assert_not_called()

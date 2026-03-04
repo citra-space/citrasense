@@ -78,6 +78,18 @@ class BaseWorkQueue(ABC):
         """
         pass
 
+    def _on_cancelled(self, item: dict[str, Any]):
+        """Handle a work item cancelled by clear() (e.g. emergency stop).
+
+        Unlike ``_on_permanent_failure``, this is called when the queue is
+        cleared while work is in-flight — not because the task itself failed.
+        Subclasses can override to perform cleanup without marking the task as
+        permanently failed on the backend.
+
+        Default delegates to ``_on_permanent_failure`` for backward compat.
+        """
+        self._on_permanent_failure(item)
+
     def _cancel_current_item(self, item: dict[str, Any]) -> None:  # noqa: B027
         """Cancel an in-flight work item during clear().
 
@@ -200,7 +212,7 @@ class BaseWorkQueue(ABC):
                         self.logger.info(f"Task {task_id} result discarded (queue cleared during execution)")
                         self.retry_counts.pop(task_id, None)
                         self.last_failure.pop(task_id, None)
-                        self._on_permanent_failure(item)
+                        self._on_cancelled(item)
                     elif success:
                         self.total_successes += 1
                         self.retry_counts.pop(task_id, None)
@@ -227,7 +239,7 @@ class BaseWorkQueue(ABC):
                         self.logger.info(f"Task {task_id} discarded after exception (queue cleared)")
                         self.retry_counts.pop(task_id, None)
                         self.last_failure.pop(task_id, None)
-                        self._on_permanent_failure(item)
+                        self._on_cancelled(item)
                     else:
                         self.logger.error(f"Worker error for {task_id}: {e}", exc_info=True)
                         if self._should_retry(task_id):
@@ -250,8 +262,10 @@ class BaseWorkQueue(ABC):
         """Cancel in-flight work, drain pending items, cancel retry timers,
         and suppress in-flight retries.
 
-        After clear(), any currently-executing task that fails will go straight
-        to _on_permanent_failure instead of scheduling another retry.
+        After clear(), any currently-executing task whose result lands will be
+        routed to ``_on_cancelled`` (not ``_on_permanent_failure``), giving
+        subclasses the option to treat operator-initiated cancellation
+        differently from genuine failures.
         """
         self._clear_epoch += 1
 

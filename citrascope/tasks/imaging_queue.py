@@ -80,6 +80,25 @@ class ImagingQueue(BaseWorkQueue):
 
         on_complete(task_id, success=True)
 
+    def _on_cancelled(self, item):
+        """Handle imaging cancelled by queue clear (e.g. emergency stop).
+
+        Does local cleanup but does NOT mark the task as failed on the backend,
+        so the next poll cycle can re-schedule it if the observation window is
+        still open.
+        """
+        task_id = item["task_id"]
+        task = item["task"]
+        on_complete = item["on_complete"]
+
+        self.logger.info(f"[ImagingWorker] Task {task_id} imaging cancelled (queue cleared)")
+
+        if task:
+            task.set_status_msg("Imaging cancelled (emergency stop)")
+
+        self.task_manager.remove_task_from_all_stages(task_id)
+        on_complete(task_id, success=False)
+
     def _on_permanent_failure(self, item):
         """Handle permanent imaging failure after max retries."""
         task_id = item["task_id"]
@@ -88,20 +107,15 @@ class ImagingQueue(BaseWorkQueue):
 
         self.logger.error(f"[ImagingWorker] Task {task_id} imaging permanently failed")
 
-        # Update status message
         if task:
             task.set_status_msg("Imaging permanently failed")
 
-        # Mark task as failed in API
         try:
             self.api_client.mark_task_failed(task_id)
         except Exception as e:
             self.logger.error(f"Failed to mark task {task_id} as failed in API: {e}")
 
-        # Remove from stage tracking
         self.task_manager.remove_task_from_all_stages(task_id)
-
-        # Notify callback
         on_complete(task_id, success=False)
 
     def _get_task_from_item(self, item):
