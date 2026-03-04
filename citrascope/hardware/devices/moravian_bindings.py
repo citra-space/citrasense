@@ -251,12 +251,14 @@ class GxccdCamera:
 
     def enumerate_usb(self) -> list[int]:
         ids: list[int] = []
-        self._lib.gxccd_enumerate_usb(ENUM_CALLBACK(lambda cid: ids.append(cid)))
+        cb = ENUM_CALLBACK(lambda cid: ids.append(cid))
+        self._lib.gxccd_enumerate_usb(cb)
         return ids
 
     def enumerate_eth(self) -> list[int]:
         ids: list[int] = []
-        self._lib.gxccd_enumerate_eth(ENUM_CALLBACK(lambda cid: ids.append(cid)))
+        cb = ENUM_CALLBACK(lambda cid: ids.append(cid))
+        self._lib.gxccd_enumerate_eth(cb)
         return ids
 
     def configure(self, ini_path: str | None = None) -> None:
@@ -421,12 +423,14 @@ class GxccdFilterWheel:
 
     def enumerate_usb(self) -> list[int]:
         ids: list[int] = []
-        self._lib.gxfw_enumerate_usb(ENUM_CALLBACK(lambda cid: ids.append(cid)))
+        cb = ENUM_CALLBACK(lambda cid: ids.append(cid))
+        self._lib.gxfw_enumerate_usb(cb)
         return ids
 
     def enumerate_eth(self) -> list[int]:
         ids: list[int] = []
-        self._lib.gxfw_enumerate_eth(ENUM_CALLBACK(lambda cid: ids.append(cid)))
+        cb = ENUM_CALLBACK(lambda cid: ids.append(cid))
+        self._lib.gxfw_enumerate_eth(cb)
         return ids
 
     def initialize_usb(self, wheel_id: int = -1) -> None:

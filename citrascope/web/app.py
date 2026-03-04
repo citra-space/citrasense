@@ -325,8 +325,20 @@ class CitraScopeWebApp:
                     except json.JSONDecodeError:
                         pass  # Ignore invalid JSON, use empty kwargs
 
-                schema = get_schema(adapter_name, **settings_kwargs)
+                schema = await asyncio.wait_for(
+                    asyncio.to_thread(get_schema, adapter_name, **settings_kwargs),
+                    timeout=15.0,
+                )
                 return {"schema": schema}
+            except asyncio.TimeoutError:
+                CITRASCOPE_LOGGER.warning(
+                    "Schema generation for %s timed out — hardware probe may be hung",
+                    adapter_name,
+                )
+                return JSONResponse(
+                    {"error": "Schema generation timed out — hardware may need a power cycle"},
+                    status_code=504,
+                )
             except ValueError as e:
                 # Invalid adapter name
                 return JSONResponse({"error": str(e)}, status_code=404)
@@ -413,8 +425,9 @@ class CitraScopeWebApp:
 
                 self.daemon.settings.update_and_save(config)
 
-                # Trigger hot-reload
-                success, error = self.daemon.reload_configuration()
+                # Trigger hot-reload in a thread so a slow adapter connect
+                # (e.g. dlopen on a hung USB device) doesn't block the event loop.
+                success, error = await asyncio.to_thread(self.daemon.reload_configuration)
 
                 if success:
                     return {
