@@ -74,6 +74,10 @@ All adapters implement `AbstractAstroHardwareAdapter`. Key methods:
 
 To add a new adapter: create the class in `citrascope/hardware/`, register it in `adapter_registry.py`.
 
+### Hardware device probes (GIL-safe detection)
+
+Any device that enumerates native hardware (ctypes/SDK calls) in `get_settings_schema()` **must** use `AbstractHardwareDevice._cached_hardware_probe()`. It runs the probe in a subprocess (separate GIL) with a timeout, so a hung USB device can't freeze the web server. See the docstring on that method for the full contract and `MoravianCamera`/`ZwoEafFocuser`/`UsbCamera` for working examples.
+
 The NINA adapter uses a **WebSocket event listener** (`nina/event_listener.py`) for reactive hardware control instead of polling. The pattern is: `event.clear()` → issue command via REST → `event.wait(timeout=...)`. Key events: `SEQUENCE-FINISHED`, `IMAGE-SAVE`, `FILTERWHEEL-CHANGED`, `AUTOFOCUS-FINISHED`.
 
 ### Work queues

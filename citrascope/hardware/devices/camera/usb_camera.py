@@ -11,6 +11,55 @@ from citrascope.hardware.abstract_astro_hardware_adapter import SettingSchemaEnt
 from citrascope.hardware.devices.camera import AbstractCamera
 
 
+def _probe_usb_cameras() -> list[dict[str, str | int]]:
+    """Enumerate USB cameras via OpenCV / cv2_enumerate_cameras.
+
+    Standalone module-level function so it can be pickled and sent to a
+    subprocess by :func:`run_hardware_probe`.
+    """
+    import logging as _logging
+
+    cameras: list[dict[str, str | int]] = []
+    try:
+        import cv2  # type: ignore[reportMissingImports]
+
+        try:
+            from cv2_enumerate_cameras import enumerate_cameras  # type: ignore[reportMissingImports]
+
+            camera_infos = list(enumerate_cameras())
+            _logging.getLogger("citrascope").debug(f"cv2_enumerate_cameras found {len(camera_infos)} cameras")
+
+            for camera_info in camera_infos:
+                name = camera_info.name or f"Camera {camera_info.index}"
+                cameras.append({"value": camera_info.index, "label": name})
+
+        except ImportError:
+            for index in range(10):
+                cap = cv2.VideoCapture(index)
+                if cap.isOpened():
+                    width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+                    height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+                    backend = cap.getBackendName() if hasattr(cap, "getBackendName") else ""
+                    backend_str = f" ({backend})" if backend else ""
+                    cameras.append({"value": index, "label": f"Camera {index} - {width}x{height}{backend_str}"})
+                    cap.release()
+                else:
+                    break
+
+        if not cameras:
+            cameras.append({"value": 0, "label": "Camera 0 (default)"})
+
+    except ImportError:
+        cameras.append({"value": 0, "label": "Camera 0 (opencv-python not installed)"})
+    except Exception:
+        cameras.append({"value": 0, "label": "Camera 0 (default)"})
+
+    return cameras
+
+
+_USB_CAMERA_FALLBACK: list[dict[str, str | int]] = [{"value": 0, "label": "Camera 0 (default)"}]
+
+
 class UsbCamera(AbstractCamera):
     """Adapter for USB cameras accessible via OpenCV.
 
@@ -23,11 +72,6 @@ class UsbCamera(AbstractCamera):
         camera_index (int): Camera device index (0 for first camera)
         output_format (str): Output format - 'fits', 'png', 'jpg'
     """
-
-    # Class-level cache for camera detection (shared across all instances)
-    _camera_cache: list[dict[str, str | int]] | None = None
-    _cache_timestamp: float = 0
-    _cache_ttl: float = float("inf")  # Cache forever until daemon restart
 
     @classmethod
     def get_friendly_name(cls) -> str:
@@ -51,13 +95,12 @@ class UsbCamera(AbstractCamera):
         }
 
     @classmethod
-    def clear_camera_cache(cls):
+    def clear_camera_cache(cls) -> None:
         """Clear cached camera list to force re-detection.
 
         Call this from a "Scan Hardware" button or when hardware changes are expected.
         """
-        cls._camera_cache = None
-        cls._cache_timestamp = 0
+        cls._clear_probe_cache()
 
     @classmethod
     def get_settings_schema(cls) -> list[SettingSchemaEntry]:
@@ -66,7 +109,6 @@ class UsbCamera(AbstractCamera):
         Returns:
             List of setting schema entries
         """
-        # Detect available cameras
         available_cameras = cls._detect_available_cameras()
 
         schema = [
@@ -97,86 +139,18 @@ class UsbCamera(AbstractCamera):
     def _detect_available_cameras(cls) -> list[dict[str, str | int]]:
         """Detect available USB cameras on the system.
 
+        Uses :meth:`_cached_hardware_probe` for subprocess isolation and
+        caching so a hung native call cannot freeze the web server.
+
         Returns:
             List of camera options as dicts with 'value' (index) and 'label' (name)
         """
-        import time
-
-        # Check cache first
-        cache_age = time.time() - cls._cache_timestamp
-        if cls._camera_cache is not None and cache_age < cls._cache_ttl:
-            from citrascope.logging import CITRASCOPE_LOGGER
-
-            CITRASCOPE_LOGGER.debug(f"Using cached camera list (age: {cache_age:.1f}s)")
-            return cls._camera_cache
-
-        start_time = time.time()
-
-        cameras = []
-        try:
-            import cv2  # type: ignore[reportMissingImports]
-
-            # Try to use cv2-enumerate-cameras for rich camera names
-            try:
-                from cv2_enumerate_cameras import enumerate_cameras  # type: ignore[reportMissingImports]
-
-                # Get fancy camera names from enumerate_cameras
-                # Assumption: enumerate_cameras() returns cameras in the same order as OpenCV detection
-                camera_infos = list(enumerate_cameras())
-
-                logging.getLogger("citrascope").debug(f"cv2_enumerate_cameras found {len(camera_infos)} cameras")
-
-                # Use the actual device index from camera_info for OpenCV compatibility
-                # Don't actually open cameras here - too wasteful
-                for camera_info in enumerate_cameras():
-                    name = camera_info.name or f"Camera {camera_info.index}"
-
-                    # Note: We're NOT opening cameras to verify or get resolution
-                    # Use camera_info.index (the actual OpenCV device index) not enumerate position
-                    cameras.append({"value": camera_info.index, "label": name})
-                    logging.getLogger("citrascope").debug(f"Found camera with device_id {camera_info.index}: {name}")
-
-            except ImportError:
-                # cv2-enumerate-cameras not installed, use basic detection
-                for index in range(10):
-                    cap = cv2.VideoCapture(index)
-                    if cap.isOpened():
-                        # Get camera resolution as identifier
-                        width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-                        height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-
-                        # Try to get backend name
-                        backend = cap.getBackendName() if hasattr(cap, "getBackendName") else ""
-                        backend_str = f" ({backend})" if backend else ""
-
-                        cameras.append({"value": index, "label": f"Camera {index} - {width}x{height}{backend_str}"})
-                        cap.release()
-                    else:
-                        # Stop searching after first unavailable index
-                        break
-
-            # If no cameras found, provide default option
-            if not cameras:
-                cameras.append({"value": 0, "label": "Camera 0 (default)"})
-
-        except ImportError:
-            # opencv not installed, provide default
-            cameras.append({"value": 0, "label": "Camera 0 (opencv-python not installed)"})
-        except Exception:
-            # Any other error, provide default
-            cameras.append({"value": 0, "label": "Camera 0 (default)"})
-
-        elapsed = time.time() - start_time
-        if elapsed > 0.1:  # Log if takes more than 100ms
-            from citrascope.logging import CITRASCOPE_LOGGER
-
-            CITRASCOPE_LOGGER.info(f"Camera detection took {elapsed:.3f}s, found {len(cameras)} camera(s)")
-
-        # Cache the results
-        cls._camera_cache = cameras
-        cls._cache_timestamp = time.time()
-
-        return cameras
+        return cls._cached_hardware_probe(
+            _probe_usb_cameras,
+            fallback=_USB_CAMERA_FALLBACK,
+            cache_ttl=float("inf"),
+            timeout=10.0,
+        )
 
     def __init__(self, logger: logging.Logger, **kwargs):
         """Initialize the USB camera.

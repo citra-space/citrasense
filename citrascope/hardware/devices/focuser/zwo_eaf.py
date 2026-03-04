@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import logging
 import threading
-import time as _time
 from typing import TYPE_CHECKING, Any, cast
 
 from citrascope.hardware.abstract_astro_hardware_adapter import SettingSchemaEntry
@@ -50,10 +49,6 @@ _FOCUSER_FALLBACK: list[dict[str, str | int]] = [{"value": -1, "label": "Auto (f
 class ZwoEafFocuser(AbstractFocuser):
     """Driver for the ZWO Electronic Automatic Focuser via the native SDK."""
 
-    _focuser_cache: list[dict[str, str | int]] | None = None
-    _cache_timestamp: float = 0
-    _cache_ttl: float = 30.0
-
     # -- AbstractHardwareDevice class methods --
 
     @classmethod
@@ -71,25 +66,15 @@ class ZwoEafFocuser(AbstractFocuser):
     def _detect_available_focusers(cls) -> list[dict[str, str | int]]:
         """Probe connected ZWO EAF focusers and return {value, label} options.
 
-        Results are cached for ``_cache_ttl`` seconds.  On cache miss the probe
-        runs in a subprocess so a hung native call cannot freeze the caller.
+        Uses :meth:`_cached_hardware_probe` for subprocess isolation and
+        caching so a hung native call cannot freeze the web server.
         """
-        cache_age = _time.time() - cls._cache_timestamp
-        if cls._focuser_cache is not None and cache_age < cls._cache_ttl:
-            return cls._focuser_cache
-
-        from citrascope.hardware.probe_runner import run_hardware_probe
-
-        options = run_hardware_probe(
+        return cls._cached_hardware_probe(
             _probe_eaf_focusers,
-            timeout=10.0,
             fallback=_FOCUSER_FALLBACK,
-            description="ZWO EAF focuser probe",
+            cache_ttl=30.0,
+            timeout=10.0,
         )
-
-        cls._focuser_cache = options
-        cls._cache_timestamp = _time.time()
-        return options
 
     @classmethod
     def get_settings_schema(cls) -> list[SettingSchemaEntry]:

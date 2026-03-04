@@ -74,10 +74,7 @@ _READ_MODE_FALLBACK: list[dict[str, str | int]] = [{"value": -1, "label": "Camer
 class MoravianCamera(AbstractCamera):
     """Driver for Moravian Instruments Gx/Cx cameras via gxccd native library."""
 
-    _camera_cache: list[dict[str, str | int]] | None = None
     _read_mode_cache: list[dict[str, str | int]] | None = None
-    _cache_timestamp: float = 0
-    _cache_ttl: float = 30.0
 
     @classmethod
     def get_friendly_name(cls) -> str:
@@ -91,26 +88,18 @@ class MoravianCamera(AbstractCamera):
     def _detect_available_cameras(cls) -> list[dict[str, str | int]]:
         """Probe connected Moravian cameras and return {value, label} options.
 
-        Results are cached for ``_cache_ttl`` seconds.  On cache miss the probe
-        runs in a subprocess so a hung native call cannot freeze the caller.
+        Uses :meth:`_cached_hardware_probe` for subprocess isolation and
+        caching so a hung native call cannot freeze the web server.
         """
-        cache_age = time.time() - cls._cache_timestamp
-        if cls._camera_cache is not None and cache_age < cls._cache_ttl:
-            return cls._camera_cache
-
-        from citrascope.hardware.probe_runner import run_hardware_probe
-
-        options, read_modes = run_hardware_probe(
+        options, read_modes = cls._cached_hardware_probe(
             _probe_moravian_cameras,
-            timeout=10.0,
             fallback=(_CAMERA_FALLBACK, _READ_MODE_FALLBACK),
-            description="Moravian camera probe",
+            cache_ttl=30.0,
+            timeout=10.0,
         )
 
-        cls._camera_cache = options
         if len(read_modes) > 1:
             cls._read_mode_cache = read_modes
-        cls._cache_timestamp = time.time()
         return options
 
     @classmethod

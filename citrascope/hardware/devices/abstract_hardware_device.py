@@ -1,9 +1,16 @@
 """Abstract base class for all hardware device types."""
 
+from __future__ import annotations
+
 import logging
+import time
 from abc import ABC, abstractmethod
+from collections.abc import Callable
+from typing import ClassVar, TypeVar
 
 from citrascope.hardware.abstract_astro_hardware_adapter import SettingSchemaEntry
+
+_T = TypeVar("_T")
 
 
 class AbstractHardwareDevice(ABC):
@@ -13,6 +20,8 @@ class AbstractHardwareDevice(ABC):
     """
 
     logger: logging.Logger
+
+    _hardware_probe_cache: ClassVar[dict[str, tuple[object, float]]] = {}
 
     def __init__(self, logger: logging.Logger, **kwargs):
         """Initialize the hardware device.
@@ -54,6 +63,70 @@ class AbstractHardwareDevice(ABC):
             List of setting schema entries (without device-type prefix)
         """
         pass
+
+    @classmethod
+    def _cached_hardware_probe(
+        cls,
+        probe_fn: Callable[[], _T],
+        *,
+        fallback: _T,
+        cache_key: str = "default",
+        cache_ttl: float = 30.0,
+        timeout: float = 10.0,
+    ) -> _T:
+        """Run a hardware probe in a subprocess with result caching.
+
+        Subclasses that enumerate native hardware (cameras, focusers, etc.)
+        should call this instead of invoking native SDKs directly.  The probe
+        runs in a separate process with its own GIL and is killed if it
+        exceeds *timeout*, preventing a hung USB device from freezing the
+        web server.
+
+        Parameters
+        ----------
+        probe_fn:
+            **Module-level** picklable callable (no arguments, picklable
+            return value).  Must be defined at module scope so the ``spawn``
+            start method on macOS can pickle it.
+        fallback:
+            Returned when the probe times out, raises, or cannot start.
+        cache_key:
+            Distinguishes multiple independent probes on the same device
+            class (e.g. ``"cameras"`` vs ``"read_modes"``).  Defaults to
+            ``"default"``.
+        cache_ttl:
+            Seconds to cache a successful probe result.
+        timeout:
+            Maximum seconds before the probe subprocess is killed.
+        """
+        from citrascope.hardware.probe_runner import run_hardware_probe
+
+        full_key = f"{cls.__name__}:{cache_key}"
+
+        entry = cls._hardware_probe_cache.get(full_key)
+        if entry is not None:
+            cached_result, cached_at = entry
+            if time.time() - cached_at < cache_ttl:
+                return cached_result  # type: ignore[return-value]
+
+        result = run_hardware_probe(
+            probe_fn,
+            timeout=timeout,
+            fallback=fallback,
+            description=f"{cls.__name__} {cache_key} probe",
+        )
+
+        cls._hardware_probe_cache[full_key] = (result, time.time())
+        return result
+
+    @classmethod
+    def _clear_probe_cache(cls, cache_key: str = "default") -> None:
+        """Evict a cached probe result, forcing a fresh probe on next call.
+
+        Useful for "Scan Hardware" buttons or after a reconnect.
+        """
+        full_key = f"{cls.__name__}:{cache_key}"
+        cls._hardware_probe_cache.pop(full_key, None)
 
     @abstractmethod
     def connect(self) -> bool:
