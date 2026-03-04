@@ -12,6 +12,16 @@ from citrascope.logging import CITRASCOPE_LOGGER, WebLogHandler
 from citrascope.web.app import CitraScopeWebApp
 
 
+class _HighFrequencyEndpointFilter(logging.Filter):
+    """Suppress access-log entries for endpoints that fire many times per second."""
+
+    _SUPPRESSED = ("/api/camera/preview",)
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        msg = record.getMessage()
+        return not any(ep in msg for ep in self._SUPPRESSED)
+
+
 class CitraScopeWebServer:
     """Manages the web server and its configuration."""
 
@@ -54,6 +64,7 @@ class CitraScopeWebServer:
         uvicorn_access.handlers = CITRASCOPE_LOGGER.handlers
         uvicorn_access.setLevel(CITRASCOPE_LOGGER.level)
         uvicorn_access.propagate = False
+        uvicorn_access.addFilter(_HighFrequencyEndpointFilter())
 
         uvicorn_error = logging.getLogger("uvicorn.error")
         uvicorn_error.handlers = CITRASCOPE_LOGGER.handlers

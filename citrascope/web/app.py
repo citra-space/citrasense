@@ -1006,9 +1006,12 @@ class CitraScopeWebApp:
 
             try:
                 if action == "start":
-                    rate = body.get("rate", 5)
-                    if not isinstance(rate, int) or not 1 <= rate <= 9:
-                        return JSONResponse({"error": "rate must be an integer 1-9"}, status_code=400)
+                    rate = body.get("rate")
+                    if rate is not None:
+                        if isinstance(rate, bool) or not isinstance(rate, int) or not 0 <= rate <= mount.max_move_rate:
+                            return JSONResponse(
+                                {"error": f"rate must be an integer 0-{mount.max_move_rate}"}, status_code=400
+                            )
                     ok = await asyncio.to_thread(mount.start_move, direction, rate)
                     return {"success": ok}
                 elif action == "stop":
@@ -1149,8 +1152,7 @@ class CitraScopeWebApp:
         async def clear_operator_stop():
             """Clear the operator stop — allows motion to resume.
 
-            Also reverses the pause that emergency_stop applied so
-            task processing can pick up where it left off.
+            Processing stays paused; the operator must manually re-enable it.
             """
             if not self.daemon:
                 return JSONResponse({"error": "Daemon not available"}, status_code=503)
@@ -1158,15 +1160,8 @@ class CitraScopeWebApp:
                 return JSONResponse({"error": "Safety monitor not available"}, status_code=503)
             self.daemon.safety_monitor.clear_operator_stop()
 
-            tm = self.daemon.task_manager
-            if tm:
-                tm.resume()
-            if self.daemon.settings:
-                self.daemon.settings.task_processing_paused = False
-                self.daemon.settings.save()
-
-            CITRASCOPE_LOGGER.info("Operator stop cleared via web UI — task processing resumed")
-            return {"success": True, "message": "Operator stop cleared — motion may resume"}
+            CITRASCOPE_LOGGER.info("Operator stop cleared — processing remains paused, re-enable manually")
+            return {"success": True, "message": "Operator stop cleared — re-enable processing when ready"}
 
         @self.app.post("/api/mount/limits")
         async def set_mount_limits(request: dict[str, Any]):
@@ -1244,6 +1239,10 @@ class CitraScopeWebApp:
                     {"error": "Hardware adapter does not support direct camera control"}, status_code=400
                 )
 
+            task_manager = self.daemon.task_manager if hasattr(self.daemon, "task_manager") else None
+            if task_manager and task_manager.is_processing_active():
+                return JSONResponse({"error": "Camera unavailable — task processing is active"}, status_code=503)
+
             try:
                 duration = request.get("duration", 1.0)
                 if not isinstance(duration, (int, float)):
@@ -1255,7 +1254,8 @@ class CitraScopeWebApp:
                     return JSONResponse({"error": "Preview exposure must be 30 seconds or less"}, status_code=400)
 
                 adapter = self.daemon.hardware_adapter
-                image_data = await asyncio.to_thread(adapter.capture_preview, duration)
+                flip_h = bool(request.get("flip_horizontal", False))
+                image_data = await asyncio.to_thread(adapter.capture_preview, duration, flip_h)
                 return {"image_data": image_data}
 
             except NotImplementedError:
@@ -1391,8 +1391,7 @@ class CitraScopeWebApp:
                     self.status.focuser_temperature = None
                     self.status.focuser_moving = False
 
-                has_camera = getattr(adapter, "camera", None) is not None
-                self.status.supports_alignment = has_camera and mount is not None
+                self.status.supports_alignment = self.status.camera_connected and mount is not None
 
                 if mount is not None and mount.cached_state is not None:
                     self.status.supports_manual_sync = mount.cached_mount_info.get("supports_sync", False)

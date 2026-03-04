@@ -328,7 +328,13 @@ class AbstractMount(AbstractHardwareDevice):
         """
         return None
 
-    def start_move(self, direction: str, rate: int = 7) -> bool:
+    @property
+    def max_move_rate(self) -> int:
+        """Maximum slew rate for ``start_move``.  Override in subclasses
+        whose firmware uses a different scale."""
+        return 9
+
+    def start_move(self, direction: str, rate: int | None = None) -> bool:
         """Start continuous motion in a cardinal direction.
 
         Used for directional cable unwinding where explicit CW/CCW
@@ -336,7 +342,7 @@ class AbstractMount(AbstractHardwareDevice):
 
         Args:
             direction: One of ``"north"``, ``"south"``, ``"east"``, ``"west"``
-            rate: Slew rate 0-9 (0 slowest, 9 fastest). Default 7 is moderate.
+            rate: Slew rate 0 to ``max_move_rate`` (0 slowest). Defaults to max.
 
         Returns:
             True if motion started, False if unsupported.

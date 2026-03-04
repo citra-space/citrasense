@@ -538,15 +538,16 @@ class ZwoAmMount(AbstractMount):
             self.logger.debug("Could not read altitude", exc_info=True)
             return None
 
-    def start_move(self, direction: str, rate: int = 7) -> bool:
+    def start_move(self, direction: str, rate: int | None = None) -> bool:
+        actual_rate = rate if rate is not None else self.max_move_rate
         try:
             d = Direction(direction.lower())
         except ValueError:
             self.logger.error("Invalid move direction: %s", direction)
             return False
-        self._transport.send_command_no_response(ZwoAmCommands.set_slew_rate(rate))
+        self._transport.send_command_no_response(ZwoAmCommands.set_slew_rate(actual_rate))
         self._transport.send_command_no_response(ZwoAmCommands.move_direction(d))
-        self.logger.info("Started move %s at rate %d", d.value, rate)
+        self.logger.info("Started move %s at rate %d", d.value, actual_rate)
         return True
 
     def stop_move(self, direction: str) -> bool:

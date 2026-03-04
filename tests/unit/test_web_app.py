@@ -334,9 +334,8 @@ def test_clear_operator_stop(client, mock_daemon):
     data = resp.json()
     assert data["success"] is True
     mock_daemon.safety_monitor.clear_operator_stop.assert_called_once()
-    mock_daemon.task_manager.resume.assert_called_once()
-    assert mock_daemon.settings.task_processing_paused is False
-    mock_daemon.settings.save.assert_called_once()
+    mock_daemon.task_manager.resume.assert_not_called()
+    mock_daemon.settings.save.assert_not_called()
 
 
 def test_clear_operator_stop_no_daemon():

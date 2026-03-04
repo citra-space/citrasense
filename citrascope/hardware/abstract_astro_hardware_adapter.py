@@ -430,7 +430,7 @@ class AbstractAstroHardwareAdapter(ABC):
         """
         return False
 
-    def capture_preview(self, exposure_time: float) -> str:
+    def capture_preview(self, exposure_time: float, flip_horizontal: bool = False) -> str:
         """Take an ephemeral preview exposure and return a JPEG data URL.
 
         No files are written to disk. Used by the live focus loop in the UI.
@@ -438,6 +438,7 @@ class AbstractAstroHardwareAdapter(ABC):
 
         Args:
             exposure_time: Exposure duration in seconds.
+            flip_horizontal: Mirror left/right for display (corrects diagonal mirrors).
 
         Returns:
             ``"data:image/jpeg;base64,..."`` string.

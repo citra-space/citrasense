@@ -77,179 +77,142 @@
     <div id="monitoringSection" x-show="$store.citrascope.currentSection === 'monitoring'"
         x-effect="$store.citrascope.status && $nextTick(() => { document.querySelectorAll('[data-bs-toggle=tooltip]').forEach(el => { try { bootstrap.Tooltip.getOrCreateInstance(el); } catch (_) {} }); })">
         <div class="container">
-            <div class="row g-3 mb-3">
-                <div class="col-12 col-md-6">
-                    <div class="card bg-dark text-light border-secondary h-100">
-                        <div class="card-header d-flex align-items-center justify-content-between">
-                            System Status
-                            <button class="btn btn-sm btn-danger"
-                                    x-show="$store.citrascope.wsConnected"
-                                    @click="emergencyStop()"
-                                    data-bs-toggle="tooltip" data-bs-theme="dark" data-bs-placement="bottom"
-                                    title="Stop mount, pause tasks, drain queue">
-                                <i class="bi bi-stop-circle-fill"></i> Stop
-                            </button>
+
+            <!-- ═══════════════ Status LED Row ═══════════════ -->
+            <div class="d-flex align-items-center flex-wrap gap-3 bg-dark rounded border border-secondary px-3 py-2 mb-3"
+                 x-data="{
+                     get safetyChecks() { return $store.citrascope.status?.safety_status?.checks || []; },
+                     get safetyWorst() {
+                         const order = ['safe','warn','stop','emergency'];
+                         let w = 'safe';
+                         for (const c of this.safetyChecks) {
+                             if (order.indexOf(c.action) > order.indexOf(w)) w = c.action;
+                         }
+                         return w;
+                     },
+                     get safetyWatchdog() { return $store.citrascope.status?.safety_status?.watchdog_alive; },
+                     get safetyTip() {
+                         if (!this.safetyChecks.length) return 'No safety checks active';
+                         const labels = { safe: '\u2713', warn: '\u26A0', stop: '\u23F8', emergency: '\u2716' };
+                         const names = { operator_stop: 'Operator Stop', cable_wrap: 'Cable Wrap', disk_space: 'Disk Space', time_health: 'Time Health' };
+                         let lines = this.safetyChecks.map(c =>
+                             (labels[c.action] || '?') + ' ' + (names[c.name] || c.name)
+                         );
+                         if (this.safetyWatchdog === false) lines.push('\u2716 Watchdog offline');
+                         return lines.join('\n');
+                     }
+                 }">
+
+                <span class="badge rounded-pill"
+                      data-bs-toggle="tooltip" data-bs-theme="dark"
+                      style="white-space:pre-line;" :title="safetyTip"
+                      x-show="safetyChecks.length > 0"
+                      :class="safetyWorst === 'emergency' ? 'bg-danger' : safetyWorst === 'stop' ? 'bg-warning text-dark' : safetyWorst === 'warn' ? 'bg-warning text-dark' : (safetyWatchdog === false ? 'bg-secondary' : 'bg-success')"
+                      x-text="safetyWorst === 'emergency' ? 'Emergency' : safetyWorst === 'stop' ? 'Safety: Hold' : safetyWorst === 'warn' ? 'Safety: Warning' : (safetyWatchdog === false ? 'Safety: Offline' : 'Safety: ' + safetyChecks.length + ' OK')"></span>
+
+                <span class="badge rounded-pill"
+                      data-bs-toggle="tooltip" data-bs-theme="dark"
+                      :title="$store.citrascope.wsConnected ? 'Connected \u2014 receiving live updates' : ($store.citrascope.wsReconnecting ? 'Reconnecting\u2026' : 'Daemon disconnected')"
+                      :class="$store.citrascope.wsConnected ? 'bg-success' : ($store.citrascope.wsReconnecting ? 'bg-warning text-dark' : 'bg-danger')"
+                      x-text="$store.citrascope.wsReconnecting ? 'Reconnecting' : 'Daemon'"></span>
+
+                <span class="badge rounded-pill"
+                      data-bs-toggle="tooltip" data-bs-theme="dark"
+                      :title="$store.citrascope.status?.telescope_connected ? 'Telescope connected' : 'Telescope disconnected'"
+                      :class="$store.citrascope.status?.telescope_connected ? 'bg-success' : 'bg-danger'">Telescope</span>
+
+                <span class="badge rounded-pill"
+                      data-bs-toggle="tooltip" data-bs-theme="dark"
+                      :title="$store.citrascope.status?.camera_connected
+                          ? ('Camera connected' + ($store.citrascope.status?.camera_temperature != null ? ' \u00b7 ' + $store.citrascope.status.camera_temperature.toFixed(1) + ' \u00b0C' : ''))
+                          : 'Camera disconnected'"
+                      :class="$store.citrascope.status?.camera_connected ? 'bg-success' : 'bg-danger'"
+                      x-text="$store.citrascope.status?.camera_connected && $store.citrascope.status?.camera_temperature != null
+                          ? 'Camera ' + $store.citrascope.status.camera_temperature.toFixed(1) + '\u00b0C'
+                          : 'Camera'"></span>
+
+                <span class="badge rounded-pill"
+                      data-bs-toggle="tooltip" data-bs-theme="dark"
+                      :title="$store.citrascope.status?.focuser_connected
+                          ? ('Focuser connected' + ($store.citrascope.status?.focuser_temperature != null ? ' \u00b7 ' + $store.citrascope.status.focuser_temperature.toFixed(1) + ' \u00b0C' : ''))
+                          : 'No focuser'"
+                      :class="$store.citrascope.status?.focuser_connected ? 'bg-success' : 'bg-secondary'"
+                      x-text="$store.citrascope.status?.focuser_connected && $store.citrascope.status?.focuser_temperature != null
+                          ? 'Focuser ' + $store.citrascope.status.focuser_temperature.toFixed(1) + '\u00b0C'
+                          : 'Focuser'"></span>
+
+                <span class="badge rounded-pill"
+                      data-bs-toggle="tooltip" data-bs-theme="dark"
+                      :title="$store.citrascope.status?.time_health?.status === 'ok' ? 'Time sync OK' : ($store.citrascope.status?.time_health?.status === 'critical' ? 'Time drift critical' : 'Time sync unknown')"
+                      :class="$store.citrascope.status?.time_health?.status === 'ok' ? 'bg-success' : ($store.citrascope.status?.time_health?.status === 'critical' ? 'bg-danger' : 'bg-secondary')"
+                      x-text="'Time: ' + $store.citrascope.formatTimeOffset($store.citrascope.status?.time_health)"></span>
+
+                <span class="badge rounded-pill"
+                      data-bs-toggle="tooltip" data-bs-theme="dark"
+                      :title="$store.citrascope.status?.gps_location ? ($store.citrascope.status.gps_location.is_strong ? 'GPS fix' : 'GPS weak/no fix') : 'GPS unavailable'"
+                      x-show="$store.citrascope.config?.gps_location_updates_enabled !== false"
+                      :class="$store.citrascope.status?.gps_location?.is_strong ? 'bg-success' : 'bg-secondary'"
+                      x-text="'GPS: ' + $store.citrascope.formatGPSLocation($store.citrascope.status?.gps_location)"></span>
+
+                <!-- Right side: toggles + E-Stop -->
+                <div class="ms-auto d-flex align-items-center gap-2">
+                    <div class="d-flex flex-column flex-md-row align-items-end align-items-md-center gap-1">
+                        <div class="d-flex align-items-center gap-1"
+                             data-bs-toggle="tooltip" data-bs-theme="dark"
+                             title="Automated scheduling — server assigns tasks to this telescope">
+                            <small class="text-muted text-nowrap">Scheduling</small>
+                            <div class="form-check form-switch mb-0">
+                                <input class="form-check-input" type="checkbox"
+                                       :checked="$store.citrascope.status?.automated_scheduling"
+                                       @change="$store.citrascope.toggleAutomatedScheduling($event.target.checked)">
+                            </div>
                         </div>
-                        <div class="card-body">
-                            <div class="row mb-2">
-                                <div class="col-6 fw-semibold">Daemon</div>
-                                <div class="col-6">
-                                    <span class="badge rounded-pill" data-bs-toggle="tooltip" data-bs-placement="bottom"
-                                        :class="$store.citrascope.wsConnected ? 'bg-success' : ($store.citrascope.wsReconnecting ? 'bg-warning text-dark' : 'bg-secondary')"
-                                        :title="$store.citrascope.wsConnected ? 'Dashboard connected - receiving live updates' : ($store.citrascope.wsReconnecting ? 'Dashboard reconnecting' : 'Dashboard disconnected')"
-                                        x-text="$store.citrascope.wsConnected ? 'Connected' : ($store.citrascope.wsReconnecting ? 'Reconnecting' : 'Connecting...')"></span>
-                                </div>
-                            </div>
-                            <div class="row mb-2"
-                                 x-data="{
-                                     get checks() { return $store.citrascope.status?.safety_status?.checks || []; },
-                                     get worst() {
-                                         const order = ['safe','warn','stop','emergency'];
-                                         let w = 'safe';
-                                         for (const c of this.checks) {
-                                             if (order.indexOf(c.action) > order.indexOf(w)) w = c.action;
-                                         }
-                                         return w;
-                                     },
-                                     get watchdog() { return $store.citrascope.status?.safety_status?.watchdog_alive; },
-                                     get tip() {
-                                         if (!this.checks.length) return 'No safety checks active';
-                                         const labels = { safe: '✓', warn: '⚠', stop: '⏸', emergency: '✖' };
-                                         const names = { operator_stop: 'Operator Stop', cable_wrap: 'Cable Wrap', disk_space: 'Disk Space', time_health: 'Time Health' };
-                                         let lines = this.checks.map(c =>
-                                             (labels[c.action] || '?') + ' ' + (names[c.name] || c.name)
-                                         );
-                                         if (this.watchdog === false) lines.push('✖ Watchdog offline');
-                                         return lines.join('\n');
-                                     }
-                                 }"
-                                 x-show="checks.length > 0">
-                                <div class="col-6 fw-semibold">
-                                    <span data-bs-toggle="tooltip" data-bs-theme="dark" data-bs-placement="top"
-                                          title="Safety monitor with watchdog thread. Checks hardware limits, disk space, and time health.">
-                                        Safety
-                                    </span>
-                                </div>
-                                <div class="col-6">
-                                    <span class="badge rounded-pill"
-                                          data-bs-toggle="tooltip" data-bs-theme="dark" data-bs-placement="bottom"
-                                          style="white-space: pre-line;"
-                                          :title="tip"
-                                          :class="worst === 'emergency' ? 'bg-danger' : worst === 'stop' ? 'bg-warning text-dark' : worst === 'warn' ? 'bg-warning text-dark' : (watchdog === false ? 'bg-secondary' : 'bg-success')"
-                                          x-text="worst === 'emergency' ? 'Emergency' : worst === 'stop' ? 'Hold' : worst === 'warn' ? 'Warning' : (watchdog === false ? 'Offline' : checks.length + ' checks OK')"></span>
-                                </div>
-                            </div>
-                            <div class="row mb-2">
-                                <div class="col-6 fw-semibold">Telescope</div>
-                                <div class="col-6">
-                                    <span class="badge rounded-pill" :class="$store.citrascope.status?.telescope_connected ? 'bg-success' : 'bg-danger'"
-                                        x-text="$store.citrascope.status?.telescope_connected ? 'Connected' : 'Disconnected'"></span>
-                                </div>
-                            </div>
-                            <div class="row mb-2">
-                                <div class="col-6 fw-semibold">Camera</div>
-                                <div class="col-6 d-flex align-items-center gap-2">
-                                    <span class="badge rounded-pill" :class="$store.citrascope.status?.camera_connected ? 'bg-success' : 'bg-danger'"
-                                        x-text="$store.citrascope.status?.camera_connected ? 'Connected' : 'Disconnected'"></span>
-                                    <span class="badge bg-secondary rounded-pill"
-                                        x-show="$store.citrascope.status?.camera_temperature != null"
-                                        x-text="($store.citrascope.status?.camera_temperature?.toFixed(1) ?? '') + ' °C'"></span>
-                                    <button class="btn btn-sm btn-outline-light"
-                                        x-show="$store.citrascope.status?.camera_connected && $store.citrascope.status?.supports_direct_camera_control"
-                                        @click="$store.citrascope.showCameraControl()">
-                                        <i class="bi bi-camera"></i> Control
-                                    </button>
-                                </div>
-                            </div>
-                            <div class="row mb-2">
-                                <div class="col-6 fw-semibold">
-                                    <span data-bs-toggle="tooltip" data-bs-theme="dark" data-bs-placement="top" title="Controls whether the Citra.space server will automatically assign new observation tasks to this telescope">
-                                        Automated Scheduling
-                                    </span>
-                                </div>
-                                <div class="col-6 d-flex align-items-center gap-2">
-                                    <span><span class="badge rounded-pill" :class="$store.citrascope.status?.automated_scheduling ? 'bg-success' : 'bg-secondary'"
-                                        x-text="$store.citrascope.status?.automated_scheduling ? 'Enabled' : 'Disabled'"></span></span>
-                                    <div class="form-check form-switch">
-                                        <input class="form-check-input" type="checkbox" title="Toggle automated scheduling"
-                                            :checked="$store.citrascope.status?.automated_scheduling"
-                                            @change="$store.citrascope.toggleAutomatedScheduling($event.target.checked)">
-                                        <label class="form-check-label visually-hidden">Automated Scheduling</label>
-                                    </div>
-                                </div>
-                            </div>
-                            <div class="row mb-2">
-                                <div class="col-6 fw-semibold">
-                                    <span data-bs-toggle="tooltip" data-bs-theme="dark" data-bs-placement="top" title="Controls whether this local daemon will execute tasks from its queue. Pause to safely stop observations without canceling scheduled tasks">
-                                        Task Processing
-                                    </span>
-                                </div>
-                                <div class="col-6 d-flex align-items-center gap-2">
-                                    <span><span class="badge rounded-pill" :class="$store.citrascope.status?.processing_active ? 'bg-success' : 'bg-secondary'"
-                                        x-text="$store.citrascope.status?.processing_active ? 'Enabled' : 'Disabled'"></span></span>
-                                    <div class="form-check form-switch">
-                                        <input class="form-check-input" type="checkbox" title="Toggle task processing"
-                                            :checked="$store.citrascope.status?.processing_active !== false"
-                                            @change="$store.citrascope.toggleProcessing($event.target.checked)">
-                                        <label class="form-check-label visually-hidden">Task Processing</label>
-                                    </div>
-                                </div>
-                            </div>
-                            <div class="row mb-2">
-                                <div class="col-6 fw-semibold">
-                                    <span data-bs-toggle="tooltip" data-bs-theme="dark" data-bs-placement="top" title="System clock synchronization status. Accurate time is critical for astronomical observations">
-                                        Time Sync
-                                    </span>
-                                </div>
-                                <div class="col-6 d-flex align-items-center gap-2">
-                                    <span>
-                                        <span class="badge rounded-pill" data-bs-toggle="tooltip"
-                                            :class="$store.citrascope.status?.time_health?.status === 'ok' ? 'bg-success' : ($store.citrascope.status?.time_health?.status === 'critical' ? 'bg-danger' : 'bg-secondary')"
-                                            :title="$store.citrascope.status?.time_health?.status === 'ok' ? 'Time sync within threshold' : ($store.citrascope.status?.time_health?.status === 'critical' ? 'Time drift exceeded' : 'Unknown')"
-                                            x-text="$store.citrascope.formatTimeOffset($store.citrascope.status?.time_health)"></span>
-                                    </span>
-                                </div>
-                            </div>
-                            <div class="row mb-2" x-show="$store.citrascope.config?.gps_location_updates_enabled !== false">
-                                <div class="col-6 fw-semibold">
-                                    <span data-bs-toggle="tooltip" data-bs-theme="dark" data-bs-placement="top" title="GPS location from satellite fix. Used for telescope positioning and FITS metadata">
-                                        GPS Location
-                                    </span>
-                                </div>
-                                <div class="col-6">
-                                    <span>
-                                        <span class="badge rounded-pill" data-bs-toggle="tooltip"
-                                            :class="$store.citrascope.status?.gps_location?.is_strong ? 'bg-success' : 'bg-secondary'"
-                                            :title="$store.citrascope.status?.gps_location ? 'GPS fix available' : 'GPS unavailable or no fix'"
-                                            x-text="$store.citrascope.formatGPSLocation($store.citrascope.status?.gps_location)"></span>
-                                    </span>
-                                </div>
-                            </div>
-                            <!-- Missing Dependencies Alert -->
-                            <div class="alert alert-warning mt-3 mb-0" role="alert"
-                                x-show="$store.citrascope.status?.missing_dependencies?.length > 0">
-                                <template x-if="$store.citrascope.status?.missing_dependencies?.length > 0">
-                                    <div>
-                                        <strong><i class="bi bi-exclamation-triangle-fill me-2"></i>Missing Dependencies:</strong>
-                                        <ul class="mb-0 mt-2">
-                                            <template x-for="dep in $store.citrascope.status.missing_dependencies" :key="dep.device_name">
-                                                <li>
-                                                    <strong x-text="dep.device_name"></strong>: Missing <span x-text="dep.missing_packages"></span><br>
-                                                    <code class="small" x-text="dep.install_cmd"></code>
-                                                </li>
-                                            </template>
-                                        </ul>
-                                    </div>
-                                </template>
+                        <div class="d-flex align-items-center gap-1"
+                             data-bs-toggle="tooltip" data-bs-theme="dark"
+                             title="Task processing — daemon executes queued tasks">
+                            <small class="text-muted text-nowrap">Processing</small>
+                            <div class="form-check form-switch mb-0">
+                                <input class="form-check-input" type="checkbox"
+                                       :checked="$store.citrascope.status?.processing_active !== false"
+                                       @change="$store.citrascope.toggleProcessing($event.target.checked)">
                             </div>
                         </div>
                     </div>
+                    <button class="btn btn-sm btn-danger"
+                            x-show="$store.citrascope.wsConnected"
+                            @click="emergencyStop()"
+                            data-bs-toggle="tooltip" data-bs-theme="dark" data-bs-placement="bottom"
+                            title="Stop mount, pause tasks, drain queue">
+                        <i class="bi bi-stop-circle-fill"></i> Stop
+                    </button>
                 </div>
-                <div class="col-12 col-md-6">
+            </div>
+
+            <!-- Missing Dependencies Alert -->
+            <div class="alert alert-warning mb-3" role="alert"
+                 x-show="$store.citrascope.status?.missing_dependencies?.length > 0">
+                <template x-if="$store.citrascope.status?.missing_dependencies?.length > 0">
+                    <div>
+                        <strong><i class="bi bi-exclamation-triangle-fill me-2"></i>Missing Dependencies:</strong>
+                        <ul class="mb-0 mt-2">
+                            <template x-for="dep in $store.citrascope.status.missing_dependencies" :key="dep.device_name">
+                                <li>
+                                    <strong x-text="dep.device_name"></strong>: Missing <span x-text="dep.missing_packages"></span><br>
+                                    <code class="small" x-text="dep.install_cmd"></code>
+                                </li>
+                            </template>
+                        </ul>
+                    </div>
+                </template>
+            </div>
+
+            <!-- ═══════════════ Main Cards Row ═══════════════ -->
+            <div class="row g-3 mb-3">
+
+                <!-- ── Telescope Card ── -->
+                <div class="col-12 col-lg-6">
                     <div class="card bg-dark text-light border-secondary h-100">
-                        <div class="card-header">
-                            Telescope
-                        </div>
+                        <div class="card-header"><i class="bi bi-crosshair me-1"></i>Telescope</div>
                         <div class="card-body">
                             <div class="row mb-2">
                                 <div class="col-6 fw-semibold">Adapter</div>
@@ -316,7 +279,8 @@
                                     </button>
                                 </div>
                             </div>
-                            <!-- Cable Wrap status (visible when safety monitor has a cable_wrap check) -->
+
+                            <!-- Cable Wrap -->
                             <div class="row mb-2"
                                  x-data="{ get cw() { return ($store.citrascope.status?.safety_status?.checks || []).find(c => c.name === 'cable_wrap'); } }"
                                  x-show="cw">
@@ -329,14 +293,14 @@
                                 <div class="col-6 d-flex align-items-center gap-2">
                                     <div class="progress position-relative" style="height: 1.3rem; min-width: 80px; max-width: 120px;"
                                          data-bs-toggle="tooltip" data-bs-theme="dark" data-bs-placement="top"
-                                         :title="'Soft ' + (cw?.soft_limit ?? 180) + '° / Hard ' + (cw?.hard_limit ?? 270) + '°'">
+                                         :title="'Soft ' + (cw?.soft_limit ?? 180) + '\u00b0 / Hard ' + (cw?.hard_limit ?? 270) + '\u00b0'">
                                         <div class="progress-bar"
                                              :class="cw?.unwinding ? 'bg-info progress-bar-striped progress-bar-animated' : cw?.action === 'emergency' ? 'bg-danger' : cw?.action === 'stop' ? 'bg-warning' : 'bg-success'"
                                              :style="'width:' + Math.min(100, (Math.abs(cw?.cumulative_deg ?? 0) / (cw?.hard_limit ?? 270)) * 100) + '%'">
                                         </div>
                                         <span class="position-absolute top-50 start-50 translate-middle small fw-semibold"
                                               :class="(cw?.action === 'stop' && !cw?.unwinding) ? 'text-dark' : 'text-white'"
-                                              x-text="(cw?.cumulative_deg >= 0 ? '+' : '') + (cw?.cumulative_deg ?? 0) + '°'"></span>
+                                              x-text="(cw?.cumulative_deg >= 0 ? '+' : '') + (cw?.cumulative_deg ?? 0) + '\u00b0'"></span>
                                     </div>
                                     <button class="btn btn-sm btn-outline-warning"
                                             x-show="cw && !cw.unwinding && Math.abs(cw.cumulative_deg) > 5"
@@ -354,33 +318,23 @@
                                     </button>
                                 </div>
                             </div>
+
+                            <!-- Alt Limits -->
                             <div class="row mb-2" x-show="$store.citrascope.status?.telescope_connected && ($store.citrascope.status?.mount_horizon_limit != null || $store.citrascope.status?.mount_overhead_limit != null)">
                                 <div class="col-6 fw-semibold">Alt Limits</div>
                                 <div class="col-6">
-                                    <span x-text="($store.citrascope.status?.mount_horizon_limit ?? '?') + '° min'"></span>
+                                    <span x-text="($store.citrascope.status?.mount_horizon_limit ?? '?') + '\u00b0 min'"></span>
                                     /
-                                    <span x-text="($store.citrascope.status?.mount_overhead_limit ?? '?') + '° max'"></span>
+                                    <span x-text="($store.citrascope.status?.mount_overhead_limit ?? '?') + '\u00b0 max'"></span>
                                 </div>
                             </div>
+
+                            <!-- Ground Station -->
                             <div class="row mb-2">
-                                <div class="col-6 fw-semibold">Enabled Filters</div>
-                                <div class="col-6 d-flex flex-wrap gap-1">
-                                    <template x-if="$store.citrascope.enabledFilters.length === 0">
-                                        <span>-</span>
-                                    </template>
-                                    <template x-for="f in $store.citrascope.enabledFilters" :key="f.name">
-                                        <span class="badge me-1"
-                                              :style="'background-color: ' + f.color + '; color: white;'
-                                                  + (f.name === $store.citrascope.status?.current_filter_name ? ' outline: 2px solid white; outline-offset: 1px;' : '')"
-                                              x-text="f.name"></span>
-                                    </template>
-                                </div>
-                            </div>
-                            <div class="row">
                                 <div class="col-6 fw-semibold">Ground Station</div>
                                 <div class="col-6">
                                     <template x-if="$store.citrascope.status?.ground_station_name && $store.citrascope.status?.ground_station_url">
-                                        <a :href="$store.citrascope.status.ground_station_url" target="_blank" class="ground-station-link" x-text="$store.citrascope.status.ground_station_name + ' ↗'"></a>
+                                        <a :href="$store.citrascope.status.ground_station_url" target="_blank" class="ground-station-link" x-text="$store.citrascope.status.ground_station_name + ' \u2197'"></a>
                                     </template>
                                     <template x-if="$store.citrascope.status?.ground_station_name && !$store.citrascope.status?.ground_station_url">
                                         <span x-text="$store.citrascope.status.ground_station_name"></span>
@@ -391,107 +345,325 @@
                                 </div>
                             </div>
 
-                            <!-- Mount Controls (only for direct hardware adapters with a mount) -->
+                            <!-- Mount Controls (direct hardware adapters only) -->
                             <div x-show="$store.citrascope.status?.supports_direct_mount_control"
-                                 x-data="{ jogRate: 5, gotoRa: '', gotoDec: '' }"
+                                 x-data="{ gotoRa: '', gotoDec: '' }"
                                  class="mt-3 pt-3 border-top border-secondary">
 
-                                <!-- Tracking toggle + slewing indicator -->
-                                <div class="d-flex align-items-center gap-2 mb-3">
-                                    <button class="btn btn-sm"
-                                            :class="$store.citrascope.status?.mount_tracking ? 'btn-success' : 'btn-outline-secondary'"
-                                            @click="mountSetTracking(!$store.citrascope.status?.mount_tracking)">
-                                        <i class="bi" :class="$store.citrascope.status?.mount_tracking ? 'bi-broadcast' : 'bi-broadcast'"></i>
-                                        <span x-text="$store.citrascope.status?.mount_tracking ? 'Tracking' : 'Start Tracking'"></span>
+                                <div class="d-flex align-items-start gap-4">
+                                    <!-- Left: Jog pad + speed -->
+                                    <div class="flex-shrink-0">
+                                        <div style="display: grid; grid-template-columns: repeat(3, 36px); grid-template-rows: repeat(3, 36px); gap: 2px;">
+                                            <div></div>
+                                            <button class="btn btn-sm btn-outline-light d-flex align-items-center justify-content-center p-0"
+                                                    style="width:36px;height:36px;"
+                                                    @mousedown="mountMove('start','north')"
+                                                    @mouseup="mountMove('stop','north')"
+                                                    @mouseleave="mountMove('stop','north')"
+                                                    @touchstart.prevent="mountMove('start','north')"
+                                                    @touchend.prevent="mountMove('stop','north')"
+                                                    @touchcancel.prevent="mountMove('stop','north')"
+                                                    title="Up (Alt+)">
+                                                <i class="bi bi-chevron-up"></i>
+                                            </button>
+                                            <div></div>
+                                            <button class="btn btn-sm btn-outline-light d-flex align-items-center justify-content-center p-0"
+                                                    style="width:36px;height:36px;"
+                                                    @mousedown="mountMove('start','west')"
+                                                    @mouseup="mountMove('stop','west')"
+                                                    @mouseleave="mountMove('stop','west')"
+                                                    @touchstart.prevent="mountMove('start','west')"
+                                                    @touchend.prevent="mountMove('stop','west')"
+                                                    @touchcancel.prevent="mountMove('stop','west')"
+                                                    title="Left (Az-)">
+                                                <i class="bi bi-chevron-left"></i>
+                                            </button>
+                                            <button class="btn btn-sm btn-outline-danger d-flex align-items-center justify-content-center p-0"
+                                                    style="width:36px;height:36px;"
+                                                    @click="mountMove('stop','north'); mountMove('stop','south'); mountMove('stop','east'); mountMove('stop','west')"
+                                                    title="Stop all motion">
+                                                <i class="bi bi-stop-fill"></i>
+                                            </button>
+                                            <button class="btn btn-sm btn-outline-light d-flex align-items-center justify-content-center p-0"
+                                                    style="width:36px;height:36px;"
+                                                    @mousedown="mountMove('start','east')"
+                                                    @mouseup="mountMove('stop','east')"
+                                                    @mouseleave="mountMove('stop','east')"
+                                                    @touchstart.prevent="mountMove('start','east')"
+                                                    @touchend.prevent="mountMove('stop','east')"
+                                                    @touchcancel.prevent="mountMove('stop','east')"
+                                                    title="Right (Az+)">
+                                                <i class="bi bi-chevron-right"></i>
+                                            </button>
+                                            <div></div>
+                                            <button class="btn btn-sm btn-outline-light d-flex align-items-center justify-content-center p-0"
+                                                    style="width:36px;height:36px;"
+                                                    @mousedown="mountMove('start','south')"
+                                                    @mouseup="mountMove('stop','south')"
+                                                    @mouseleave="mountMove('stop','south')"
+                                                    @touchstart.prevent="mountMove('start','south')"
+                                                    @touchend.prevent="mountMove('stop','south')"
+                                                    @touchcancel.prevent="mountMove('stop','south')"
+                                                    title="Down (Alt-)">
+                                                <i class="bi bi-chevron-down"></i>
+                                            </button>
+                                            <div></div>
+                                        </div>
+                                    </div>
+
+                                    <!-- Right: Goto, Alignment -->
+                                    <div class="flex-grow-1 d-flex flex-column gap-3">
+                                        <div>
+                                            <div class="d-flex align-items-end gap-2">
+                                                <div style="flex: 1;">
+                                                    <label class="form-label small text-muted mb-1">RA (°)</label>
+                                                    <input type="number" class="form-control form-control-sm"
+                                                           x-model.lazy="gotoRa" step="any" min="0" max="360" placeholder="0–360">
+                                                </div>
+                                                <div style="flex: 1;">
+                                                    <label class="form-label small text-muted mb-1">Dec (°)</label>
+                                                    <input type="number" class="form-control form-control-sm"
+                                                           x-model.lazy="gotoDec" step="any" min="-90" max="90" placeholder="-90–90">
+                                                </div>
+                                                <button class="btn btn-sm btn-outline-primary text-nowrap"
+                                                        :disabled="gotoRa === '' || gotoDec === '' || $store.citrascope.status?.mount_slewing"
+                                                        @click="mountGoto(gotoRa, gotoDec)">
+                                                    <i class="bi bi-cursor"></i> Go
+                                                </button>
+                                            </div>
+                                        </div>
+
+                                        <!-- Alignment, Tracking, Slewing -->
+                                        <div class="d-flex align-items-center flex-wrap gap-2">
+                                            <button type="button" class="btn btn-sm"
+                                                    x-show="$store.citrascope.status?.supports_alignment"
+                                                    :class="$store.citrascope.status?.alignment_running ? 'btn-outline-info' : ($store.citrascope.status?.alignment_requested ? 'btn-outline-warning' : 'btn-outline-primary')"
+                                                    :disabled="$store.citrascope.status?.alignment_running"
+                                                    @click="window.triggerAlignment()">
+                                                <template x-if="$store.citrascope.status?.alignment_running">
+                                                    <span>
+                                                        <span class="spinner-border spinner-border-sm me-1" role="status"></span>
+                                                        Aligning...
+                                                    </span>
+                                                </template>
+                                                <template x-if="!$store.citrascope.status?.alignment_running">
+                                                    <span x-text="$store.citrascope.status?.alignment_requested ? 'Cancel Alignment' : 'Align Now'">Align Now</span>
+                                                </template>
+                                            </button>
+                                            <button class="btn btn-sm"
+                                                    :class="$store.citrascope.status?.mount_tracking ? 'btn-success' : 'btn-outline-secondary'"
+                                                    @click="mountSetTracking(!$store.citrascope.status?.mount_tracking)">
+                                                <i class="bi bi-broadcast me-1"></i>Sidereal Tracking
+                                            </button>
+                                            <span class="badge rounded-pill bg-info"
+                                                  x-show="$store.citrascope.status?.mount_slewing">
+                                                <span class="spinner-border spinner-border-sm me-1" style="width: .6rem; height: .6rem;"></span>
+                                                Slewing
+                                            </span>
+                                        </div>
+                                        <div x-show="$store.citrascope.status?.supports_alignment">
+                                            <div class="small mt-1" x-show="$store.citrascope.status?.alignment_running"
+                                                 x-text="$store.citrascope.status?.alignment_progress || 'In progress...'"></div>
+                                            <small class="text-muted" x-show="!$store.citrascope.status?.alignment_running"
+                                                   x-text="'Last: ' + $store.citrascope.formatTimestamp($store.citrascope.status?.last_alignment_timestamp)"></small>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+
+                        </div>
+                    </div>
+                </div>
+
+                <!-- ── Optics Card ── -->
+                <div class="col-12 col-lg-6">
+                    <div class="card bg-dark text-light border-secondary h-100">
+                        <div class="card-header d-flex align-items-center justify-content-between">
+                            <span><i class="bi bi-eyeglasses me-1"></i>Optics</span>
+                            <div class="d-flex align-items-center gap-2">
+                                <span class="badge bg-secondary rounded-pill"
+                                      x-show="$store.citrascope.status?.camera_temperature != null"
+                                      x-text="($store.citrascope.status?.camera_temperature?.toFixed(1) ?? '') + ' \u00b0C'"></span>
+                            </div>
+                        </div>
+                        <div class="card-body">
+
+                            <!-- ─── Camera Preview ─── -->
+                            <div x-show="$store.citrascope.status?.camera_connected && $store.citrascope.status?.supports_direct_camera_control">
+                                <div class="text-center mb-2 position-relative"
+                                     style="min-height: 80px; background: #111; border-radius: .375rem; overflow: hidden;">
+                                    <template x-if="!$store.citrascope.previewDataUrl">
+                                        <div class="d-flex align-items-center justify-content-center text-muted"
+                                             style="min-height: 80px;">
+                                            <span>No preview yet</span>
+                                        </div>
+                                    </template>
+                                    <template x-if="$store.citrascope.previewDataUrl">
+                                        <img :src="$store.citrascope.previewDataUrl"
+                                             alt="Camera preview"
+                                             class="img-fluid"
+                                             style="max-height: 360px; width: auto;">
+                                    </template>
+                                </div>
+
+                                <div class="d-flex align-items-end gap-2 flex-wrap mb-2">
+                                    <div>
+                                        <label class="form-label small mb-0">Exp (s)</label>
+                                        <input type="number" class="form-control form-control-sm" style="width: 80px;"
+                                               x-model.number="$store.citrascope.previewExposure"
+                                               min="0.01" max="30" step="0.1"
+                                               :disabled="$store.citrascope.isLooping">
+                                    </div>
+                                    <button class="btn btn-sm btn-outline-light"
+                                            :disabled="$store.citrascope.isCapturing || $store.citrascope.isLooping || $store.citrascope.isImagingTaskActive"
+                                            @click="$store.citrascope.singlePreview()">
+                                        <i class="bi bi-camera"></i> Snap
                                     </button>
-                                    <span class="badge rounded-pill bg-info"
-                                          x-show="$store.citrascope.status?.mount_slewing">
-                                        <span class="spinner-border spinner-border-sm me-1" style="width: .6rem; height: .6rem;"></span>
-                                        Slewing
+                                    <button class="btn btn-sm"
+                                            :class="$store.citrascope.isLooping ? 'btn-danger' : 'btn-success'"
+                                            :disabled="!$store.citrascope.isLooping && $store.citrascope.isImagingTaskActive"
+                                            @click="$store.citrascope.isLooping ? $store.citrascope.stopFocusLoop() : $store.citrascope.startFocusLoop()">
+                                        <i class="bi" :class="$store.citrascope.isLooping ? 'bi-stop-fill' : 'bi-play-fill'"></i>
+                                        <span x-text="$store.citrascope.isLooping ? 'Stop' : 'Loop'"></span>
+                                    </button>
+                                    <button class="btn btn-sm btn-outline-secondary"
+                                            :disabled="$store.citrascope.isSaving || $store.citrascope.isLooping || $store.citrascope.isImagingTaskActive"
+                                            @click="$store.citrascope.captureImage()"
+                                            data-bs-toggle="tooltip" data-bs-theme="dark" title="Capture to FITS using current exposure">
+                                        <i class="bi bi-save"></i>
+                                        <span x-text="$store.citrascope.isSaving ? 'Saving...' : 'Save'"></span>
+                                    </button>
+                                    <button class="btn btn-sm"
+                                            :class="$store.citrascope.previewFlipH ? 'btn-info' : 'btn-outline-secondary'"
+                                            @click="$store.citrascope.previewFlipH = !$store.citrascope.previewFlipH"
+                                            data-bs-toggle="tooltip" data-bs-theme="dark" title="Flip preview horizontally (corrects diagonal mirror)">
+                                        <i class="bi bi-symmetry-vertical"></i>
+                                    </button>
+                                    <span class="text-warning small" x-show="$store.citrascope.isImagingTaskActive" x-cloak>
+                                        <i class="bi bi-exclamation-triangle-fill"></i> Processing active
                                     </span>
                                 </div>
+                            </div>
 
-                                <!-- Jog Pad -->
-                                <div class="d-flex align-items-start gap-3 mb-3">
-                                    <div style="display: grid; grid-template-columns: repeat(3, 36px); grid-template-rows: repeat(3, 36px); gap: 2px;">
-                                        <div></div>
-                                        <button class="btn btn-sm btn-outline-light d-flex align-items-center justify-content-center p-0"
-                                                style="width:36px;height:36px;"
-                                                @mousedown="mountMove('start','north',jogRate)"
-                                                @mouseup="mountMove('stop','north')"
-                                                @mouseleave="mountMove('stop','north')"
-                                                @touchstart.prevent="mountMove('start','north',jogRate)"
-                                                @touchend.prevent="mountMove('stop','north')"
-                                                title="Up (Alt+)">
-                                            <i class="bi bi-chevron-up"></i>
-                                        </button>
-                                        <div></div>
+                            <!-- ─── Filters ─── -->
+                            <div class="pt-2 mt-2 border-top border-secondary"
+                                 x-show="$store.citrascope.enabledFilters.length > 0 || $store.citrascope.status?.current_filter_position != null">
+                                <div class="d-flex align-items-center gap-2 flex-wrap">
+                                    <template x-for="f in $store.citrascope.enabledFilters" :key="f.name">
+                                        <span class="badge"
+                                              :style="'background-color: ' + f.color + '; color: white;'
+                                                  + (f.name === $store.citrascope.status?.current_filter_name ? ' outline: 2px solid white; outline-offset: 1px;' : '')"
+                                              x-text="f.name"></span>
+                                    </template>
+                                    <template x-if="$store.citrascope.status?.supports_direct_camera_control && $store.citrascope.status?.current_filter_position != null">
+                                        <div class="d-flex align-items-center gap-2 ms-auto" style="max-width: 200px;">
+                                            <span class="rounded-circle d-inline-block flex-shrink-0"
+                                                  :style="{ width: '10px', height: '10px', minWidth: '10px', backgroundColor: $store.citrascope.filterColors[$store.citrascope.status?.current_filter_name] || '#777' }"></span>
+                                            <select class="form-select form-select-sm"
+                                                    :value="String($store.citrascope.status?.current_filter_position ?? '')"
+                                                    @change="window.changeFilterPosition($event.target.value)">
+                                                <template x-for="[fid, fdata] in Object.entries($store.citrascope.filters || {})" :key="fid">
+                                                    <option :value="fid" x-text="fdata.name"></option>
+                                                </template>
+                                            </select>
+                                        </div>
+                                    </template>
+                                </div>
+                            </div>
 
-                                        <button class="btn btn-sm btn-outline-light d-flex align-items-center justify-content-center p-0"
-                                                style="width:36px;height:36px;"
-                                                @mousedown="mountMove('start','west',jogRate)"
-                                                @mouseup="mountMove('stop','west')"
-                                                @mouseleave="mountMove('stop','west')"
-                                                @touchstart.prevent="mountMove('start','west',jogRate)"
-                                                @touchend.prevent="mountMove('stop','west')"
-                                                title="Left (Az-)">
-                                            <i class="bi bi-chevron-left"></i>
-                                        </button>
-                                        <button class="btn btn-sm btn-outline-danger d-flex align-items-center justify-content-center p-0"
-                                                style="width:36px;height:36px;"
-                                                @click="mountMove('stop','north'); mountMove('stop','south'); mountMove('stop','east'); mountMove('stop','west')"
-                                                title="Stop all motion">
-                                            <i class="bi bi-stop-fill"></i>
-                                        </button>
-                                        <button class="btn btn-sm btn-outline-light d-flex align-items-center justify-content-center p-0"
-                                                style="width:36px;height:36px;"
-                                                @mousedown="mountMove('start','east',jogRate)"
-                                                @mouseup="mountMove('stop','east')"
-                                                @mouseleave="mountMove('stop','east')"
-                                                @touchstart.prevent="mountMove('start','east',jogRate)"
-                                                @touchend.prevent="mountMove('stop','east')"
-                                                title="Right (Az+)">
-                                            <i class="bi bi-chevron-right"></i>
-                                        </button>
-
-                                        <div></div>
-                                        <button class="btn btn-sm btn-outline-light d-flex align-items-center justify-content-center p-0"
-                                                style="width:36px;height:36px;"
-                                                @mousedown="mountMove('start','south',jogRate)"
-                                                @mouseup="mountMove('stop','south')"
-                                                @mouseleave="mountMove('stop','south')"
-                                                @touchstart.prevent="mountMove('start','south',jogRate)"
-                                                @touchend.prevent="mountMove('stop','south')"
-                                                title="Down (Alt-)">
-                                            <i class="bi bi-chevron-down"></i>
-                                        </button>
-                                        <div></div>
-                                    </div>
-                                    <div>
-                                        <label class="form-label small text-muted mb-1">Speed</label>
-                                        <input type="range" class="form-range" min="1" max="9" step="1"
-                                               x-model.number="jogRate" style="width: 80px;">
-                                        <div class="text-center small text-muted" x-text="jogRate + '/9'"></div>
+                            <!-- ─── Focus ─── -->
+                            <div class="pt-2 mt-2 border-top border-secondary"
+                                 x-show="$store.citrascope.status?.focuser_connected"
+                                 x-data="{ stepSize: 100, targetPos: $store.citrascope.status?.focuser_position ?? 0 }">
+                                <div class="d-flex align-items-center justify-content-between mb-2">
+                                    <h6 class="mb-0 small fw-semibold"><i class="bi bi-arrows-expand me-1"></i>Focus</h6>
+                                    <div class="d-flex align-items-center gap-2">
+                                        <small class="text-muted font-monospace"
+                                               x-show="$store.citrascope.status?.focuser_temperature != null"
+                                               x-text="$store.citrascope.status?.focuser_temperature?.toFixed(1) + ' \u00b0C'"></small>
+                                        <small class="text-muted font-monospace"
+                                               x-show="$store.citrascope.status?.focuser_position != null"
+                                               x-text="'Pos: ' + $store.citrascope.status?.focuser_position"></small>
                                     </div>
                                 </div>
 
-                                <!-- Goto RA/Dec -->
-                                <div class="d-flex align-items-end gap-2">
-                                    <div style="flex: 1;">
-                                        <label class="form-label small text-muted mb-1">RA (°)</label>
-                                        <input type="number" class="form-control form-control-sm"
-                                               x-model.lazy="gotoRa" step="any" min="0" max="360" placeholder="0–360">
-                                    </div>
-                                    <div style="flex: 1;">
-                                        <label class="form-label small text-muted mb-1">Dec (°)</label>
-                                        <input type="number" class="form-control form-control-sm"
-                                               x-model.lazy="gotoDec" step="any" min="-90" max="90" placeholder="-90–90">
-                                    </div>
-                                    <button class="btn btn-sm btn-outline-primary text-nowrap"
-                                            :disabled="gotoRa === '' || gotoDec === '' || $store.citrascope.status?.mount_slewing"
-                                            @click="mountGoto(gotoRa, gotoDec)">
-                                        <i class="bi bi-cursor"></i> Go
+                                <div class="d-flex align-items-center gap-1 flex-wrap">
+                                    <button type="button" class="btn btn-sm btn-outline-secondary"
+                                            :disabled="$store.citrascope.status?.focuser_moving"
+                                            @click="window.moveFocuserRelative(-stepSize * 10)" title="In (coarse)">
+                                        <i class="bi bi-chevron-double-left"></i>
                                     </button>
+                                    <button type="button" class="btn btn-sm btn-outline-secondary"
+                                            :disabled="$store.citrascope.status?.focuser_moving"
+                                            @click="window.moveFocuserRelative(-stepSize)" title="In (fine)">
+                                        <i class="bi bi-chevron-left"></i>
+                                    </button>
+                                    <div class="input-group input-group-sm" style="width: 120px;">
+                                        <input type="number" class="form-control text-center"
+                                               x-model.number="stepSize" min="1" step="1">
+                                        <span class="input-group-text">steps</span>
+                                    </div>
+                                    <button type="button" class="btn btn-sm btn-outline-secondary"
+                                            :disabled="$store.citrascope.status?.focuser_moving"
+                                            @click="window.moveFocuserRelative(stepSize)" title="Out (fine)">
+                                        <i class="bi bi-chevron-right"></i>
+                                    </button>
+                                    <button type="button" class="btn btn-sm btn-outline-secondary"
+                                            :disabled="$store.citrascope.status?.focuser_moving"
+                                            @click="window.moveFocuserRelative(stepSize * 10)" title="Out (coarse)">
+                                        <i class="bi bi-chevron-double-right"></i>
+                                    </button>
+                                    <button type="button" class="btn btn-sm btn-outline-danger"
+                                            x-show="$store.citrascope.status?.focuser_moving"
+                                            @click="window.abortFocuser()" title="Stop">
+                                        <i class="bi bi-stop-fill"></i>
+                                    </button>
+                                    <span class="border-start border-secondary mx-1" style="height: 24px;"></span>
+                                    <input type="number" class="form-control form-control-sm" style="width: 80px;"
+                                           x-model.number="targetPos" min="0" placeholder="Pos"
+                                           :max="$store.citrascope.status?.focuser_max_position || 999999">
+                                    <button type="button" class="btn btn-sm btn-outline-primary"
+                                            :disabled="$store.citrascope.status?.focuser_moving"
+                                            @click="window.moveFocuserAbsolute(targetPos)">
+                                        Go
+                                    </button>
+                                    <span class="border-start border-secondary mx-1" style="height: 24px;"
+                                          x-show="$store.citrascope.status?.supports_autofocus"></span>
+                                    <button type="button" class="btn btn-sm"
+                                            x-show="$store.citrascope.status?.supports_autofocus"
+                                            :class="$store.citrascope.status?.autofocus_running ? 'btn-outline-danger' : ($store.citrascope.status?.autofocus_requested ? 'btn-outline-warning' : 'btn-outline-primary')"
+                                            @click="window.triggerAutofocus()">
+                                        <template x-if="$store.citrascope.status?.autofocus_running">
+                                            <span><i class="bi bi-stop-fill me-1"></i>Cancel AF</span>
+                                        </template>
+                                        <template x-if="!$store.citrascope.status?.autofocus_running">
+                                            <span x-text="$store.citrascope.status?.autofocus_requested ? 'Cancel AF' : 'Autofocus'"></span>
+                                        </template>
+                                    </button>
+                                </div>
+                                <div class="d-flex align-items-center gap-1 mt-1 flex-wrap">
+                                    <div class="d-flex gap-1">
+                                        <button class="btn btn-sm btn-outline-secondary py-0 px-2" style="font-size: 0.7rem;" @click="stepSize = 10">10</button>
+                                        <button class="btn btn-sm btn-outline-secondary py-0 px-2" style="font-size: 0.7rem;" @click="stepSize = 50">50</button>
+                                        <button class="btn btn-sm btn-outline-secondary py-0 px-2" style="font-size: 0.7rem;" @click="stepSize = 100">100</button>
+                                        <button class="btn btn-sm btn-outline-secondary py-0 px-2" style="font-size: 0.7rem;" @click="stepSize = 500">500</button>
+                                        <button class="btn btn-sm btn-outline-secondary py-0 px-2" style="font-size: 0.7rem;" @click="stepSize = 1000">1k</button>
+                                    </div>
+                                    <span class="small text-info ms-2" x-show="$store.citrascope.status?.focuser_moving">
+                                        <span class="spinner-border spinner-border-sm me-1" style="width: .5rem; height: .5rem;" role="status"></span>
+                                        Moving...
+                                    </span>
+                                    <span class="small" x-show="$store.citrascope.status?.autofocus_running"
+                                          x-text="$store.citrascope.status?.autofocus_progress || 'Autofocusing...'"></span>
+                                    <small class="small text-muted" x-show="$store.citrascope.status?.supports_autofocus && !$store.citrascope.status?.autofocus_running"
+                                           x-text="$store.citrascope.formatLastAutofocus($store.citrascope.status)"></small>
+                                </div>
+                            </div>
+
+                            <!-- ─── Autofocus schedule (if applicable) ─── -->
+                            <div class="pt-1" x-show="$store.citrascope.status?.supports_autofocus && $store.citrascope.status?.next_autofocus_minutes != null">
+                                <div class="small text-muted" x-show="$store.citrascope.status?.next_autofocus_minutes != null">
+                                    Next in: <span x-text="$store.citrascope.status?.next_autofocus_minutes === 0 ? 'now (overdue)' : $store.citrascope.formatMinutes($store.citrascope.status?.next_autofocus_minutes || 0)"></span>
                                 </div>
                             </div>
 
@@ -501,6 +673,7 @@
 
             </div>
         </div>
+
         <!-- Safety alerts — shown when any check is non-safe -->
         <div class="container"
              x-data="{ get alerts() {
@@ -609,7 +782,7 @@
                 <div class="col-12">
                     <div class="card bg-dark text-light border-secondary">
                         <div class="card-header d-flex align-items-center justify-content-between">
-                            <span>Scheduled Tasks</span>
+                            <span><i class="bi bi-calendar-week me-1"></i>Scheduled Tasks</span>
                             <span class="small text-secondary"><span x-text="$store.citrascope.status?.tasks_pending ?? $store.citrascope.tasks?.length ?? 0">0</span> scheduled</span>
                         </div>
                         <div class="card-body p-0">

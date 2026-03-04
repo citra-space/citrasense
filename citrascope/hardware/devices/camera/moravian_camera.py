@@ -373,7 +373,7 @@ class MoravianCamera(AbstractCamera):
         cam.set_gain(gain_val)
         cam.set_binning(binning, binning)
 
-        self.logger.info(f"Starting {duration}s exposure (gain={gain_val}, binning={binning}x{binning})")
+        self.logger.debug(f"Starting {duration}s exposure (gain={gain_val}, binning={binning}x{binning})")
         cam.start_exposure(duration, True, 0, 0, w, h)
 
         # Sleep for most of the exposure, then poll (per gxccd.h recommendation)

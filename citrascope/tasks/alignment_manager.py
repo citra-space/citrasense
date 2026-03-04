@@ -115,9 +115,8 @@ class AlignmentManager:
                 self.logger.error("Cannot align — no telescope_record available (configure telescope in Citra)")
                 return
 
-            camera: Any = getattr(self.hardware_adapter, "camera", None)
             mount: Any = getattr(self.hardware_adapter, "mount", None)
-            if not camera or not mount:
+            if not self.hardware_adapter.is_camera_connected() or not mount:
                 self.logger.error("Cannot align — camera and mount are both required")
                 return
 
@@ -139,16 +138,24 @@ class AlignmentManager:
                 return
 
             self._set_progress("Plate solving...")
-            result = PlateSolverProcessor.solve(Path(image_path), telescope_record)
+            self.logger.info(f"Alignment: plate solving {image_path}...")
+            location_service = getattr(self.daemon, "location_service", None)
+            result = PlateSolverProcessor.solve(Path(image_path), telescope_record, location_service=location_service)
 
             if result is None:
                 self.logger.error("Alignment failed — plate solve returned no solution")
                 return
 
             solved_ra, solved_dec = result
+            self.logger.info(f"Alignment: solved RA={solved_ra:.4f}°, Dec={solved_dec:.4f}°")
+
             self._set_progress("Syncing mount...")
+            current_ra, current_dec = mount.get_radec()
             mount.sync_to_radec(solved_ra, solved_dec)
-            self.logger.info(f"Alignment successful: synced to RA={solved_ra:.4f}°, Dec={solved_dec:.4f}°")
+            self.logger.info(
+                f"Alignment successful: mount synced "
+                f"(offset RA={solved_ra - current_ra:+.4f}°, Dec={solved_dec - current_dec:+.4f}°)"
+            )
 
         except Exception as e:
             self.logger.error(f"Alignment failed: {e!s}", exc_info=True)
