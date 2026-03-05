@@ -364,8 +364,9 @@ class ZwoAmMount(AbstractMount):
         return parked
 
     def find_home(self) -> bool:
+        pre_az = self.get_azimuth()
+        self.logger.info("Find-home initiated (pre-home az=%.1f°)", pre_az or 0.0)
         self._transport.send_command_no_response(ZwoAmCommands.find_home())
-        self.logger.info("Find-home initiated")
         return True
 
     def is_home(self) -> bool:

@@ -269,12 +269,20 @@ class _DummyMount(AbstractMount):
         return True
 
     def _finish_home(self) -> None:
+        old_az = self._base_az
         self._base_az = self._HOME_AZ
         self._alt = 90.0 - abs(_OBSERVER_LAT_DEG)
         self._ra, self._dec = _altaz_to_radec(self._HOME_AZ, self._alt)
         self._ref_time = time.monotonic()
         self._tracking = False
         self._homed = True
+        self.logger.info(
+            "DummyMount homed: az %.1f° → %.1f° (delta=%.1f°)",
+            old_az,
+            self._HOME_AZ,
+            abs(self._HOME_AZ - old_az),
+        )
+        self._fire_sync_listeners(self._HOME_AZ)
 
     def is_home(self) -> bool:
         return self._homed

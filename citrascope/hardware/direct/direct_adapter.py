@@ -673,7 +673,8 @@ class DirectHardwareAdapter(AbstractAstroHardwareAdapter):
 
             raise SafetyError("Homing blocked by safety monitor")
 
-        self.logger.info("Mount not homed — initiating find-home (required for GoTo)")
+        pre_az = self._mount.get_azimuth()
+        self.logger.info("Mount not homed — initiating find-home (pre-home az=%.1f°)", pre_az or 0.0)
         self._mount.find_home()
 
         _TIMEOUT_S = 60
@@ -684,9 +685,16 @@ class DirectHardwareAdapter(AbstractAstroHardwareAdapter):
         idle_count = 0
         while time.monotonic() < deadline:
             time.sleep(1)
+
             try:
                 if self._mount.is_home():
-                    self.logger.info("Mount homed successfully")
+                    post_az = self._mount.get_azimuth()
+                    self.logger.info(
+                        "Mount homed successfully — az %.1f° → %.1f° (delta=%.1f°)",
+                        pre_az or 0.0,
+                        post_az or 0.0,
+                        abs((post_az or 0.0) - (pre_az or 0.0)),
+                    )
                     return True
             except Exception:
                 self.logger.debug("is_home() check failed during homing poll", exc_info=True)

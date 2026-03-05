@@ -20,10 +20,11 @@ from citrascope.safety.cable_wrap_check import CableWrapCheck
 
 
 class _FixedCachedState:
-    """Returns a fixed az_deg from mount.cached_state."""
+    """Returns fixed fields from mount.cached_state."""
 
-    def __init__(self, az: float | None):
+    def __init__(self, az: float | None, is_at_home: bool = False):
         self.az_deg = az
+        self.is_at_home = is_at_home
 
 
 def _make_mount(mode: str = "altaz", az: float | None = 100.0) -> MagicMock:
@@ -217,3 +218,75 @@ class TestSyncFiresListeners:
 
         assert result is True
         assert len(good_calls) == 1
+
+
+# ------------------------------------------------------------------
+# Homing transition absorbs phantom
+# ------------------------------------------------------------------
+
+
+class TestHomingTransition:
+    def test_homing_absorbs_phantom(self):
+        """When is_at_home transitions True, az snap is not accumulated."""
+        mount = _make_mount(az=138.0)
+        cc = _make_cable_check(mount, cumulative=25.0)
+        cc._last_az = 138.0
+        cc._was_at_home = False
+
+        # Simulate one normal observe so _was_at_home is set
+        cc._observe_once()
+        assert cc._cumulative_deg == pytest.approx(25.0, abs=0.01)
+
+        # Mount finishes homing: az snaps to 0, is_at_home becomes True
+        mount.cached_state = _FixedCachedState(0.0, is_at_home=True)
+        cc._observe_once()
+
+        assert cc._last_az == 0.0
+        assert cc._cumulative_deg == pytest.approx(25.0, abs=0.01)
+
+    def test_normal_motion_after_homing_accumulates(self):
+        """Real motion after homing is tracked normally."""
+        mount = _make_mount(az=138.0)
+        cc = _make_cable_check(mount, cumulative=25.0)
+        cc._last_az = 138.0
+        cc._was_at_home = False
+
+        # Homing completes
+        mount.cached_state = _FixedCachedState(0.0, is_at_home=True)
+        cc._observe_once()
+        assert cc._cumulative_deg == pytest.approx(25.0, abs=0.01)
+
+        # Mount slews away from home
+        mount.cached_state = _FixedCachedState(10.0, is_at_home=False)
+        cc._observe_once()
+        assert cc._cumulative_deg == pytest.approx(35.0, abs=0.01)
+
+    def test_repeated_at_home_does_not_rebaseline(self):
+        """Once the transition is absorbed, subsequent at-home polls accumulate normally."""
+        mount = _make_mount(az=138.0)
+        cc = _make_cable_check(mount, cumulative=25.0)
+        cc._last_az = 138.0
+        cc._was_at_home = False
+
+        # Homing completes
+        mount.cached_state = _FixedCachedState(0.0, is_at_home=True)
+        cc._observe_once()
+        assert cc._was_at_home is True
+
+        # Still at home, small az drift (e.g. tracking started)
+        mount.cached_state = _FixedCachedState(0.5, is_at_home=True)
+        cc._observe_once()
+
+        assert cc._cumulative_deg == pytest.approx(25.5, abs=0.01)
+
+    def test_already_at_home_on_startup(self):
+        """If the mount is already homed when cable wrap starts, no phantom on first read."""
+        mount = _make_mount(az=0.0)
+        mount.cached_state = _FixedCachedState(0.0, is_at_home=True)
+        cc = _make_cable_check(mount, cumulative=0.0)
+
+        cc._observe_once()
+
+        assert cc._last_az == 0.0
+        assert cc._cumulative_deg == pytest.approx(0.0, abs=0.01)
+        assert cc._was_at_home is True

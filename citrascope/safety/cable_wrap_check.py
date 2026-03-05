@@ -82,6 +82,7 @@ class CableWrapCheck(SafetyCheck):
         self._unwinding: bool = False
         self._unwind_thread: threading.Thread | None = None
         self._az_healthy: bool = True
+        self._was_at_home: bool = False
         self._lock = threading.Lock()
         self._last_save_time: float = 0.0
         self._consecutive_unwind_failures: int = 0
@@ -142,9 +143,11 @@ class CableWrapCheck(SafetyCheck):
         try:
             cached = self._mount.cached_state
             az = cached.az_deg if cached is not None else None
+            at_home = cached.is_at_home if cached is not None else False
         except Exception:
             self._logger.debug("Failed to read azimuth", exc_info=True)
             az = None
+            at_home = False
 
         with self._lock:
             if self._unwinding:
@@ -156,7 +159,17 @@ class CableWrapCheck(SafetyCheck):
 
             self._az_healthy = True
 
-            if self._last_az is not None:
+            homing_just_completed = at_home and not self._was_at_home and self._last_az is not None
+            self._was_at_home = at_home
+
+            if homing_just_completed:
+                self._logger.info(
+                    "Cable wrap: homing complete — re-baselined az %.1f° → %.1f° (cumulative %.1f°)",
+                    self._last_az or 0.0,
+                    az,
+                    self._cumulative_deg,
+                )
+            elif self._last_az is not None:
                 delta = _shortest_arc(self._last_az, az)
                 self._cumulative_deg += delta
             self._last_az = az
