@@ -66,6 +66,40 @@
                 {% include '_config_hardware.html' %}
 
 
+                <!-- Observation Settings Card -->
+                <div class="col-12" x-data="{ observationCardExpanded: $persist(true).as('observationCard') }">
+                    <div class="card bg-dark text-light border-secondary">
+                        <div class="card-header d-flex justify-content-between align-items-center" style="cursor: pointer;" @click="observationCardExpanded = !observationCardExpanded">
+                            <div class="d-flex align-items-center gap-2">
+                                <i class="bi bi-bullseye"></i>
+                                <h5 class="mb-0">Observation</h5>
+                                <small class="text-muted" x-show="!observationCardExpanded"
+                                       x-text="({'auto': 'Auto', 'tracking': 'Tracking', 'static': 'Static'})[$store.citrascope.config.observation_mode] || 'Auto'"></small>
+                            </div>
+                            <i class="bi" :class="observationCardExpanded ? 'bi-chevron-up' : 'bi-chevron-down'"></i>
+                        </div>
+                        <div class="card-body" x-show="observationCardExpanded">
+                            <div class="row g-3">
+                                <div class="col-12 col-md-6">
+                                    <label for="observation_mode" class="form-label">Satellite Observation Strategy</label>
+                                    <select id="observation_mode" class="form-select"
+                                        x-model="$store.citrascope.config.observation_mode">
+                                        <option value="auto">Auto (tracking if mount supports it)</option>
+                                        <option value="tracking">Tracking (custom rates, long exposure)</option>
+                                        <option value="static">Static (point-ahead, short exposure)</option>
+                                    </select>
+                                    <small class="text-muted d-block mt-2">
+                                        <strong>Auto</strong> uses tracking on capable mounts, static otherwise.
+                                        <strong>Tracking</strong> matches satellite motion for point-source images.
+                                        <strong>Static</strong> holds position for streak images.
+                                    </small>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+
                 <!-- Image Processing Settings Card -->
                 <div class="col-12" x-data="{ processorCardExpanded: $persist(true).as('processorCard') }">
                     <div class="card bg-dark text-light border-secondary">
