@@ -14,7 +14,7 @@ from citrascope.settings.citrascope_settings import CitraScopeSettings
 )
 def cli(web_port):
     """CitraScope daemon - configure via web UI at http://localhost:24872"""
-    settings = CitraScopeSettings(web_port=web_port)
+    settings = CitraScopeSettings.load(web_port=web_port)
     daemon = CitraScopeDaemon(settings)
     daemon.run()
 

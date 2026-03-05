@@ -47,7 +47,7 @@ __main__.py (CLI via Click)
        │    ├─ base_work_queue.py → imaging_queue.py, processing_queue.py, upload_queue.py
        │    └─ scope/ (base_telescope_task.py, static/tracking variants)
        ├─ processors/ (pluggable pipeline: plate_solver → source_extractor → photometry → satellite_matcher)
-       ├─ settings/ (CitraScopeSettings, persisted to JSON)
+       ├─ settings/ (CitraScopeSettings — Pydantic BaseModel, persisted to JSON)
        └─ web/ (FastAPI app, Alpine.js frontend, WebSocket log streaming)
 ```
 
@@ -93,38 +93,19 @@ Tasks flow through three serial queues: **ImagingQueue** → **ProcessingQueue**
 - Templates in `web/templates/` (Jinja2 partials prefixed with `_`)
 - The web server runs in a **daemon thread** with its own event loop (`web/server.py`). Use thread-safe mechanisms when accessing daemon state from web handlers. The daemon only calls `web_server.start()` — all web complexity stays in `web/server.py`.
 
-### Adding a new setting (full checklist)
+### Adding a new setting
 
-**Agents frequently miss steps here.** A setting must be wired in **four** places or it silently fails to save or load:
+`CitraScopeSettings` is a **Pydantic BaseModel**. Each persisted setting is a single field declaration. The API endpoint (`GET /api/config`) and JS save function (`saveConfiguration()`) derive from `to_dict()` / `store.config` automatically — no manual field lists to maintain.
 
-1. **`settings/citrascope_settings.py` — `__init__`**: Load from config dict with a default:
+1. **`settings/citrascope_settings.py`** — add a Pydantic field with type and default:
    ```python
-   self.my_setting: str = config.get("my_setting", "default_value")
+   my_setting: str = "default_value"
    ```
+   If the field needs validation, add a `@field_validator` with warn-and-fallback semantics (see existing validators for the pattern).
 
-2. **`settings/citrascope_settings.py` — `to_dict()`**: Add to the returned dict so it gets persisted:
-   ```python
-   "my_setting": self.my_setting,
-   ```
-   *If you skip this, the setting loads from the file but is never written back — it vanishes on next save.*
+2. **(If UI-editable)** Add the input/control to the relevant HTML template in `web/templates/`.
 
-3. **`web/app.py` — `GET /api/config` response**: Add to the response dict in `get_config()` so the UI can read it:
-   ```python
-   "my_setting": settings.my_setting,
-   ```
-   *If you skip this, the setting exists server-side but the web UI never sees it.*
-
-4. **`web/static/config.js` — `saveConfiguration()`**: Add to the `config` object so the UI sends it back on save:
-   ```javascript
-   my_setting: formConfig.my_setting || 'default_value',
-   ```
-   *If you skip this, the UI reads the setting fine but drops it when the user saves config.*
-
-5. **(If UI-editable)** Add the input/control to the relevant HTML template in `web/templates/`.
-
-The `GET /api/config` response and `to_dict()` look nearly identical but are **separate code paths** — the API response includes extra computed fields (`app_url`, `config_file_path`, etc.) that aren't in `to_dict()`. Both must include the setting.
-
-For validation, add it in `__init__` after loading (see autofocus RA/Dec validation for the pattern).
+That's it. `to_dict()` (via `model_dump()`), `GET /api/config`, `saveConfiguration()`, and `update_and_save()` all pick up the new field automatically.
 
 ### Adapter settings persistence
 

@@ -53,6 +53,49 @@ def mock_settings():
         parent=MagicMock(__truediv__=lambda self, x: MagicMock(__str__=lambda self: f"/tmp/{x}")),
     )
     s.is_configured.return_value = True
+    s.keep_processing_output = False
+    s.alignment_exposure_seconds = 2.0
+    s.align_on_startup = False
+    s.last_alignment_timestamp = None
+    s.task_processing_paused = False
+    s.observation_mode = "auto"
+    s.elset_refresh_interval_hours = 6
+    s.to_dict.return_value = {
+        "host": s.host,
+        "port": s.port,
+        "use_ssl": s.use_ssl,
+        "personal_access_token": s.personal_access_token,
+        "telescope_id": s.telescope_id,
+        "use_dummy_api": s.use_dummy_api,
+        "hardware_adapter": s.hardware_adapter,
+        "adapter_settings": s._all_adapter_settings,
+        "log_level": s.log_level,
+        "keep_images": s.keep_images,
+        "keep_processing_output": s.keep_processing_output,
+        "processors_enabled": s.processors_enabled,
+        "enabled_processors": s.enabled_processors,
+        "max_task_retries": s.max_task_retries,
+        "initial_retry_delay_seconds": s.initial_retry_delay_seconds,
+        "max_retry_delay_seconds": s.max_retry_delay_seconds,
+        "file_logging_enabled": s.file_logging_enabled,
+        "log_retention_days": s.log_retention_days,
+        "scheduled_autofocus_enabled": s.scheduled_autofocus_enabled,
+        "autofocus_interval_minutes": s.autofocus_interval_minutes,
+        "last_autofocus_timestamp": s.last_autofocus_timestamp,
+        "autofocus_target_preset": s.autofocus_target_preset,
+        "autofocus_target_custom_ra": s.autofocus_target_custom_ra,
+        "autofocus_target_custom_dec": s.autofocus_target_custom_dec,
+        "alignment_exposure_seconds": s.alignment_exposure_seconds,
+        "align_on_startup": s.align_on_startup,
+        "last_alignment_timestamp": s.last_alignment_timestamp,
+        "time_check_interval_minutes": s.time_check_interval_minutes,
+        "time_offset_pause_ms": s.time_offset_pause_ms,
+        "gps_location_updates_enabled": s.gps_location_updates_enabled,
+        "gps_update_interval_minutes": s.gps_update_interval_minutes,
+        "task_processing_paused": s.task_processing_paused,
+        "observation_mode": s.observation_mode,
+        "elset_refresh_interval_hours": s.elset_refresh_interval_hours,
+    }
     return s
 
 

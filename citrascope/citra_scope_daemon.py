@@ -106,7 +106,7 @@ class CitraScopeDaemon:
                 CITRASCOPE_LOGGER.info("Configuration reload requested")
                 CITRASCOPE_LOGGER.info("\u2500" * 60)
                 # Reload settings from file (preserving web_port)
-                new_settings = CitraScopeSettings(web_port=self.settings.web_port)
+                new_settings = CitraScopeSettings.load(web_port=self.settings.web_port)
                 self.settings = new_settings
                 CITRASCOPE_LOGGER.setLevel(self.settings.log_level)
 

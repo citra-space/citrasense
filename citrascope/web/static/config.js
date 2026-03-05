@@ -282,41 +282,25 @@ async function saveConfiguration(event) {
         }
     });
 
+    // Server-computed fields that should not be sent back on save
+    const COMPUTED_FIELDS = [
+        'app_url', 'config_file_path', 'log_file_path',
+        'images_dir_path', 'processing_dir_path'
+    ];
+
     const config = {
-        personal_access_token: formConfig.personal_access_token || '',
-        telescope_id: formConfig.telescope_id || '',
-        use_dummy_api: formConfig.use_dummy_api || false,
-        hardware_adapter: formConfig.hardware_adapter || '',
-        adapter_settings: adapterSettings, // Send flat settings for current adapter
-        log_level: formConfig.log_level || 'INFO',
-        keep_images: formConfig.keep_images || false,
-        keep_processing_output: formConfig.keep_processing_output || false,
-        file_logging_enabled: formConfig.file_logging_enabled !== undefined ? formConfig.file_logging_enabled : true,
-        scheduled_autofocus_enabled: formConfig.scheduled_autofocus_enabled || false,
-        autofocus_interval_minutes: parseInt(formConfig.autofocus_interval_minutes || 60, 10),
-        time_check_interval_minutes: parseInt(formConfig.time_check_interval_minutes || 5, 10),
-        time_offset_pause_ms: parseFloat(formConfig.time_offset_pause_ms || 500),
-        gps_location_updates_enabled: formConfig.gps_location_updates_enabled !== undefined ? formConfig.gps_location_updates_enabled : true,
-        gps_update_interval_minutes: parseInt(formConfig.gps_update_interval_minutes || 5, 10),
-        task_processing_paused: formConfig.task_processing_paused !== undefined ? formConfig.task_processing_paused : false,
-        observation_mode: formConfig.observation_mode || 'auto',
-        processors_enabled: formConfig.processors_enabled !== undefined ? formConfig.processors_enabled : true,
-        enabled_processors: formConfig.enabled_processors || {},
-        host,
-        port,
-        use_ssl,
-        // Preserve other settings from Alpine store (the single source of truth)
-        max_task_retries: store.config.max_task_retries || 3,
-        initial_retry_delay_seconds: store.config.initial_retry_delay_seconds || 30,
-        max_retry_delay_seconds: store.config.max_retry_delay_seconds || 300,
-        log_retention_days: store.config.log_retention_days || 30,
-        last_autofocus_timestamp: store.config.last_autofocus_timestamp,
-        autofocus_target_preset: store.config.autofocus_target_preset || 'mirach',
-        autofocus_target_custom_ra: store.config.autofocus_target_custom_ra,
-        autofocus_target_custom_dec: store.config.autofocus_target_custom_dec,
-        alignment_exposure_seconds: store.config.alignment_exposure_seconds || 2.0,
-        align_on_startup: store.config.align_on_startup || false,
+        ...store.config,
+        // Overrides for specially-handled fields
+        adapter_settings: adapterSettings,
+        host, port, use_ssl,
+        // Type coercions for form-bound numeric inputs (Alpine x-model can produce strings)
+        autofocus_interval_minutes: parseInt(store.config.autofocus_interval_minutes || 60, 10),
+        time_check_interval_minutes: parseInt(store.config.time_check_interval_minutes || 5, 10),
+        time_offset_pause_ms: parseFloat(store.config.time_offset_pause_ms || 500),
+        gps_update_interval_minutes: parseInt(store.config.gps_update_interval_minutes || 5, 10),
     };
+
+    COMPUTED_FIELDS.forEach(f => delete config[f]);
 
     try {
         // Validate filters BEFORE saving main config
