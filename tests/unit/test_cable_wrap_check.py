@@ -54,6 +54,7 @@ class _CachedStateSequence:
 
     def __init__(self, azimuths: list[float | None]):
         self._iter = iter(azimuths)
+        self.is_at_home = False
 
     @property
     def az_deg(self) -> float | None:
