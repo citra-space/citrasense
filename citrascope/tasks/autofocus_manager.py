@@ -142,6 +142,10 @@ class AutofocusManager:
 
         preset_key = settings.autofocus_target_preset or "mirach"
 
+        if preset_key == "current":
+            self.logger.info("Autofocus target: current position (no slew)")
+            return None, None
+
         if preset_key == "custom":
             ra = settings.autofocus_target_custom_ra
             dec = settings.autofocus_target_custom_dec

@@ -9,7 +9,6 @@ from pathlib import Path
 
 import requests
 
-from citrascope.constants import AUTOFOCUS_TARGET_PRESETS
 from citrascope.hardware.abstract_astro_hardware_adapter import (
     AbstractAstroHardwareAdapter,
     ObservationStrategy,
@@ -100,18 +99,26 @@ class NinaAdvancedHttpAdapter(AbstractAstroHardwareAdapter):
         endpoint to cancel a NINA autofocus in progress.
 
         Args:
-            target_ra: RA of the slew target in degrees (J2000), or None for Mirach
-            target_dec: Dec of the slew target in degrees (J2000), or None for Mirach
+            target_ra: RA of the slew target in degrees (J2000), or None to
+                focus at the current telescope position (no slew).
+            target_dec: Dec of the slew target in degrees (J2000), or None to
+                focus at the current telescope position (no slew).
             on_progress: Optional callback(str) to report progress updates
             cancel_event: Unused (NINA manages its own autofocus lifecycle)
 
         Raises:
             RuntimeError: If no filters discovered or no enabled filters
+            ValueError: If only one of target_ra/target_dec is None
         """
 
         def report(msg):
             if on_progress:
                 on_progress(msg)
+
+        if (target_ra is None) != (target_dec is None):
+            raise ValueError(
+                f"target_ra and target_dec must both be set or both be None, " f"got ra={target_ra}, dec={target_dec}"
+            )
 
         if not self.filter_map:
             raise RuntimeError("No filters discovered. Cannot perform autofocus.")
@@ -124,28 +131,25 @@ class NinaAdvancedHttpAdapter(AbstractAstroHardwareAdapter):
         self.logger.info(f"Performing autofocus routine on {total} enabled filter(s) ...")
 
         if target_ra is not None and target_dec is not None:
-            ra = target_ra
-            dec = target_dec
+            report("Slewing to target...")
+            self.logger.info(f"Slewing to autofocus target (RA={target_ra:.4f}, Dec={target_dec:.4f}) ...")
+            try:
+                response = requests.get(
+                    f"{self.nina_api_path}{self.MOUNT_URL}slew?ra={target_ra}&dec={target_dec}", timeout=30
+                )
+                response.raise_for_status()
+                mount_status = response.json()
+                self.logger.info(f"Mount {mount_status['Response']}")
+            except requests.Timeout as e:
+                raise RuntimeError("Mount slew request timed out") from e
+            except requests.RequestException as e:
+                raise RuntimeError(f"Mount slew failed: {e}") from e
+
+            while self.telescope_is_moving():
+                self.logger.info("Waiting for mount to finish slewing...")
+                time.sleep(5)
         else:
-            mirach = AUTOFOCUS_TARGET_PRESETS["mirach"]
-            ra = mirach["ra"]
-            dec = mirach["dec"]
-
-        report("Slewing to target...")
-        self.logger.info(f"Slewing to autofocus target (RA={ra:.4f}, Dec={dec:.4f}) ...")
-        try:
-            response = requests.get(f"{self.nina_api_path}{self.MOUNT_URL}slew?ra={ra}&dec={dec}", timeout=30)
-            response.raise_for_status()
-            mount_status = response.json()
-            self.logger.info(f"Mount {mount_status['Response']}")
-        except requests.Timeout as e:
-            raise RuntimeError("Mount slew request timed out") from e
-        except requests.RequestException as e:
-            raise RuntimeError(f"Mount slew failed: {e}") from e
-
-        while self.telescope_is_moving():
-            self.logger.info("Waiting for mount to finish slewing...")
-            time.sleep(5)
+            self.logger.info("Autofocus at current position (no slew)")
 
         for idx, (id, filter) in enumerate(enabled_filters.items(), 1):
             name = filter["name"]

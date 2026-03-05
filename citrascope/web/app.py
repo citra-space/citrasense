@@ -36,6 +36,27 @@ FILTER_NAME_OPTIONS = [
 ]
 
 
+def _resolve_autofocus_target_name(settings: Any) -> str:
+    """Return a human-readable name for the active autofocus target."""
+    preset_key = getattr(settings, "autofocus_target_preset", None) or "mirach"
+
+    if preset_key == "current":
+        return "Current position"
+
+    if preset_key == "custom":
+        ra = getattr(settings, "autofocus_target_custom_ra", None)
+        dec = getattr(settings, "autofocus_target_custom_dec", None)
+        if ra is not None and dec is not None:
+            return f"Custom (RA={ra:.4f}, Dec={dec:.4f})"
+        return "Mirach (custom missing coords)"
+
+    preset = AUTOFOCUS_TARGET_PRESETS.get(preset_key)
+    if not preset:
+        return f"Mirach (unknown preset '{preset_key}')"
+
+    return f"{preset['name']} ({preset['designation']})"
+
+
 class SystemStatus(BaseModel):
     """Current system status."""
 
@@ -57,6 +78,7 @@ class SystemStatus(BaseModel):
     autofocus_requested: bool = False
     autofocus_running: bool = False
     autofocus_progress: str = ""
+    autofocus_target_name: str = ""
     last_autofocus_timestamp: int | None = None
     next_autofocus_minutes: int | None = None
     time_health: dict[str, Any] | None = None
@@ -1435,6 +1457,7 @@ class CitraScopeWebApp:
                 settings = self.daemon.settings
                 self.status.last_autofocus_timestamp = settings.last_autofocus_timestamp
                 self.status.last_alignment_timestamp = settings.last_alignment_timestamp
+                self.status.autofocus_target_name = _resolve_autofocus_target_name(settings)
 
                 # Calculate next autofocus time if scheduled is enabled
                 if settings.scheduled_autofocus_enabled:

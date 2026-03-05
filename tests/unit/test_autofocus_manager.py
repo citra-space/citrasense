@@ -1,6 +1,7 @@
 """Unit tests for AutofocusManager."""
 
 import time
+from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
@@ -212,11 +213,53 @@ def test_resolve_target_unknown_preset(autofocus_manager, mock_settings):
     assert dec == mirach["dec"]
 
 
+def test_resolve_target_current_position(autofocus_manager, mock_settings):
+    mock_settings.autofocus_target_preset = "current"
+    ra, dec = autofocus_manager._resolve_target()
+    assert ra is None
+    assert dec is None
+
+
 def test_resolve_target_no_settings(autofocus_manager, mock_daemon):
     mock_daemon.settings = None
     ra, dec = autofocus_manager._resolve_target()
     assert ra is None
     assert dec is None
+
+
+# ---------------------------------------------------------------------------
+# Target kwargs passed to adapter
+# ---------------------------------------------------------------------------
+
+
+def test_adapter_receives_named_preset_coords(autofocus_manager, mock_settings, mock_hardware_adapter):
+    mock_settings.autofocus_target_preset = "vega"
+    autofocus_manager.request()
+    autofocus_manager.check_and_execute()
+    _, kwargs = mock_hardware_adapter.do_autofocus.call_args
+    expected = AUTOFOCUS_TARGET_PRESETS["vega"]
+    assert kwargs["target_ra"] == expected["ra"]
+    assert kwargs["target_dec"] == expected["dec"]
+
+
+def test_adapter_receives_none_for_current_position(autofocus_manager, mock_settings, mock_hardware_adapter):
+    mock_settings.autofocus_target_preset = "current"
+    autofocus_manager.request()
+    autofocus_manager.check_and_execute()
+    _, kwargs = mock_hardware_adapter.do_autofocus.call_args
+    assert kwargs["target_ra"] is None
+    assert kwargs["target_dec"] is None
+
+
+def test_adapter_receives_custom_coords(autofocus_manager, mock_settings, mock_hardware_adapter):
+    mock_settings.autofocus_target_preset = "custom"
+    mock_settings.autofocus_target_custom_ra = 200.0
+    mock_settings.autofocus_target_custom_dec = 45.0
+    autofocus_manager.request()
+    autofocus_manager.check_and_execute()
+    _, kwargs = mock_hardware_adapter.do_autofocus.call_args
+    assert kwargs["target_ra"] == 200.0
+    assert kwargs["target_dec"] == 45.0
 
 
 # ---------------------------------------------------------------------------
@@ -289,3 +332,100 @@ def test_filter_config_saved_after_autofocus(autofocus_manager, mock_hardware_ad
     autofocus_manager.request()
     autofocus_manager.check_and_execute()
     assert mock_settings.adapter_settings["filters"] == {"0": {"name": "Red"}, "1": {"name": "Green"}}
+
+
+# ---------------------------------------------------------------------------
+# Autofocus target name resolution (status display)
+# ---------------------------------------------------------------------------
+
+
+class TestResolveAutofocusTargetName:
+    """Tests for _resolve_autofocus_target_name used by the status API."""
+
+    def test_named_preset(self):
+        from citrascope.web.app import _resolve_autofocus_target_name
+
+        settings = MagicMock()
+        settings.autofocus_target_preset = "vega"
+        result = _resolve_autofocus_target_name(settings)
+        assert result == "Vega (Alpha Lyrae)"
+
+    def test_current_position(self):
+        from citrascope.web.app import _resolve_autofocus_target_name
+
+        settings = MagicMock()
+        settings.autofocus_target_preset = "current"
+        result = _resolve_autofocus_target_name(settings)
+        assert result == "Current position"
+
+    def test_custom_with_coords(self):
+        from citrascope.web.app import _resolve_autofocus_target_name
+
+        settings = MagicMock()
+        settings.autofocus_target_preset = "custom"
+        settings.autofocus_target_custom_ra = 123.4567
+        settings.autofocus_target_custom_dec = -45.6789
+        result = _resolve_autofocus_target_name(settings)
+        assert "123.4567" in result
+        assert "-45.6789" in result
+        assert "Custom" in result
+
+    def test_custom_missing_coords(self):
+        from citrascope.web.app import _resolve_autofocus_target_name
+
+        settings = MagicMock()
+        settings.autofocus_target_preset = "custom"
+        settings.autofocus_target_custom_ra = None
+        settings.autofocus_target_custom_dec = None
+        result = _resolve_autofocus_target_name(settings)
+        assert "Mirach" in result
+
+    def test_unknown_preset(self):
+        from citrascope.web.app import _resolve_autofocus_target_name
+
+        settings = MagicMock()
+        settings.autofocus_target_preset = "nonexistent"
+        result = _resolve_autofocus_target_name(settings)
+        assert "Mirach" in result
+        assert "nonexistent" in result
+
+    def test_falsy_preset_defaults_to_mirach(self):
+        from citrascope.web.app import _resolve_autofocus_target_name
+
+        settings = MagicMock()
+        settings.autofocus_target_preset = ""
+        result = _resolve_autofocus_target_name(settings)
+        assert "Mirach" in result
+
+
+# ---------------------------------------------------------------------------
+# Dummy adapter autofocus targeting
+# ---------------------------------------------------------------------------
+
+
+class TestDummyAdapterAutofocusTargeting:
+    """Verify DummyAdapter handles None/real coords correctly in do_autofocus."""
+
+    def test_skips_slew_when_both_none(self, tmp_path: Path):
+        from citrascope.hardware.dummy_adapter import DummyAdapter
+
+        adapter = DummyAdapter(MagicMock(), tmp_path)
+        adapter.connect()
+        adapter.do_autofocus(target_ra=None, target_dec=None)
+
+    def test_uses_provided_coords(self, tmp_path: Path):
+        from citrascope.hardware.dummy_adapter import DummyAdapter
+
+        adapter = DummyAdapter(MagicMock(), tmp_path)
+        adapter.connect()
+        adapter.do_autofocus(target_ra=100.0, target_dec=30.0)
+
+    def test_raises_on_partial_none(self, tmp_path: Path):
+        from citrascope.hardware.dummy_adapter import DummyAdapter
+
+        adapter = DummyAdapter(MagicMock(), tmp_path)
+        adapter.connect()
+        with pytest.raises(ValueError, match="both be set or both be None"):
+            adapter.do_autofocus(target_ra=100.0, target_dec=None)
+        with pytest.raises(ValueError, match="both be set or both be None"):
+            adapter.do_autofocus(target_ra=None, target_dec=30.0)

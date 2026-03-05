@@ -837,10 +837,15 @@ class DummyAdapter(AbstractAstroHardwareAdapter):
         cancel_event: threading.Event | None = None,
     ) -> None:
         """Simulate autofocus routine."""
+        if (target_ra is None) != (target_dec is None):
+            raise ValueError(
+                f"target_ra and target_dec must both be set or both be None, " f"got ra={target_ra}, dec={target_dec}"
+            )
+
         if target_ra is not None and target_dec is not None:
             self.logger.info(f"DummyAdapter: Starting autofocus on target RA={target_ra:.4f}, Dec={target_dec:.4f}")
         else:
-            self.logger.info("DummyAdapter: Starting autofocus (default target)")
+            self.logger.info("DummyAdapter: Starting autofocus at current position (no slew)")
 
         filters = [f for f in self.filter_map.values() if f.get("enabled", True)] if self.filter_map else []
         total = len(filters) or 1

@@ -587,83 +587,98 @@
                                     </div>
                                 </div>
 
-                                <div class="d-flex align-items-center gap-1 flex-wrap">
-                                    <button type="button" class="btn btn-sm btn-outline-secondary"
-                                            :disabled="$store.citrascope.status?.focuser_moving"
-                                            @click="window.moveFocuserRelative(-stepSize * 10)" title="In (coarse)">
-                                        <i class="bi bi-chevron-double-left"></i>
-                                    </button>
-                                    <button type="button" class="btn btn-sm btn-outline-secondary"
-                                            :disabled="$store.citrascope.status?.focuser_moving"
-                                            @click="window.moveFocuserRelative(-stepSize)" title="In (fine)">
-                                        <i class="bi bi-chevron-left"></i>
-                                    </button>
-                                    <div class="input-group input-group-sm" style="width: 120px;">
-                                        <input type="number" class="form-control text-center"
-                                               x-model.number="stepSize" min="1" step="1">
-                                        <span class="input-group-text">steps</span>
+                                <div class="row g-2">
+                                    <!-- Relative stepping -->
+                                    <div class="col-12 col-md">
+                                        <div class="d-flex align-items-center gap-1">
+                                            <button type="button" class="btn btn-sm btn-outline-secondary"
+                                                    :disabled="$store.citrascope.status?.focuser_moving"
+                                                    @click="window.moveFocuserRelative(-stepSize * 10)" title="In (coarse)">
+                                                <i class="bi bi-chevron-double-left"></i>
+                                            </button>
+                                            <button type="button" class="btn btn-sm btn-outline-secondary"
+                                                    :disabled="$store.citrascope.status?.focuser_moving"
+                                                    @click="window.moveFocuserRelative(-stepSize)" title="In (fine)">
+                                                <i class="bi bi-chevron-left"></i>
+                                            </button>
+                                            <div class="input-group input-group-sm" style="width: 120px;">
+                                                <input type="number" class="form-control text-center"
+                                                       x-model.number="stepSize" min="1" step="1">
+                                                <span class="input-group-text">steps</span>
+                                            </div>
+                                            <button type="button" class="btn btn-sm btn-outline-secondary"
+                                                    :disabled="$store.citrascope.status?.focuser_moving"
+                                                    @click="window.moveFocuserRelative(stepSize)" title="Out (fine)">
+                                                <i class="bi bi-chevron-right"></i>
+                                            </button>
+                                            <button type="button" class="btn btn-sm btn-outline-secondary"
+                                                    :disabled="$store.citrascope.status?.focuser_moving"
+                                                    @click="window.moveFocuserRelative(stepSize * 10)" title="Out (coarse)">
+                                                <i class="bi bi-chevron-double-right"></i>
+                                            </button>
+                                            <button type="button" class="btn btn-sm btn-outline-danger"
+                                                    x-show="$store.citrascope.status?.focuser_moving"
+                                                    @click="window.abortFocuser()" title="Stop">
+                                                <i class="bi bi-stop-fill"></i>
+                                            </button>
+                                        </div>
+                                        <div class="d-flex gap-1 mt-1">
+                                            <button class="btn btn-sm btn-outline-secondary py-0 px-2" style="font-size: 0.7rem;" @click="stepSize = 10">10</button>
+                                            <button class="btn btn-sm btn-outline-secondary py-0 px-2" style="font-size: 0.7rem;" @click="stepSize = 50">50</button>
+                                            <button class="btn btn-sm btn-outline-secondary py-0 px-2" style="font-size: 0.7rem;" @click="stepSize = 100">100</button>
+                                            <button class="btn btn-sm btn-outline-secondary py-0 px-2" style="font-size: 0.7rem;" @click="stepSize = 500">500</button>
+                                            <button class="btn btn-sm btn-outline-secondary py-0 px-2" style="font-size: 0.7rem;" @click="stepSize = 1000">1k</button>
+                                        </div>
+                                        <span class="small text-info" x-show="$store.citrascope.status?.focuser_moving">
+                                            <span class="spinner-border spinner-border-sm me-1" style="width: .5rem; height: .5rem;" role="status"></span>
+                                            Moving...
+                                        </span>
                                     </div>
-                                    <button type="button" class="btn btn-sm btn-outline-secondary"
-                                            :disabled="$store.citrascope.status?.focuser_moving"
-                                            @click="window.moveFocuserRelative(stepSize)" title="Out (fine)">
-                                        <i class="bi bi-chevron-right"></i>
-                                    </button>
-                                    <button type="button" class="btn btn-sm btn-outline-secondary"
-                                            :disabled="$store.citrascope.status?.focuser_moving"
-                                            @click="window.moveFocuserRelative(stepSize * 10)" title="Out (coarse)">
-                                        <i class="bi bi-chevron-double-right"></i>
-                                    </button>
-                                    <button type="button" class="btn btn-sm btn-outline-danger"
-                                            x-show="$store.citrascope.status?.focuser_moving"
-                                            @click="window.abortFocuser()" title="Stop">
-                                        <i class="bi bi-stop-fill"></i>
-                                    </button>
-                                    <span class="border-start border-secondary mx-1" style="height: 24px;"></span>
-                                    <input type="number" class="form-control form-control-sm" style="width: 80px;"
-                                           x-model.number="targetPos" min="0" placeholder="Pos"
-                                           :max="$store.citrascope.status?.focuser_max_position || 999999">
-                                    <button type="button" class="btn btn-sm btn-outline-primary"
-                                            :disabled="$store.citrascope.status?.focuser_moving"
-                                            @click="window.moveFocuserAbsolute(targetPos)">
-                                        Go
-                                    </button>
-                                    <span class="border-start border-secondary mx-1" style="height: 24px;"
-                                          x-show="$store.citrascope.status?.supports_autofocus"></span>
-                                    <button type="button" class="btn btn-sm"
-                                            x-show="$store.citrascope.status?.supports_autofocus"
-                                            :class="$store.citrascope.status?.autofocus_running ? 'btn-outline-danger' : ($store.citrascope.status?.autofocus_requested ? 'btn-outline-warning' : 'btn-outline-primary')"
-                                            @click="window.triggerAutofocus()">
-                                        <template x-if="$store.citrascope.status?.autofocus_running">
-                                            <span><i class="bi bi-stop-fill me-1"></i>Cancel AF</span>
-                                        </template>
-                                        <template x-if="!$store.citrascope.status?.autofocus_running">
-                                            <span x-text="$store.citrascope.status?.autofocus_requested ? 'Cancel AF' : 'Autofocus'"></span>
-                                        </template>
-                                    </button>
-                                </div>
-                                <div class="d-flex align-items-center gap-1 mt-1 flex-wrap">
-                                    <div class="d-flex gap-1">
-                                        <button class="btn btn-sm btn-outline-secondary py-0 px-2" style="font-size: 0.7rem;" @click="stepSize = 10">10</button>
-                                        <button class="btn btn-sm btn-outline-secondary py-0 px-2" style="font-size: 0.7rem;" @click="stepSize = 50">50</button>
-                                        <button class="btn btn-sm btn-outline-secondary py-0 px-2" style="font-size: 0.7rem;" @click="stepSize = 100">100</button>
-                                        <button class="btn btn-sm btn-outline-secondary py-0 px-2" style="font-size: 0.7rem;" @click="stepSize = 500">500</button>
-                                        <button class="btn btn-sm btn-outline-secondary py-0 px-2" style="font-size: 0.7rem;" @click="stepSize = 1000">1k</button>
-                                    </div>
-                                    <span class="small text-info ms-2" x-show="$store.citrascope.status?.focuser_moving">
-                                        <span class="spinner-border spinner-border-sm me-1" style="width: .5rem; height: .5rem;" role="status"></span>
-                                        Moving...
-                                    </span>
-                                    <span class="small" x-show="$store.citrascope.status?.autofocus_running"
-                                          x-text="$store.citrascope.status?.autofocus_progress || 'Autofocusing...'"></span>
-                                    <small class="small text-muted" x-show="$store.citrascope.status?.supports_autofocus && !$store.citrascope.status?.autofocus_running"
-                                           x-text="$store.citrascope.formatLastAutofocus($store.citrascope.status)"></small>
-                                </div>
-                            </div>
 
-                            <!-- ─── Autofocus schedule (if applicable) ─── -->
-                            <div class="pt-1" x-show="$store.citrascope.status?.supports_autofocus && $store.citrascope.status?.next_autofocus_minutes != null">
-                                <div class="small text-muted" x-show="$store.citrascope.status?.next_autofocus_minutes != null">
-                                    Next in: <span x-text="$store.citrascope.status?.next_autofocus_minutes === 0 ? 'now (overdue)' : $store.citrascope.formatMinutes($store.citrascope.status?.next_autofocus_minutes || 0)"></span>
+                                    <!-- Absolute move -->
+                                    <div class="col d-flex align-items-start justify-content-center">
+                                        <div class="d-flex align-items-center gap-1">
+                                            <input type="number" class="form-control form-control-sm" style="width: 80px;"
+                                                   x-model.number="targetPos" min="0" placeholder="Pos"
+                                                   :max="$store.citrascope.status?.focuser_max_position || 999999">
+                                            <button type="button" class="btn btn-sm btn-outline-primary"
+                                                    :disabled="$store.citrascope.status?.focuser_moving"
+                                                    @click="window.moveFocuserAbsolute(targetPos)">
+                                                Go
+                                            </button>
+                                        </div>
+                                    </div>
+
+                                    <!-- Autofocus -->
+                                    <div class="col-auto d-flex align-items-start"
+                                         x-show="$store.citrascope.status?.supports_autofocus">
+                                        <div>
+                                            <div class="d-flex align-items-center gap-2">
+                                                <button type="button" class="btn btn-sm"
+                                                        :class="$store.citrascope.status?.autofocus_running ? 'btn-outline-danger' : ($store.citrascope.status?.autofocus_requested ? 'btn-outline-warning' : 'btn-outline-primary')"
+                                                        @click="window.triggerAutofocus()">
+                                                    <template x-if="$store.citrascope.status?.autofocus_running">
+                                                        <span><i class="bi bi-stop-fill me-1"></i>Cancel AF</span>
+                                                    </template>
+                                                    <template x-if="!$store.citrascope.status?.autofocus_running">
+                                                        <span x-text="$store.citrascope.status?.autofocus_requested ? 'Cancel AF' : 'Autofocus'"></span>
+                                                    </template>
+                                                </button>
+                                                <small class="text-muted" x-show="!$store.citrascope.status?.autofocus_running"
+                                                       x-text="$store.citrascope.formatLastAutofocus($store.citrascope.status)"></small>
+                                            </div>
+                                            <span class="small" x-show="$store.citrascope.status?.autofocus_running"
+                                                  x-text="$store.citrascope.status?.autofocus_progress || 'Autofocusing...'"></span>
+                                            <div x-show="!$store.citrascope.status?.autofocus_running">
+                                                <small class="text-muted" x-show="$store.citrascope.status?.autofocus_target_name"
+                                                       x-text="'Target: ' + $store.citrascope.status?.autofocus_target_name"></small>
+                                            </div>
+                                            <div x-show="!$store.citrascope.status?.autofocus_running && $store.citrascope.status?.next_autofocus_minutes != null">
+                                                <small class="text-muted"
+                                                       x-text="'Next in: ' + ($store.citrascope.status?.next_autofocus_minutes === 0 ? 'now (overdue)' : $store.citrascope.formatMinutes($store.citrascope.status?.next_autofocus_minutes || 0))"></small>
+                                            </div>
+                                        </div>
+                                    </div>
                                 </div>
                             </div>
 
