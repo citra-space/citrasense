@@ -112,6 +112,26 @@ class TestZwoAmCommands:
     def test_tracking_off_cmd(self):
         assert ZwoAmCommands.tracking_off() == ":Td#"
 
+    # --- custom tracking rate offsets ---
+
+    def test_ra_tracking_rate_offset_positive(self):
+        assert ZwoAmCommands.set_ra_tracking_rate_offset(50.0) == ":RA+050.000000#"
+
+    def test_ra_tracking_rate_offset_negative(self):
+        assert ZwoAmCommands.set_ra_tracking_rate_offset(-12.5) == ":RA-012.500000#"
+
+    def test_ra_tracking_rate_offset_zero(self):
+        assert ZwoAmCommands.set_ra_tracking_rate_offset(0.0) == ":RA+000.000000#"
+
+    def test_dec_tracking_rate_offset_positive(self):
+        assert ZwoAmCommands.set_dec_tracking_rate_offset(10.123456) == ":RE+010.123456#"
+
+    def test_dec_tracking_rate_offset_negative(self):
+        assert ZwoAmCommands.set_dec_tracking_rate_offset(-0.5) == ":RE-000.500000#"
+
+    def test_dec_tracking_rate_offset_zero(self):
+        assert ZwoAmCommands.set_dec_tracking_rate_offset(0.0) == ":RE+000.000000#"
+
     # --- site location ---
 
     def test_set_latitude_positive(self):

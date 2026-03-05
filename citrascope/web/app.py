@@ -292,6 +292,7 @@ class CitraScopeWebApp:
                 "gps_location_updates_enabled": settings.gps_location_updates_enabled,
                 "gps_update_interval_minutes": settings.gps_update_interval_minutes,
                 "task_processing_paused": settings.task_processing_paused,
+                "observation_mode": settings.observation_mode,
                 "processors_enabled": settings.processors_enabled,
                 "enabled_processors": settings.enabled_processors,
                 "app_url": app_url,

@@ -187,6 +187,13 @@ class AbstractMount(AbstractHardwareDevice):
         """
         return False
 
+    def reset_tracking_rates(self) -> None:
+        """Zero out custom tracking rate offsets, returning to base tracking.
+
+        No-op by default. Mounts that support custom rates should override.
+        """
+        return
+
     def guide_pulse(self, direction: str, duration_ms: int) -> bool:
         """Send an autoguiding correction pulse.
 

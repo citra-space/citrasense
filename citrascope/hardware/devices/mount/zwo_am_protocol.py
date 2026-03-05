@@ -388,6 +388,16 @@ class ZwoAmCommands:
         }
         return _cmds[rate]
 
+    @staticmethod
+    def set_ra_tracking_rate_offset(arcsec_per_sec: float) -> str:
+        """Set RA tracking rate offset from base rate (arcsec/s). Fire-and-forget."""
+        return f":RA{arcsec_per_sec:+011.6f}#"
+
+    @staticmethod
+    def set_dec_tracking_rate_offset(arcsec_per_sec: float) -> str:
+        """Set Dec tracking rate offset from base rate (arcsec/s). Fire-and-forget."""
+        return f":RE{arcsec_per_sec:+011.6f}#"
+
     # --- Home / Park (fire-and-forget) ---
 
     @staticmethod

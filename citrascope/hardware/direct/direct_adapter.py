@@ -1170,20 +1170,43 @@ class DirectHardwareAdapter(AbstractAstroHardwareAdapter):
             )
         )
 
-    def set_custom_tracking_rate(self, ra_rate: float, dec_rate: float):
+    def set_custom_tracking_rate(self, ra_rate: float, dec_rate: float) -> bool:
         """Set custom tracking rate for telescope.
 
         Args:
             ra_rate: RA tracking rate in arcseconds/second
             dec_rate: Dec tracking rate in arcseconds/second
+
+        Returns:
+            True if rates were accepted by the mount, False otherwise.
         """
         if not self._mount:
             self.logger.warning("No mount configured - cannot set tracking rate")
-            return
+            return False
 
         self.logger.info(f'Setting custom tracking rate: RA={ra_rate}"/s, Dec={dec_rate}"/s')
         if not self._mount.set_custom_tracking_rates(ra_rate, dec_rate):
             self.logger.warning("Mount does not support custom tracking rates")
+            return False
+        return True
+
+    def reset_tracking_rates(self) -> None:
+        """Zero out custom tracking rate offsets, returning to base sidereal tracking."""
+        if not self._mount:
+            return
+        self._mount.reset_tracking_rates()
+
+    @property
+    def supports_custom_tracking(self) -> bool:
+        """Check if the connected mount supports custom tracking rates."""
+        if not self._mount:
+            return False
+        try:
+            info = self._mount.get_mount_info()
+        except Exception as exc:
+            self.logger.warning("Failed to query mount info for custom tracking support: %s", exc)
+            return False
+        return info.get("supports_custom_tracking", False)
 
     def get_tracking_rate(self) -> tuple[float, float]:
         """Get current telescope tracking rate.

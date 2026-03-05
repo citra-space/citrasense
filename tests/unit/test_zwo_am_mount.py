@@ -56,6 +56,37 @@ class TestSyncDatetime:
         assert result is False
 
 
+class TestCustomTrackingRates:
+    def test_set_custom_tracking_rates_sends_commands(self, mount: ZwoAmMount):
+        mount._transport.send_command_with_retry.return_value = "NG#"  # tracking=True
+        result = mount.set_custom_tracking_rates(50.0, -10.0)
+
+        assert result is True
+        no_resp_calls = [c.args[0] for c in mount._transport.send_command_no_response.call_args_list]
+        assert ":RA+050.000000#" in no_resp_calls
+        assert ":RE-010.000000#" in no_resp_calls
+
+    def test_set_custom_tracking_rates_starts_tracking_if_not_active(self, mount: ZwoAmMount):
+        mount._transport.send_command_with_retry.return_value = "nN#"  # tracking=False
+        mount.set_custom_tracking_rates(1.0, 2.0)
+
+        no_resp_calls = [c.args[0] for c in mount._transport.send_command_no_response.call_args_list]
+        assert ":TQ#" in no_resp_calls  # sidereal rate set
+        assert ":Te#" in no_resp_calls  # tracking enabled
+
+    def test_reset_tracking_rates_zeros_offsets(self, mount: ZwoAmMount):
+        mount.reset_tracking_rates()
+
+        no_resp_calls = [c.args[0] for c in mount._transport.send_command_no_response.call_args_list]
+        assert ":RA+000.000000#" in no_resp_calls
+        assert ":RE+000.000000#" in no_resp_calls
+
+    def test_get_mount_info_supports_custom_tracking(self, mount: ZwoAmMount):
+        mount._transport.send_command_with_retry.return_value = "NG#"
+        info = mount.get_mount_info()
+        assert info["supports_custom_tracking"] is True
+
+
 class _FakeTransport(ZwoAmTransport):
     """In-memory transport that records command order for concurrency testing."""
 

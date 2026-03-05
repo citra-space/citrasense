@@ -381,8 +381,33 @@ class ZwoAmMount(AbstractMount):
             "mount_mode": mode.value,
             "supports_sync": True,
             "supports_guide_pulse": True,
-            "supports_custom_tracking": False,
+            "supports_custom_tracking": True,
         }
+
+    def set_custom_tracking_rates(self, ra_rate: float, dec_rate: float) -> bool:
+        """Set custom tracking rate offsets for satellite tracking.
+
+        Ensures sidereal tracking is active as the base, then applies
+        RA/Dec offsets on top. The mount's :RA#/:RE# commands add to the
+        active base rate.
+
+        Args:
+            ra_rate: RA rate offset in arcseconds/second
+            dec_rate: Dec rate offset in arcseconds/second
+        """
+
+        self.start_tracking("sidereal")
+
+        self._transport.send_command_no_response(ZwoAmCommands.set_ra_tracking_rate_offset(ra_rate))
+        self._transport.send_command_no_response(ZwoAmCommands.set_dec_tracking_rate_offset(dec_rate))
+        self.logger.info('Custom tracking rates set: RA=%+.2f"/s, Dec=%+.2f"/s', ra_rate, dec_rate)
+        return True
+
+    def reset_tracking_rates(self) -> None:
+        """Zero out custom tracking rate offsets, returning to pure sidereal."""
+        self._transport.send_command_no_response(ZwoAmCommands.set_ra_tracking_rate_offset(0.0))
+        self._transport.send_command_no_response(ZwoAmCommands.set_dec_tracking_rate_offset(0.0))
+        self.logger.info("Tracking rate offsets reset to zero")
 
     # ------------------------------------------------------------------
     # Optional capabilities (concrete overrides)

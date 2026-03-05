@@ -299,6 +299,7 @@ async function saveConfiguration(event) {
         gps_location_updates_enabled: formConfig.gps_location_updates_enabled !== undefined ? formConfig.gps_location_updates_enabled : true,
         gps_update_interval_minutes: parseInt(formConfig.gps_update_interval_minutes || 5, 10),
         task_processing_paused: formConfig.task_processing_paused !== undefined ? formConfig.task_processing_paused : false,
+        observation_mode: formConfig.observation_mode || 'auto',
         processors_enabled: formConfig.processors_enabled !== undefined ? formConfig.processors_enabled : true,
         enabled_processors: formConfig.enabled_processors || {},
         host,

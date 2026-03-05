@@ -121,6 +121,12 @@ class CitraScopeSettings:
         # Task processing state (persisted so pause survives restarts)
         self.task_processing_paused: bool = config.get("task_processing_paused", False)
 
+        # Observation mode: "auto" (use tracking if mount supports it), "tracking", or "static"
+        self.observation_mode: str = config.get("observation_mode", "auto")
+        if self.observation_mode not in ("auto", "tracking", "static"):
+            CITRASCOPE_LOGGER.warning(f"Invalid observation_mode ({self.observation_mode!r}). Falling back to 'auto'.")
+            self.observation_mode = "auto"
+
         # MSI Processor configuration
         # Note: Individual processor enable/disable is handled via enabled_processors dict (already exists)
         self.elset_refresh_interval_hours: float = config.get("elset_refresh_interval_hours", 6)
@@ -185,6 +191,7 @@ class CitraScopeSettings:
             "processors_enabled": self.processors_enabled,
             "enabled_processors": self.enabled_processors,
             "task_processing_paused": self.task_processing_paused,
+            "observation_mode": self.observation_mode,
             "elset_refresh_interval_hours": self.elset_refresh_interval_hours,
         }
 

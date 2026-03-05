@@ -241,6 +241,22 @@ class AbstractAstroHardwareAdapter(ABC):
         """Get the current tracking rate for the telescope in RA and Dec (arcseconds per second)."""
         pass
 
+    def reset_tracking_rates(self) -> None:
+        """Zero out custom tracking rate offsets, returning to base sidereal tracking.
+
+        No-op by default. Adapters that support custom tracking rates should
+        override this to reset offsets after satellite observations.
+        """
+        return
+
+    @property
+    def supports_custom_tracking(self) -> bool:
+        """Whether the connected mount supports custom RA/Dec tracking rates.
+
+        Returns False by default. Adapters with capable mounts should override.
+        """
+        return False
+
     def perform_alignment(self, target_ra: float, target_dec: float) -> bool:
         """Perform plate-solve alignment to correct the mount's pointing model.
 

@@ -206,3 +206,49 @@ def test_settings_update_and_save():
     saved = instance.save_config.call_args[0][0]
     assert "web_port" not in saved
     assert saved["adapter_settings"]["dummy"]["some_key"] == "val"
+
+
+# ---------------------------------------------------------------------------
+# Observation mode
+# ---------------------------------------------------------------------------
+
+
+def test_observation_mode_defaults_to_auto():
+    with patch("citrascope.settings.citrascope_settings.SettingsFileManager") as MockSFM:
+        MockSFM.return_value.load_config.return_value = {}
+        from citrascope.settings.citrascope_settings import CitraScopeSettings
+
+        s = CitraScopeSettings()
+
+    assert s.observation_mode == "auto"
+
+
+@pytest.mark.parametrize("mode", ["auto", "tracking", "static"])
+def test_observation_mode_accepts_valid_values(mode):
+    with patch("citrascope.settings.citrascope_settings.SettingsFileManager") as MockSFM:
+        MockSFM.return_value.load_config.return_value = {"observation_mode": mode}
+        from citrascope.settings.citrascope_settings import CitraScopeSettings
+
+        s = CitraScopeSettings()
+
+    assert s.observation_mode == mode
+
+
+def test_observation_mode_rejects_invalid_value():
+    with patch("citrascope.settings.citrascope_settings.SettingsFileManager") as MockSFM:
+        MockSFM.return_value.load_config.return_value = {"observation_mode": "bogus"}
+        from citrascope.settings.citrascope_settings import CitraScopeSettings
+
+        s = CitraScopeSettings()
+
+    assert s.observation_mode == "auto"
+
+
+def test_observation_mode_in_to_dict():
+    with patch("citrascope.settings.citrascope_settings.SettingsFileManager") as MockSFM:
+        MockSFM.return_value.load_config.return_value = {"observation_mode": "tracking"}
+        from citrascope.settings.citrascope_settings import CitraScopeSettings
+
+        s = CitraScopeSettings()
+
+    assert s.to_dict()["observation_mode"] == "tracking"

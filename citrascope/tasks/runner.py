@@ -10,6 +10,7 @@ from citrascope.tasks.alignment_manager import AlignmentManager
 from citrascope.tasks.autofocus_manager import AutofocusManager
 from citrascope.tasks.homing_manager import HomingManager
 from citrascope.tasks.scope.static_telescope_task import StaticTelescopeTask
+from citrascope.tasks.scope.tracking_telescope_task import TrackingTelescopeTask
 from citrascope.tasks.task import Task
 
 # Task polling interval in seconds
@@ -416,10 +417,29 @@ class TaskManager:
         return False
 
     def _create_telescope_task(self, task: Task):
-        """Create appropriate telescope task instance for the given task."""
-        # For now, use StaticTelescopeTask
-        # Future: could choose between Static and Tracking based on task type
-        return StaticTelescopeTask(
+        """Create appropriate telescope task instance for the given task.
+
+        Selection depends on the ``observation_mode`` setting:
+        - "auto": use TrackingTelescopeTask if the adapter reports
+          ``supports_custom_tracking``, otherwise StaticTelescopeTask.
+        - "tracking": always TrackingTelescopeTask.
+        - "static": always StaticTelescopeTask.
+        """
+        mode = self.daemon.settings.observation_mode
+
+        use_tracking = False
+        if mode == "tracking":
+            use_tracking = True
+        elif mode == "auto":
+            use_tracking = self.hardware_adapter.supports_custom_tracking
+
+        if use_tracking:
+            self.logger.info("Using TrackingTelescopeTask (mode=%s)", mode)
+        else:
+            self.logger.info("Using StaticTelescopeTask (mode=%s)", mode)
+
+        cls = TrackingTelescopeTask if use_tracking else StaticTelescopeTask
+        return cls(
             self.api_client,
             self.hardware_adapter,
             self.logger,
