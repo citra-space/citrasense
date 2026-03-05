@@ -97,6 +97,25 @@ def test_cache_load_from_file(tmp_path):
     assert len(cache.get_elsets()) == 1
 
 
+def test_cache_load_sets_refresh_epoch_from_mtime(tmp_path):
+    """Loading from file should set _last_refresh_epoch to the file's mtime,
+    so refresh_if_stale() doesn't immediately re-download."""
+    data = [{"satellite_id": "25544", "name": "ISS", "tle": ["l1", "l2"]}]
+    cache_path = tmp_path / "elsets.json"
+    cache_path.write_text(json.dumps(data))
+
+    cache = ElsetCache(cache_path=cache_path)
+    assert cache._last_refresh_epoch == 0.0
+    cache.load_from_file()
+    assert cache._last_refresh_epoch > 0.0
+    assert cache._last_refresh_epoch == cache_path.stat().st_mtime
+
+    mock_api = MagicMock()
+    mock_api.get_elsets_latest.return_value = []
+    cache.refresh_if_stale(mock_api, interval_hours=24)
+    mock_api.get_elsets_latest.assert_not_called()
+
+
 def test_cache_load_from_missing_file(tmp_path):
     cache = ElsetCache(cache_path=tmp_path / "nope.json")
     cache.load_from_file()

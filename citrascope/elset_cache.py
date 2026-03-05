@@ -82,6 +82,7 @@ class ElsetCache:
             if isinstance(data, list):
                 with self._lock:
                     self._list = data
+                    self._last_refresh_epoch = Path(p).stat().st_mtime
         except (json.JSONDecodeError, OSError):
             pass
 
