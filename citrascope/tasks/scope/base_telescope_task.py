@@ -15,6 +15,12 @@ _DEFAULT_SETTLE_TIME_S = 1.5
 _DEFAULT_CONVERGENCE_THRESHOLD_DEG = 0.3
 _FOV_CONVERGENCE_FRACTION = 0.35
 
+_MIN_MOTION_TIME_S = 0.5
+_MIN_SLEW_DISTANCE_DEG = 0.1
+_MIN_OBSERVED_RATE_DEG_PER_S = 0.1
+_MAX_OBSERVED_RATE_DEG_PER_S = 50.0
+_RATE_DIVERGENCE_WARNING_THRESHOLD = 0.3
+
 
 def estimate_slew_time(
     distance_deg: float,
@@ -26,7 +32,7 @@ def estimate_slew_time(
 
     For short slews the mount never reaches max speed (triangle profile).
     For long slews it accelerates, cruises, then decelerates (trapezoid).
-    Settle time (vibration dampening after stop) is always added.
+    Settle time (vibration damping after stop) is always added.
     """
     if distance_deg <= 0 or max_rate <= 0 or acceleration <= 0:
         return settle_time
@@ -163,13 +169,13 @@ class AbstractBaseTelescopeTask(ABC):
             self.logger.info(self._format_processing_summary(task_id, result.extracted_data))
 
         # Feed plate solve result to hardware adapter so mount model can update (e.g. alignment offsets)
-        if result and result.extracted_data and self.daemon.hardware_adapter:
+        if result and result.extracted_data and self.hardware_adapter:
             ra = result.extracted_data.get("plate_solver.ra_center")
             dec = result.extracted_data.get("plate_solver.dec_center")
             if ra is not None and dec is not None:
                 expected_ra = getattr(self.task, "target_ra_deg", None)
                 expected_dec = getattr(self.task, "target_dec_deg", None)
-                self.daemon.hardware_adapter.update_from_plate_solve(
+                self.hardware_adapter.update_from_plate_solve(
                     float(ra),
                     float(dec),
                     expected_ra_deg=expected_ra,
@@ -378,13 +384,13 @@ class AbstractBaseTelescopeTask(ABC):
 
             # Adaptive rate: learn from observed slew performance
             motion_time = slew_duration - _DEFAULT_SETTLE_TIME_S
-            if motion_time > 0.5 and slewed_distance > 0.1:
+            if motion_time > _MIN_MOTION_TIME_S and slewed_distance > _MIN_SLEW_DISTANCE_DEG:
                 observed_rate = slewed_distance / motion_time
-                effective_rate = max(0.1, min(50.0, observed_rate))
+                effective_rate = max(_MIN_OBSERVED_RATE_DEG_PER_S, min(_MAX_OBSERVED_RATE_DEG_PER_S, observed_rate))
 
                 if not rate_warning_logged:
                     api_rate = self.hardware_adapter.scope_slew_rate_degrees_per_second
-                    if api_rate > 0 and abs(effective_rate - api_rate) / api_rate > 0.3:
+                    if api_rate > 0 and abs(effective_rate - api_rate) / api_rate > _RATE_DIVERGENCE_WARNING_THRESHOLD:
                         self.logger.warning(
                             f"Observed slew rate ({effective_rate:.1f} deg/s) differs from "
                             f"configured maxSlewRate ({api_rate:.1f} deg/s) by "
@@ -440,8 +446,8 @@ class AbstractBaseTelescopeTask(ABC):
         solved pixel scale diverges from the telescope record by >10%, logs a
         warning so the operator knows their config may be stale.
         """
-        adapter = self.daemon.hardware_adapter
-        if not adapter or adapter.observed_fov_short_deg:
+        adapter = self.hardware_adapter
+        if adapter is None or adapter.observed_fov_short_deg:
             return
 
         field_w = extracted_data.get("plate_solver.field_width_deg")

@@ -1,9 +1,10 @@
 """Tests for AbstractBaseTelescopeTask and StaticTelescopeTask."""
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, create_autospec, patch
 
 import pytest
 
+from citrascope.hardware.abstract_astro_hardware_adapter import AbstractAstroHardwareAdapter
 from citrascope.tasks.task import Task
 
 
@@ -22,8 +23,8 @@ def _make_task_dict(**overrides):
 
 
 def _make_hardware_adapter(**overrides):
-    """Build a MagicMock hardware adapter with sensible defaults for slew tests."""
-    adapter = MagicMock()
+    """Build a spec'd mock hardware adapter with sensible defaults for slew tests."""
+    adapter = create_autospec(AbstractAstroHardwareAdapter, instance=True)
     adapter.observed_fov_short_deg = None
     adapter.telescope_record = None
     adapter.scope_slew_rate_degrees_per_second = 5.0
@@ -245,7 +246,7 @@ class TestOnProcessingComplete:
                 pass
 
         daemon = _make_daemon()
-        return ConcreteTask(MagicMock(), MagicMock(), MagicMock(), _make_task_dict(), daemon)
+        return ConcreteTask(MagicMock(), daemon.hardware_adapter, MagicMock(), _make_task_dict(), daemon)
 
     def test_skip_upload_when_should_upload_false(self):
         ct = self._make_concrete()
@@ -265,7 +266,7 @@ class TestOnProcessingComplete:
         }
         with patch.object(ct, "_queue_for_upload"):
             ct._on_processing_complete("/img.fits", "task-1", result)
-        ct.daemon.hardware_adapter.update_from_plate_solve.assert_called_once()
+        ct.hardware_adapter.update_from_plate_solve.assert_called_once()
 
     def test_no_result_queues_for_upload(self):
         ct = self._make_concrete()
