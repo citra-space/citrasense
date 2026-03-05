@@ -45,4 +45,7 @@ class TrackingTelescopeTask(AbstractBaseTelescopeTask):
             filepath = self.hardware_adapter.take_image(self.task.id, 20.0)  # 20 second exposure
             return self.upload_image_and_mark_complete(filepath)
         finally:
-            self.hardware_adapter.reset_tracking_rates()
+            try:
+                self.hardware_adapter.reset_tracking_rates()
+            except Exception as e:
+                self.logger.error("Failed to reset tracking rates for task %s: %s", self.task.id, e)

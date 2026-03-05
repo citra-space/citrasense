@@ -1201,7 +1201,11 @@ class DirectHardwareAdapter(AbstractAstroHardwareAdapter):
         """Check if the connected mount supports custom tracking rates."""
         if not self._mount:
             return False
-        info = self._mount.get_mount_info()
+        try:
+            info = self._mount.get_mount_info()
+        except Exception as exc:
+            self.logger.warning("Failed to query mount info for custom tracking support: %s", exc)
+            return False
         return info.get("supports_custom_tracking", False)
 
     def get_tracking_rate(self) -> tuple[float, float]:

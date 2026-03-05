@@ -391,16 +391,12 @@ class ZwoAmMount(AbstractMount):
         RA/Dec offsets on top. The mount's :RA#/:RE# commands add to the
         active base rate.
 
-        After setting, samples position over ~1 s to verify the mount is
-        actually moving at approximately the requested rates.
-
         Args:
             ra_rate: RA rate offset in arcseconds/second
             dec_rate: Dec rate offset in arcseconds/second
         """
 
-        if not self.is_tracking():
-            self.start_tracking("sidereal")
+        self.start_tracking("sidereal")
 
         self._transport.send_command_no_response(ZwoAmCommands.set_ra_tracking_rate_offset(ra_rate))
         self._transport.send_command_no_response(ZwoAmCommands.set_dec_tracking_rate_offset(dec_rate))
