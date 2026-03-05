@@ -291,13 +291,12 @@ class CitraScopeDaemon:
 
             # Safety monitor MUST be online before any mount motion.
             # connect() above establishes the serial link and syncs site/time
-            # but does NOT home.  home_if_needed() below triggers the first
-            # physical slew — by then, CableWrapCheck is already observing.
-            self._initialize_safety_monitor()
+            # but does NOT home.  The operator can home manually via the web
+            # UI (/api/mount/home) when ready.
+            if not self.hardware_adapter.is_mount_homed():
+                CITRASCOPE_LOGGER.info("Mount is not at home position — home via web UI if GoTo fails")
 
-            # Home the mount (now safety-gated and monitored)
-            if not self.hardware_adapter.home_if_needed():
-                CITRASCOPE_LOGGER.warning("Mount homing failed or timed out — GoTo may not work")
+            self._initialize_safety_monitor()
 
             # Create TaskManager (now owns all queues and stage tracking)
             self.task_manager = TaskManager(
