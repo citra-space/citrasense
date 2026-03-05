@@ -383,6 +383,7 @@ class CitraScopeDaemon:
             state_file = data_dir / "cable_wrap_state.json"
             cable_check = CableWrapCheck(CITRASCOPE_LOGGER, mount, state_file=state_file)
             cable_check.start()
+            mount.register_sync_listener(cable_check.notify_sync)
 
             if cable_check.needs_startup_unwind():
                 CITRASCOPE_LOGGER.warning(

@@ -427,6 +427,12 @@ class ZwoAmMount(AbstractMount):
         except Exception:
             self.logger.warning("Could not read back position after sync")
 
+        post_sync_az = self.get_azimuth()
+        cache = getattr(self, "_state_cache", None)
+        if cache is not None and post_sync_az is not None:
+            cache.update_azimuth(post_sync_az)
+        self._fire_sync_listeners(post_sync_az)
+
         return True
 
     def guide_pulse(self, direction: str, duration_ms: int) -> bool:

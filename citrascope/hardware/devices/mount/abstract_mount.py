@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import logging
 from abc import abstractmethod
+from collections.abc import Callable
 from typing import TYPE_CHECKING
 
 from citrascope.hardware.devices.abstract_hardware_device import AbstractHardwareDevice
@@ -22,6 +24,30 @@ class AbstractMount(AbstractHardwareDevice):
     expose its data.  The adapter creates and attaches the cache — consumers
     never see it directly.
     """
+
+    def __init__(self, logger: logging.Logger, **kwargs) -> None:
+        super().__init__(logger=logger, **kwargs)
+        self._sync_listeners: list[Callable[[float | None], None]] = []
+
+    # ------------------------------------------------------------------
+    # Sync listeners — consumers (e.g. CableWrapCheck) register here to
+    # be notified after an alignment sync so they can re-baseline state.
+    # ------------------------------------------------------------------
+
+    def register_sync_listener(self, callback: Callable[[float | None], None]) -> None:
+        """Register a callback invoked after ``sync_to_radec`` succeeds.
+
+        The callback receives the post-sync azimuth (or None if unavailable).
+        """
+        self._sync_listeners.append(callback)
+
+    def _fire_sync_listeners(self, post_sync_az: float | None = None) -> None:
+        """Notify all registered listeners after a successful sync."""
+        for cb in self._sync_listeners:
+            try:
+                cb(post_sync_az)
+            except Exception:
+                self.logger.debug("Sync listener %s raised", cb, exc_info=True)
 
     # ------------------------------------------------------------------
     # Core abstract methods — every mount must implement these

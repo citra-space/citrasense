@@ -231,6 +231,7 @@ class _DummyMount(AbstractMount):
         self._alt = alt
         self._ref_time = time.monotonic()
         self.logger.info(f"Synced to RA={ra:.4f}°, Dec={dec:.4f}°")
+        self._fire_sync_listeners(az)
         return True
 
     _HOME_AZ = 0.0

@@ -257,6 +257,24 @@ class CableWrapCheck(SafetyCheck):
         if thread is not None and thread.is_alive():
             thread.join(timeout=timeout)
 
+    def notify_sync(self, post_sync_az: float | None) -> None:
+        """Re-baseline azimuth after alignment sync (no physical motion).
+
+        Called by the mount's sync listener after :CM# succeeds and the
+        state cache has already been updated with the post-sync azimuth.
+        Sets ``_last_az`` so the next ``_observe_once`` sees near-zero delta.
+        """
+        with self._lock:
+            old = self._last_az
+            if post_sync_az is not None:
+                self._last_az = post_sync_az
+        self._logger.info(
+            "Cable wrap: alignment sync — re-baselined az %.1f° → %.1f° (cumulative %.1f°)",
+            old or 0.0,
+            post_sync_az or 0.0,
+            self._cumulative_deg,
+        )
+
     def reset(self) -> None:
         with self._lock:
             self._cumulative_deg = 0.0
