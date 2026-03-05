@@ -234,6 +234,32 @@ def test_update_and_save_preserves_fields_not_in_payload():
     assert saved["personal_access_token"] == "new_tok"
 
 
+def test_update_and_save_strips_computed_keys():
+    """Computed/server-only keys from the web UI should not be written to disk."""
+    with patch("citrascope.settings.citrascope_settings.SettingsFileManager") as MockSFM:
+        instance = MockSFM.return_value
+        instance.load_config.return_value = {"hardware_adapter": "dummy"}
+        from citrascope.settings.citrascope_settings import CitraScopeSettings
+
+        s = CitraScopeSettings.load()
+        s.update_and_save(
+            {
+                "hardware_adapter": "dummy",
+                "adapter_settings": {},
+                "app_url": "https://should-not-persist.example",
+                "config_file_path": "/tmp/fake",
+                "log_file_path": "/tmp/fake.log",
+                "images_dir_path": "/tmp/images",
+                "processing_dir_path": "/tmp/processing",
+            }
+        )
+
+    saved = instance.save_config.call_args[0][0]
+    for key in ("app_url", "config_file_path", "log_file_path", "images_dir_path", "processing_dir_path"):
+        assert key not in saved, f"Computed key '{key}' should not be persisted"
+    assert saved["hardware_adapter"] == "dummy"
+
+
 # ---------------------------------------------------------------------------
 # Observation mode
 # ---------------------------------------------------------------------------

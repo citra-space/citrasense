@@ -31,7 +31,7 @@ class CitraScopeSettings(BaseModel):
     handles loading from a config dict with defaults for missing keys.
     """
 
-    model_config = ConfigDict(arbitrary_types_allowed=True)
+    model_config = ConfigDict(arbitrary_types_allowed=True, validate_assignment=True)
 
     # ── Persisted settings ────────────────────────────────────────────
     # API
@@ -235,4 +235,8 @@ class CitraScopeSettings(BaseModel):
 
         merged = self.to_dict()
         merged.update(config)
+
+        allowed_keys = {k for k, v in type(self).model_fields.items() if not v.exclude} | {"adapter_settings"}
+        merged = {k: v for k, v in merged.items() if k in allowed_keys}
+
         self._config_manager.save_config(merged)
