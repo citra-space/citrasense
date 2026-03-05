@@ -40,6 +40,8 @@ Commands that DO NOT work on ZWO AM5::
   :Sh# / :So#        Standard LX200 set horizon/overhead limit → silently rejected
   :GX95#             OnStep get meridian auto-flip → timeout / no response
   :SX95,{0|1}#      OnStep set meridian auto-flip → rejected
+  :GX42# / :GX43#   OnStep get raw instrument axis position → timeout / no response
+                     (tested on AM5 firmware v1.1.2, 2026-03-05)
 
 ZWO-proprietary commands (use these instead)::
 

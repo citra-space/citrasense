@@ -119,6 +119,28 @@ class MountStateCache:
         except Exception:
             logger.warning("Failed to refresh limits for cache", exc_info=True)
 
+    def update_azimuth(self, az_deg: float) -> None:
+        """Immediately update the cached azimuth (e.g. after alignment sync).
+
+        Swaps in a new snapshot with only ``az_deg`` and ``timestamp``
+        changed, so consumers see the post-sync value without waiting
+        for the next polling cycle.
+        """
+        with self._snap_lock:
+            old = self._snapshot
+            self._snapshot = MountSnapshot(
+                timestamp=time.monotonic(),
+                ra_deg=old.ra_deg,
+                dec_deg=old.dec_deg,
+                az_deg=az_deg,
+                alt_deg=old.alt_deg,
+                is_tracking=old.is_tracking,
+                is_slewing=old.is_slewing,
+                is_at_home=old.is_at_home,
+                is_parked=old.is_parked,
+                mount_mode=old.mount_mode,
+            )
+
     # ------------------------------------------------------------------
     # Polling thread lifecycle
     # ------------------------------------------------------------------

@@ -364,8 +364,9 @@ class ZwoAmMount(AbstractMount):
         return parked
 
     def find_home(self) -> bool:
+        pre_az = self.get_azimuth()
+        self.logger.info("Find-home initiated (pre-home az=%.1f°)", pre_az or 0.0)
         self._transport.send_command_no_response(ZwoAmCommands.find_home())
-        self.logger.info("Find-home initiated")
         return True
 
     def is_home(self) -> bool:
@@ -426,6 +427,12 @@ class ZwoAmMount(AbstractMount):
             self.logger.info("Post-sync readback: RA=%.4f° Dec=%.4f°", readback_ra, readback_dec)
         except Exception:
             self.logger.warning("Could not read back position after sync")
+
+        post_sync_az = self.get_azimuth()
+        cache = getattr(self, "_state_cache", None)
+        if cache is not None and post_sync_az is not None:
+            cache.update_azimuth(post_sync_az)
+        self._fire_sync_listeners(post_sync_az)
 
         return True
 
