@@ -102,7 +102,12 @@ class AbstractBaseTelescopeTask(ABC):
         )
         return most_recent_elset
 
-    def upload_image_and_mark_complete(self, filepath: str | list[str]) -> bool:
+    def upload_image_and_mark_complete(
+        self,
+        filepath: str | list[str],
+        satellite_data: dict | None = None,
+        pointing_report: dict | None = None,
+    ) -> bool:
         """
         Image captured. Queue for background processing and return immediately.
         Telescope is now free to start next task.
@@ -143,6 +148,8 @@ class AbstractBaseTelescopeTask(ABC):
                         "ground_station_record": self.daemon.ground_station,
                         "settings": self.daemon.settings,
                         "daemon": self.daemon,
+                        "satellite_data": satellite_data,
+                        "pointing_report": pointing_report,
                     },
                     on_complete=lambda tid, result, fp=image_path: self._on_processing_complete(fp, tid, result),
                 )
@@ -342,8 +349,11 @@ class AbstractBaseTelescopeTask(ABC):
         rate = max_rate if max_rate is not None else self.hardware_adapter.scope_slew_rate_degrees_per_second
         return estimate_slew_time(distance_deg, rate)
 
-    def point_to_lead_position(self, satellite_data):
+    def point_to_lead_position(self, satellite_data) -> dict:
+        """Iteratively slew the telescope toward the satellite's predicted position.
 
+        Returns a pointing report dict with convergence telemetry for diagnostics.
+        """
         self.logger.debug(f"Using TLE {satellite_data['most_recent_elset']['tle']}")
 
         max_angular_distance_deg = self._compute_convergence_threshold()
@@ -353,6 +363,13 @@ class AbstractBaseTelescopeTask(ABC):
         rate_warning_logged = False
         attempts = 0
         max_attempts = 10
+
+        iteration_log: list[dict] = []
+        report: dict = {
+            "convergence_threshold_deg": round(max_angular_distance_deg, 4),
+            "max_attempts": max_attempts,
+            "configured_slew_rate_deg_per_s": self.hardware_adapter.scope_slew_rate_degrees_per_second,
+        }
 
         while attempts < max_attempts:
             if self.is_cancelled:
@@ -384,9 +401,11 @@ class AbstractBaseTelescopeTask(ABC):
 
             # Adaptive rate: learn from observed slew performance
             motion_time = slew_duration - _DEFAULT_SETTLE_TIME_S
+            iter_observed_rate: float | None = None
             if motion_time > _MIN_MOTION_TIME_S and slewed_distance > _MIN_SLEW_DISTANCE_DEG:
                 observed_rate = slewed_distance / motion_time
                 effective_rate = max(_MIN_OBSERVED_RATE_DEG_PER_S, min(_MAX_OBSERVED_RATE_DEG_PER_S, observed_rate))
+                iter_observed_rate = round(effective_rate, 2)
 
                 if not rate_warning_logged:
                     api_rate = self.hardware_adapter.scope_slew_rate_degrees_per_second
@@ -406,16 +425,45 @@ class AbstractBaseTelescopeTask(ABC):
             )
 
             current_satellite_position = self.get_target_radec_and_rates(satellite_data)
+            sat_ra_deg = float(current_satellite_position[0].degrees)  # type: ignore[union-attr]
+            sat_dec_deg = float(current_satellite_position[1].degrees)  # type: ignore[union-attr]
             current_angular_distance_deg = self.hardware_adapter.angular_distance(
-                post_slew_ra,
-                post_slew_dec,
-                current_satellite_position[0].degrees,  # type: ignore
-                current_satellite_position[1].degrees,  # type: ignore
+                post_slew_ra, post_slew_dec, sat_ra_deg, sat_dec_deg
             )
             self.logger.info(f"Current angular distance to satellite is {current_angular_distance_deg:.3f} degrees.")
+
+            iteration_log.append(
+                {
+                    "attempt": attempts,
+                    "pre_slew_ra_deg": round(pre_slew_ra, 4),
+                    "pre_slew_dec_deg": round(pre_slew_dec, 4),
+                    "target_lead_ra_deg": round(float(lead_ra.degrees), 4),  # type: ignore[union-attr]
+                    "target_lead_dec_deg": round(float(lead_dec.degrees), 4),  # type: ignore[union-attr]
+                    "estimated_slew_time_s": round(est_slew_time, 2),
+                    "actual_slew_time_s": round(slew_duration, 2),
+                    "post_slew_ra_deg": round(post_slew_ra, 4),
+                    "post_slew_dec_deg": round(post_slew_dec, 4),
+                    "slewed_distance_deg": round(slewed_distance, 4),
+                    "satellite_ra_deg": round(sat_ra_deg, 4),
+                    "satellite_dec_deg": round(sat_dec_deg, 4),
+                    "angular_distance_to_satellite_deg": round(current_angular_distance_deg, 4),
+                    "observed_slew_rate_deg_per_s": iter_observed_rate,
+                    "converged": current_angular_distance_deg <= max_angular_distance_deg,
+                }
+            )
+
             if current_angular_distance_deg <= max_angular_distance_deg:
                 self.logger.info("Telescope is within acceptable range of target.")
                 break
+
+        report["attempts"] = attempts
+        report["iterations"] = iteration_log
+        report["converged"] = bool(iteration_log and iteration_log[-1].get("converged"))
+        if iteration_log:
+            report["final_angular_distance_deg"] = iteration_log[-1]["angular_distance_to_satellite_deg"]
+            report["final_telescope_ra_deg"] = iteration_log[-1]["post_slew_ra_deg"]
+            report["final_telescope_dec_deg"] = iteration_log[-1]["post_slew_dec_deg"]
+        return report
 
     def _compute_convergence_threshold(self) -> float:
         """Derive pointing convergence threshold from FOV.

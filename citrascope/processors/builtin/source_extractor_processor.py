@@ -9,6 +9,7 @@ import pandas as pd
 from astropy.io import fits
 
 from citrascope.processors.abstract_processor import AbstractImageProcessor
+from citrascope.processors.artifact_writer import dump_processor_result
 from citrascope.processors.processor_result import ProcessingContext, ProcessorResult
 
 from .processor_dependencies import check_sextractor
@@ -217,7 +218,19 @@ class SourceExtractorProcessor(AbstractImageProcessor):
 
             elapsed = time.time() - start_time
 
-            return ProcessorResult(
+            fwhm_stats = {}
+            if len(sources_df) and "fwhm" in sources_df.columns:
+                fwhm = sources_df["fwhm"]
+                fwhm_stats = {
+                    "fwhm_min": float(fwhm.min()),
+                    "fwhm_max": float(fwhm.max()),
+                    "fwhm_median": float(fwhm.median()),
+                    "fwhm_mean": float(fwhm.mean()),
+                    "count_fwhm_lt_1_5": int((fwhm < 1.5).sum()),
+                    "count_fwhm_gte_1_5": int((fwhm >= 1.5).sum()),
+                }
+
+            result = ProcessorResult(
                 should_upload=True,
                 extracted_data={
                     "num_sources": len(sources_df),
@@ -228,9 +241,11 @@ class SourceExtractorProcessor(AbstractImageProcessor):
                 processing_time_seconds=elapsed,
                 processor_name=self.name,
             )
+            dump_processor_result(context.working_dir, "source_extractor_result.json", result, extra=fwhm_stats)
+            return result
 
         except Exception as e:
-            return ProcessorResult(
+            result = ProcessorResult(
                 should_upload=True,
                 extracted_data={},
                 confidence=0.0,
@@ -238,3 +253,5 @@ class SourceExtractorProcessor(AbstractImageProcessor):
                 processing_time_seconds=time.time() - start_time,
                 processor_name=self.name,
             )
+            dump_processor_result(context.working_dir, "source_extractor_result.json", result)
+            return result

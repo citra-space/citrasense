@@ -15,6 +15,7 @@ from pixelemon.optics._base_optical_assembly import BaseOpticalAssembly
 from pixelemon.sensors._base_sensor import BaseSensor
 
 from citrascope.processors.abstract_processor import AbstractImageProcessor
+from citrascope.processors.artifact_writer import dump_processor_result
 from citrascope.processors.processor_result import ProcessingContext, ProcessorResult
 
 from .processor_dependencies import check_pixelemon, normalize_fits_timestamp
@@ -302,7 +303,7 @@ class PlateSolverProcessor(AbstractImageProcessor):
 
             elapsed = time.time() - start_time
 
-            return ProcessorResult(
+            result = ProcessorResult(
                 should_upload=True,
                 extracted_data={
                     "plate_solved": True,
@@ -318,9 +319,11 @@ class PlateSolverProcessor(AbstractImageProcessor):
                 processing_time_seconds=elapsed,
                 processor_name=self.name,
             )
+            dump_processor_result(context.working_dir, "plate_solver_result.json", result)
+            return result
 
         except Exception as e:
-            return ProcessorResult(
+            result = ProcessorResult(
                 should_upload=True,
                 extracted_data={"plate_solved": False},
                 confidence=0.0,
@@ -328,3 +331,5 @@ class PlateSolverProcessor(AbstractImageProcessor):
                 processing_time_seconds=time.time() - start_time,
                 processor_name=self.name,
             )
+            dump_processor_result(context.working_dir, "plate_solver_result.json", result)
+            return result

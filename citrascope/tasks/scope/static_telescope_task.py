@@ -10,6 +10,7 @@ class StaticTelescopeTask(AbstractBaseTelescopeTask):
         if not satellite_data or satellite_data.get("most_recent_elset") is None:
             raise ValueError("Could not fetch valid satellite data or TLE.")
 
+        pointing_report: dict | None = None
         try:
             strategy = self.hardware_adapter.get_observation_strategy()
 
@@ -17,7 +18,7 @@ class StaticTelescopeTask(AbstractBaseTelescopeTask):
                 self.task.set_status_msg("Setting filter...")
                 self.set_filter_for_task()
                 self.task.set_status_msg("Slewing to target...")
-                self.point_to_lead_position(satellite_data)
+                pointing_report = self.point_to_lead_position(satellite_data)
                 if self.is_cancelled:
                     return False
                 self.task.set_status_msg("Exposing image (2s)...")
@@ -38,4 +39,6 @@ class StaticTelescopeTask(AbstractBaseTelescopeTask):
             self.logger.error(f"Observation failed for task {self.task.id}: {e}")
             return False
 
-        return self.upload_image_and_mark_complete(filepaths)
+        return self.upload_image_and_mark_complete(
+            filepaths, satellite_data=satellite_data, pointing_report=pointing_report
+        )

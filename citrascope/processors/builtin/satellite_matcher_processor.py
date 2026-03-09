@@ -18,9 +18,14 @@ from keplemon.enums import ReferenceFrame
 from scipy.spatial import KDTree
 
 from citrascope.processors.abstract_processor import AbstractImageProcessor
+from citrascope.processors.artifact_writer import dump_json, dump_processor_result
 from citrascope.processors.processor_result import ProcessingContext, ProcessorResult
 
 from .processor_dependencies import normalize_fits_timestamp
+
+_FWHM_THRESHOLD = 1.5
+_FIELD_RADIUS_DEG = 2.0
+_MATCH_RADIUS_DEG = 1.0 / 60.0  # 1 arcminute
 
 
 class SatelliteMatcherProcessor(AbstractImageProcessor):
@@ -54,19 +59,41 @@ class SatelliteMatcherProcessor(AbstractImageProcessor):
 
     def _match_satellites(
         self, sources: pd.DataFrame, context: ProcessingContext, tracking_mode: str = "rate"
-    ) -> list[dict[str, Any]]:
+    ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
         """Propagate TLEs and match detected sources with predicted satellite positions.
 
-        Prefers the elset cache when populated; falls back to the single TLE on the task.
+        Returns (observations, debug_info) where debug_info contains the full diagnostic
+        bundle for satellite_matcher_debug.json.
         """
+        debug: dict[str, Any] = {
+            "tracking_mode": tracking_mode,
+            "fwhm_threshold": _FWHM_THRESHOLD,
+            "field_radius_deg": _FIELD_RADIUS_DEG,
+            "match_radius_arcmin": _MATCH_RADIUS_DEG * 60.0,
+        }
+
         # Separate stars from satellites by FWHM based on tracking mode
         if tracking_mode == "rate":
-            potential_sats = sources[sources["fwhm"] < 1.5].copy()
+            potential_sats = sources[sources["fwhm"] < _FWHM_THRESHOLD].copy()
+            star_like_count = int((sources["fwhm"] >= _FWHM_THRESHOLD).sum())
         else:
-            potential_sats = sources[sources["fwhm"] >= 1.5].copy()
+            potential_sats = sources[sources["fwhm"] >= _FWHM_THRESHOLD].copy()
+            star_like_count = int((sources["fwhm"] < _FWHM_THRESHOLD).sum())
+
+        fwhm_vals = sources["fwhm"]
+        debug["source_classification"] = {
+            "total_sources": len(sources),
+            "satellite_candidate_count": len(potential_sats),
+            "star_like_count": star_like_count,
+            "fwhm_min": float(fwhm_vals.min()) if len(fwhm_vals) else None,
+            "fwhm_max": float(fwhm_vals.max()) if len(fwhm_vals) else None,
+            "fwhm_median": float(fwhm_vals.median()) if len(fwhm_vals) else None,
+            "fwhm_mean": float(fwhm_vals.mean()) if len(fwhm_vals) else None,
+        }
 
         if potential_sats.empty:
-            return []
+            debug["early_exit"] = "no satellite candidates after FWHM filtering"
+            return [], debug
 
         # Observer location
         try:
@@ -89,6 +116,9 @@ class SatelliteMatcherProcessor(AbstractImageProcessor):
             dec_center = float(header.get("CRVAL2", 0.0))  # type: ignore[arg-type]
         epoch = self._parse_fits_timestamp(str(timestamp_str))
 
+        debug["field_center"] = {"ra_deg": ra_center, "dec_deg": dec_center}
+        debug["epoch"] = str(timestamp_str)
+
         # Sun position (km, J2000/ECI) via astropy ERFA — no external ephemeris file required
         _t = AstropyTime(epoch.to_datetime())
         _sun_bary, _ = get_body_barycentric_posvel("sun", _t)
@@ -101,6 +131,7 @@ class SatelliteMatcherProcessor(AbstractImageProcessor):
 
         # Build elset list: prefer cache, fall back to the task's single TLE
         elsets = (context.elset_cache.get_elsets() if context.elset_cache else []) or []
+        elset_source = "cache" if elsets else "task_fallback"
         if not elsets:
             if not context.task:
                 raise RuntimeError("No task context available for satellite matching")
@@ -112,25 +143,70 @@ class SatelliteMatcherProcessor(AbstractImageProcessor):
                 raise RuntimeError("Invalid TLE format")
             elsets = [{"satellite_id": context.task.satelliteId, "name": context.task.satelliteName, "tle": tle_data}]
 
+        debug["elset_count"] = len(elsets)
+        debug["elset_source"] = elset_source
+
+        # Target satellite comparison: pointing TLE vs cache TLE
+        target_sat_id = context.task.satelliteId if context.task else None
+        target_section: dict[str, Any] = {"satellite_id": target_sat_id}
+        if context.satellite_data:
+            mre = context.satellite_data.get("most_recent_elset")
+            target_section["pointing_tle"] = mre.get("tle") if mre else None
+            target_section["pointing_elset_epoch"] = mre.get("creationEpoch") if mre else None
+        else:
+            target_section["pointing_tle"] = None
+            target_section["pointing_tle_note"] = "satellite_data not available in processing context"
+
+        cache_match = next((e for e in elsets if e.get("satellite_id") == target_sat_id), None)
+        if cache_match:
+            target_section["cache_tle"] = cache_match.get("tle")
+            pointing_tle = target_section.get("pointing_tle")
+            cache_tle = cache_match.get("tle")
+            target_section["tle_match"] = pointing_tle == cache_tle if (pointing_tle and cache_tle) else None
+        else:
+            target_section["cache_tle"] = None
+            target_section["cache_tle_note"] = "target satellite not found in elset cache"
+        debug["target_satellite"] = target_section
+
         # Propagate all TLEs, keep only those within the field, collect predictions
-        in_field_deg = 2.0
-        predictions = []
+        predictions: list[dict[str, Any]] = []
+        all_propagations: list[dict[str, Any]] = []
+
         for elset in elsets:
             tle = elset.get("tle") or []
             if len(tle) < 2:
                 continue
             sat_id = elset.get("satellite_id") or "unknown"
             name = elset.get("name") or sat_id
+            prop_record: dict[str, Any] = {"satellite_id": sat_id, "name": name}
             try:
                 kep_tle = TLE.from_lines(tle[0], tle[1])
                 satellite = Satellite.from_tle(kep_tle)
                 topo = obs.get_topocentric_to_satellite(epoch, satellite, ReferenceFrame.J2000)
                 ra_deg = topo.right_ascension
                 dec_deg = topo.declination
-                if abs(ra_center - ra_deg) >= in_field_deg or abs(dec_center - dec_deg) >= in_field_deg:
+
+                delta_ra = abs(ra_center - ra_deg)
+                if delta_ra > 180.0:
+                    delta_ra = 360.0 - delta_ra
+                delta_dec = abs(dec_center - dec_deg)
+                distance_from_center = math.sqrt(delta_ra**2 + delta_dec**2)
+                in_field = delta_ra < _FIELD_RADIUS_DEG and delta_dec < _FIELD_RADIUS_DEG
+
+                prop_record.update(
+                    {
+                        "predicted_ra_deg": ra_deg,
+                        "predicted_dec_deg": dec_deg,
+                        "distance_from_center_deg": round(distance_from_center, 4),
+                        "in_field": in_field,
+                    }
+                )
+
+                if not in_field:
+                    all_propagations.append(prop_record)
                     continue
 
-                # Phase angle: Sun–Satellite–Observer (angle at satellite between sat→sun and sat→observer)
+                # Phase angle: Sun-Satellite-Observer
                 sat_state = satellite.get_state_at_epoch(epoch).to_frame(ReferenceFrame.J2000)
                 sat_pos = sat_state.position
                 sat_to_sun = [sun_pos_km[i] - [sat_pos.x, sat_pos.y, sat_pos.z][i] for i in range(3)]
@@ -143,24 +219,82 @@ class SatelliteMatcherProcessor(AbstractImageProcessor):
                 cos_angle = max(-1.0, min(1.0, dot / (mag_a * mag_b)))
                 phase_angle = math.degrees(math.acos(cos_angle))
 
+                prop_record["phase_angle"] = round(phase_angle, 2)
+                all_propagations.append(prop_record)
+
                 predictions.append(
                     {"ra": ra_deg, "dec": dec_deg, "satellite_id": sat_id, "name": name, "phase_angle": phase_angle}
                 )
-            except Exception:
+            except Exception as exc:
+                prop_record["propagation_error"] = str(exc)
+                all_propagations.append(prop_record)
                 continue
 
-        if not predictions:
-            return []
+        debug["predictions_all"] = all_propagations
+        debug["predictions_in_field"] = [p for p in all_propagations if p.get("in_field")]
+        debug["predictions_in_field_count"] = len(predictions)
 
-        # KDTree spatial match: 1 arcminute radius
-        tree = KDTree([[p["ra"], p["dec"]] for p in predictions])
-        distances, indices = tree.query(potential_sats[["ra", "dec"]].values, distance_upper_bound=1.0 / 60.0)
-        valid_mask = distances < 1.0 / 60.0
-        if not valid_mask.any():
-            return []
+        if not predictions:
+            debug["early_exit"] = "no TLE predictions in field"
+            return [], debug
+
+        # KDTree spatial match
+        pred_coords = [[p["ra"], p["dec"]] for p in predictions]
+        tree = KDTree(pred_coords)
+
+        # Query without upper bound so we always get the nearest distance for diagnostics
+        source_coords = potential_sats[["ra", "dec"]].values
+        distances, indices = tree.query(source_coords)
+        valid_mask = np.asarray(distances) < _MATCH_RADIUS_DEG
+
+        # Record match details for every satellite candidate source
+        match_details: list[dict[str, Any]] = []
+        for i in range(len(potential_sats)):
+            row = potential_sats.iloc[i]
+            dist_deg = float(np.asarray(distances)[i])
+            idx = int(np.asarray(indices)[i])
+            detail: dict[str, Any] = {
+                "source_ra": float(row["ra"]),
+                "source_dec": float(row["dec"]),
+                "source_fwhm": float(row["fwhm"]),
+                "source_mag": float(row["mag"]),
+                "nearest_prediction_distance_arcmin": round(dist_deg * 60.0, 4),
+                "within_match_radius": bool(valid_mask[i]),
+            }
+            if 0 <= idx < len(predictions):
+                detail["nearest_satellite_id"] = predictions[idx]["satellite_id"]
+                detail["nearest_satellite_name"] = predictions[idx]["name"]
+            if valid_mask[i]:
+                detail["matched"] = True
+            match_details.append(detail)
+        debug["match_details"] = match_details
+
+        # Reverse match: for each in-field prediction, find the nearest detected source
+        source_tree = KDTree(source_coords)
+        pred_distances, pred_indices = source_tree.query(pred_coords)
+        reverse_match: list[dict[str, Any]] = []
+        for i, p in enumerate(predictions):
+            dist_deg = float(np.asarray(pred_distances)[i])
+            src_idx = int(np.asarray(pred_indices)[i])
+            entry: dict[str, Any] = {
+                "satellite_id": p["satellite_id"],
+                "name": p["name"],
+                "predicted_ra": p["ra"],
+                "predicted_dec": p["dec"],
+                "nearest_source_distance_arcmin": round(dist_deg * 60.0, 4),
+                "within_match_radius": dist_deg < _MATCH_RADIUS_DEG,
+            }
+            if 0 <= src_idx < len(potential_sats):
+                src_row = potential_sats.iloc[src_idx]
+                entry["nearest_source_ra"] = float(src_row["ra"])
+                entry["nearest_source_dec"] = float(src_row["dec"])
+                entry["nearest_source_fwhm"] = float(src_row["fwhm"])
+                entry["nearest_source_mag"] = float(src_row["mag"])
+            reverse_match.append(entry)
+        debug["reverse_match"] = reverse_match
 
         filter_name = (context.task.assigned_filter_name if context.task else None) or "Clear"
-        observations = []
+        observations: list[dict[str, Any]] = []
         for i in range(len(potential_sats)):
             if not valid_mask[i]:
                 continue
@@ -173,16 +307,18 @@ class SatelliteMatcherProcessor(AbstractImageProcessor):
                 {
                     "norad_id": p["satellite_id"],
                     "name": p["name"],
-                    "ra": row["ra"],
-                    "dec": row["dec"],
-                    "mag": row["mag"],
+                    "ra": float(row["ra"]),
+                    "dec": float(row["dec"]),
+                    "mag": float(row["mag"]),
                     "filter": filter_name,
                     "timestamp": timestamp_str,
                     "phase_angle": round(p["phase_angle"], 1),
-                    "fwhm": row["fwhm"],
+                    "fwhm": float(row["fwhm"]),
                 }
             )
-        return observations
+
+        debug["satellite_observations"] = observations
+        return observations, debug
 
     def process(self, context: ProcessingContext) -> ProcessorResult:
         """Process image with satellite matching.
@@ -218,14 +354,11 @@ class SatelliteMatcherProcessor(AbstractImageProcessor):
                 names=["mag", "magerr", "ra", "dec", "fwhm"],
             )
 
-            # Match satellites
-            satellite_observations = self._match_satellites(
-                sources_df, context, tracking_mode="rate"  # Could make this configurable
-            )
+            satellite_observations, debug_info = self._match_satellites(sources_df, context, tracking_mode="rate")
 
             elapsed = time.time() - start_time
 
-            return ProcessorResult(
+            result = ProcessorResult(
                 should_upload=True,
                 extracted_data={
                     "num_satellites_detected": len(satellite_observations),
@@ -237,8 +370,13 @@ class SatelliteMatcherProcessor(AbstractImageProcessor):
                 processor_name=self.name,
             )
 
+            dump_processor_result(context.working_dir, "satellite_matcher_result.json", result)
+            dump_json(context.working_dir, "satellite_matcher_debug.json", debug_info)
+
+            return result
+
         except Exception as e:
-            return ProcessorResult(
+            result = ProcessorResult(
                 should_upload=True,
                 extracted_data={},
                 confidence=0.0,
@@ -246,3 +384,5 @@ class SatelliteMatcherProcessor(AbstractImageProcessor):
                 processing_time_seconds=time.time() - start_time,
                 processor_name=self.name,
             )
+            dump_processor_result(context.working_dir, "satellite_matcher_result.json", result)
+            return result

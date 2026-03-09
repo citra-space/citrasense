@@ -12,6 +12,7 @@ from astropy.wcs import WCS
 from scipy.spatial import KDTree
 
 from citrascope.processors.abstract_processor import AbstractImageProcessor
+from citrascope.processors.artifact_writer import dump_csv, dump_processor_result
 from citrascope.processors.processor_result import ProcessingContext, ProcessorResult
 
 
@@ -108,7 +109,9 @@ class PhotometryProcessor(AbstractImageProcessor):
 
         return matched
 
-    def _calibrate_photometry(self, sources: pd.DataFrame, image_path: Path, filter_name: str) -> tuple[float, int]:
+    def _calibrate_photometry(
+        self, sources: pd.DataFrame, image_path: Path, filter_name: str
+    ) -> tuple[float, int, pd.DataFrame, pd.DataFrame]:
         """Query APASS catalog and calculate magnitude zero point.
 
         Args:
@@ -117,7 +120,7 @@ class PhotometryProcessor(AbstractImageProcessor):
             filter_name: Filter name (Clear, g, r, i)
 
         Returns:
-            Tuple of (zero_point, num_matched_stars)
+            Tuple of (zero_point, num_matched_stars, apass_catalog, crossmatch_df)
 
         Raises:
             RuntimeError: If calibration fails
@@ -162,7 +165,7 @@ class PhotometryProcessor(AbstractImageProcessor):
         # Calculate zero point (median difference between catalog and instrumental mags)
         zero_point = float(np.nanmedian(matched_clean[filter_col] - matched_clean["mag"]))
 
-        return zero_point, len(matched_clean)
+        return zero_point, len(matched_clean), apass_stars, matched_clean
 
     def process(self, context: ProcessingContext) -> ProcessorResult:
         """Process image with photometric calibration.
@@ -202,13 +205,13 @@ class PhotometryProcessor(AbstractImageProcessor):
             filter_name = context.task.assigned_filter_name if context.task else None
 
             # Calibrate
-            zero_point, num_matched = self._calibrate_photometry(
+            zero_point, num_matched, apass_catalog, crossmatch_df = self._calibrate_photometry(
                 sources_df, context.working_image_path, filter_name or "Clear"
             )
 
             elapsed = time.time() - start_time
 
-            return ProcessorResult(
+            result = ProcessorResult(
                 should_upload=True,
                 extracted_data={
                     "zero_point": zero_point,
@@ -221,8 +224,14 @@ class PhotometryProcessor(AbstractImageProcessor):
                 processor_name=self.name,
             )
 
+            dump_processor_result(context.working_dir, "photometry_result.json", result)
+            dump_csv(context.working_dir, "photometry_apass_catalog.csv", apass_catalog)
+            dump_csv(context.working_dir, "photometry_crossmatch.csv", crossmatch_df)
+
+            return result
+
         except Exception as e:
-            return ProcessorResult(
+            result = ProcessorResult(
                 should_upload=True,
                 extracted_data={},
                 confidence=0.0,
@@ -230,3 +239,5 @@ class PhotometryProcessor(AbstractImageProcessor):
                 processing_time_seconds=time.time() - start_time,
                 processor_name=self.name,
             )
+            dump_processor_result(context.working_dir, "photometry_result.json", result)
+            return result

@@ -293,8 +293,8 @@ class TestPhotometryProcessor:
         sources = pd.DataFrame({"ra": [120.1, 120.2], "dec": [45.1, 45.2], "mag": [10.5, 11.2]})
         mock_read.return_value = sources
 
-        # Mock calibration
-        mock_calibrate.return_value = (25.3, 15)
+        # Mock calibration (zero_point, num_matched, apass_catalog, crossmatch_df)
+        mock_calibrate.return_value = (25.3, 15, pd.DataFrame(), pd.DataFrame())
 
         processor = PhotometryProcessor()
         result = processor.process(mock_context)

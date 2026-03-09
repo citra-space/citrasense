@@ -9,6 +9,7 @@ import numpy as np
 from astropy.io import fits
 
 from citrascope.processors.abstract_processor import AbstractImageProcessor
+from citrascope.processors.artifact_writer import dump_context_artifacts, dump_processing_summary
 from citrascope.processors.builtin.photometry_processor import PhotometryProcessor
 from citrascope.processors.builtin.plate_solver_processor import PlateSolverProcessor
 from citrascope.processors.builtin.satellite_matcher_processor import SatelliteMatcherProcessor
@@ -83,6 +84,8 @@ class ProcessorRegistry:
         if context.image_data is None:
             context.image_data = self._load_image(context.image_path)
 
+        dump_context_artifacts(context)
+
         # Filter to only enabled processors
         enabled_processors = [
             p for p in self.processors if self.settings.enabled_processors.get(p.name, True)  # Default to enabled
@@ -140,6 +143,9 @@ class ProcessorRegistry:
             f"All processors completed in {total_time:.2f}s. "
             f"Total extracted keys: {len(aggregated.extracted_data)}, should_upload={aggregated.should_upload}"
         )
+
+        dump_processing_summary(context.working_dir, aggregated)
+
         return aggregated
 
     def _aggregate_results(self, results: list[ProcessorResult], total_time: float) -> AggregatedResult:
