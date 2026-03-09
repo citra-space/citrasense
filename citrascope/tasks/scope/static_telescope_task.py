@@ -21,8 +21,9 @@ class StaticTelescopeTask(AbstractBaseTelescopeTask):
                 pointing_report = self.point_to_lead_position(satellite_data)
                 if self.is_cancelled:
                     return False
-                self.task.set_status_msg("Exposing image (2s)...")
-                filepaths = self.hardware_adapter.take_image(self.task.id, 2.0)
+                exposure = self.daemon.settings.exposure_seconds
+                self.task.set_status_msg(f"Exposing image ({exposure}s)...")
+                filepaths = self.hardware_adapter.take_image(self.task.id, exposure)
 
             elif strategy == ObservationStrategy.SEQUENCE_TO_CONTROLLER:
                 target_ra, target_dec, _, _ = self.get_target_radec_and_rates(satellite_data)

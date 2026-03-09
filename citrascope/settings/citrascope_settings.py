@@ -90,6 +90,9 @@ class CitraScopeSettings(BaseModel):
     # Observation mode: "auto", "tracking", or "static"
     observation_mode: str = "auto"
 
+    # Exposure duration for take_image calls (seconds)
+    exposure_seconds: float = 2.0
+
     # MSI / elset cache
     elset_refresh_interval_hours: float = 6
 
@@ -151,6 +154,19 @@ class CitraScopeSettings(BaseModel):
         if v not in ("auto", "tracking", "static"):
             CITRASCOPE_LOGGER.warning("Invalid observation_mode (%r). Falling back to 'auto'.", v)
             return "auto"
+        return v
+
+    @field_validator("exposure_seconds", mode="before")
+    @classmethod
+    def _validate_exposure_seconds(cls, v: Any) -> float:
+        try:
+            v = float(v)
+        except (TypeError, ValueError):
+            CITRASCOPE_LOGGER.warning("Invalid exposure_seconds (%r). Falling back to 2.0.", v)
+            return 2.0
+        if v < 0.01 or v > 300:
+            CITRASCOPE_LOGGER.warning("exposure_seconds %.3f out of range [0.01, 300]. Clamping.", v)
+            return max(0.01, min(300.0, v))
         return v
 
     # ── Factory ───────────────────────────────────────────────────────
