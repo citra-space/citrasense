@@ -25,6 +25,20 @@ class UploadQueue(BaseWorkQueue):
         super().__init__(num_workers, settings, logger)
         self.task_manager = task_manager
 
+        # Session-scoped counters for upload path breakdown
+        self.observation_uploads: int = 0
+        self.image_uploads: int = 0
+        self.satellites_identified: int = 0
+
+    def get_stats(self) -> dict:
+        """Return lifetime counters including upload path breakdown."""
+        stats = super().get_stats()
+        with self._stats_lock:
+            stats["observation_uploads"] = self.observation_uploads
+            stats["image_uploads"] = self.image_uploads
+            stats["satellites_identified"] = self.satellites_identified
+        return stats
+
     def submit(
         self,
         task_id: str,
@@ -133,9 +147,15 @@ class UploadQueue(BaseWorkQueue):
         obs_path = (result or {}).get("obs_path", False)
 
         if obs_path:
+            self.observation_uploads += 1
+            pr = item.get("processing_result")
+            if pr and getattr(pr, "extracted_data", None):
+                sat_obs = pr.extracted_data.get("satellite_matcher.satellite_observations") or []
+                self.satellites_identified += len(sat_obs)
             if task_obj:
                 task_obj.set_status_msg("Observations uploaded")
         else:
+            self.image_uploads += 1
             if task_obj:
                 task_obj.set_status_msg("Upload complete")
 

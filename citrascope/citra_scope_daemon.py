@@ -47,7 +47,6 @@ class CitraScopeDaemon:
             ver = "dev"
         CITRASCOPE_LOGGER.info("=" * 60)
         CITRASCOPE_LOGGER.info(f"CitraScope {ver} starting (PID {os.getpid()})")
-        CITRASCOPE_LOGGER.info("=" * 60)
 
         self.api_client = api_client
         self.hardware_adapter = hardware_adapter
@@ -541,7 +540,6 @@ class CitraScopeDaemon:
             if success:
                 CITRASCOPE_LOGGER.info("=" * 60)
                 CITRASCOPE_LOGGER.info("CitraScope ready \u2014 watching for tasks")
-                CITRASCOPE_LOGGER.info("=" * 60)
             else:
                 CITRASCOPE_LOGGER.warning(
                     f"Could not start telescope operations: {error}. "

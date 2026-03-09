@@ -5,6 +5,9 @@
         icon   — bootstrap-icons name, e.g. 'camera-fill'
         color  — Bootstrap color name for badge/icon, e.g. 'primary'
         col_attrs — extra HTML attrs on the col div, e.g. x-show="..."
+
+        Supports Jinja2 caller(): if invoked via {% call stage_box(...) %},
+        the caller block replaces the default success/fail progress bar.
     #}
     {% macro stage_box(stage, label, icon, color, col_attrs='') %}
     <div class="col-md" {{ col_attrs }}>
@@ -16,6 +19,9 @@
                       x-show="$store.citrascope.status?.tasks_by_stage?.{{ stage }}?.length > 0"
                       x-text="$store.citrascope.status.tasks_by_stage.{{ stage }}.length"></span>
             </div>
+            {% if caller is defined %}
+            {{ caller() }}
+            {% else %}
             <div class="progress mb-2" style="height: 4px; cursor: default;"
                  x-show="$store.citrascope.status?.pipeline_stats?.{{ stage }}?.attempts > 0"
                  x-init="new bootstrap.Tooltip($el, {
@@ -34,6 +40,7 @@
                 <div class="progress-bar bg-danger" role="progressbar"
                      :style="`width: ${(() => { const s = $store.citrascope.status.pipeline_stats.{{ stage }}; const r = s.successes + s.permanent_failures; return r > 0 ? (s.permanent_failures / r) * 100 : 0; })()}%`"></div>
             </div>
+            {% endif %}
             {{ task_list(stage) }}
         </div>
     </div>
@@ -747,13 +754,12 @@
                     <div class="card bg-dark text-light border-secondary">
                         <div class="card-header d-flex align-items-center justify-content-between">
                             <span><i class="bi bi-lightning-charge-fill me-2"></i>Active Tasks</span>
-                            <span class="text-muted small"
+                            <span class="d-flex flex-wrap gap-3 text-muted small"
                                   x-show="$store.citrascope.status?.pipeline_stats?.tasks?.started > 0">
-                                <span x-text="$store.citrascope.status.pipeline_stats.tasks.started"></span> run &middot;
-                                <span class="text-success" x-text="$store.citrascope.status.pipeline_stats.tasks.succeeded"></span> ok
-                                <template x-if="$store.citrascope.status.pipeline_stats.tasks.failed > 0">
-                                    <span> &middot; <span class="text-danger" x-text="$store.citrascope.status.pipeline_stats.tasks.failed"></span> failed</span>
-                                </template>
+                                <span><i class="bi bi-check-circle me-1 text-success"></i><span x-text="$store.citrascope.status?.pipeline_stats?.tasks?.succeeded || 0"></span> Completed</span>
+                                <span><i class="bi bi-rocket me-1 text-info"></i><span x-text="$store.citrascope.status?.pipeline_stats?.uploading?.satellites_identified || 0"></span> Satellites</span>
+                                <span><i class="bi bi-eye me-1 text-success"></i><span x-text="$store.citrascope.status?.pipeline_stats?.uploading?.observation_uploads || 0"></span> Obs</span>
+                                <span><i class="bi bi-image me-1 text-warning"></i><span x-text="$store.citrascope.status?.pipeline_stats?.uploading?.image_uploads || 0"></span> Img</span>
                             </span>
                         </div>
                         <div class="card-body">
@@ -765,14 +771,70 @@
                                     <i class="bi bi-arrow-right text-secondary" style="font-size: 1.5rem;"></i>
                                 </div>
 
-                                {{ stage_box('processing', 'Processing', 'gear-fill',          'warning', 'x-show="$store.citrascope.config?.processors_enabled"') }}
+                                {% call stage_box('processing', 'Processing', 'gear-fill', 'warning', 'x-show="$store.citrascope.config?.processors_enabled"') %}
+                                <div class="d-flex flex-column gap-1 mb-2" style="cursor: default;"
+                                     x-show="$store.citrascope.status?.active_processors?.length > 0 && $store.citrascope.status?.pipeline_stats?.processors"
+                                     x-init="new bootstrap.Tooltip($el, {
+                                         placement: 'top',
+                                         trigger: 'hover',
+                                         html: true,
+                                         title() {
+                                             const procs = $store.citrascope.status?.pipeline_stats?.processors;
+                                             const names = $store.citrascope.status?.active_processors || [];
+                                             if (!procs || !names.length) return '';
+                                             return names.filter(n => procs[n]?.runs > 0).map(n => {
+                                                 const p = procs[n];
+                                                 const ok = p.runs - p.failures;
+                                                 const label = n.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+                                                 return `${label}: ${ok} ok / ${p.failures} failed`;
+                                             }).join('<br>');
+                                         }
+                                     })">
+                                    <template x-for="name in ($store.citrascope.status?.active_processors || [])" :key="name">
+                                        <template x-if="$store.citrascope.status?.pipeline_stats?.processors?.[name]?.runs > 0">
+                                            <div class="progress" style="height: 3px;">
+                                                <div class="progress-bar bg-success" role="progressbar"
+                                                     :style="`width: ${(() => { const p = $store.citrascope.status.pipeline_stats.processors[name]; return p.runs > 0 ? ((p.runs - p.failures) / p.runs) * 100 : 0; })()}%`"></div>
+                                                <div class="progress-bar bg-danger" role="progressbar"
+                                                     :style="`width: ${(() => { const p = $store.citrascope.status.pipeline_stats.processors[name]; return p.runs > 0 ? (p.failures / p.runs) * 100 : 0; })()}%`"></div>
+                                            </div>
+                                        </template>
+                                    </template>
+                                </div>
+                                {% endcall %}
 
                                 <!-- Arrow 2 (Processing → Uploading, only shown when processing enabled) -->
                                 <div class="col-auto align-items-center px-2" x-show="$store.citrascope.config?.processors_enabled" :class="{'d-flex': $store.citrascope.config?.processors_enabled}">
                                     <i class="bi bi-arrow-right text-secondary d-none d-md-inline-block" style="font-size: 1.5rem;"></i>
                                 </div>
 
-                                {{ stage_box('uploading',  'Submission', 'cloud-upload-fill',  'success') }}
+                                {% call stage_box('uploading', 'Submission', 'cloud-upload-fill', 'success') %}
+                                <div class="d-flex flex-column gap-1 mb-2" style="cursor: default;"
+                                     x-show="(($store.citrascope.status?.pipeline_stats?.uploading?.observation_uploads || 0) + ($store.citrascope.status?.pipeline_stats?.uploading?.image_uploads || 0) + ($store.citrascope.status?.pipeline_stats?.uploading?.permanent_failures || 0)) > 0"
+                                     x-init="new bootstrap.Tooltip($el, {
+                                         placement: 'top',
+                                         trigger: 'hover',
+                                         html: true,
+                                         title() {
+                                             const u = $store.citrascope.status?.pipeline_stats?.uploading;
+                                             if (!u) return '';
+                                             const lines = [];
+                                             lines.push(`${u.observation_uploads || 0} observation uploads`);
+                                             lines.push(`${u.image_uploads || 0} image-only`);
+                                             if (u.permanent_failures > 0) lines.push(`${u.permanent_failures} failed`);
+                                             return lines.join('<br>');
+                                         }
+                                     })">
+                                    <div class="progress" style="height: 3px;">
+                                        <div class="progress-bar bg-success" role="progressbar"
+                                             :style="`width: ${(() => { const u = $store.citrascope.status?.pipeline_stats?.uploading; if (!u) return 0; const t = (u.observation_uploads || 0) + (u.image_uploads || 0) + (u.permanent_failures || 0); return t > 0 ? ((u.observation_uploads || 0) / t) * 100 : 0; })()}%`"></div>
+                                        <div class="progress-bar bg-warning" role="progressbar"
+                                             :style="`width: ${(() => { const u = $store.citrascope.status?.pipeline_stats?.uploading; if (!u) return 0; const t = (u.observation_uploads || 0) + (u.image_uploads || 0) + (u.permanent_failures || 0); return t > 0 ? ((u.image_uploads || 0) / t) * 100 : 0; })()}%`"></div>
+                                        <div class="progress-bar bg-danger" role="progressbar"
+                                             :style="`width: ${(() => { const u = $store.citrascope.status?.pipeline_stats?.uploading; if (!u) return 0; const t = (u.observation_uploads || 0) + (u.image_uploads || 0) + (u.permanent_failures || 0); return t > 0 ? ((u.permanent_failures || 0) / t) * 100 : 0; })()}%`"></div>
+                                    </div>
+                                </div>
+                                {% endcall %}
                             </div>
                         </div>
                     </div>
