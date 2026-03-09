@@ -8,6 +8,7 @@ the RA hours ↔ degrees conversion happens at this boundary.
 from __future__ import annotations
 
 import logging
+import time
 from datetime import datetime, timezone
 from typing import Any
 
@@ -254,6 +255,10 @@ class ZwoAmMount(AbstractMount):
             self.logger.info("Mount mode: %s | At home: %s | Parked: %s", mode.value, at_home, parked)
         except Exception:
             self.logger.warning("Could not read mount status")
+
+        if not self._ensure_altaz_mode():
+            self._transport.close()
+            return False
 
         try:
             limits_on = self.get_altitude_limits_enabled()
@@ -535,6 +540,43 @@ class ZwoAmMount(AbstractMount):
         else:
             self.logger.debug("Mount rejected upper altitude limit %d° (firmware may not support :SLH#)", degrees)
         return ok
+
+    def _ensure_altaz_mode(self) -> bool:
+        """Send :AA# if needed and verify the mount is in alt-az mode.
+
+        Called during connect(). The :AA# command (like :AP#) requires a
+        power cycle to take effect, so if the mount is in the wrong mode
+        we send the command for next boot and warn — but still allow the
+        connection so the operator isn't stranded in the field.
+        """
+        try:
+            _, _, _, _, mode = self._get_status_flags()
+            if mode == MountMode.ALTAZ:
+                self.logger.info("Mount confirmed in alt-az mode")
+                return True
+
+            self.logger.warning(
+                "Mount is in %s mode — satellite work requires alt-az. "
+                "Sending :AA# (will take effect after power cycle).",
+                mode.value,
+            )
+            self._transport.send_command_no_response(ZwoAmCommands.set_altaz_mode())
+            time.sleep(0.5)
+
+            _, _, _, _, mode = self._get_status_flags()
+            if mode == MountMode.ALTAZ:
+                self.logger.info("Mount switched to alt-az mode")
+                return True
+
+            self.logger.warning(
+                "Mount still reporting %s mode. Alt-az will activate after a power cycle. "
+                "Continuing with current mode — GoTo/tracking may behave unexpectedly.",
+                mode.value,
+            )
+            return True
+        except Exception as exc:
+            self.logger.error("Could not set/verify alt-az mode: %s", exc)
+            return False
 
     def set_equatorial_mode(self) -> bool:
         self._transport.send_command_no_response(ZwoAmCommands.set_polar_mode())
