@@ -146,6 +146,28 @@ class SatelliteMatcherProcessor(AbstractImageProcessor):
         debug["elset_count"] = len(elsets)
         debug["elset_source"] = elset_source
 
+        # Target satellite comparison: pointing TLE vs cache TLE
+        target_sat_id = context.task.satelliteId if context.task else None
+        target_section: dict[str, Any] = {"satellite_id": target_sat_id}
+        if context.satellite_data:
+            mre = context.satellite_data.get("most_recent_elset")
+            target_section["pointing_tle"] = mre.get("tle") if mre else None
+            target_section["pointing_elset_epoch"] = mre.get("creationEpoch") if mre else None
+        else:
+            target_section["pointing_tle"] = None
+            target_section["pointing_tle_note"] = "satellite_data not available in processing context"
+
+        cache_match = next((e for e in elsets if e.get("satellite_id") == target_sat_id), None)
+        if cache_match:
+            target_section["cache_tle"] = cache_match.get("tle")
+            pointing_tle = target_section.get("pointing_tle")
+            cache_tle = cache_match.get("tle")
+            target_section["tle_match"] = pointing_tle == cache_tle if (pointing_tle and cache_tle) else None
+        else:
+            target_section["cache_tle"] = None
+            target_section["cache_tle_note"] = "target satellite not found in elset cache"
+        debug["target_satellite"] = target_section
+
         # Propagate all TLEs, keep only those within the field, collect predictions
         predictions: list[dict[str, Any]] = []
         all_propagations: list[dict[str, Any]] = []

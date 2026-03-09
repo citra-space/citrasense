@@ -102,7 +102,7 @@ class AbstractBaseTelescopeTask(ABC):
         )
         return most_recent_elset
 
-    def upload_image_and_mark_complete(self, filepath: str | list[str]) -> bool:
+    def upload_image_and_mark_complete(self, filepath: str | list[str], satellite_data: dict | None = None) -> bool:
         """
         Image captured. Queue for background processing and return immediately.
         Telescope is now free to start next task.
@@ -143,6 +143,7 @@ class AbstractBaseTelescopeTask(ABC):
                         "ground_station_record": self.daemon.ground_station,
                         "settings": self.daemon.settings,
                         "daemon": self.daemon,
+                        "satellite_data": satellite_data,
                     },
                     on_complete=lambda tid, result, fp=image_path: self._on_processing_complete(fp, tid, result),
                 )

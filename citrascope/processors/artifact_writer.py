@@ -35,6 +35,14 @@ Context artifacts (written before processors run)
     NAXIS1/2, XBINNING/YBINNING, EXPTIME, FILTER, SITELAT/SITELONG/SITEALT,
     INSTRUME, GAIN, TASKID, etc.
 
+``target_satellite.json`` *(only present when satellite_data was available)*
+    Full satellite record fetched from the Citra API during task execution,
+    including all elsets and the ``most_recent_elset`` with the TLE that
+    was actually used to point the telescope.  This is the authoritative
+    "what TLE did we aim at?" artifact — compare its TLE against the
+    cache TLE (see ``target_satellite`` section in
+    ``satellite_matcher_debug.json``) to detect staleness.
+
 Per-processor result artifacts
 ------------------------------
 Each ``*_result.json`` contains: processor_name, confidence (0–1),
@@ -80,6 +88,12 @@ extracted_data (the processor's output dict).
     - ``epoch``: DATE-OBS timestamp string
     - ``elset_count``: number of TLEs searched
     - ``elset_source``: "cache" or "task_fallback"
+    - ``target_satellite``: comparison of the TLE used for pointing vs the
+      cache TLE for the task's target satellite.  Keys: satellite_id,
+      pointing_tle, pointing_elset_epoch, cache_tle, tle_match (bool —
+      True if both TLEs are identical, None if either is missing).
+      If satellite_data wasn't threaded through, pointing_tle is None
+      with an explanatory note.
     - ``predictions_all``: every TLE propagation attempt — satellite_id,
       name, predicted_ra_deg, predicted_dec_deg, distance_from_center_deg,
       in_field (bool), phase_angle (if in-field), propagation_error (if
@@ -260,6 +274,9 @@ def dump_context_artifacts(context: ProcessingContext) -> None:
         dump_json(wd, "telescope_record.json", context.telescope_record or {})
 
         dump_json(wd, "fits_header.json", _read_fits_header(context.working_image_path))
+
+        if context.satellite_data:
+            dump_json(wd, "target_satellite.json", context.satellite_data)
     except Exception as exc:
         logger.warning("Failed to dump context artifacts: %s", exc)
 

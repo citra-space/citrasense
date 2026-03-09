@@ -151,6 +151,16 @@ class TestDumpContextArtifacts:
             {"satellite_id": "25544", "name": "ISS", "tle": ["1 line", "2 line"]},
         ]
 
+        satellite_data = {
+            "id": "sat-99",
+            "name": "STARLINK-1234",
+            "most_recent_elset": {
+                "tle": ["1 25544U ...", "2 25544 ..."],
+                "creationEpoch": "2026-03-09T00:00:00Z",
+            },
+            "elsets": [{"tle": ["1 25544U ...", "2 25544 ..."], "creationEpoch": "2026-03-09T00:00:00Z"}],
+        }
+
         context = ProcessingContext(
             image_path=sample_fits,
             working_image_path=sample_fits,
@@ -162,6 +172,7 @@ class TestDumpContextArtifacts:
             settings=None,
             location_service=location_service,
             elset_cache=elset_cache,
+            satellite_data=satellite_data,
         )
 
         dump_context_artifacts(context)
@@ -171,6 +182,7 @@ class TestDumpContextArtifacts:
         assert (working_dir / "observer_location.json").exists()
         assert (working_dir / "telescope_record.json").exists()
         assert (working_dir / "fits_header.json").exists()
+        assert (working_dir / "target_satellite.json").exists()
 
         task_data = json.loads((working_dir / "task.json").read_text())
         assert task_data["satelliteName"] == "STARLINK-1234"
@@ -187,6 +199,9 @@ class TestDumpContextArtifacts:
 
         fits_hdr = json.loads((working_dir / "fits_header.json").read_text())
         assert fits_hdr["CRVAL1"] == 180.0
+
+        target_sat = json.loads((working_dir / "target_satellite.json").read_text())
+        assert target_sat["most_recent_elset"]["tle"] == ["1 25544U ...", "2 25544 ..."]
 
     def test_handles_missing_services(self, working_dir, sample_fits):
         context = ProcessingContext(
@@ -205,6 +220,7 @@ class TestDumpContextArtifacts:
         assert json.loads((working_dir / "elset_cache_snapshot.json").read_text()) == []
         assert json.loads((working_dir / "observer_location.json").read_text()) == {}
         assert json.loads((working_dir / "telescope_record.json").read_text()) == {}
+        assert not (working_dir / "target_satellite.json").exists()
 
 
 class TestDumpProcessorResult:

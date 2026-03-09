@@ -43,7 +43,7 @@ class TrackingTelescopeTask(AbstractBaseTelescopeTask):
 
             self.task.set_status_msg("Exposing image (20s)...")
             filepath = self.hardware_adapter.take_image(self.task.id, 20.0)  # 20 second exposure
-            return self.upload_image_and_mark_complete(filepath)
+            return self.upload_image_and_mark_complete(filepath, satellite_data=satellite_data)
         finally:
             try:
                 self.hardware_adapter.reset_tracking_rates()

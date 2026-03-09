@@ -38,4 +38,4 @@ class StaticTelescopeTask(AbstractBaseTelescopeTask):
             self.logger.error(f"Observation failed for task {self.task.id}: {e}")
             return False
 
-        return self.upload_image_and_mark_complete(filepaths)
+        return self.upload_image_and_mark_complete(filepaths, satellite_data=satellite_data)
