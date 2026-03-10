@@ -2,7 +2,7 @@
 
 import math
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 import astropy.units as u
@@ -112,12 +112,25 @@ class SatelliteMatcherProcessor(AbstractImageProcessor):
             timestamp_str = header.get("DATE-OBS")
             if not timestamp_str:
                 raise RuntimeError("No DATE-OBS in FITS header")
+            exptime = float(header.get("EXPTIME", 0.0))  # type: ignore[arg-type]
             ra_center = float(header.get("CRVAL1", 0.0))  # type: ignore[arg-type]
             dec_center = float(header.get("CRVAL2", 0.0))  # type: ignore[arg-type]
+
+        # Offset to mid-exposure for better satellite position prediction
         epoch = self._parse_fits_timestamp(str(timestamp_str))
+        if exptime > 0:
+            mid_dt = datetime.fromisoformat(
+                normalize_fits_timestamp(str(timestamp_str)).replace("Z", "+00:00")
+            ) + timedelta(seconds=exptime / 2.0)
+            if mid_dt.tzinfo is None:
+                mid_dt = mid_dt.replace(tzinfo=timezone.utc)
+            epoch = ktime.Epoch.from_datetime(mid_dt)
+            timestamp_str = mid_dt.strftime("%Y-%m-%dT%H:%M:%S.%f")
 
         debug["field_center"] = {"ra_deg": ra_center, "dec_deg": dec_center}
         debug["epoch"] = str(timestamp_str)
+        debug["exptime"] = exptime
+        debug["mid_exposure_offset_s"] = exptime / 2.0 if exptime > 0 else 0.0
 
         # Sun position (km, J2000/ECI) via astropy ERFA — no external ephemeris file required
         _t = AstropyTime(epoch.to_datetime())
