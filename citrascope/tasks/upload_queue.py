@@ -1,4 +1,8 @@
-"""Background upload queue for uploading images and marking tasks complete."""
+"""Background upload queue for uploading images.
+
+Completion (mark_task_complete, stage cleanup, stats) is handled by the
+telescope task's _on_image_done callback after all images for a task finish.
+"""
 
 from collections.abc import Callable
 from pathlib import Path
@@ -8,11 +12,15 @@ from citrascope.tasks.base_work_queue import BaseWorkQueue
 
 class UploadQueue(BaseWorkQueue):
     """
-    Background worker for uploading images and marking tasks complete.
+    Background worker for uploading images.
     Uploads can be slow (network), so run in background.
+
+    Note: mark_task_complete is NOT called here. The caller's on_complete
+    callback aggregates per-image results and marks the task complete once
+    all images for a task have finished (see _on_image_done).
     """
 
-    def __init__(self, num_workers: int = 1, settings=None, logger=None, task_manager=None):
+    def __init__(self, num_workers: int = 1, settings=None, logger=None):
         """
         Initialize upload queue.
 
@@ -20,10 +28,8 @@ class UploadQueue(BaseWorkQueue):
             num_workers: Number of concurrent upload threads (default: 1, network is bottleneck)
             settings: Settings instance with retry configuration
             logger: Logger instance
-            task_manager: TaskManager instance for stage tracking
         """
         super().__init__(num_workers, settings, logger)
-        self.task_manager = task_manager
 
         # Session-scoped counters for upload path breakdown
         self.observation_uploads: int = 0
@@ -126,17 +132,7 @@ class UploadQueue(BaseWorkQueue):
             self.logger.error(f"[UploadWorker] Upload failed for {task_id}")
             return (False, None)
 
-        # Mark task complete on server
-        if task_obj:
-            task_obj.set_status_msg("Marking complete...")
-        marked_complete = item["api_client"].mark_task_complete(task_id)
-
-        if not marked_complete:
-            self.logger.error(f"[UploadWorker] Failed to mark {task_id} complete")
-            return (False, None)
-
-        # Success — stash whether we took the obs path so _on_success can decide on cleanup
-        self.logger.info(f"[UploadWorker] Task {task_id} completed successfully")
+        self.logger.info(f"[UploadWorker] Upload succeeded for task {task_id}")
         return (True, {"obs_path": can_upload_obs})
 
     def _on_success(self, item, result):
@@ -170,7 +166,11 @@ class UploadQueue(BaseWorkQueue):
         on_complete(task_id, success=True)
 
     def _on_permanent_failure(self, item):
-        """Handle permanent upload failure."""
+        """Handle permanent upload failure.
+
+        Stage cleanup is deferred to the on_complete callback (_on_image_done)
+        which waits until all images for the task have finished.
+        """
         task_id = item["task_id"]
         task_obj = item.get("task")
         on_complete = item["on_complete"]
@@ -179,10 +179,6 @@ class UploadQueue(BaseWorkQueue):
 
         if task_obj:
             task_obj.set_status_msg("Upload permanently failed")
-
-        # Remove from stage tracking
-        if self.task_manager:
-            self.task_manager.remove_task_from_all_stages(task_id)
 
         on_complete(task_id, success=False)
 

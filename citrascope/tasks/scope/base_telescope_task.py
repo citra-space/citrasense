@@ -64,6 +64,13 @@ class AbstractBaseTelescopeTask(ABC):
         self.daemon = daemon
         self._cancelled = threading.Event()
 
+        # Multi-image completion tracking (reset per upload_image_and_mark_complete call)
+        self._completion_lock = threading.Lock()
+        self._pending_images: int = 0
+        self._completed_images: int = 0
+        self._any_upload_succeeded: bool = False
+        self._finalized: bool = False
+
     def cancel(self) -> None:
         """Signal this task to abort at the next safe point."""
         self._cancelled.set()
@@ -118,6 +125,13 @@ class AbstractBaseTelescopeTask(ABC):
         else:
             filepaths = filepath
 
+        # Reset multi-image completion tracking
+        with self._completion_lock:
+            self._pending_images = len(filepaths)
+            self._completed_images = 0
+            self._any_upload_succeeded = False
+            self._finalized = False
+
         # Count this as a started task (one increment regardless of image count)
         self.daemon.task_manager.record_task_started()
 
@@ -164,11 +178,10 @@ class AbstractBaseTelescopeTask(ABC):
         """Called by background worker when processing finishes."""
         self.logger.info(f"Processing complete for task {task_id}")
 
-        # Check if processors rejected upload
+        # Check if processors rejected upload — count as completed image
         if result and not result.should_upload:
             self.logger.info(f"Skipping upload per processor: {result.skip_reason}")
-            self.api_client.mark_task_complete(task_id)
-            self.daemon.task_manager.remove_task_from_all_stages(task_id)
+            self._on_image_done(task_id, success=True)
             return
 
         # Log processing summary (human-readable, not the raw dict)
@@ -215,18 +228,67 @@ class AbstractBaseTelescopeTask(ABC):
             telescope_record=self.daemon.telescope_record,
             sensor_location=sensor_location,
             settings=self.daemon.settings,
-            on_complete=self._on_upload_complete,
+            on_complete=self._on_image_done,
         )
 
-    def _on_upload_complete(self, task_id: str, success: bool):
-        """Called by background worker when upload finishes."""
-        if success:
-            self.daemon.task_manager.record_task_succeeded()
-            self.logger.info(f"Task {task_id} fully complete (uploaded)")
+    def _on_image_done(self, task_id: str, success: bool):
+        """Called when a single image finishes (upload success/failure or processor skip).
+
+        Decrements the pending-image counter. When the last image for this task
+        finishes, marks the task complete on the server (if any image succeeded),
+        records stats once, and removes the task from stage tracking.
+
+        A ``_finalized`` flag ensures the completion path runs exactly once, even
+        if callbacks fire more times than ``_pending_images`` (defensive guard).
+        """
+        with self._completion_lock:
+            self._completed_images += 1
+            if success:
+                self._any_upload_succeeded = True
+            should_finalize = (
+                self._completed_images >= self._pending_images and self._pending_images > 0 and not self._finalized
+            )
+            if should_finalize:
+                self._finalized = True
+            remaining = self._pending_images - self._completed_images
+
+        if not should_finalize:
+            if remaining > 0:
+                self.logger.debug(
+                    f"Task {task_id}: image {self._completed_images}/{self._pending_images} done "
+                    f"({'ok' if success else 'FAILED'}), {remaining} remaining"
+                )
+            else:
+                self.logger.warning(f"Task {task_id}: spurious _on_image_done after finalization")
+            return
+
+        # All images for this task have finished — finalize exactly once
+        if self._any_upload_succeeded:
+            marked = self._mark_complete_with_retry(task_id)
+            if marked:
+                self.daemon.task_manager.record_task_succeeded()
+                self.logger.info(f"Task {task_id} fully complete ({self._completed_images} image(s) processed)")
+            else:
+                self.daemon.task_manager.record_task_failed()
+                self.logger.error(f"Task {task_id}: data uploaded but failed to mark complete after retries")
         else:
             self.daemon.task_manager.record_task_failed()
-            self.logger.error(f"Task {task_id} upload failed - not retrying")
+            self.logger.error(f"Task {task_id} failed — all {self._completed_images} image(s) failed to upload")
+
         self.daemon.task_manager.remove_task_from_all_stages(task_id)
+
+    def _mark_complete_with_retry(self, task_id: str, attempts: int = 3, delay: float = 2.0) -> bool:
+        """Try to mark a task complete on the server, retrying on transient failures."""
+        for attempt in range(1, attempts + 1):
+            if self.api_client.mark_task_complete(task_id):
+                return True
+            if attempt < attempts:
+                self.logger.warning(
+                    f"mark_task_complete failed for {task_id} (attempt {attempt}/{attempts}), "
+                    f"retrying in {delay}s..."
+                )
+                time.sleep(delay)
+        return False
 
     @staticmethod
     def _format_processing_summary(task_id: str, data: dict) -> str:

@@ -55,7 +55,6 @@ class TaskManager:
             num_workers=1,
             settings=settings,
             logger=logger,
-            task_manager=self,
         )
 
         # Stage tracking (TaskManager now owns this)

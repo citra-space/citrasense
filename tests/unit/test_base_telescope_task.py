@@ -251,6 +251,7 @@ class TestOnProcessingComplete:
 
     def test_skip_upload_when_should_upload_false(self):
         ct = self._make_concrete()
+        ct._pending_images = 1
         result = MagicMock()
         result.should_upload = False
         result.skip_reason = "Test skip"
@@ -304,7 +305,7 @@ class TestQueueForUpload:
         assert call_kwargs[1]["sensor_location"] is None
 
 
-class TestOnUploadComplete:
+class TestOnImageDone:
     def _make_concrete(self):
         from citrascope.tasks.scope.base_telescope_task import AbstractBaseTelescopeTask
 
@@ -317,12 +318,14 @@ class TestOnUploadComplete:
 
     def test_success(self):
         ct = self._make_concrete()
-        ct._on_upload_complete("task-1", True)
+        ct._pending_images = 1
+        ct._on_image_done("task-1", True)
         ct.daemon.task_manager.record_task_succeeded.assert_called_once()
 
     def test_failure(self):
         ct = self._make_concrete()
-        ct._on_upload_complete("task-1", False)
+        ct._pending_images = 1
+        ct._on_image_done("task-1", False)
         ct.daemon.task_manager.record_task_failed.assert_called_once()
 
 
