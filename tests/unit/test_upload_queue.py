@@ -13,7 +13,7 @@ def uq():
     settings.max_task_retries = 3
     settings.initial_retry_delay_seconds = 1
     settings.max_retry_delay_seconds = 10
-    return UploadQueue(num_workers=1, settings=settings, logger=MagicMock(), task_manager=MagicMock())
+    return UploadQueue(num_workers=1, settings=settings, logger=MagicMock())
 
 
 def test_get_task_from_item(uq):

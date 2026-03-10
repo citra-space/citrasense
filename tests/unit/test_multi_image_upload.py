@@ -6,7 +6,7 @@ after ALL images for a task have finished.
 """
 
 import threading
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 
 def _make_task_instance():
@@ -121,6 +121,7 @@ class TestUploadImageAndMarkComplete:
         assert t._pending_images == 3
         assert t._completed_images == 0
         assert t._any_upload_succeeded is False
+        assert t._finalized is False
 
     def test_single_image_sets_pending_to_one(self):
         t = _make_task_instance()
@@ -163,6 +164,60 @@ class TestSkipUploadPath:
 
         # Both done now
         t.api_client.mark_task_complete.assert_called_once_with("task-abc")
+        t.daemon.task_manager.remove_task_from_all_stages.assert_called_once()
+
+
+class TestFinalizationGuard:
+    """Verify that duplicate/spurious callbacks don't finalize twice."""
+
+    def test_extra_callbacks_ignored(self):
+        t = _make_task_instance()
+        t._pending_images = 1
+
+        t._on_image_done("task-abc", success=True)
+        t._on_image_done("task-abc", success=True)  # spurious duplicate
+
+        t.api_client.mark_task_complete.assert_called_once()
+        t.daemon.task_manager.record_task_succeeded.assert_called_once()
+        t.daemon.task_manager.remove_task_from_all_stages.assert_called_once()
+
+    def test_zero_pending_never_finalizes(self):
+        """_pending_images=0 (uninitialised) should not finalize."""
+        t = _make_task_instance()
+        # _pending_images defaults to 0
+
+        t._on_image_done("task-abc", success=True)
+
+        t.api_client.mark_task_complete.assert_not_called()
+        t.daemon.task_manager.remove_task_from_all_stages.assert_not_called()
+
+
+class TestMarkCompleteRetry:
+    """Verify mark_task_complete retries and failure handling."""
+
+    @patch("citrascope.tasks.scope.base_telescope_task.time.sleep")
+    def test_retries_on_transient_failure(self, mock_sleep):
+        t = _make_task_instance()
+        t._pending_images = 1
+        t.api_client.mark_task_complete.side_effect = [False, False, True]
+
+        t._on_image_done("task-abc", success=True)
+
+        assert t.api_client.mark_task_complete.call_count == 3
+        t.daemon.task_manager.record_task_succeeded.assert_called_once()
+
+    @patch("citrascope.tasks.scope.base_telescope_task.time.sleep")
+    def test_records_failure_after_exhausted_retries(self, mock_sleep):
+        t = _make_task_instance()
+        t._pending_images = 1
+        t.api_client.mark_task_complete.return_value = False
+
+        t._on_image_done("task-abc", success=True)
+
+        assert t.api_client.mark_task_complete.call_count == 3
+        t.daemon.task_manager.record_task_failed.assert_called_once()
+        t.daemon.task_manager.record_task_succeeded.assert_not_called()
+        # Still removes from stages so the task doesn't get stuck
         t.daemon.task_manager.remove_task_from_all_stages.assert_called_once()
 
 

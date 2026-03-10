@@ -20,7 +20,7 @@ class UploadQueue(BaseWorkQueue):
     all images for a task have finished (see _on_image_done).
     """
 
-    def __init__(self, num_workers: int = 1, settings=None, logger=None, task_manager=None):
+    def __init__(self, num_workers: int = 1, settings=None, logger=None):
         """
         Initialize upload queue.
 
@@ -28,10 +28,8 @@ class UploadQueue(BaseWorkQueue):
             num_workers: Number of concurrent upload threads (default: 1, network is bottleneck)
             settings: Settings instance with retry configuration
             logger: Logger instance
-            task_manager: TaskManager instance for stage tracking
         """
         super().__init__(num_workers, settings, logger)
-        self.task_manager = task_manager
 
         # Session-scoped counters for upload path breakdown
         self.observation_uploads: int = 0
