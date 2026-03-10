@@ -1,6 +1,9 @@
 import os
 
 import httpx
+from keplemon.elements import TopocentricElements
+from keplemon.enums import TimeSystem
+from keplemon.time import Epoch
 
 from .abstract_api_client import AbstractCitraApiClient
 
@@ -111,17 +114,23 @@ class CitraApiClient(AbstractCitraApiClient):
         min_wavelength = telescope_record.get("spectralMinWavelengthNm")
         max_wavelength = telescope_record.get("spectralMaxWavelengthNm")
 
+        altitude_km = sensor_location.get("altitude", 0.0) / 1000.0
+
         payload = []
         for obs in observations:
+            # Convert J2000/ICRS astrometric RA/Dec to topocentric TEME (server convention)
+            obs_epoch = Epoch.from_iso(obs["timestamp"], time_system=TimeSystem.UTC)
+            topo = TopocentricElements.from_j2000(obs_epoch, obs["ra"], obs["dec"])
+
             entry = {
                 "satelliteId": obs["norad_id"],
                 "telescopeId": telescope_id,
                 "epoch": obs["timestamp"],
-                "rightAscension": obs["ra"],
-                "declination": obs["dec"],
+                "rightAscension": topo.right_ascension,
+                "declination": topo.declination,
                 "sensorLatitude": sensor_location["latitude"],
                 "sensorLongitude": sensor_location["longitude"],
-                "sensorAltitude": sensor_location.get("altitude", 0.0),
+                "sensorAltitude": altitude_km,
                 "angularNoise": angular_noise,
             }
             if obs.get("mag") is not None:

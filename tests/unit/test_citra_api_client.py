@@ -230,6 +230,6 @@ def test_upload_optical_observations_api_failure(client):
     err.text = "error"
     err.headers = {"content-type": "application/json"}
     err.raise_for_status.side_effect = httpx.HTTPStatusError("", request=MagicMock(), response=err)
-    obs = [{"norad_id": "25544", "timestamp": "t", "ra": 0, "dec": 0}]
+    obs = [{"norad_id": "25544", "timestamp": "2026-01-01T00:00:00Z", "ra": 0, "dec": 0}]
     with patch.object(client.client, "request", return_value=err):
         assert client.upload_optical_observations(obs, {"id": "t"}, {"latitude": 0, "longitude": 0}) is False
