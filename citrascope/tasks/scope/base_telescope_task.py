@@ -11,15 +11,16 @@ from citrascope.hardware.abstract_astro_hardware_adapter import AbstractAstroHar
 from citrascope.tasks.fits_enrichment import enrich_fits_metadata
 
 _DEFAULT_SLEW_ACCELERATION_DEG_PER_S2 = 2.0
-_DEFAULT_SETTLE_TIME_S = 1.5
+_DEFAULT_SETTLE_TIME_S = 0.5
 _DEFAULT_CONVERGENCE_THRESHOLD_DEG = 0.3
 _FOV_CONVERGENCE_FRACTION = 0.35
 
-_MIN_MOTION_TIME_S = 0.5
-_MIN_SLEW_DISTANCE_DEG = 0.1
+_MIN_MOTION_TIME_S = 0.2
+_MIN_SLEW_DISTANCE_DEG = 0.05
 _MIN_OBSERVED_RATE_DEG_PER_S = 0.1
 _MAX_OBSERVED_RATE_DEG_PER_S = 50.0
 _RATE_DIVERGENCE_WARNING_THRESHOLD = 0.3
+_SLEW_RATE_EMA_ALPHA = 0.4
 
 
 def estimate_slew_time(
@@ -437,7 +438,7 @@ class AbstractBaseTelescopeTask(ABC):
         max_angular_distance_deg = self._compute_convergence_threshold()
         self.logger.info(f"Convergence threshold: {max_angular_distance_deg:.3f}°")
 
-        effective_rate: float | None = None
+        effective_rate = self.hardware_adapter.observed_slew_rate_deg_per_s
         rate_warning_logged = False
         attempts = 0
         max_attempts = 10
@@ -479,12 +480,20 @@ class AbstractBaseTelescopeTask(ABC):
                 pre_slew_ra, pre_slew_dec, post_slew_ra, post_slew_dec
             )
 
-            # Adaptive rate: learn from observed slew performance
-            motion_time = slew_duration - _DEFAULT_SETTLE_TIME_S
+            # Adaptive rate: learn from observed slew performance.
+            # slew_duration is GoTo time only (mount reports done); settle is post-motion
+            # vibration damping and is NOT included, so no subtraction needed.
             iter_observed_rate: float | None = None
-            if motion_time > _MIN_MOTION_TIME_S and slewed_distance > _MIN_SLEW_DISTANCE_DEG:
-                observed_rate = slewed_distance / motion_time
-                effective_rate = max(_MIN_OBSERVED_RATE_DEG_PER_S, min(_MAX_OBSERVED_RATE_DEG_PER_S, observed_rate))
+            if slew_duration > _MIN_MOTION_TIME_S and slewed_distance > _MIN_SLEW_DISTANCE_DEG:
+                observed_rate = slewed_distance / slew_duration
+                observed_rate = max(_MIN_OBSERVED_RATE_DEG_PER_S, min(_MAX_OBSERVED_RATE_DEG_PER_S, observed_rate))
+
+                if effective_rate is not None:
+                    effective_rate = _SLEW_RATE_EMA_ALPHA * observed_rate + (1 - _SLEW_RATE_EMA_ALPHA) * effective_rate
+                else:
+                    effective_rate = observed_rate
+
+                self.hardware_adapter.observed_slew_rate_deg_per_s = effective_rate
                 iter_observed_rate = round(effective_rate, 2)
 
                 if not rate_warning_logged:

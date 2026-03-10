@@ -27,6 +27,7 @@ def _make_hardware_adapter(**overrides):
     """Build a spec'd mock hardware adapter with sensible defaults for slew tests."""
     adapter = create_autospec(AbstractAstroHardwareAdapter, instance=True)
     adapter.observed_fov_short_deg = None
+    adapter.observed_slew_rate_deg_per_s = None
     adapter.telescope_record = None
     adapter.scope_slew_rate_degrees_per_second = 5.0
     for k, v in overrides.items():
@@ -797,6 +798,134 @@ class TestEstimateLeadPositionExtraLead:
 
         # Last call should be with total_lead = 3.0 + 10.0 = 13.0
         assert abs(call_args[-1] - 13.0) < 0.01
+
+
+class TestAdaptiveSlewRate:
+    """Tests for EMA smoothing, adapter persistence, and session initialization of slew rate."""
+
+    def _make_concrete(self, adapter_rate=None):
+        from citrascope.tasks.scope.base_telescope_task import AbstractBaseTelescopeTask
+
+        class ConcreteTask(AbstractBaseTelescopeTask):
+            def execute(self):
+                pass
+
+        daemon = _make_daemon()
+        adapter = _make_hardware_adapter(observed_slew_rate_deg_per_s=adapter_rate)
+        adapter.scope_slew_rate_degrees_per_second = 5.0
+        daemon.hardware_adapter = adapter
+        return ConcreteTask(MagicMock(), adapter, MagicMock(), _make_task_dict(), daemon)
+
+    def _run_single_slew(self, ct, slew_duration, slewed_distance):
+        """Simulate one iteration of point_to_lead_position's slew loop.
+
+        Mocks all external dependencies so the loop runs once, converges, and exits.
+        Patches time.time at the module level to control slew_duration.
+        """
+        lead_ra = MagicMock(degrees=10.0)
+        lead_dec = MagicMock(degrees=20.0)
+        sat_pos = (MagicMock(degrees=10.0), MagicMock(degrees=20.0), None, None)
+
+        ct.hardware_adapter.get_telescope_direction.return_value = (0.0, 0.0)
+        ct.hardware_adapter.telescope_is_moving.return_value = False
+
+        call_count = [0]
+
+        def angular_distance_side_effect(*_args):
+            call_count[0] += 1
+            if call_count[0] == 1:
+                return slewed_distance
+            return 0.01  # converged
+
+        ct.hardware_adapter.angular_distance.side_effect = angular_distance_side_effect
+
+        base_time = [1000.0]
+
+        def fake_time():
+            return base_time[0]
+
+        def point_and_advance(*_args, **_kwargs):
+            base_time[0] += slew_duration
+
+        ct.hardware_adapter.point_telescope.side_effect = point_and_advance
+
+        with patch("citrascope.tasks.scope.base_telescope_task.time.time", side_effect=fake_time):
+            with patch("citrascope.tasks.scope.base_telescope_task.time.sleep"):
+                with patch.object(ct, "estimate_lead_position", return_value=(lead_ra, lead_dec, 1.0)):
+                    with patch.object(ct, "get_target_radec_and_rates", return_value=sat_pos):
+                        ct.point_to_lead_position({"most_recent_elset": {"tle": ["a", "b"]}})
+
+    def test_first_measurement_sets_rate_directly(self):
+        """With no prior rate, first observation sets effective_rate = observed_rate."""
+        ct = self._make_concrete(adapter_rate=None)
+        self._run_single_slew(ct, slew_duration=1.0, slewed_distance=4.0)
+
+        stored = ct.hardware_adapter.observed_slew_rate_deg_per_s
+        assert stored is not None
+        assert abs(stored - 4.0) < 0.01
+
+    def test_ema_blends_with_previous_rate(self):
+        """With a prior rate, new measurement is EMA-blended."""
+        from citrascope.tasks.scope.base_telescope_task import _SLEW_RATE_EMA_ALPHA
+
+        ct = self._make_concrete(adapter_rate=3.0)
+        self._run_single_slew(ct, slew_duration=1.0, slewed_distance=5.0)
+
+        stored = ct.hardware_adapter.observed_slew_rate_deg_per_s
+        expected = _SLEW_RATE_EMA_ALPHA * 5.0 + (1 - _SLEW_RATE_EMA_ALPHA) * 3.0
+        assert stored is not None
+        assert abs(stored - expected) < 0.01
+
+    def test_session_persistence_initializes_from_adapter(self):
+        """effective_rate should start from adapter's persisted value, not None."""
+        ct = self._make_concrete(adapter_rate=6.0)
+
+        lead_ra = MagicMock(degrees=10.0)
+        lead_dec = MagicMock(degrees=20.0)
+        sat_pos = (MagicMock(degrees=10.0), MagicMock(degrees=20.0), None, None)
+
+        ct.hardware_adapter.get_telescope_direction.return_value = (0.0, 0.0)
+        ct.hardware_adapter.telescope_is_moving.return_value = False
+        ct.hardware_adapter.angular_distance.side_effect = [0.5, 0.01, 0.01]
+
+        with patch.object(ct, "estimate_lead_position") as mock_est:
+            mock_est.return_value = (lead_ra, lead_dec, 1.0)
+            with patch.object(ct, "get_target_radec_and_rates", return_value=sat_pos):
+                ct.point_to_lead_position({"most_recent_elset": {"tle": ["a", "b"]}})
+
+            first_call = mock_est.call_args_list[0]
+            max_rate_used = first_call[1].get("max_rate")
+            assert max_rate_used is not None
+            assert abs(max_rate_used - 6.0) < 0.5
+
+    def test_rate_clamped_to_bounds(self):
+        """Extreme observed rates should be clamped to [MIN, MAX]."""
+        from citrascope.tasks.scope.base_telescope_task import _MAX_OBSERVED_RATE_DEG_PER_S
+
+        ct = self._make_concrete(adapter_rate=None)
+        self._run_single_slew(ct, slew_duration=0.3, slewed_distance=100.0)
+
+        stored = ct.hardware_adapter.observed_slew_rate_deg_per_s
+        assert stored is not None
+        assert stored <= _MAX_OBSERVED_RATE_DEG_PER_S
+
+    def test_small_slew_below_threshold_does_not_update_rate(self):
+        """Slews below _MIN_SLEW_DISTANCE_DEG should not update the rate."""
+        ct = self._make_concrete(adapter_rate=4.0)
+
+        lead_ra = MagicMock(degrees=10.0)
+        lead_dec = MagicMock(degrees=20.0)
+        sat_pos = (MagicMock(degrees=10.0), MagicMock(degrees=20.0), None, None)
+
+        ct.hardware_adapter.get_telescope_direction.return_value = (0.0, 0.0)
+        ct.hardware_adapter.telescope_is_moving.return_value = False
+        ct.hardware_adapter.angular_distance.side_effect = [0.01, 0.01, 0.01]
+
+        with patch.object(ct, "estimate_lead_position", return_value=(lead_ra, lead_dec, 1.0)):
+            with patch.object(ct, "get_target_radec_and_rates", return_value=sat_pos):
+                ct.point_to_lead_position({"most_recent_elset": {"tle": ["a", "b"]}})
+
+        assert ct.hardware_adapter.observed_slew_rate_deg_per_s == 4.0
 
 
 class TestVerifyPointing:
