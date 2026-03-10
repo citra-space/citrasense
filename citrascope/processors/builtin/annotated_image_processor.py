@@ -22,11 +22,12 @@ _PREDICTION_COLOR = (255, 255, 0)  # Yellow for unmatched predictions
 _TEXT_BG_COLOR = (0, 0, 0)  # Black overlay strip
 _TEXT_COLOR = (255, 255, 255)  # White text
 
-_CIRCLE_RADIUS_PX = 30
-_LABEL_OFFSET_PX = 8
-_OVERLAY_HEIGHT_PX = 56
-_FONT_SIZE = 28
-_JPEG_QUALITY = 90
+_FONT_SIZE = 18
+_CIRCLE_RADIUS = 20
+_LABEL_OFFSET = 6
+_OVERLAY_HEIGHT = 36
+_STROKE_WIDTH = 2
+_IMAGE_FORMAT = "PNG"
 
 
 class AnnotatedImageProcessor(AbstractImageProcessor):
@@ -177,7 +178,7 @@ class AnnotatedImageProcessor(AbstractImageProcessor):
             if px is None or py is None:
                 continue
             self._draw_circle(draw, px, py, _MATCH_COLOR)
-            self._safe_text(draw, (px + _CIRCLE_RADIUS_PX + _LABEL_OFFSET_PX, py - 6), name, _MATCH_COLOR, font)
+            self._safe_text(draw, (px + _CIRCLE_RADIUS + _LABEL_OFFSET, py - _FONT_SIZE // 4), name, _MATCH_COLOR, font)
 
     def _draw_predictions(self, draw: ImageDraw.ImageDraw, wcs: WCS, predictions: list[dict], font) -> None:
         for pred in predictions:
@@ -190,7 +191,9 @@ class AnnotatedImageProcessor(AbstractImageProcessor):
             if px is None or py is None:
                 continue
             self._draw_dashed_circle(draw, px, py, _PREDICTION_COLOR)
-            self._safe_text(draw, (px + _CIRCLE_RADIUS_PX + _LABEL_OFFSET_PX, py - 6), name, _PREDICTION_COLOR, font)
+            self._safe_text(
+                draw, (px + _CIRCLE_RADIUS + _LABEL_OFFSET, py - _FONT_SIZE // 4), name, _PREDICTION_COLOR, font
+            )
 
     @staticmethod
     def _radec_to_pixel(wcs: WCS, ra_deg: float, dec_deg: float) -> tuple[int | None, int | None]:
@@ -202,11 +205,11 @@ class AnnotatedImageProcessor(AbstractImageProcessor):
             return None, None
 
     @staticmethod
-    def _draw_circle(draw: ImageDraw.ImageDraw, cx: int, cy: int, color: tuple, radius: int = _CIRCLE_RADIUS_PX):
+    def _draw_circle(draw: ImageDraw.ImageDraw, cx: int, cy: int, color: tuple):
         draw.ellipse(
-            (cx - radius, cy - radius, cx + radius, cy + radius),
+            (cx - _CIRCLE_RADIUS, cy - _CIRCLE_RADIUS, cx + _CIRCLE_RADIUS, cy + _CIRCLE_RADIUS),
             outline=color,
-            width=2,
+            width=_STROKE_WIDTH,
         )
 
     @staticmethod
@@ -215,21 +218,19 @@ class AnnotatedImageProcessor(AbstractImageProcessor):
         cx: int,
         cy: int,
         color: tuple,
-        radius: int = _CIRCLE_RADIUS_PX,
         dash_count: int = 16,
     ):
         """Draw a dashed circle as alternating arcs."""
-
         arc_span = 360.0 / dash_count
         for i in range(0, dash_count, 2):
             start_angle = i * arc_span
             end_angle = start_angle + arc_span
             draw.arc(
-                (cx - radius, cy - radius, cx + radius, cy + radius),
+                (cx - _CIRCLE_RADIUS, cy - _CIRCLE_RADIUS, cx + _CIRCLE_RADIUS, cy + _CIRCLE_RADIUS),
                 start=start_angle,
                 end=end_angle,
                 fill=color,
-                width=2,
+                width=_STROKE_WIDTH,
             )
 
     @staticmethod
@@ -249,8 +250,8 @@ class AnnotatedImageProcessor(AbstractImageProcessor):
         match_count: int,
         font,
     ):
-        """Draw a semi-transparent info strip at the top of the image."""
-        draw.rectangle((0, 0, img_width, _OVERLAY_HEIGHT_PX), fill=_TEXT_BG_COLOR)
+        """Draw an info strip at the top of the image."""
+        draw.rectangle((0, 0, img_width, _OVERLAY_HEIGHT), fill=_TEXT_BG_COLOR)
 
         parts: list[str] = []
         if task_name:
@@ -260,7 +261,8 @@ class AnnotatedImageProcessor(AbstractImageProcessor):
         parts.append(f"{match_count} match{'es' if match_count != 1 else ''}")
 
         text = "  |  ".join(parts)
-        AnnotatedImageProcessor._safe_text(draw, (10, 12), text, _TEXT_COLOR, font)
+        text_y = max(2, (_OVERLAY_HEIGHT - _FONT_SIZE) // 2)
+        AnnotatedImageProcessor._safe_text(draw, (10, text_y), text, _TEXT_COLOR, font)
 
     @staticmethod
     def _get_font():
@@ -268,24 +270,23 @@ class AnnotatedImageProcessor(AbstractImageProcessor):
         try:
             return ImageFont.load_default(size=_FONT_SIZE)
         except TypeError:
-            # Pillow < 10.1 doesn't accept size=
             return ImageFont.load_default()
         except Exception:
             return None
 
     @staticmethod
     def _save_annotated(img: Image.Image, original_path: Path) -> Path:
-        """Save annotated JPEG alongside the original FITS image (permanent)."""
-        out_path = original_path.parent / f"{original_path.stem}.annotated.jpg"
-        img.save(str(out_path), "JPEG", quality=_JPEG_QUALITY)
+        """Save annotated PNG alongside the original FITS image (permanent)."""
+        out_path = original_path.parent / f"{original_path.stem}.annotated.png"
+        img.save(str(out_path), _IMAGE_FORMAT)
         return out_path
 
     @staticmethod
     def _save_to_working_dir(img: Image.Image, working_dir: Path) -> Path | None:
-        """Save annotated JPEG in the processing working directory."""
+        """Save annotated PNG in the processing working directory."""
         try:
-            out_path = working_dir / "annotated.jpg"
-            img.save(str(out_path), "JPEG", quality=_JPEG_QUALITY)
+            out_path = working_dir / "annotated.png"
+            img.save(str(out_path), _IMAGE_FORMAT)
             return out_path
         except Exception:
             return None

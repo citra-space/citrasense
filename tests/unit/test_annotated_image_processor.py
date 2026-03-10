@@ -33,7 +33,7 @@ def _make_context(
     task = None
     if task_name:
         task = MagicMock()
-        task.satellite_name = task_name
+        task.satelliteName = task_name
 
     return ProcessingContext(
         image_path=fits_path,
@@ -202,12 +202,12 @@ class TestAnnotatedImageSaving:
         permanent = Path(result.extracted_data["image_path"])
         working = Path(result.extracted_data["working_dir_path"])
         assert permanent.exists()
-        assert permanent.suffix == ".jpg"
+        assert permanent.suffix == ".png"
         assert permanent.stem == "test_image.annotated"
         assert working.exists()
-        assert working.name == "annotated.jpg"
+        assert working.name == "annotated.png"
 
-    def test_output_is_valid_jpeg(self, tmp_path):
+    def test_output_is_valid_png(self, tmp_path):
         proc = AnnotatedImageProcessor()
         debug = _make_debug_json()
         ctx = _make_context(tmp_path, debug_json=debug)
@@ -216,7 +216,7 @@ class TestAnnotatedImageSaving:
             result = proc.process(ctx)
 
         img = Image.open(result.extracted_data["image_path"])
-        assert img.format == "JPEG"
+        assert img.format == "PNG"
         assert img.mode == "RGB"
 
 

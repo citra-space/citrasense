@@ -240,11 +240,11 @@ class CitraScopeWebApp:
 
         @self.app.get("/api/task-preview/latest")
         async def get_latest_task_preview():
-            """Serve the latest annotated task image as a JPEG."""
+            """Serve the latest annotated task image."""
             ann_path = getattr(self.daemon, "latest_annotated_image_path", None)
             if not ann_path or not Path(ann_path).exists():
                 return JSONResponse({"error": "No preview available"}, status_code=404)
-            return FileResponse(ann_path, media_type="image/jpeg")
+            return FileResponse(ann_path, media_type="image/png")
 
         @self.app.get("/api/config")
         async def get_config():
