@@ -2,6 +2,7 @@
 
 import logging
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import cast
 
@@ -180,6 +181,7 @@ class XimeaHyperspectralCamera(AbstractCamera):
         # Camera handle (will be initialized on connect)
         self._camera = None
         self._is_connected = False
+        self._last_exposure_start: datetime | None = None
 
         # Camera info cache
         self._camera_info = {}
@@ -332,6 +334,7 @@ class XimeaHyperspectralCamera(AbstractCamera):
 
         try:
             timeout_ms = int((exposure_us / 1000.0) + 5000)
+            self._last_exposure_start = datetime.now(timezone.utc)
             self._camera.get_image(img, timeout=timeout_ms)
             data: np.ndarray = img.get_image_data_numpy()
             return data
@@ -531,8 +534,6 @@ class XimeaHyperspectralCamera(AbstractCamera):
             # Save as multi-extension FITS (one extension per spectral band)
             try:
                 # Create primary HDU with basic metadata
-                from datetime import datetime, timezone
-
                 from astropy.io import fits
 
                 primary_hdu = fits.PrimaryHDU()
@@ -547,7 +548,8 @@ class XimeaHyperspectralCamera(AbstractCamera):
                     primary_hdu.header["EXPTIME"] = self._last_exposure_us / 1000000.0  # seconds
                 if hasattr(self, "_last_gain_db"):
                     primary_hdu.header["GAIN"] = self._last_gain_db
-                primary_hdu.header["DATE-OBS"] = datetime.now(timezone.utc).isoformat()
+                date_obs = self._last_exposure_start or datetime.now(timezone.utc)
+                primary_hdu.header["DATE-OBS"] = date_obs.isoformat()
 
                 # Camera metadata
                 if self._camera_info:
@@ -599,8 +601,6 @@ class XimeaHyperspectralCamera(AbstractCamera):
 
         if suffix == ".fits":
             try:
-                from datetime import datetime, timezone
-
                 from astropy.io import fits
 
                 hdu = fits.PrimaryHDU(data)
@@ -615,7 +615,8 @@ class XimeaHyperspectralCamera(AbstractCamera):
                     hdu.header["EXPTIME"] = self._last_exposure_us / 1000000.0  # seconds
                 if hasattr(self, "_last_gain_db"):
                     hdu.header["GAIN"] = self._last_gain_db
-                hdu.header["DATE-OBS"] = datetime.now(timezone.utc).isoformat()
+                date_obs = self._last_exposure_start or datetime.now(timezone.utc)
+                hdu.header["DATE-OBS"] = date_obs.isoformat()
 
                 # Camera metadata
                 if self._camera_info:

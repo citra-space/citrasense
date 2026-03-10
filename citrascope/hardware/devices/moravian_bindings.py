@@ -51,6 +51,7 @@ GBP_COOLER = 4
 GBP_FAN = 5
 GBP_FILTERS = 6
 GBP_WINDOW_HEATING = 8
+GBP_GPS = 15
 
 # gxccd_get_integer_parameter indexes
 GIP_CHIP_W = 1
@@ -182,6 +183,31 @@ def _init_camera_api(lib: ctypes.CDLL) -> None:
     lib.gxccd_enumerate_read_modes.restype = c_int
 
     lib.gxccd_get_last_error.argtypes = [c_void_p, c_void_p, c_size_t]
+
+    # GPS and hardware timestamp functions
+    lib.gxccd_get_image_time_stamp.argtypes = [
+        c_void_p,
+        ctypes.POINTER(c_int),
+        ctypes.POINTER(c_int),
+        ctypes.POINTER(c_int),
+        ctypes.POINTER(c_int),
+        ctypes.POINTER(c_int),
+        ctypes.POINTER(c_double),
+    ]
+    lib.gxccd_get_gps_data.argtypes = [
+        c_void_p,
+        ctypes.POINTER(c_double),
+        ctypes.POINTER(c_double),
+        ctypes.POINTER(c_double),
+        ctypes.POINTER(c_int),
+        ctypes.POINTER(c_int),
+        ctypes.POINTER(c_int),
+        ctypes.POINTER(c_int),
+        ctypes.POINTER(c_int),
+        ctypes.POINTER(c_double),
+        ctypes.POINTER(ctypes.c_uint),
+        ctypes.POINTER(c_bool),
+    ]
 
 
 def _init_fw_api(lib: ctypes.CDLL) -> None:
@@ -397,6 +423,80 @@ class GxccdCamera:
     def set_filter(self, index: int) -> None:
         assert self._handle is not None
         self._check(self._lib.gxccd_set_filter(self._handle, index))
+
+    # -- GPS and hardware timestamps --
+
+    def get_image_time_stamp(self) -> tuple[int, int, int, int, int, float] | None:
+        """Get the hardware timestamp of the last exposure start.
+
+        Requires a GPS module with satellite fix. Returns None on error
+        (no GPS, no fix, or no exposure taken yet).
+
+        Returns:
+            (year, month, day, hour, minute, second) in UTC, or None.
+        """
+        assert self._handle is not None
+        year, month, day = c_int(), c_int(), c_int()
+        hour, minute = c_int(), c_int()
+        second = c_double()
+        ret = self._lib.gxccd_get_image_time_stamp(
+            self._handle,
+            byref(year),
+            byref(month),
+            byref(day),
+            byref(hour),
+            byref(minute),
+            byref(second),
+        )
+        if ret == -1:
+            return None
+        return (year.value, month.value, day.value, hour.value, minute.value, second.value)
+
+    def get_gps_data(self) -> dict | None:
+        """Get current GPS receiver data.
+
+        Returns None on error (no GPS module or no data available).
+
+        Returns:
+            Dict with lat, lon, msl (meters), year/month/day/hour/minute/second (UTC),
+            satellites (count), and fix (bool), or None.
+        """
+        assert self._handle is not None
+        lat, lon, msl = c_double(), c_double(), c_double()
+        year, month, day = c_int(), c_int(), c_int()
+        hour, minute = c_int(), c_int()
+        second = c_double()
+        satellites = ctypes.c_uint()
+        fix = c_bool()
+        ret = self._lib.gxccd_get_gps_data(
+            self._handle,
+            byref(lat),
+            byref(lon),
+            byref(msl),
+            byref(year),
+            byref(month),
+            byref(day),
+            byref(hour),
+            byref(minute),
+            byref(second),
+            byref(satellites),
+            byref(fix),
+        )
+        if ret == -1:
+            return None
+        return {
+            "latitude": lat.value,
+            "longitude": lon.value,
+            "altitude_msl": msl.value,
+            "year": year.value,
+            "month": month.value,
+            "day": day.value,
+            "hour": hour.value,
+            "minute": minute.value,
+            "second": second.value,
+            "satellites": satellites.value,
+            "fix": fix.value,
+        }
 
 
 # ---------------------------------------------------------------------------

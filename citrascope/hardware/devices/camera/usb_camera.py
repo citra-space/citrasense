@@ -2,6 +2,7 @@
 
 import logging
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import cast
 
@@ -170,6 +171,7 @@ class UsbCamera(AbstractCamera):
         # Camera instance (lazy loaded)
         self._camera = None
         self._connected = False
+        self._last_exposure_start: datetime | None = None
 
         # Lazy import opencv to avoid hard dependency
         self._cv2_module = None
@@ -245,6 +247,7 @@ class UsbCamera(AbstractCamera):
 
         try:
             self.logger.info("Capturing USB camera frame...")
+            self._last_exposure_start = datetime.now(timezone.utc)
             ret, frame = self._camera.read()
             if not ret or frame is None:
                 raise RuntimeError("Failed to capture frame from USB camera")
@@ -375,6 +378,8 @@ class UsbCamera(AbstractCamera):
             hdu = fits.PrimaryHDU(gray.astype(np.uint16))
             hdu.header["INSTRUME"] = "USB Camera"
             hdu.header["CAMERA"] = f"Index {self.camera_index}"
+            date_obs = self._last_exposure_start or datetime.now(timezone.utc)
+            hdu.header["DATE-OBS"] = (date_obs.isoformat(), "UTC exposure start")
             hdu.writeto(save_path, overwrite=True)
 
         except ImportError:

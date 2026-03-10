@@ -10,7 +10,7 @@ from __future__ import annotations
 import logging
 import time
 from ctypes import create_string_buffer
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
@@ -221,6 +221,8 @@ class MoravianCamera(AbstractCamera):
         self._read_modes: list[str] = []
         self._camera_info: dict = {}
         self._integrated_fw: MoravianIntegratedFilterWheel | None = None
+        self._last_exposure_start: datetime | None = None
+        self._has_gps: bool = False
 
     def connect(self) -> bool:
         try:
@@ -228,6 +230,7 @@ class MoravianCamera(AbstractCamera):
                 GBP_COOLER,
                 GBP_FAN,
                 GBP_FILTERS,
+                GBP_GPS,
                 GBP_WINDOW_HEATING,
                 GIP_CHIP_D,
                 GIP_CHIP_W,
@@ -323,12 +326,31 @@ class MoravianCamera(AbstractCamera):
                 self._integrated_fw.connect()
                 self.logger.info(f"Detected integrated filter wheel with {num_filters} positions")
 
+            # GPS module detection
+            try:
+                self._has_gps = cam.get_boolean_parameter(GBP_GPS)
+                if self._has_gps:
+                    gps_data = cam.get_gps_data()
+                    if gps_data:
+                        self.logger.info(
+                            f"Camera GPS: {gps_data['satellites']} satellites, "
+                            f"fix={'yes' if gps_data['fix'] else 'no'}, "
+                            f"lat={gps_data['latitude']:.6f}, lon={gps_data['longitude']:.6f}, "
+                            f"alt={gps_data['altitude_msl']:.1f}m"
+                        )
+                    else:
+                        self.logger.info("Camera GPS module detected but no data available yet")
+            except Exception as e:
+                self.logger.debug(f"GPS detection skipped: {e}")
+                self._has_gps = False
+
             temp = cam.get_value(GV_CHIP_TEMPERATURE)
             self.logger.info(
                 f"Connected to {desc.strip()} (SN: {serial.strip()}) "
                 f"{w}x{h} px, {temp:.1f}°C"
                 + (f", fan: max={self._max_fan}" if self._has_fan else "")
                 + (f", heating: max={self._max_window_heating}" if self._has_window_heating else "")
+                + (", GPS: yes" if self._has_gps else "")
             )
 
             # Auto-start cooling if cooler present and target is below ambient
@@ -382,6 +404,7 @@ class MoravianCamera(AbstractCamera):
         cam.set_binning(binning, binning)
 
         self.logger.debug(f"Starting {duration}s exposure (gain={gain_val}, binning={binning}x{binning})")
+        self._last_exposure_start = datetime.now(timezone.utc)
         cam.start_exposure(duration, True, 0, 0, w, h)
 
         # Sleep for most of the exposure, then poll (per gxccd.h recommendation)
@@ -398,6 +421,35 @@ class MoravianCamera(AbstractCamera):
 
         return np.frombuffer(bytes(buf), dtype=np.uint16).reshape((binned_h, binned_w))
 
+    def _resolve_exposure_timestamp(self) -> tuple[datetime, str]:
+        """Determine the best available exposure-start timestamp.
+
+        Priority:
+        1. Hardware GPS timestamp (true exposure start, microsecond resolution —
+           sub-microsecond detail from the camera is rounded, not preserved)
+        2. Host clock captured before start_exposure() in capture_array()
+        3. Host clock now (should never happen after the capture_array fix)
+
+        Returns:
+            (timestamp, source) where source is "gps" or "host".
+        """
+        if self._has_gps and self._gxccd is not None:
+            try:
+                ts = self._gxccd.get_image_time_stamp()
+                if ts is not None:
+                    year, month, day, hour, minute, second = ts
+                    whole_sec = int(second)
+                    microsecond = round((second - whole_sec) * 1_000_000)
+                    gps_dt = datetime(year, month, day, hour, minute, 0, tzinfo=timezone.utc) + timedelta(
+                        seconds=whole_sec, microseconds=microsecond
+                    )
+                    return gps_dt, "gps"
+            except Exception as e:
+                self.logger.debug(f"GPS timestamp unavailable: {e}")
+
+        host_dt = self._last_exposure_start or datetime.now(timezone.utc)
+        return host_dt, "host"
+
     def take_exposure(
         self,
         duration: float,
@@ -407,13 +459,24 @@ class MoravianCamera(AbstractCamera):
         save_path: Path | None = None,
     ) -> Path:
         data = self.capture_array(duration, gain, offset, binning)
+        exposure_start, date_src = self._resolve_exposure_timestamp()
 
         if save_path is None:
             ts = time.strftime("%Y%m%d_%H%M%S")
             save_path = Path(f"moravian_{ts}.fits")
 
         gain_val = gain if gain is not None else self._default_gain
-        self._save_fits(data.tobytes(), data.shape[1], data.shape[0], duration, gain_val, binning, save_path)
+        self._save_fits(
+            data.tobytes(),
+            data.shape[1],
+            data.shape[0],
+            duration,
+            gain_val,
+            binning,
+            save_path,
+            exposure_start=exposure_start,
+            date_src=date_src,
+        )
         self.logger.info(f"Image saved to {save_path}")
         return save_path
 
@@ -426,6 +489,8 @@ class MoravianCamera(AbstractCamera):
         gain: int,
         binning: int,
         save_path: Path,
+        exposure_start: datetime | None = None,
+        date_src: str = "host",
     ) -> None:
         import numpy as np
         from astropy.io import fits
@@ -434,13 +499,16 @@ class MoravianCamera(AbstractCamera):
         data = np.frombuffer(buf, dtype=np.uint16).reshape((height, width))
         # FITS convention: first pixel is bottom-left, same as gxccd -- no flip needed
 
+        date_obs = exposure_start or datetime.now(timezone.utc)
+
         hdu = fits.PrimaryHDU(data)
         hdr = hdu.header
         hdr["EXPTIME"] = (exp_time, "Exposure time in seconds")
         hdr["GAIN"] = (gain, "Camera gain register value")
         hdr["XBINNING"] = (binning, "Horizontal binning")
         hdr["YBINNING"] = (binning, "Vertical binning")
-        hdr["DATE-OBS"] = (datetime.now(timezone.utc).isoformat(), "UTC observation time")
+        hdr["DATE-OBS"] = (date_obs.isoformat(), "UTC exposure start")
+        hdr["DATE-SRC"] = (date_src, "Timestamp source: gps or host")
         hdr["INSTRUME"] = (self._camera_info.get("model", ""), "Camera model")
 
         serial = self._camera_info.get("serial_number", "")

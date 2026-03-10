@@ -2,6 +2,7 @@
 
 import logging
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import cast
 
@@ -108,6 +109,7 @@ class RaspberryPiHQCamera(AbstractCamera):
         # Camera instance (lazy loaded)
         self._camera = None
         self._connected = False
+        self._last_exposure_start: datetime | None = None
 
         # Lazy import picamera2 to avoid hard dependency
         self._picamera2_module = None
@@ -193,6 +195,7 @@ class RaspberryPiHQCamera(AbstractCamera):
             self.logger.info(f"Taking {duration}s exposure, gain={actual_gain}")
             self._camera.set_controls({"ExposureTime": exposure_us, "AnalogueGain": float(actual_gain)})
 
+            self._last_exposure_start = datetime.now(timezone.utc)
             request = self._camera.capture_request()
             image_data = request.make_array("main")
             request.release()
@@ -294,6 +297,8 @@ class RaspberryPiHQCamera(AbstractCamera):
             hdu = fits.PrimaryHDU(gray)
             hdu.header["INSTRUME"] = "Raspberry Pi HQ Camera"
             hdu.header["CAMERA"] = "IMX477"
+            date_obs = self._last_exposure_start or datetime.now(timezone.utc)
+            hdu.header["DATE-OBS"] = (date_obs.isoformat(), "UTC exposure start")
             hdu.writeto(save_path, overwrite=True)
 
         except ImportError:
