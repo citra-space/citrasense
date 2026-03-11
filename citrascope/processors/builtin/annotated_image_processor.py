@@ -31,7 +31,7 @@ _IMAGE_FORMAT = "PNG"
 
 
 class AnnotatedImageProcessor(AbstractImageProcessor):
-    """Renders a stretched JPEG with satellite match annotations overlaid.
+    """Renders a stretched PNG with satellite match annotations overlaid.
 
     Reads the satellite_matcher_debug.json from the working directory to draw:
     - Cyan circles + labels for confirmed satellite matches

@@ -1552,8 +1552,8 @@ class CitraScopeWebApp:
             # Latest annotated task image for the Optics pane
             ann_path = getattr(self.daemon, "latest_annotated_image_path", None)
             if ann_path and Path(ann_path).exists():
-                mtime = int(Path(ann_path).stat().st_mtime)
-                self.status.latest_task_image_url = f"/api/task-preview/latest?t={mtime}"
+                mtime_ns = Path(ann_path).stat().st_mtime_ns
+                self.status.latest_task_image_url = f"/api/task-preview/latest?t={mtime_ns}"
             else:
                 self.status.latest_task_image_url = None
 
