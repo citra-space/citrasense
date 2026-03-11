@@ -447,6 +447,7 @@ class TestFullPipelineDemoFits:
 
         settings = Mock()
         settings.enabled_processors = {}
+        settings.observation_mode = "tracking"
 
         class FakeLocationService:
             def get_current_location(self):
@@ -523,6 +524,7 @@ class TestFullPipelineDemoFits:
         )
         settings = Mock()
         settings.enabled_processors = {}
+        settings.observation_mode = "tracking"
 
         class FakeLocationService:
             def get_current_location(self):
@@ -667,6 +669,7 @@ class TestSatelliteMatcherProcessor:
         )
         settings = Mock()
         settings.enabled_processors = {}
+        settings.observation_mode = "tracking"
 
         class FakeLocationService:
             def get_current_location(self):
