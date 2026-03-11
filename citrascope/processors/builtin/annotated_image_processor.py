@@ -277,9 +277,15 @@ class AnnotatedImageProcessor(AbstractImageProcessor):
 
     @staticmethod
     def _save_preview(img: Image.Image, images_dir: Path) -> Path:
-        """Save annotated PNG as a single rotating preview file (overwritten each time)."""
+        """Save annotated PNG as a single rotating preview file (overwritten each time).
+
+        Uses atomic write (temp file + rename) to prevent serving a partially
+        written image when the web endpoint reads during an overwrite.
+        """
         out_path = images_dir / "latest_preview.png"
-        img.save(str(out_path), _IMAGE_FORMAT)
+        tmp_path = images_dir / "latest_preview.tmp.png"
+        img.save(str(tmp_path), _IMAGE_FORMAT)
+        tmp_path.replace(out_path)
         return out_path
 
     @staticmethod
