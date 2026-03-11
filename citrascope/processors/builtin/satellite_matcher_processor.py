@@ -46,19 +46,6 @@ class SatelliteMatcherProcessor(AbstractImageProcessor):
     description = "Match detected sources with TLE predictions (requires full pipeline)"
 
     @staticmethod
-    def _resolve_tracking_mode(context: ProcessingContext) -> str:
-        """Map the observation_mode setting to the FWHM filter direction.
-
-        "static"   -> sidereal tracking: stars are points, satellites streak
-        "tracking" -> rate tracking: satellites are points, stars streak
-        "auto"     -> default to sidereal (rate tracking requires a capable mount)
-        """
-        obs_mode = getattr(context.settings, "observation_mode", "auto") if context.settings else "auto"
-        if obs_mode == "tracking":
-            return "rate"
-        return "sidereal"
-
-    @staticmethod
     def _subtract_known_stars(candidates: pd.DataFrame, working_dir: Path) -> tuple[pd.DataFrame, dict[str, Any]]:
         """Remove sources that matched APASS catalog stars in the photometry step.
 
@@ -75,11 +62,21 @@ class SatelliteMatcherProcessor(AbstractImageProcessor):
         except Exception:
             return candidates, {"source": "skipped", "reason": "failed to parse photometry_crossmatch.csv"}
 
-        if xmatch.empty or "ra" not in xmatch.columns or "dec" not in xmatch.columns:
-            return candidates, {"source": "skipped", "reason": "crossmatch CSV empty or missing ra/dec"}
+        # Prefer APASS catalog positions (radeg/decdeg) over detected source positions (ra/dec).
+        # Using detected source positions would falsely remove a satellite that happened to
+        # land in the crossmatch by proximity to a catalog star.
+        if "radeg" in xmatch.columns and "decdeg" in xmatch.columns:
+            ra_col, dec_col = "radeg", "decdeg"
+        elif "ra" in xmatch.columns and "dec" in xmatch.columns:
+            ra_col, dec_col = "ra", "dec"
+        else:
+            return candidates, {"source": "skipped", "reason": "crossmatch CSV missing coordinate columns"}
+
+        if xmatch.empty:
+            return candidates, {"source": "skipped", "reason": "crossmatch CSV empty"}
 
         before = len(candidates)
-        star_coords = xmatch[["ra", "dec"]].values
+        star_coords = xmatch[[ra_col, dec_col]].values
         star_tree = KDTree(star_coords)
 
         cand_coords = candidates[["ra", "dec"]].values
@@ -426,7 +423,7 @@ class SatelliteMatcherProcessor(AbstractImageProcessor):
                 names=["mag", "magerr", "ra", "dec", "fwhm"],
             )
 
-            tracking_mode = self._resolve_tracking_mode(context)
+            tracking_mode = context.tracking_mode or "sidereal"
             satellite_observations, debug_info = self._match_satellites(
                 sources_df, context, tracking_mode=tracking_mode
             )

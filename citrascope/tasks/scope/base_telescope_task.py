@@ -72,6 +72,16 @@ class AbstractBaseTelescopeTask(ABC):
         self._any_upload_succeeded: bool = False
         self._finalized: bool = False
 
+    @property
+    def tracking_mode(self) -> str:
+        """Return the tracking mode used during imaging: 'sidereal' or 'rate'.
+
+        Subclasses override this. The value is threaded into ProcessingContext
+        so downstream processors (satellite matcher) know the FWHM filter direction
+        without guessing from settings.
+        """
+        return "sidereal"
+
     def cancel(self) -> None:
         """Signal this task to abort at the next safe point."""
         self._cancelled.set()
@@ -165,6 +175,7 @@ class AbstractBaseTelescopeTask(ABC):
                         "daemon": self.daemon,
                         "satellite_data": satellite_data,
                         "pointing_report": pointing_report,
+                        "tracking_mode": self.tracking_mode,
                     },
                     on_complete=lambda tid, result, fp=image_path: self._on_processing_complete(fp, tid, result),
                 )

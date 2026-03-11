@@ -2,6 +2,10 @@ from citrascope.tasks.scope.base_telescope_task import AbstractBaseTelescopeTask
 
 
 class TrackingTelescopeTask(AbstractBaseTelescopeTask):
+    @property
+    def tracking_mode(self) -> str:
+        return "rate"
+
     def execute(self):
 
         self.task.set_status_msg("Fetching satellite data...")

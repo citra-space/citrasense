@@ -447,7 +447,6 @@ class TestFullPipelineDemoFits:
 
         settings = Mock()
         settings.enabled_processors = {}
-        settings.observation_mode = "tracking"
 
         class FakeLocationService:
             def get_current_location(self):
@@ -467,6 +466,7 @@ class TestFullPipelineDemoFits:
             settings=settings,
             location_service=FakeLocationService(),
             elset_cache=None,  # no hot list: use single-TLE from task (backward compatibility)
+            tracking_mode="rate",
             logger=Mock(),
         )
 
@@ -524,7 +524,6 @@ class TestFullPipelineDemoFits:
         )
         settings = Mock()
         settings.enabled_processors = {}
-        settings.observation_mode = "tracking"
 
         class FakeLocationService:
             def get_current_location(self):
@@ -544,6 +543,7 @@ class TestFullPipelineDemoFits:
             settings=settings,
             location_service=FakeLocationService(),
             elset_cache=elset_cache,
+            tracking_mode="rate",
             logger=Mock(),
         )
 
@@ -669,7 +669,6 @@ class TestSatelliteMatcherProcessor:
         )
         settings = Mock()
         settings.enabled_processors = {}
-        settings.observation_mode = "tracking"
 
         class FakeLocationService:
             def get_current_location(self):
@@ -687,6 +686,7 @@ class TestSatelliteMatcherProcessor:
             settings=settings,
             location_service=FakeLocationService(),
             elset_cache=elset_cache,
+            tracking_mode="rate",
             logger=Mock(),
         )
 

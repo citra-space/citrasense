@@ -62,5 +62,8 @@ class ProcessingContext:
     # Pointing telemetry from the iterative slew convergence loop (None for SEQUENCE_TO_CONTROLLER strategy)
     pointing_report: dict | None = None
 
+    # Tracking mode used during imaging: "sidereal" or "rate". Set by the telescope task at queue time.
+    tracking_mode: str | None = None
+
     # Logging
     logger: Any | None = None  # Logger instance for debugging

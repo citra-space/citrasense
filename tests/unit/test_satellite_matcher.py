@@ -85,6 +85,35 @@ class TestSubtractKnownStars:
         assert len(filtered) == 1
         assert stats["catalog_stars_removed"] == 0
 
+    def test_uses_catalog_positions_not_source_positions(self, tmp_path: Path):
+        """A satellite near (but not on) a catalog star should be retained.
+
+        The crossmatch CSV has both detected-source coords (ra/dec) and catalog
+        star coords (radeg/decdeg). We must match against the catalog positions
+        to avoid removing a satellite that happened to land in the crossmatch.
+        """
+        star_ra, star_dec = 180.0, 45.0
+        sat_ra, sat_dec = 180.005, 45.0  # ~18 arcsec from the star
+
+        candidates = _make_sources([(sat_ra, sat_dec)])
+
+        # The satellite appeared in the crossmatch because it was within
+        # photometry's 1-arcmin match radius of the star. Its ra/dec is in
+        # the CSV, but the actual star is at radeg/decdeg.
+        xmatch = pd.DataFrame(
+            {
+                "ra": [sat_ra],
+                "dec": [sat_dec],  # detected source position (the satellite!)
+                "radeg": [star_ra],
+                "decdeg": [star_dec],  # actual APASS star position
+            }
+        )
+        xmatch.to_csv(tmp_path / "photometry_crossmatch.csv", index=False)
+
+        filtered, stats = SatelliteMatcherProcessor._subtract_known_stars(candidates, tmp_path)
+        assert len(filtered) == 1, "satellite should NOT be removed -- it's 18 arcsec from the catalog star"
+        assert stats["catalog_stars_removed"] == 0
+
 
 # ===================================================================
 # 2. Reverse match produces at most one observation per prediction
