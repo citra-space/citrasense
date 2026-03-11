@@ -72,6 +72,13 @@ class ElsetCache:
         self._last_refresh_epoch: float = 0.0
         self._source: str = ""
 
+    def _clear(self) -> None:
+        """Reset in-memory state under the lock."""
+        with self._lock:
+            self._list = []
+            self._source = ""
+            self._last_refresh_epoch = 0.0
+
     def get_elsets(self) -> list[dict]:
         """Return current list of processor-ready elsets (thread-safe)."""
         with self._lock:
@@ -105,17 +112,22 @@ class ElsetCache:
         if isinstance(data, dict) and "elsets" in data:
             stored_source = data.get("source", "")
             elsets = data["elsets"]
+            if not isinstance(elsets, list):
+                _logger.warning("ElsetCache: corrupt cache file (elsets is not a list) — discarding")
+                self._clear()
+                return
             if expected_source and stored_source != expected_source:
                 _logger.warning(
                     "ElsetCache: source mismatch (file=%s, expected=%s) — discarding cached data",
                     stored_source,
                     expected_source,
                 )
+                self._clear()
                 return
         elif isinstance(data, list):
-            # Legacy bare-list format — no source tag, treat as unknown
             if expected_source:
                 _logger.warning("ElsetCache: legacy cache format (no source tag) — discarding cached data")
+                self._clear()
                 return
             elsets = data
             stored_source = ""
@@ -133,15 +145,22 @@ class ElsetCache:
         Returns True if refresh succeeded, False otherwise.
         """
         source_key: str = getattr(api_client, "cache_source_key", type(api_client).__name__)
-        raw = api_client.get_elsets_latest(days=days)
+        try:
+            raw = api_client.get_elsets_latest(days=days)
+        except Exception as e:
+            if logger:
+                logger.warning("ElsetCache: get_elsets_latest raised %s: %s", type(e).__name__, e)
+            return False
         if raw is None:
             if logger:
                 logger.warning("ElsetCache: get_elsets_latest returned None")
             return False
         normalized = _normalize_api_response(raw)
+        now = time.time()
         with self._lock:
             self._list = normalized
             self._source = source_key
+            self._last_refresh_epoch = now
         if self._cache_path:
             try:
                 self._cache_path.parent.mkdir(parents=True, exist_ok=True)
@@ -155,7 +174,6 @@ class ElsetCache:
             except OSError as e:
                 if logger:
                     logger.warning("ElsetCache: failed to write cache file: %s", e)
-        self._last_refresh_epoch = time.time()
         count = len(normalized)
         if logger:
             logger.info("ElsetCache: refreshed %d elsets (source=%s)", count, source_key)
