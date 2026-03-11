@@ -112,25 +112,25 @@
 
                 <span class="badge rounded-pill"
                       data-bs-toggle="tooltip" data-bs-theme="dark"
-                      style="white-space:pre-line;" :title="safetyTip"
+                      style="white-space:pre-line;" :data-bs-title="safetyTip"
                       x-show="safetyChecks.length > 0"
                       :class="safetyWorst === 'emergency' ? 'bg-danger' : safetyWorst === 'stop' ? 'bg-warning text-dark' : safetyWorst === 'warn' ? 'bg-warning text-dark' : (safetyWatchdog === false ? 'bg-secondary' : 'bg-success')"
                       x-text="safetyWorst === 'emergency' ? 'Emergency' : safetyWorst === 'stop' ? 'Safety: Hold' : safetyWorst === 'warn' ? 'Safety: Warning' : (safetyWatchdog === false ? 'Safety: Offline' : 'Safety: ' + safetyChecks.length + ' OK')"></span>
 
                 <span class="badge rounded-pill"
                       data-bs-toggle="tooltip" data-bs-theme="dark"
-                      :title="$store.citrascope.wsConnected ? 'Connected \u2014 receiving live updates' : ($store.citrascope.wsReconnecting ? 'Reconnecting\u2026' : 'Daemon disconnected')"
+                      :data-bs-title="$store.citrascope.wsConnected ? 'Connected \u2014 receiving live updates' : ($store.citrascope.wsReconnecting ? 'Reconnecting\u2026' : 'Daemon disconnected')"
                       :class="$store.citrascope.wsConnected ? 'bg-success' : ($store.citrascope.wsReconnecting ? 'bg-warning text-dark' : 'bg-danger')"
                       x-text="$store.citrascope.wsReconnecting ? 'Reconnecting' : 'Daemon'"></span>
 
                 <span class="badge rounded-pill"
                       data-bs-toggle="tooltip" data-bs-theme="dark"
-                      :title="$store.citrascope.status?.telescope_connected ? 'Telescope connected' : 'Telescope disconnected'"
+                      :data-bs-title="$store.citrascope.status?.telescope_connected ? 'Telescope connected' : 'Telescope disconnected'"
                       :class="$store.citrascope.status?.telescope_connected ? 'bg-success' : 'bg-danger'">Telescope</span>
 
                 <span class="badge rounded-pill"
                       data-bs-toggle="tooltip" data-bs-theme="dark"
-                      :title="$store.citrascope.status?.camera_connected
+                      :data-bs-title="$store.citrascope.status?.camera_connected
                           ? ('Camera connected' + ($store.citrascope.status?.camera_temperature != null ? ' \u00b7 ' + $store.citrascope.status.camera_temperature.toFixed(1) + ' \u00b0C' : ''))
                           : 'Camera disconnected'"
                       :class="$store.citrascope.status?.camera_connected ? 'bg-success' : 'bg-danger'"
@@ -140,7 +140,7 @@
 
                 <span class="badge rounded-pill"
                       data-bs-toggle="tooltip" data-bs-theme="dark"
-                      :title="$store.citrascope.status?.focuser_connected
+                      :data-bs-title="$store.citrascope.status?.focuser_connected
                           ? ('Focuser connected' + ($store.citrascope.status?.focuser_temperature != null ? ' \u00b7 ' + $store.citrascope.status.focuser_temperature.toFixed(1) + ' \u00b0C' : ''))
                           : 'No focuser'"
                       :class="$store.citrascope.status?.focuser_connected ? 'bg-success' : 'bg-secondary'"
@@ -150,16 +150,36 @@
 
                 <span class="badge rounded-pill"
                       data-bs-toggle="tooltip" data-bs-theme="dark"
-                      :title="$store.citrascope.status?.time_health?.status === 'ok' ? 'Time sync OK' : ($store.citrascope.status?.time_health?.status === 'critical' ? 'Time drift critical' : 'Time sync unknown')"
+                      :data-bs-title="$store.citrascope.status?.time_health?.status === 'ok' ? 'Time sync OK' : ($store.citrascope.status?.time_health?.status === 'critical' ? 'Time drift critical' : 'Time sync unknown')"
                       :class="$store.citrascope.status?.time_health?.status === 'ok' ? 'bg-success' : ($store.citrascope.status?.time_health?.status === 'critical' ? 'bg-danger' : 'bg-secondary')"
                       x-text="'Time: ' + $store.citrascope.formatTimeOffset($store.citrascope.status?.time_health)"></span>
 
                 <span class="badge rounded-pill"
                       data-bs-toggle="tooltip" data-bs-theme="dark"
-                      :title="$store.citrascope.status?.gps_location ? ($store.citrascope.status.gps_location.is_strong ? 'GPS fix' : 'GPS weak/no fix') : 'GPS unavailable'"
+                      :data-bs-title="$store.citrascope.status?.gps_location ? ($store.citrascope.status.gps_location.is_strong ? 'GPS fix' : 'GPS weak/no fix') : 'GPS unavailable'"
                       x-show="$store.citrascope.config?.gps_location_updates_enabled !== false"
                       :class="$store.citrascope.status?.gps_location?.is_strong ? 'bg-success' : 'bg-secondary'"
                       x-text="'GPS: ' + $store.citrascope.formatGPSLocation($store.citrascope.status?.gps_location)"></span>
+
+                <span class="badge rounded-pill"
+                      data-bs-toggle="tooltip" data-bs-theme="dark"
+                      x-show="$store.citrascope.status?.elset_health"
+                      :data-bs-title="(() => {
+                          const h = $store.citrascope.status?.elset_health;
+                          if (!h) return 'TLE cache not loaded';
+                          const src = h.source || 'unknown';
+                          const ago = h.last_refresh > 0
+                              ? Math.round((Date.now() / 1000 - h.last_refresh) / 60) + 'm ago'
+                              : 'never';
+                          return src + ' \u00b7 refreshed ' + ago;
+                      })()"
+                      :class="(() => {
+                          const c = $store.citrascope.status?.elset_health?.elset_count || 0;
+                          if (c >= 25000) return 'bg-success';
+                          if (c > 0) return 'bg-warning text-dark';
+                          return 'bg-danger';
+                      })()"
+                      x-text="'TLEs: ' + ($store.citrascope.status?.elset_health?.elset_count || 0).toLocaleString()"></span>
 
                 <!-- Right side: toggles + E-Stop -->
                 <div class="ms-auto d-flex align-items-center gap-2">

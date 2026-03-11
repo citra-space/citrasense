@@ -65,14 +65,33 @@ class CitraScopeDaemon:
         # Initialize processor registry
         self.processor_registry = ProcessorRegistry(settings=self.settings, logger=CITRASCOPE_LOGGER)
 
-        # Elset cache for satellite matcher (file-backed; path from platformdirs inside ElsetCache)
+        # Elset cache for satellite matcher (file-backed; warm-start from disk, full refresh at init)
         self.elset_cache = ElsetCache()
-        self.elset_cache.load_from_file()
 
         # Note: Work queues and stage tracking now managed by TaskManager
 
         # Create web server instance (always enabled)
         self.web_server = CitraScopeWebServer(daemon=self, host="0.0.0.0", port=self.settings.web_port)
+
+    def _refresh_elset_cache_with_retry(self, max_attempts: int = 3) -> None:
+        """Force-refresh the elset cache at startup, retrying on failure."""
+        assert self.api_client is not None
+        for attempt in range(1, max_attempts + 1):
+            if self.elset_cache.refresh(self.api_client, logger=CITRASCOPE_LOGGER):
+                return
+            if attempt < max_attempts:
+                backoff = 2**attempt
+                CITRASCOPE_LOGGER.warning(
+                    "ElsetCache: refresh attempt %d/%d failed, retrying in %ds",
+                    attempt,
+                    max_attempts,
+                    backoff,
+                )
+                time.sleep(backoff)
+        CITRASCOPE_LOGGER.warning(
+            "ElsetCache: all %d refresh attempts failed — using cached data if available",
+            max_attempts,
+        )
 
     def _create_hardware_adapter(self) -> AbstractAstroHardwareAdapter:
         """Factory method to create the appropriate hardware adapter based on settings."""
@@ -174,6 +193,10 @@ class CitraScopeDaemon:
                     self.settings.use_ssl,
                     CITRASCOPE_LOGGER,
                 )
+
+            # Warm-start elset cache from disk (source-aware: discards if API source changed)
+            self.elset_cache.load_from_file(expected_source=self.api_client.cache_source_key)
+            self._refresh_elset_cache_with_retry()
 
             # Initialize hardware adapter
             self.hardware_adapter = self._create_hardware_adapter()

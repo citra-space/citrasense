@@ -2,6 +2,16 @@ from abc import ABC, abstractmethod
 
 
 class AbstractCitraApiClient(ABC):
+    @property
+    @abstractmethod
+    def cache_source_key(self) -> str:
+        """Unique key identifying this API source for cache invalidation.
+
+        Used by ElsetCache to detect when the data source changes (e.g. switching
+        between dummy and real API, or between dev and prod hosts).
+        """
+        ...
+
     @abstractmethod
     def does_api_server_accept_key(self):
         pass

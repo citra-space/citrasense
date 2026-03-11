@@ -47,6 +47,10 @@ class MockCitraApiClient(AbstractCitraApiClient):
     without making actual HTTP requests.
     """
 
+    @property
+    def cache_source_key(self) -> str:
+        return "MockCitraApiClient"
+
     def does_api_server_accept_key(self):
         """Simulate API key validation."""
         return True

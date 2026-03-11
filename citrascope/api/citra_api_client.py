@@ -9,6 +9,10 @@ from .abstract_api_client import AbstractCitraApiClient
 
 
 class CitraApiClient(AbstractCitraApiClient):
+    @property
+    def cache_source_key(self) -> str:
+        return self.base_url
+
     def put_telescope_status(self, body):
         """
         PUT to /telescopes to report online status.

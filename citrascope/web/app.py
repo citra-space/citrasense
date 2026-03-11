@@ -111,6 +111,7 @@ class SystemStatus(BaseModel):
     mount_slewing: bool = False
     supports_direct_mount_control: bool = False
     safety_status: dict[str, Any] | None = None
+    elset_health: dict[str, Any] | None = None
     latest_task_image_url: str | None = None
 
 
@@ -1548,6 +1549,12 @@ class CitraScopeWebApp:
                     self.status.safety_status = None
             else:
                 self.status.safety_status = None
+
+            # Elset cache health for satellite matching status
+            if hasattr(self.daemon, "elset_cache") and self.daemon.elset_cache:
+                self.status.elset_health = self.daemon.elset_cache.get_health()
+            else:
+                self.status.elset_health = None
 
             # Latest annotated task image for the Optics pane
             ann_path = getattr(self.daemon, "latest_annotated_image_path", None)
