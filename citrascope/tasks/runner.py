@@ -113,6 +113,14 @@ class TaskManager:
             self.telescope_record.get("automatedScheduling", False) if self.telescope_record else False
         )
 
+    @property
+    def automated_scheduling(self) -> bool:
+        return self._automated_scheduling
+
+    @automated_scheduling.setter
+    def automated_scheduling(self, value: bool) -> None:
+        self._automated_scheduling = value
+
     def update_task_stage(self, task_id: str, stage: str):
         """Move task to specified stage. Stage is 'imaging', 'processing', or 'uploading'."""
         with self._stage_lock:

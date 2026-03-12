@@ -222,14 +222,7 @@ class AbstractBaseTelescopeTask(ABC):
             ra = result.extracted_data.get("plate_solver.ra_center")
             dec = result.extracted_data.get("plate_solver.dec_center")
             if ra is not None and dec is not None:
-                expected_ra = getattr(self.task, "target_ra_deg", None)
-                expected_dec = getattr(self.task, "target_dec_deg", None)
-                self.hardware_adapter.update_from_plate_solve(
-                    float(ra),
-                    float(dec),
-                    expected_ra_deg=expected_ra,
-                    expected_dec_deg=expected_dec,
-                )
+                self.hardware_adapter.update_from_plate_solve(float(ra), float(dec))
 
             self._update_observed_fov_from_plate_solve(result.extracted_data)
 

@@ -124,7 +124,7 @@ def mock_daemon(mock_settings):
     d.task_manager.alignment_manager.is_running.return_value = False
     d.task_manager.alignment_manager.progress = ""
     d.task_manager.is_processing_active.return_value = True
-    d.task_manager._automated_scheduling = False
+    d.task_manager.automated_scheduling = False
     d.task_manager.get_tasks_by_stage.return_value = {}
     d.task_manager.get_tasks_snapshot.return_value = []
     d.task_manager.pending_task_count = 0

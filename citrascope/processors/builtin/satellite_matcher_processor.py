@@ -216,7 +216,7 @@ class SatelliteMatcherProcessor(AbstractImageProcessor):
         if not elsets:
             if not context.task:
                 raise RuntimeError("No task context available for satellite matching")
-            most_recent_elset = getattr(context.task, "most_recent_elset", None)
+            most_recent_elset = context.satellite_data.get("most_recent_elset") if context.satellite_data else None
             if not most_recent_elset:
                 raise RuntimeError("No TLE data available in task")
             tle_data = most_recent_elset.get("tle", [])

@@ -101,7 +101,7 @@ class UploadQueue(BaseWorkQueue):
         # Decide which upload path to take
         sat_obs = []
         pr = item.get("processing_result")
-        if pr and getattr(pr, "extracted_data", None):
+        if pr and pr.extracted_data:
             sat_obs = pr.extracted_data.get("satellite_matcher.satellite_observations") or []
 
         telescope_record = item.get("telescope_record")
@@ -145,7 +145,7 @@ class UploadQueue(BaseWorkQueue):
         if obs_path:
             self.observation_uploads += 1
             pr = item.get("processing_result")
-            if pr and getattr(pr, "extracted_data", None):
+            if pr and pr.extracted_data:
                 sat_obs = pr.extracted_data.get("satellite_matcher.satellite_observations") or []
                 self.satellites_identified += len(sat_obs)
             if task_obj:

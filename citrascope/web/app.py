@@ -49,14 +49,14 @@ def _task_to_dict(task: Any) -> dict:
 
 def _resolve_autofocus_target_name(settings: Any) -> str:
     """Return a human-readable name for the active autofocus target."""
-    preset_key = getattr(settings, "autofocus_target_preset", None) or "mirach"
+    preset_key = settings.autofocus_target_preset
 
     if preset_key == "current":
         return "Current position"
 
     if preset_key == "custom":
-        ra = getattr(settings, "autofocus_target_custom_ra", None)
-        dec = getattr(settings, "autofocus_target_custom_dec", None)
+        ra = settings.autofocus_target_custom_ra
+        dec = settings.autofocus_target_custom_dec
         if ra is not None and dec is not None:
             return f"Custom (RA={ra:.4f}, Dec={dec:.4f})"
         return "Mirach (custom missing coords)"
@@ -557,7 +557,7 @@ class CitraScopeWebApp:
                 success = self.daemon.api_client.update_telescope_automated_scheduling(telescope_id, enabled)
 
                 if success:
-                    self.daemon.task_manager._automated_scheduling = enabled
+                    self.daemon.task_manager.automated_scheduling = enabled
                     CITRASCOPE_LOGGER.info(f"Automated scheduling set to {'enabled' if enabled else 'disabled'}")
                     await self.broadcast_status()
                     return {"status": "success", "enabled": enabled}
@@ -1485,7 +1485,7 @@ class CitraScopeWebApp:
             # Update task processing state
             if hasattr(self.daemon, "task_manager") and self.daemon.task_manager:
                 self.status.processing_active = self.daemon.task_manager.is_processing_active()
-                self.status.automated_scheduling = self.daemon.task_manager._automated_scheduling or False
+                self.status.automated_scheduling = self.daemon.task_manager.automated_scheduling
 
             # Check for missing dependencies from adapter
             self.status.missing_dependencies = []

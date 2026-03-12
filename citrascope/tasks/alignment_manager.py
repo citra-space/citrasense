@@ -105,7 +105,7 @@ class AlignmentManager:
 
     def _get_exposure_seconds(self) -> float:
         if self.settings:
-            return getattr(self.settings, "alignment_exposure_seconds", 2.0)
+            return self.settings.alignment_exposure_seconds
         return 2.0
 
     def _execute(self) -> None:
@@ -114,7 +114,7 @@ class AlignmentManager:
             self._running = True
             self._progress = "Starting alignment..."
         try:
-            telescope_record: dict[str, Any] | None = getattr(self.hardware_adapter, "telescope_record", None)
+            telescope_record: dict[str, Any] | None = self.hardware_adapter.telescope_record
             if not telescope_record:
                 self.logger.error("Cannot align — no telescope_record available (configure telescope in Citra)")
                 return
