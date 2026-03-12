@@ -33,10 +33,11 @@ def _make_tracking_task():
     adapter.set_custom_tracking_rate.return_value = True
     adapter.take_image.return_value = "/tmp/test.fits"
 
-    daemon = MagicMock()
-    daemon.settings.processors_enabled = True
-    daemon.hardware_adapter = adapter
-    daemon.location_service.get_current_location.return_value = {
+    settings = MagicMock()
+    settings.processors_enabled = True
+    task_manager = MagicMock()
+    location_service = MagicMock()
+    location_service.get_current_location.return_value = {
         "latitude": 37.0,
         "longitude": -122.0,
         "altitude": 100.0,
@@ -45,7 +46,19 @@ def _make_tracking_task():
     task_obj = _make_task_dict()
     logger = MagicMock()
 
-    ct = TrackingTelescopeTask(api, adapter, logger, task_obj, daemon)
+    ct = TrackingTelescopeTask(
+        api,
+        adapter,
+        logger,
+        task_obj,
+        settings=settings,
+        task_manager=task_manager,
+        location_service=location_service,
+        telescope_record={"id": "tel-1"},
+        ground_station={"id": "gs-1"},
+        elset_cache=None,
+        processor_registry=None,
+    )
     return ct
 
 

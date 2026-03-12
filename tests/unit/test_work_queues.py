@@ -333,10 +333,10 @@ def test_processing_queue_execute_success(tmp_path):
         settings=MagicMock(max_task_retries=3, initial_retry_delay_seconds=1, max_retry_delay_seconds=10),
         logger=MagicMock(),
     )
-    mock_daemon = MagicMock()
+    mock_processor_registry = MagicMock()
     mock_result = MagicMock()
     mock_result.total_time = 1.5
-    mock_daemon.processor_registry.process_all.return_value = mock_result
+    mock_processor_registry.process_all.return_value = mock_result
 
     mock_settings = MagicMock()
     images_dir = tmp_path / "images"
@@ -349,7 +349,7 @@ def test_processing_queue_execute_success(tmp_path):
         "context": {
             "task": MagicMock(),
             "settings": mock_settings,
-            "daemon": mock_daemon,
+            "processor_registry": mock_processor_registry,
             "telescope_record": {},
             "ground_station_record": {},
         },
@@ -364,8 +364,8 @@ def test_processing_queue_execute_exception(tmp_path):
     from citrascope.tasks.processing_queue import ProcessingQueue
 
     pq = ProcessingQueue(num_workers=1, settings=MagicMock(), logger=MagicMock())
-    mock_daemon = MagicMock()
-    mock_daemon.processor_registry.process_all.side_effect = Exception("boom")
+    mock_processor_registry = MagicMock()
+    mock_processor_registry.process_all.side_effect = Exception("boom")
 
     mock_settings = MagicMock()
     images_dir = tmp_path / "images"
@@ -375,7 +375,11 @@ def test_processing_queue_execute_exception(tmp_path):
     item = {
         "task_id": "t1",
         "image_path": str(tmp_path / "img.fits"),
-        "context": {"task": MagicMock(), "settings": mock_settings, "daemon": mock_daemon},
+        "context": {
+            "task": MagicMock(),
+            "settings": mock_settings,
+            "processor_registry": mock_processor_registry,
+        },
         "on_complete": MagicMock(),
     }
     success, _result = pq._execute_work(item)

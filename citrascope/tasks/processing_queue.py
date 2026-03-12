@@ -71,25 +71,24 @@ class ProcessingQueue(BaseWorkQueue):
             working_dir.mkdir(parents=True, exist_ok=True)
             self.logger.debug(f"[ProcessingWorker] Created working directory: {working_dir}")
 
-            # Build processing context, injecting specific services rather than the whole daemon
-            daemon = item["context"].get("daemon")
             context = ProcessingContext(
                 image_path=item["image_path"],
-                working_image_path=item["image_path"],  # Initialize to original image
+                working_image_path=item["image_path"],
                 working_dir=working_dir,
-                image_data=None,  # Loaded by processors
+                image_data=None,
                 task=task_obj,
                 telescope_record=item["context"].get("telescope_record"),
                 ground_station_record=item["context"].get("ground_station_record"),
                 settings=item["context"].get("settings"),
-                location_service=getattr(daemon, "location_service", None),
-                elset_cache=getattr(daemon, "elset_cache", None),
+                location_service=item["context"].get("location_service"),
+                elset_cache=item["context"].get("elset_cache"),
                 satellite_data=item["context"].get("satellite_data"),
                 pointing_report=item["context"].get("pointing_report"),
                 tracking_mode=item["context"].get("tracking_mode"),
                 logger=self.logger,
             )
-            result = daemon.processor_registry.process_all(context)
+            processor_registry = item["context"].get("processor_registry")
+            result = processor_registry.process_all(context)
 
             # Success
             self.logger.info(f"[ProcessingWorker] Task {task_id} processed in {result.total_time:.2f}s")

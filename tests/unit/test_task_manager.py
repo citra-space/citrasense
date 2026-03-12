@@ -78,9 +78,11 @@ def task_manager(
         api_client=mock_api_client,
         logger=mock_logger,
         hardware_adapter=mock_hardware_adapter,
-        daemon=mock_daemon,
         settings=mock_settings,
         processor_registry=mock_processor_registry,
+        telescope_record=mock_daemon.telescope_record,
+        ground_station=mock_daemon.ground_station,
+        location_service=mock_daemon.location_service,
     )
     return tm
 
@@ -126,7 +128,7 @@ def test_poll_tasks_adds_new_tasks(task_manager, mock_api_client):
     with task_manager.heap_lock:
         # Simulate one iteration of poll_tasks
         task_manager._report_online()
-        tasks = mock_api_client.get_telescope_tasks(task_manager.daemon.telescope_record["id"])
+        tasks = mock_api_client.get_telescope_tasks(task_manager.telescope_record["id"])
 
         # The actual logic from poll_tasks
         api_task_map = {}
@@ -185,7 +187,7 @@ def test_poll_tasks_removes_cancelled_tasks(task_manager, mock_api_client):
 
     # Run the removal logic from poll_tasks
     with task_manager.heap_lock:
-        tasks = mock_api_client.get_telescope_tasks(task_manager.daemon.telescope_record["id"])
+        tasks = mock_api_client.get_telescope_tasks(task_manager.telescope_record["id"])
 
         # Build api_task_map
         api_task_map = {}
@@ -240,7 +242,7 @@ def test_poll_tasks_removes_tasks_with_changed_status(task_manager, mock_api_cli
 
     # Run the removal logic
     with task_manager.heap_lock:
-        tasks = mock_api_client.get_telescope_tasks(task_manager.daemon.telescope_record["id"])
+        tasks = mock_api_client.get_telescope_tasks(task_manager.telescope_record["id"])
 
         # Build api_task_map (Cancelled tasks won't be included)
         api_task_map = {}
@@ -290,7 +292,7 @@ def test_poll_tasks_does_not_remove_current_task(task_manager, mock_api_client):
 
     # Run the removal logic
     with task_manager.heap_lock:
-        tasks = mock_api_client.get_telescope_tasks(task_manager.daemon.telescope_record["id"])
+        tasks = mock_api_client.get_telescope_tasks(task_manager.telescope_record["id"])
 
         api_task_map = {}
         for task_dict in tasks:

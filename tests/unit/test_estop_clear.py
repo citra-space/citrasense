@@ -18,18 +18,13 @@ def _make_task_manager() -> TaskManager:
     settings.initial_retry_delay_seconds = 1
     settings.max_retry_delay_seconds = 10
 
-    daemon = MagicMock()
-    daemon.telescope_record = {"id": "test-scope"}
-    daemon.settings = settings
-    daemon.safety_monitor = None
-
     tm = TaskManager(
         api_client=MagicMock(),
         logger=MagicMock(),
         hardware_adapter=MagicMock(),
-        daemon=daemon,
         settings=settings,
         processor_registry=MagicMock(),
+        telescope_record={"id": "test-scope"},
     )
     return tm
 

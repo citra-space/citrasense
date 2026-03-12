@@ -37,13 +37,6 @@ def mock_settings():
 
 
 @pytest.fixture
-def mock_daemon(mock_settings):
-    daemon = MagicMock()
-    daemon.settings = mock_settings
-    return daemon
-
-
-@pytest.fixture
 def mock_imaging_queue():
     queue = MagicMock()
     queue.is_idle.return_value = True
@@ -51,8 +44,8 @@ def mock_imaging_queue():
 
 
 @pytest.fixture
-def autofocus_manager(mock_logger, mock_hardware_adapter, mock_daemon, mock_imaging_queue):
-    return AutofocusManager(mock_logger, mock_hardware_adapter, mock_daemon, mock_imaging_queue)
+def autofocus_manager(mock_logger, mock_hardware_adapter, mock_settings, mock_imaging_queue):
+    return AutofocusManager(mock_logger, mock_hardware_adapter, mock_settings, mock_imaging_queue)
 
 
 # ---------------------------------------------------------------------------
@@ -220,8 +213,8 @@ def test_resolve_target_current_position(autofocus_manager, mock_settings):
     assert dec is None
 
 
-def test_resolve_target_no_settings(autofocus_manager, mock_daemon):
-    mock_daemon.settings = None
+def test_resolve_target_no_settings(autofocus_manager):
+    autofocus_manager.settings = None
     ra, dec = autofocus_manager._resolve_target()
     assert ra is None
     assert dec is None

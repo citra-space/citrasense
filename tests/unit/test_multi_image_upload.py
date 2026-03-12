@@ -23,9 +23,23 @@ def _make_task_instance():
     logger = MagicMock()
     task = MagicMock()
     task.id = "task-abc"
-    daemon = MagicMock()
+    task_manager = MagicMock()
+    settings = MagicMock()
+    location_service = MagicMock()
 
-    return ConcreteTask(api_client, hardware_adapter, logger, task, daemon)
+    return ConcreteTask(
+        api_client,
+        hardware_adapter,
+        logger,
+        task,
+        settings=settings,
+        task_manager=task_manager,
+        location_service=location_service,
+        telescope_record=None,
+        ground_station=None,
+        elset_cache=None,
+        processor_registry=None,
+    )
 
 
 class TestOnImageDone:
@@ -36,9 +50,9 @@ class TestOnImageDone:
         t._on_image_done("task-abc", success=True)
 
         t.api_client.mark_task_complete.assert_called_once_with("task-abc")
-        t.daemon.task_manager.record_task_succeeded.assert_called_once()
-        t.daemon.task_manager.record_task_failed.assert_not_called()
-        t.daemon.task_manager.remove_task_from_all_stages.assert_called_once_with("task-abc")
+        t.task_manager.record_task_succeeded.assert_called_once()
+        t.task_manager.record_task_failed.assert_not_called()
+        t.task_manager.remove_task_from_all_stages.assert_called_once_with("task-abc")
 
     def test_single_image_failure(self):
         t = _make_task_instance()
@@ -47,9 +61,9 @@ class TestOnImageDone:
         t._on_image_done("task-abc", success=False)
 
         t.api_client.mark_task_complete.assert_not_called()
-        t.daemon.task_manager.record_task_failed.assert_called_once()
-        t.daemon.task_manager.record_task_succeeded.assert_not_called()
-        t.daemon.task_manager.remove_task_from_all_stages.assert_called_once_with("task-abc")
+        t.task_manager.record_task_failed.assert_called_once()
+        t.task_manager.record_task_succeeded.assert_not_called()
+        t.task_manager.remove_task_from_all_stages.assert_called_once_with("task-abc")
 
     def test_three_images_all_succeed(self):
         t = _make_task_instance()
@@ -60,14 +74,14 @@ class TestOnImageDone:
 
         # Not yet — 2 of 3
         t.api_client.mark_task_complete.assert_not_called()
-        t.daemon.task_manager.remove_task_from_all_stages.assert_not_called()
+        t.task_manager.remove_task_from_all_stages.assert_not_called()
 
         t._on_image_done("task-abc", success=True)
 
         # Now all 3 done
         t.api_client.mark_task_complete.assert_called_once_with("task-abc")
-        t.daemon.task_manager.record_task_succeeded.assert_called_once()
-        t.daemon.task_manager.remove_task_from_all_stages.assert_called_once_with("task-abc")
+        t.task_manager.record_task_succeeded.assert_called_once()
+        t.task_manager.remove_task_from_all_stages.assert_called_once_with("task-abc")
 
     def test_three_images_partial_success(self):
         """2 succeed, 1 fails — mark_task_complete still called (data was uploaded)."""
@@ -79,8 +93,8 @@ class TestOnImageDone:
         t._on_image_done("task-abc", success=True)
 
         t.api_client.mark_task_complete.assert_called_once_with("task-abc")
-        t.daemon.task_manager.record_task_succeeded.assert_called_once()
-        t.daemon.task_manager.record_task_failed.assert_not_called()
+        t.task_manager.record_task_succeeded.assert_called_once()
+        t.task_manager.record_task_failed.assert_not_called()
 
     def test_three_images_all_fail(self):
         """All 3 fail — mark_task_complete NOT called, record_task_failed once."""
@@ -92,9 +106,9 @@ class TestOnImageDone:
         t._on_image_done("task-abc", success=False)
 
         t.api_client.mark_task_complete.assert_not_called()
-        t.daemon.task_manager.record_task_failed.assert_called_once()
-        t.daemon.task_manager.record_task_succeeded.assert_not_called()
-        t.daemon.task_manager.remove_task_from_all_stages.assert_called_once_with("task-abc")
+        t.task_manager.record_task_failed.assert_called_once()
+        t.task_manager.record_task_succeeded.assert_not_called()
+        t.task_manager.remove_task_from_all_stages.assert_called_once_with("task-abc")
 
     def test_no_premature_removal(self):
         """Task stays in stage tracking until all images finish."""
@@ -103,10 +117,10 @@ class TestOnImageDone:
 
         for _ in range(2):
             t._on_image_done("task-abc", success=True)
-            t.daemon.task_manager.remove_task_from_all_stages.assert_not_called()
+            t.task_manager.remove_task_from_all_stages.assert_not_called()
 
         t._on_image_done("task-abc", success=True)
-        t.daemon.task_manager.remove_task_from_all_stages.assert_called_once()
+        t.task_manager.remove_task_from_all_stages.assert_called_once()
 
 
 class TestUploadImageAndMarkComplete:
@@ -114,7 +128,7 @@ class TestUploadImageAndMarkComplete:
 
     def test_resets_counters_for_multi_image(self):
         t = _make_task_instance()
-        t.daemon.settings.processors_enabled = False
+        t.settings.processors_enabled = False
 
         t.upload_image_and_mark_complete(["/img1.fits", "/img2.fits", "/img3.fits"])
 
@@ -125,7 +139,7 @@ class TestUploadImageAndMarkComplete:
 
     def test_single_image_sets_pending_to_one(self):
         t = _make_task_instance()
-        t.daemon.settings.processors_enabled = False
+        t.settings.processors_enabled = False
 
         t.upload_image_and_mark_complete("/img1.fits")
 
@@ -147,7 +161,7 @@ class TestSkipUploadPath:
 
         # Image counted, but task not yet done (1 of 2)
         assert t._completed_images == 1
-        t.daemon.task_manager.remove_task_from_all_stages.assert_not_called()
+        t.task_manager.remove_task_from_all_stages.assert_not_called()
 
     def test_skip_plus_upload_marks_complete_once(self):
         t = _make_task_instance()
@@ -164,7 +178,7 @@ class TestSkipUploadPath:
 
         # Both done now
         t.api_client.mark_task_complete.assert_called_once_with("task-abc")
-        t.daemon.task_manager.remove_task_from_all_stages.assert_called_once()
+        t.task_manager.remove_task_from_all_stages.assert_called_once()
 
 
 class TestFinalizationGuard:
@@ -178,8 +192,8 @@ class TestFinalizationGuard:
         t._on_image_done("task-abc", success=True)  # spurious duplicate
 
         t.api_client.mark_task_complete.assert_called_once()
-        t.daemon.task_manager.record_task_succeeded.assert_called_once()
-        t.daemon.task_manager.remove_task_from_all_stages.assert_called_once()
+        t.task_manager.record_task_succeeded.assert_called_once()
+        t.task_manager.remove_task_from_all_stages.assert_called_once()
 
     def test_zero_pending_never_finalizes(self):
         """_pending_images=0 (uninitialised) should not finalize."""
@@ -189,7 +203,7 @@ class TestFinalizationGuard:
         t._on_image_done("task-abc", success=True)
 
         t.api_client.mark_task_complete.assert_not_called()
-        t.daemon.task_manager.remove_task_from_all_stages.assert_not_called()
+        t.task_manager.remove_task_from_all_stages.assert_not_called()
 
 
 class TestMarkCompleteRetry:
@@ -204,7 +218,7 @@ class TestMarkCompleteRetry:
         t._on_image_done("task-abc", success=True)
 
         assert t.api_client.mark_task_complete.call_count == 3
-        t.daemon.task_manager.record_task_succeeded.assert_called_once()
+        t.task_manager.record_task_succeeded.assert_called_once()
 
     @patch("citrascope.tasks.scope.base_telescope_task.time.sleep")
     def test_records_failure_after_exhausted_retries(self, mock_sleep):
@@ -215,10 +229,10 @@ class TestMarkCompleteRetry:
         t._on_image_done("task-abc", success=True)
 
         assert t.api_client.mark_task_complete.call_count == 3
-        t.daemon.task_manager.record_task_failed.assert_called_once()
-        t.daemon.task_manager.record_task_succeeded.assert_not_called()
+        t.task_manager.record_task_failed.assert_called_once()
+        t.task_manager.record_task_succeeded.assert_not_called()
         # Still removes from stages so the task doesn't get stuck
-        t.daemon.task_manager.remove_task_from_all_stages.assert_called_once()
+        t.task_manager.remove_task_from_all_stages.assert_called_once()
 
 
 class TestThreadSafety:
@@ -241,4 +255,4 @@ class TestThreadSafety:
 
         assert t._completed_images == 50
         t.api_client.mark_task_complete.assert_called_once()
-        t.daemon.task_manager.remove_task_from_all_stages.assert_called_once()
+        t.task_manager.remove_task_from_all_stages.assert_called_once()

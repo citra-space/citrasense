@@ -11,7 +11,7 @@ from citrascope.constants import AUTOFOCUS_TARGET_PRESETS
 from citrascope.hardware.abstract_astro_hardware_adapter import AbstractAstroHardwareAdapter
 
 if TYPE_CHECKING:
-    from citrascope.citra_scope_daemon import CitraScopeDaemon
+    from citrascope.settings.citrascope_settings import CitraScopeSettings
     from citrascope.tasks.base_work_queue import BaseWorkQueue
 
 
@@ -27,12 +27,12 @@ class AutofocusManager:
         self,
         logger: logging.Logger,
         hardware_adapter: AbstractAstroHardwareAdapter,
-        daemon: CitraScopeDaemon,
+        settings: CitraScopeSettings,
         imaging_queue: BaseWorkQueue | None = None,
     ):
         self.logger = logger
         self.hardware_adapter = hardware_adapter
-        self.daemon = daemon
+        self.settings = settings
         self.imaging_queue = imaging_queue
         self._requested = False
         self._running = False
@@ -116,17 +116,17 @@ class AutofocusManager:
 
     def _should_run_scheduled(self) -> bool:
         """Check if scheduled autofocus should run based on settings."""
-        if not self.daemon.settings:
+        if not self.settings:
             return False
 
-        if not self.daemon.settings.scheduled_autofocus_enabled:
+        if not self.settings.scheduled_autofocus_enabled:
             return False
 
         if not self.hardware_adapter.supports_autofocus():
             return False
 
-        interval_minutes = self.daemon.settings.autofocus_interval_minutes
-        last_timestamp = self.daemon.settings.last_autofocus_timestamp
+        interval_minutes = self.settings.autofocus_interval_minutes
+        last_timestamp = self.settings.last_autofocus_timestamp
 
         if last_timestamp is None:
             return True
@@ -136,7 +136,7 @@ class AutofocusManager:
 
     def _resolve_target(self) -> tuple[float | None, float | None]:
         """Resolve autofocus target RA/Dec from settings (preset or custom)."""
-        settings = self.daemon.settings
+        settings = self.settings
         if not settings:
             return None, None
 
@@ -182,8 +182,8 @@ class AutofocusManager:
             if self.hardware_adapter.supports_filter_management():
                 try:
                     filter_config = self.hardware_adapter.get_filter_config()
-                    if filter_config and self.daemon.settings:
-                        self.daemon.settings.adapter_settings["filters"] = filter_config
+                    if filter_config and self.settings:
+                        self.settings.adapter_settings["filters"] = filter_config
                         self.logger.info(f"Saved filter configuration with {len(filter_config)} filters")
                 except Exception as e:
                     self.logger.warning(f"Failed to save filter configuration after autofocus: {e}")
@@ -195,6 +195,6 @@ class AutofocusManager:
             with self._lock:
                 self._running = False
                 self._progress = ""
-            if self.daemon.settings:
-                self.daemon.settings.last_autofocus_timestamp = int(time.time())
-                self.daemon.settings.save()
+            if self.settings:
+                self.settings.last_autofocus_timestamp = int(time.time())
+                self.settings.save()

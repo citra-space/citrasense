@@ -33,24 +33,31 @@ def mock_task():
 
 
 @pytest.fixture
-def mock_daemon():
-    d = MagicMock()
-    d.telescope_record = {"id": "tel-1", "name": "CDK14"}
-    d.ground_station = {
+def mock_location_service():
+    ls = MagicMock()
+    ls.get_current_location.return_value = {
+        "latitude": 34.05,
+        "longitude": -118.25,
+        "altitude": 510.0,
+        "source": "gps",
+    }
+    return ls
+
+
+@pytest.fixture
+def telescope_record():
+    return {"id": "tel-1", "name": "CDK14"}
+
+
+@pytest.fixture
+def ground_station():
+    return {
         "id": "gs-1",
         "name": "Desert Station",
         "latitude": 34.0,
         "longitude": -118.0,
         "altitude": 500.0,
     }
-    d.location_service = MagicMock()
-    d.location_service.get_current_location.return_value = {
-        "latitude": 34.05,
-        "longitude": -118.25,
-        "altitude": 510.0,
-        "source": "gps",
-    }
-    return d
 
 
 # ---------------------------------------------------------------------------
@@ -58,14 +65,20 @@ def mock_daemon():
 # ---------------------------------------------------------------------------
 
 
-def test_enrich_adds_origin(fits_file, mock_daemon):
-    enrich_fits_metadata(fits_file, daemon=mock_daemon)
+def test_enrich_adds_origin(fits_file, mock_location_service):
+    enrich_fits_metadata(fits_file, location_service=mock_location_service)
     with fits.open(fits_file) as hdul:
         assert hdul[0].header["ORIGIN"] == "Citra.space"
 
 
-def test_enrich_adds_task_metadata(fits_file, mock_task, mock_daemon):
-    enrich_fits_metadata(fits_file, task=mock_task, daemon=mock_daemon)
+def test_enrich_adds_task_metadata(fits_file, mock_task, mock_location_service, telescope_record, ground_station):
+    enrich_fits_metadata(
+        fits_file,
+        task=mock_task,
+        location_service=mock_location_service,
+        telescope_record=telescope_record,
+        ground_station=ground_station,
+    )
     with fits.open(fits_file) as hdul:
         h = hdul[0].header
         assert h["TASKID"] == "task-uuid-123"
@@ -74,17 +87,29 @@ def test_enrich_adds_task_metadata(fits_file, mock_task, mock_daemon):
         assert h["TELESCOP"] == "PlaneWave CDK14"
 
 
-def test_enrich_adds_location_from_gps(fits_file, mock_daemon):
-    enrich_fits_metadata(fits_file, daemon=mock_daemon)
+def test_enrich_adds_location_from_gps(fits_file, mock_location_service):
+    enrich_fits_metadata(fits_file, location_service=mock_location_service)
     with fits.open(fits_file) as hdul:
         h = hdul[0].header
         assert h["SITELAT"] == pytest.approx(34.05)
         assert h["SITELONG"] == pytest.approx(-118.25)
 
 
-def test_enrich_idempotent(fits_file, mock_task, mock_daemon):
-    enrich_fits_metadata(fits_file, task=mock_task, daemon=mock_daemon)
-    enrich_fits_metadata(fits_file, task=mock_task, daemon=mock_daemon)
+def test_enrich_idempotent(fits_file, mock_task, mock_location_service, telescope_record, ground_station):
+    enrich_fits_metadata(
+        fits_file,
+        task=mock_task,
+        location_service=mock_location_service,
+        telescope_record=telescope_record,
+        ground_station=ground_station,
+    )
+    enrich_fits_metadata(
+        fits_file,
+        task=mock_task,
+        location_service=mock_location_service,
+        telescope_record=telescope_record,
+        ground_station=ground_station,
+    )
     with fits.open(fits_file) as hdul:
         assert hdul[0].header["TASKID"] == "task-uuid-123"
 
@@ -114,7 +139,7 @@ def test_enrich_corrupted_file(tmp_path):
 def test_add_location_from_ground_station():
     header = fits.Header()
     gs = {"latitude": 35.0, "longitude": -120.0, "altitude": 300.0}
-    _add_location_metadata(header, daemon=None, ground_station_record=gs)
+    _add_location_metadata(header, ground_station_record=gs)
     assert header["SITELAT"] == 35.0
     assert header["SITELONG"] == -120.0
     assert header["SITEELEV"] == 300.0
@@ -122,14 +147,14 @@ def test_add_location_from_ground_station():
 
 def test_add_location_no_source():
     header = fits.Header()
-    _add_location_metadata(header, daemon=None, ground_station_record=None)
+    _add_location_metadata(header)
     assert "SITELAT" not in header
 
 
-def test_add_location_gps_preferred_over_gs(mock_daemon):
+def test_add_location_gps_preferred_over_gs(mock_location_service):
     header = fits.Header()
     gs = {"latitude": 0.0, "longitude": 0.0, "altitude": 0.0}
-    _add_location_metadata(header, daemon=mock_daemon, ground_station_record=gs)
+    _add_location_metadata(header, location_service=mock_location_service, ground_station_record=gs)
     assert header["SITELAT"] == pytest.approx(34.05)
 
 

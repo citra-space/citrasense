@@ -53,6 +53,20 @@ def _make_daemon():
     return daemon
 
 
+def _daemon_kwargs(daemon):
+    """Extract keyword args for AbstractBaseTelescopeTask from a daemon mock."""
+    return {
+        "settings": daemon.settings,
+        "task_manager": daemon.task_manager,
+        "location_service": daemon.location_service,
+        "telescope_record": daemon.telescope_record,
+        "ground_station": daemon.ground_station,
+        "elset_cache": daemon.elset_cache,
+        "processor_registry": daemon.processor_registry,
+        "on_annotated_image": lambda path: setattr(daemon, "latest_annotated_image_path", path),
+    }
+
+
 class TestFetchSatellite:
     def test_returns_satellite_with_elset(self):
         from citrascope.tasks.scope.base_telescope_task import AbstractBaseTelescopeTask
@@ -75,7 +89,7 @@ class TestFetchSatellite:
             def execute(self):
                 pass
 
-        ct = ConcreteTask(api, daemon.hardware_adapter, logger, task_obj, daemon)
+        ct = ConcreteTask(api, daemon.hardware_adapter, logger, task_obj, **_daemon_kwargs(daemon))
         result = ct.fetch_satellite()
         assert result is not None
         assert "most_recent_elset" in result
@@ -92,7 +106,7 @@ class TestFetchSatellite:
             def execute(self):
                 pass
 
-        ct = ConcreteTask(api, daemon.hardware_adapter, MagicMock(), task_obj, daemon)
+        ct = ConcreteTask(api, daemon.hardware_adapter, MagicMock(), task_obj, **_daemon_kwargs(daemon))
         assert ct.fetch_satellite() is None
 
     def test_returns_none_when_no_elsets(self):
@@ -107,7 +121,7 @@ class TestFetchSatellite:
             def execute(self):
                 pass
 
-        ct = ConcreteTask(api, daemon.hardware_adapter, MagicMock(), task_obj, daemon)
+        ct = ConcreteTask(api, daemon.hardware_adapter, MagicMock(), task_obj, **_daemon_kwargs(daemon))
         assert ct.fetch_satellite() is None
 
 
@@ -119,7 +133,7 @@ class TestGetMostRecentElset:
             def execute(self):
                 pass
 
-        ct = ConcreteTask(MagicMock(), MagicMock(), MagicMock(), _make_task_dict(), _make_daemon())
+        ct = ConcreteTask(MagicMock(), MagicMock(), MagicMock(), _make_task_dict(), **_daemon_kwargs(_make_daemon()))
         sat_data = {"most_recent_elset": {"tle": ["a", "b"]}}
         assert ct._get_most_recent_elset(sat_data) == {"tle": ["a", "b"]}
 
@@ -130,7 +144,7 @@ class TestGetMostRecentElset:
             def execute(self):
                 pass
 
-        ct = ConcreteTask(MagicMock(), MagicMock(), MagicMock(), _make_task_dict(), _make_daemon())
+        ct = ConcreteTask(MagicMock(), MagicMock(), MagicMock(), _make_task_dict(), **_daemon_kwargs(_make_daemon()))
         sat_data = {
             "elsets": [
                 {"tle": ["old1", "old2"], "creationEpoch": "2024-01-01T00:00:00Z"},
@@ -147,7 +161,7 @@ class TestGetMostRecentElset:
             def execute(self):
                 pass
 
-        ct = ConcreteTask(MagicMock(), MagicMock(), MagicMock(), _make_task_dict(), _make_daemon())
+        ct = ConcreteTask(MagicMock(), MagicMock(), MagicMock(), _make_task_dict(), **_daemon_kwargs(_make_daemon()))
         assert ct._get_most_recent_elset({"elsets": []}) is None
 
     def test_missing_creation_epoch_uses_fallback(self):
@@ -157,7 +171,7 @@ class TestGetMostRecentElset:
             def execute(self):
                 pass
 
-        ct = ConcreteTask(MagicMock(), MagicMock(), MagicMock(), _make_task_dict(), _make_daemon())
+        ct = ConcreteTask(MagicMock(), MagicMock(), MagicMock(), _make_task_dict(), **_daemon_kwargs(_make_daemon()))
         sat_data = {
             "elsets": [
                 {"tle": ["a", "b"]},
@@ -178,7 +192,7 @@ class TestUploadImageAndMarkComplete:
 
         daemon = _make_daemon()
         task_obj = _make_task_dict()
-        ct = ConcreteTask(MagicMock(), MagicMock(), MagicMock(), task_obj, daemon)
+        ct = ConcreteTask(MagicMock(), MagicMock(), MagicMock(), task_obj, **_daemon_kwargs(daemon))
 
         with patch("citrascope.tasks.scope.base_telescope_task.enrich_fits_metadata"):
             result = ct.upload_image_and_mark_complete("/path/to/img.fits")
@@ -195,7 +209,7 @@ class TestUploadImageAndMarkComplete:
 
         daemon = _make_daemon()
         task_obj = _make_task_dict()
-        ct = ConcreteTask(MagicMock(), MagicMock(), MagicMock(), task_obj, daemon)
+        ct = ConcreteTask(MagicMock(), MagicMock(), MagicMock(), task_obj, **_daemon_kwargs(daemon))
 
         with patch("citrascope.tasks.scope.base_telescope_task.enrich_fits_metadata"):
             result = ct.upload_image_and_mark_complete(["/a.fits", "/b.fits"])
@@ -213,7 +227,7 @@ class TestUploadImageAndMarkComplete:
         daemon = _make_daemon()
         daemon.settings.processors_enabled = False
         task_obj = _make_task_dict()
-        ct = ConcreteTask(MagicMock(), MagicMock(), MagicMock(), task_obj, daemon)
+        ct = ConcreteTask(MagicMock(), MagicMock(), MagicMock(), task_obj, **_daemon_kwargs(daemon))
 
         with patch("citrascope.tasks.scope.base_telescope_task.enrich_fits_metadata"):
             with patch.object(ct, "_queue_for_upload") as mock_upload:
@@ -229,7 +243,7 @@ class TestUploadImageAndMarkComplete:
 
         daemon = _make_daemon()
         task_obj = _make_task_dict()
-        ct = ConcreteTask(MagicMock(), MagicMock(), MagicMock(), task_obj, daemon)
+        ct = ConcreteTask(MagicMock(), MagicMock(), MagicMock(), task_obj, **_daemon_kwargs(daemon))
 
         with patch(
             "citrascope.tasks.scope.base_telescope_task.enrich_fits_metadata",
@@ -248,7 +262,9 @@ class TestOnProcessingComplete:
                 pass
 
         daemon = _make_daemon()
-        return ConcreteTask(MagicMock(), daemon.hardware_adapter, MagicMock(), _make_task_dict(), daemon)
+        return ConcreteTask(
+            MagicMock(), daemon.hardware_adapter, MagicMock(), _make_task_dict(), **_daemon_kwargs(daemon)
+        )
 
     def test_skip_upload_when_should_upload_false(self):
         ct = self._make_concrete()
@@ -287,7 +303,7 @@ class TestQueueForUpload:
                 pass
 
         daemon = _make_daemon()
-        ct = ConcreteTask(MagicMock(), MagicMock(), MagicMock(), _make_task_dict(), daemon)
+        ct = ConcreteTask(MagicMock(), MagicMock(), MagicMock(), _make_task_dict(), **_daemon_kwargs(daemon))
         ct._queue_for_upload("/img.fits", processing_result=None)
         daemon.task_manager.upload_queue.submit.assert_called_once()
 
@@ -300,7 +316,7 @@ class TestQueueForUpload:
 
         daemon = _make_daemon()
         daemon.location_service.get_current_location.side_effect = Exception("no GPS")
-        ct = ConcreteTask(MagicMock(), MagicMock(), MagicMock(), _make_task_dict(), daemon)
+        ct = ConcreteTask(MagicMock(), MagicMock(), MagicMock(), _make_task_dict(), **_daemon_kwargs(daemon))
         ct._queue_for_upload("/img.fits", processing_result=None)
         call_kwargs = daemon.task_manager.upload_queue.submit.call_args
         assert call_kwargs[1]["sensor_location"] is None
@@ -315,19 +331,19 @@ class TestOnImageDone:
                 pass
 
         daemon = _make_daemon()
-        return ConcreteTask(MagicMock(), MagicMock(), MagicMock(), _make_task_dict(), daemon)
+        return ConcreteTask(MagicMock(), MagicMock(), MagicMock(), _make_task_dict(), **_daemon_kwargs(daemon))
 
     def test_success(self):
         ct = self._make_concrete()
         ct._pending_images = 1
         ct._on_image_done("task-1", True)
-        ct.daemon.task_manager.record_task_succeeded.assert_called_once()
+        ct.task_manager.record_task_succeeded.assert_called_once()
 
     def test_failure(self):
         ct = self._make_concrete()
         ct._pending_images = 1
         ct._on_image_done("task-1", False)
-        ct.daemon.task_manager.record_task_failed.assert_called_once()
+        ct.task_manager.record_task_failed.assert_called_once()
 
 
 class TestCancellation:
@@ -339,7 +355,9 @@ class TestCancellation:
                 pass
 
         daemon = _make_daemon()
-        return ConcreteTask(MagicMock(), daemon.hardware_adapter, MagicMock(), _make_task_dict(), daemon)
+        return ConcreteTask(
+            MagicMock(), daemon.hardware_adapter, MagicMock(), _make_task_dict(), **_daemon_kwargs(daemon)
+        )
 
     def test_cancel_sets_flag(self):
         ct = self._make_concrete()
@@ -462,7 +480,7 @@ class TestPredictSlewTime:
             return math.degrees(math.acos(min(1.0, max(-1.0, cos_a))))
 
         adapter.angular_distance.side_effect = real_angular_distance
-        return ConcreteTask(MagicMock(), adapter, MagicMock(), _make_task_dict(), daemon)
+        return ConcreteTask(MagicMock(), adapter, MagicMock(), _make_task_dict(), **_daemon_kwargs(daemon))
 
     def test_uses_angular_distance_not_axis_max(self):
         ct = self._make_concrete()
@@ -498,7 +516,7 @@ class TestConvergenceThreshold:
         daemon = _make_daemon()
         adapter = _make_hardware_adapter(**adapter_kwargs)
         daemon.hardware_adapter = adapter
-        return ConcreteTask(MagicMock(), adapter, MagicMock(), _make_task_dict(), daemon)
+        return ConcreteTask(MagicMock(), adapter, MagicMock(), _make_task_dict(), **_daemon_kwargs(daemon))
 
     def test_from_telescope_record(self):
         from citrascope.tasks.scope.base_telescope_task import _FOV_CONVERGENCE_FRACTION
@@ -592,7 +610,7 @@ class TestGetFovRadiusDeg:
 
         daemon = _make_daemon()
         adapter = _make_hardware_adapter(**adapter_kwargs)
-        return ConcreteTask(MagicMock(), adapter, MagicMock(), _make_task_dict(), daemon)
+        return ConcreteTask(MagicMock(), adapter, MagicMock(), _make_task_dict(), **_daemon_kwargs(daemon))
 
     def test_from_observed_fov(self):
         ct = self._make_concrete(observed_fov_short_deg=2.0)
@@ -627,7 +645,7 @@ class TestComputeAngularRate:
 
         daemon = _make_daemon()
         adapter = _make_hardware_adapter()
-        return ConcreteTask(MagicMock(), adapter, MagicMock(), _make_task_dict(), daemon)
+        return ConcreteTask(MagicMock(), adapter, MagicMock(), _make_task_dict(), **_daemon_kwargs(daemon))
 
     @staticmethod
     def _make_rate_mock(arcsec_per_s: float) -> MagicMock:
@@ -690,7 +708,7 @@ class TestComputeSatelliteTiming:
         daemon = _make_daemon()
         adapter = _make_hardware_adapter(observed_fov_short_deg=fov_short_deg)
         adapter.get_telescope_direction.return_value = (180.0, 45.0)
-        return ConcreteTask(MagicMock(), adapter, MagicMock(), _make_task_dict(), daemon)
+        return ConcreteTask(MagicMock(), adapter, MagicMock(), _make_task_dict(), **_daemon_kwargs(daemon))
 
     def test_approaching_satellite(self):
         """Satellite is 5° away and closing at 1°/s — should report ~4s to FOV entry."""
@@ -761,7 +779,7 @@ class TestEstimateLeadPositionExtraLead:
         daemon = _make_daemon()
         adapter = _make_hardware_adapter()
         adapter.scope_slew_rate_degrees_per_second = 5.0
-        return ConcreteTask(MagicMock(), adapter, MagicMock(), _make_task_dict(), daemon)
+        return ConcreteTask(MagicMock(), adapter, MagicMock(), _make_task_dict(), **_daemon_kwargs(daemon))
 
     def test_zero_extra_lead_matches_original(self):
         ct = self._make_concrete()
@@ -814,7 +832,7 @@ class TestAdaptiveSlewRate:
         adapter = _make_hardware_adapter(observed_slew_rate_deg_per_s=adapter_rate)
         adapter.scope_slew_rate_degrees_per_second = 5.0
         daemon.hardware_adapter = adapter
-        return ConcreteTask(MagicMock(), adapter, MagicMock(), _make_task_dict(), daemon)
+        return ConcreteTask(MagicMock(), adapter, MagicMock(), _make_task_dict(), **_daemon_kwargs(daemon))
 
     def _run_single_slew(self, ct, slew_duration, slewed_distance):
         """Simulate one iteration of point_to_lead_position's slew loop.
@@ -940,7 +958,7 @@ class TestVerifyPointing:
 
         daemon = _make_daemon()
         adapter = _make_hardware_adapter()
-        return ConcreteTask(MagicMock(), adapter, MagicMock(), _make_task_dict(), daemon)
+        return ConcreteTask(MagicMock(), adapter, MagicMock(), _make_task_dict(), **_daemon_kwargs(daemon))
 
     def test_returns_true_on_success(self):
         ct = self._make_concrete()

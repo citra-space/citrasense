@@ -115,23 +115,20 @@ def mock_daemon(mock_settings):
     d.hardware_adapter.mount.cached_state = None
     d.task_manager = MagicMock()
     d.task_manager.current_task_id = None
-    d.task_manager.task_heap = []
-    d.task_manager.heap_lock = MagicMock()
-    d.task_manager.heap_lock.__enter__ = MagicMock(return_value=None)
-    d.task_manager.heap_lock.__exit__ = MagicMock(return_value=False)
-    d.task_manager._stage_lock = MagicMock()
-    d.task_manager._stage_lock.__enter__ = MagicMock(return_value=None)
-    d.task_manager._stage_lock.__exit__ = MagicMock(return_value=False)
-    d.task_manager.imaging_tasks = {}
-    d.task_manager.processing_tasks = {}
-    d.task_manager.uploading_tasks = {}
     d.task_manager.autofocus_manager = MagicMock()
     d.task_manager.autofocus_manager.is_requested.return_value = False
     d.task_manager.autofocus_manager.is_running.return_value = False
     d.task_manager.autofocus_manager.progress = ""
+    d.task_manager.alignment_manager = MagicMock()
+    d.task_manager.alignment_manager.is_requested.return_value = False
+    d.task_manager.alignment_manager.is_running.return_value = False
+    d.task_manager.alignment_manager.progress = ""
     d.task_manager.is_processing_active.return_value = True
     d.task_manager._automated_scheduling = False
     d.task_manager.get_tasks_by_stage.return_value = {}
+    d.task_manager.get_scheduled_tasks_snapshot.return_value = []
+    d.task_manager.get_all_tasks_snapshot.return_value = []
+    d.task_manager.pending_task_count = 0
     d.task_manager.imaging_queue = MagicMock()
     d.task_manager.imaging_queue.get_stats.return_value = {"attempts": 0, "successes": 0, "permanent_failures": 0}
     d.task_manager.processing_queue = MagicMock()
@@ -628,7 +625,7 @@ def test_filter_sync():
     c, d = _batch_client()
     resp = c.post("/api/adapter/filters/sync")
     assert resp.status_code == 200
-    d._sync_filters_to_backend.assert_called_once()
+    d.sync_filters_to_backend.assert_called_once()
 
 
 # ---------------------------------------------------------------------------

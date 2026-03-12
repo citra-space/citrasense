@@ -11,8 +11,8 @@ from citrascope.tasks.scope.tracking_telescope_task import TrackingTelescopeTask
 
 def _make_manager(observation_mode: str, supports_custom_tracking: bool) -> TaskManager:
     """Build a TaskManager with just enough mocks to call _create_telescope_task."""
-    daemon = MagicMock()
-    daemon.settings.observation_mode = observation_mode
+    settings = MagicMock()
+    settings.observation_mode = observation_mode
 
     adapter = MagicMock()
     type(adapter).supports_custom_tracking = PropertyMock(return_value=supports_custom_tracking)
@@ -21,7 +21,13 @@ def _make_manager(observation_mode: str, supports_custom_tracking: bool) -> Task
     mgr.api_client = MagicMock()
     mgr.logger = MagicMock()
     mgr.hardware_adapter = adapter
-    mgr.daemon = daemon
+    mgr.settings = settings
+    mgr.processor_registry = MagicMock()
+    mgr.location_service = MagicMock()
+    mgr.telescope_record = {"id": "tel-1"}
+    mgr.ground_station = {"id": "gs-1"}
+    mgr.elset_cache = None
+    mgr._on_annotated_image = None
     return mgr
 
 

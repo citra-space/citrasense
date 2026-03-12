@@ -9,8 +9,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from citrascope.citra_scope_daemon import CitraScopeDaemon
     from citrascope.hardware.abstract_astro_hardware_adapter import AbstractAstroHardwareAdapter
+    from citrascope.settings.citrascope_settings import CitraScopeSettings
     from citrascope.tasks.base_work_queue import BaseWorkQueue
 
 
@@ -27,13 +27,17 @@ class AlignmentManager:
         self,
         logger: logging.Logger,
         hardware_adapter: AbstractAstroHardwareAdapter,
-        daemon: CitraScopeDaemon,
+        settings: CitraScopeSettings,
         imaging_queue: BaseWorkQueue | None = None,
+        safety_monitor=None,
+        location_service=None,
     ):
         self.logger = logger
         self.hardware_adapter = hardware_adapter
-        self.daemon = daemon
+        self.settings = settings
         self.imaging_queue = imaging_queue
+        self.safety_monitor = safety_monitor
+        self.location_service = location_service
         self._requested = False
         self._running = False
         self._progress = ""
@@ -100,8 +104,8 @@ class AlignmentManager:
         return True
 
     def _get_exposure_seconds(self) -> float:
-        if self.daemon.settings:
-            return getattr(self.daemon.settings, "alignment_exposure_seconds", 2.0)
+        if self.settings:
+            return getattr(self.settings, "alignment_exposure_seconds", 2.0)
         return 2.0
 
     def _execute(self) -> None:
@@ -122,8 +126,7 @@ class AlignmentManager:
 
             from citrascope.processors.builtin.plate_solver_processor import PlateSolverProcessor
 
-            safety_monitor = getattr(self.daemon, "safety_monitor", None)
-            if safety_monitor and not safety_monitor.is_action_safe("capture"):
+            if self.safety_monitor and not self.safety_monitor.is_action_safe("capture"):
                 self.logger.warning("Alignment aborted — safety monitor blocked capture")
                 return
 
@@ -139,8 +142,9 @@ class AlignmentManager:
 
             self._set_progress("Plate solving...")
             self.logger.info(f"Alignment: plate solving {image_path}...")
-            location_service = getattr(self.daemon, "location_service", None)
-            result = PlateSolverProcessor.solve(Path(image_path), telescope_record, location_service=location_service)
+            result = PlateSolverProcessor.solve(
+                Path(image_path), telescope_record, location_service=self.location_service
+            )
 
             if result is None:
                 self.logger.error("Alignment failed — plate solve returned no solution")
@@ -163,6 +167,6 @@ class AlignmentManager:
             with self._lock:
                 self._running = False
                 self._progress = ""
-            if self.daemon.settings:
-                self.daemon.settings.last_alignment_timestamp = int(time.time())
-                self.daemon.settings.save()
+            if self.settings:
+                self.settings.last_alignment_timestamp = int(time.time())
+                self.settings.save()

@@ -2,6 +2,7 @@ import math
 import threading
 import time
 from abc import ABC, abstractmethod
+from collections.abc import Callable
 from pathlib import Path
 
 from dateutil import parser as dtparser
@@ -56,13 +57,27 @@ class AbstractBaseTelescopeTask(ABC):
         hardware_adapter: AbstractAstroHardwareAdapter,
         logger,
         task,
-        daemon,
+        settings,
+        task_manager,
+        location_service,
+        telescope_record: dict | None,
+        ground_station: dict | None,
+        elset_cache,
+        processor_registry,
+        on_annotated_image: Callable[[str], None] | None = None,
     ):
         self.api_client = api_client
         self.hardware_adapter: AbstractAstroHardwareAdapter = hardware_adapter
         self.logger = logger
         self.task = task
-        self.daemon = daemon
+        self.settings = settings
+        self.task_manager = task_manager
+        self.location_service = location_service
+        self.telescope_record = telescope_record
+        self.ground_station = ground_station
+        self.elset_cache = elset_cache
+        self.processor_registry = processor_registry
+        self._on_annotated_image = on_annotated_image
         self._cancelled = threading.Event()
 
         # Multi-image completion tracking (reset per upload_image_and_mark_complete call)
@@ -143,13 +158,11 @@ class AbstractBaseTelescopeTask(ABC):
             self._any_upload_succeeded = False
             self._finalized = False
 
-        # Count this as a started task (one increment regardless of image count)
-        self.daemon.task_manager.record_task_started()
+        self.task_manager.record_task_started()
 
-        # Update status message and stage ONCE before processing loop
-        if self.daemon.settings.processors_enabled:
+        if self.settings.processors_enabled:
             self.task.set_status_msg("Queued for processing...")
-            self.daemon.task_manager.update_task_stage(self.task.id, "processing")
+            self.task_manager.update_task_stage(self.task.id, "processing")
 
         for image_path in filepaths:
             # 1. Enrich FITS metadata (quick, keep synchronous)
@@ -157,22 +170,26 @@ class AbstractBaseTelescopeTask(ABC):
                 enrich_fits_metadata(
                     image_path,
                     task=self.task,
-                    daemon=self.daemon,
+                    location_service=self.location_service,
+                    telescope_record=self.telescope_record,
+                    ground_station=self.ground_station,
                 )
             except Exception as e:
                 self.logger.warning(f"Failed to enrich FITS metadata for {image_path}: {e}")
 
             # 2. Queue for background processing
-            if self.daemon.settings.processors_enabled:
-                self.daemon.task_manager.processing_queue.submit(
+            if self.settings.processors_enabled:
+                self.task_manager.processing_queue.submit(
                     task_id=self.task.id,
                     image_path=Path(image_path),
                     context={
                         "task": self.task,
-                        "telescope_record": self.daemon.telescope_record,
-                        "ground_station_record": self.daemon.ground_station,
-                        "settings": self.daemon.settings,
-                        "daemon": self.daemon,
+                        "telescope_record": self.telescope_record,
+                        "ground_station_record": self.ground_station,
+                        "settings": self.settings,
+                        "location_service": self.location_service,
+                        "elset_cache": self.elset_cache,
+                        "processor_registry": self.processor_registry,
                         "satellite_data": satellite_data,
                         "pointing_report": pointing_report,
                         "tracking_mode": self.tracking_mode,
@@ -219,8 +236,8 @@ class AbstractBaseTelescopeTask(ABC):
         # Surface annotated image to the web UI
         if result and result.extracted_data:
             annotated = result.extracted_data.get("annotated_image.image_path")
-            if annotated and Path(annotated).exists():
-                self.daemon.latest_annotated_image_path = annotated
+            if annotated and Path(annotated).exists() and self._on_annotated_image:
+                self._on_annotated_image(annotated)
 
         # Queue for upload
         self._queue_for_upload(filepath, processing_result=result)
@@ -230,22 +247,21 @@ class AbstractBaseTelescopeTask(ABC):
         # Capture sensor location now (GPS-enhanced if available) so the upload worker
         # can attach it to optical observations without accessing the daemon later.
         try:
-            sensor_location = self.daemon.location_service.get_current_location()
+            sensor_location = self.location_service.get_current_location()
         except Exception:
             sensor_location = None
 
-        # Clear previous status message and set upload message
         self.task.set_status_msg("Queued for upload...")
-        self.daemon.task_manager.update_task_stage(self.task.id, "uploading")
-        self.daemon.task_manager.upload_queue.submit(
+        self.task_manager.update_task_stage(self.task.id, "uploading")
+        self.task_manager.upload_queue.submit(
             task_id=self.task.id,
             task=self.task,
             image_path=filepath,
             processing_result=processing_result,
             api_client=self.api_client,
-            telescope_record=self.daemon.telescope_record,
+            telescope_record=self.telescope_record,
             sensor_location=sensor_location,
-            settings=self.daemon.settings,
+            settings=self.settings,
             on_complete=self._on_image_done,
         )
 
@@ -284,16 +300,16 @@ class AbstractBaseTelescopeTask(ABC):
         if self._any_upload_succeeded:
             marked = self._mark_complete_with_retry(task_id)
             if marked:
-                self.daemon.task_manager.record_task_succeeded()
+                self.task_manager.record_task_succeeded()
                 self.logger.info(f"Task {task_id} fully complete ({self._completed_images} image(s) processed)")
             else:
-                self.daemon.task_manager.record_task_failed()
+                self.task_manager.record_task_failed()
                 self.logger.error(f"Task {task_id}: data uploaded but failed to mark complete after retries")
         else:
-            self.daemon.task_manager.record_task_failed()
+            self.task_manager.record_task_failed()
             self.logger.error(f"Task {task_id} failed — all {self._completed_images} image(s) failed to upload")
 
-        self.daemon.task_manager.remove_task_from_all_stages(task_id)
+        self.task_manager.remove_task_from_all_stages(task_id)
 
     def _mark_complete_with_retry(self, task_id: str, attempts: int = 3, delay: float = 2.0) -> bool:
         """Try to mark a task complete on the server, retrying on transient failures."""
@@ -394,10 +410,10 @@ class AbstractBaseTelescopeTask(ABC):
 
         # Get current location from location service (GPS preferred, ground station fallback)
         # Defensive check against race condition during component reinitialization
-        if not self.daemon.location_service:
+        if not self.location_service:
             raise ValueError("Location service not available (system may be reinitializing)")
 
-        location = self.daemon.location_service.get_current_location()
+        location = self.location_service.get_current_location()
         if not location:
             raise ValueError("No location available from location service")
 

@@ -321,9 +321,9 @@ class CitraScopeDaemon:
             )
 
             # Save filter configuration if adapter supports it
-            self._save_filter_config()
+            self.save_filter_config()
             # Sync discovered filters to backend on startup
-            self._sync_filters_to_backend()
+            self.sync_filters_to_backend()
 
             adapter_name = type(self.hardware_adapter).__name__
             slew_rate = self.hardware_adapter.scope_slew_rate_degrees_per_second
@@ -351,9 +351,14 @@ class CitraScopeDaemon:
                 self.api_client,
                 CITRASCOPE_LOGGER,
                 self.hardware_adapter,
-                self,
                 self.settings,
                 self.processor_registry,
+                elset_cache=self.elset_cache,
+                safety_monitor=self.safety_monitor,
+                location_service=self.location_service,
+                telescope_record=self.telescope_record,
+                ground_station=self.ground_station,
+                on_annotated_image=lambda path: setattr(self, "latest_annotated_image_path", path),
             )
 
             # Restore preserved task metadata
@@ -465,7 +470,7 @@ class CitraScopeDaemon:
                     cable_check.cumulative_deg,
                 )
 
-    def _save_filter_config(self):
+    def save_filter_config(self):
         """Save filter configuration from adapter to settings if supported.
 
         This method is called:
@@ -473,7 +478,7 @@ class CitraScopeDaemon:
         - After autofocus to save updated focus positions
         - After manual filter focus updates via web API
 
-        Note: This only saves locally. Call _sync_filters_to_backend() separately
+        Note: This only saves locally. Call sync_filters_to_backend() separately
         when enabled filters change to update the backend.
 
         Thread safety: This modifies self.settings and writes to disk.
@@ -491,7 +496,7 @@ class CitraScopeDaemon:
         except Exception as e:
             CITRASCOPE_LOGGER.warning(f"Failed to save filter configuration: {e}")
 
-    def _sync_filters_to_backend(self):
+    def sync_filters_to_backend(self):
         """Sync enabled filters to backend API.
 
         Extracts enabled filter names from hardware adapter, expands them via

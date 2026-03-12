@@ -45,9 +45,9 @@ class StaticTelescopeTask(AbstractBaseTelescopeTask):
         Fast movers (LEO): slew ahead, plate-solve, wait for the satellite
         to enter the FOV, then burst-capture.
         """
-        exposure = self.daemon.settings.exposure_seconds
-        num_exposures = self.daemon.settings.num_exposures
-        plate_solve = self.daemon.settings.plate_solve_after_slew
+        exposure = self.settings.exposure_seconds
+        num_exposures = self.settings.num_exposures
+        plate_solve = self.settings.plate_solve_after_slew
         imaging_window = num_exposures * exposure
 
         # -- Slow-mover detection --

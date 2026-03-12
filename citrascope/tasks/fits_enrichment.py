@@ -13,7 +13,9 @@ from citrascope.logging import CITRASCOPE_LOGGER
 def enrich_fits_metadata(
     filepath: str,
     task=None,
-    daemon=None,
+    location_service=None,
+    telescope_record: dict | None = None,
+    ground_station: dict | None = None,
 ) -> None:
     """
     Enrich FITS file with observation context metadata before upload.
@@ -24,7 +26,9 @@ def enrich_fits_metadata(
     Args:
         filepath: Path to FITS file to enrich
         task: Task object with observation details (optional for manual captures)
-        daemon: CitraScopeDaemon instance for location/record lookup (optional)
+        location_service: LocationService for GPS-enhanced coordinates (optional)
+        telescope_record: Telescope record dict from the API (optional)
+        ground_station: Ground station record dict from the API (optional)
 
     FITS Keywords Added:
         Location (from GPS or ground station):
@@ -57,58 +61,44 @@ def enrich_fits_metadata(
         CITRASCOPE_LOGGER.warning(f"FITS file not found: {filepath}")
         return
 
-    # Extract records from daemon
-    telescope_record = daemon.telescope_record if daemon else None
-    ground_station = daemon.ground_station if daemon else None
-
     try:
-        # Open FITS file in update mode
         with fits.open(filepath, mode="update") as hdul:
             primary = hdul[0]
             assert isinstance(primary, fits.PrimaryHDU)
             header = primary.header
 
-            # Check if already enriched (idempotency)
             if task and hasattr(task, "id") and task.id:
                 if "TASKID" in header:
                     CITRASCOPE_LOGGER.debug(f"FITS file already enriched (TASKID present): {filepath}")
                     return
 
-            # Add location metadata (GPS preferred, ground station fallback)
-            _add_location_metadata(header, daemon, ground_station)
+            _add_location_metadata(header, location_service=location_service, ground_station_record=ground_station)
 
-            # Add observation context from task
             if task:
                 _add_task_metadata(header, task, telescope_record, ground_station)
 
-            # Add origin
             header["ORIGIN"] = ("Citra.space", "Data origin")
-
-            # Changes are automatically saved on context exit (mode="update")
 
         CITRASCOPE_LOGGER.debug(f"Enriched FITS metadata: {filepath}")
 
     except Exception as e:
-        # Fail gracefully - enrichment failures shouldn't block uploads
         CITRASCOPE_LOGGER.warning(f"Failed to enrich FITS metadata for {filepath}: {e}")
 
 
-def _add_location_metadata(header, daemon, ground_station_record: dict | None) -> None:
+def _add_location_metadata(header, location_service=None, ground_station_record: dict | None = None) -> None:
     """
     Add observatory location metadata to FITS header.
 
-    Tries GPS first (if daemon available), falls back to ground station.
+    Tries GPS first (via location_service), falls back to ground station record.
     """
     location = None
 
-    # Try to get location from location service (GPS or ground station)
-    if daemon and daemon.location_service:
+    if location_service:
         try:
-            location = daemon.location_service.get_current_location()
+            location = location_service.get_current_location()
         except Exception as e:
             CITRASCOPE_LOGGER.debug(f"Could not get location from location service: {e}")
 
-    # Fallback to ground station record if daemon unavailable
     if not location and ground_station_record:
         location = {
             "latitude": ground_station_record.get("latitude"),

@@ -46,7 +46,7 @@ class TrackingTelescopeTask(AbstractBaseTelescopeTask):
             if self.is_cancelled:
                 return False
 
-            exposure = self.daemon.settings.exposure_seconds
+            exposure = self.settings.exposure_seconds
             self.task.set_status_msg(f"Exposing image ({exposure}s)...")
             filepath = self.hardware_adapter.take_image(self.task.id, exposure)
             return self.upload_image_and_mark_complete(
