@@ -50,8 +50,14 @@ class SatelliteMatcherProcessor(AbstractImageProcessor):
         """Remove sources that matched APASS catalog stars in the photometry step.
 
         Reads photometry_crossmatch.csv (written by PhotometryProcessor) and removes
-        any candidate whose position matches a cataloged star within 1 arcsecond.
-        Returns the filtered DataFrame and a stats dict for the debug bundle.
+        any candidate whose detected position matches a crossmatched source within
+        the star-match tolerance.
+
+        We match against detected-source positions (ra/dec) rather than APASS catalog
+        positions (radeg/decdeg) because real astrometric offsets between WCS-solved
+        detections and catalog entries are 18-33 arcseconds -- far too large for a
+        tight proximity match.  The detected positions come from the same SExtractor
+        run as our candidates, so the match is sub-pixel identical.
         """
         crossmatch_path = working_dir / "photometry_crossmatch.csv"
         if not crossmatch_path.exists():
@@ -62,21 +68,14 @@ class SatelliteMatcherProcessor(AbstractImageProcessor):
         except Exception:
             return candidates, {"source": "skipped", "reason": "failed to parse photometry_crossmatch.csv"}
 
-        # Prefer APASS catalog positions (radeg/decdeg) over detected source positions (ra/dec).
-        # Using detected source positions would falsely remove a satellite that happened to
-        # land in the crossmatch by proximity to a catalog star.
-        if "radeg" in xmatch.columns and "decdeg" in xmatch.columns:
-            ra_col, dec_col = "radeg", "decdeg"
-        elif "ra" in xmatch.columns and "dec" in xmatch.columns:
-            ra_col, dec_col = "ra", "dec"
-        else:
-            return candidates, {"source": "skipped", "reason": "crossmatch CSV missing coordinate columns"}
+        if "ra" not in xmatch.columns or "dec" not in xmatch.columns:
+            return candidates, {"source": "skipped", "reason": "crossmatch CSV missing ra/dec columns"}
 
         if xmatch.empty:
             return candidates, {"source": "skipped", "reason": "crossmatch CSV empty"}
 
         before = len(candidates)
-        star_coords = xmatch[[ra_col, dec_col]].values
+        star_coords = xmatch[["ra", "dec"]].values
         star_tree = KDTree(star_coords)
 
         cand_coords = candidates[["ra", "dec"]].values
@@ -117,20 +116,36 @@ class SatelliteMatcherProcessor(AbstractImageProcessor):
         Returns (observations, debug_info) where debug_info contains the full diagnostic
         bundle for satellite_matcher_debug.json.
         """
+        # GEO/slow-mover detection: skip FWHM filter when the target barely moves,
+        # because point-like GEO satellites are indistinguishable from stars by shape.
+        is_slow_mover = False
+        try:
+            slew_ahead = (context.pointing_report or {}).get("slew_ahead", {})
+            is_slow_mover = bool(slew_ahead.get("is_slow_mover", False))
+        except (AttributeError, TypeError):
+            pass
+
+        fwhm_filter_applied = not is_slow_mover
+
         debug: dict[str, Any] = {
             "tracking_mode": tracking_mode,
+            "is_slow_mover": is_slow_mover,
+            "fwhm_filter_applied": fwhm_filter_applied,
             "fwhm_threshold": _FWHM_THRESHOLD,
             "field_radius_deg": _FIELD_RADIUS_DEG,
             "match_radius_arcmin": _MATCH_RADIUS_DEG * 60.0,
         }
 
-        # Separate stars from satellites by FWHM based on tracking mode
-        if tracking_mode == "rate":
-            potential_sats = sources[sources["fwhm"] < _FWHM_THRESHOLD].copy()
-            star_like_count = int((sources["fwhm"] >= _FWHM_THRESHOLD).sum())
+        if fwhm_filter_applied:
+            if tracking_mode == "rate":
+                potential_sats = sources[sources["fwhm"] < _FWHM_THRESHOLD].copy()
+                star_like_count = int((sources["fwhm"] >= _FWHM_THRESHOLD).sum())
+            else:
+                potential_sats = sources[sources["fwhm"] >= _FWHM_THRESHOLD].copy()
+                star_like_count = int((sources["fwhm"] < _FWHM_THRESHOLD).sum())
         else:
-            potential_sats = sources[sources["fwhm"] >= _FWHM_THRESHOLD].copy()
-            star_like_count = int((sources["fwhm"] < _FWHM_THRESHOLD).sum())
+            potential_sats = sources.copy()
+            star_like_count = 0
 
         fwhm_vals = sources["fwhm"]
         debug["source_classification"] = {

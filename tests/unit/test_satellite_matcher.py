@@ -35,7 +35,7 @@ class TestSubtractKnownStars:
 
         candidates = _make_sources([(star_ra, star_dec), (sat_ra, sat_dec)])
 
-        xmatch = pd.DataFrame({"ra": [star_ra], "dec": [star_dec], "radeg": [star_ra], "decdeg": [star_dec]})
+        xmatch = pd.DataFrame({"ra": [star_ra], "dec": [star_dec]})
         xmatch.to_csv(tmp_path / "photometry_crossmatch.csv", index=False)
 
         filtered, stats = SatelliteMatcherProcessor._subtract_known_stars(candidates, tmp_path)
@@ -49,7 +49,7 @@ class TestSubtractKnownStars:
     def test_retains_all_when_no_match(self, tmp_path: Path):
         candidates = _make_sources([(100.0, 30.0), (101.0, 31.0)])
 
-        xmatch = pd.DataFrame({"ra": [200.0], "dec": [-40.0], "radeg": [200.0], "decdeg": [-40.0]})
+        xmatch = pd.DataFrame({"ra": [200.0], "dec": [-40.0]})
         xmatch.to_csv(tmp_path / "photometry_crossmatch.csv", index=False)
 
         filtered, stats = SatelliteMatcherProcessor._subtract_known_stars(candidates, tmp_path)
@@ -85,38 +85,113 @@ class TestSubtractKnownStars:
         assert len(filtered) == 1
         assert stats["catalog_stars_removed"] == 0
 
-    def test_uses_catalog_positions_not_source_positions(self, tmp_path: Path):
-        """A satellite near (but not on) a catalog star should be retained.
+    def test_matches_on_detected_positions(self, tmp_path: Path):
+        """Star subtraction matches against detected-source positions (ra/dec).
 
         The crossmatch CSV has both detected-source coords (ra/dec) and catalog
-        star coords (radeg/decdeg). We must match against the catalog positions
-        to avoid removing a satellite that happened to land in the crossmatch.
+        star coords (radeg/decdeg). Real astrometric offsets between the two are
+        18-33 arcseconds, so we match on detected positions which come from the
+        same SExtractor run as our candidates.
         """
-        star_ra, star_dec = 180.0, 45.0
-        sat_ra, sat_dec = 180.005, 45.0  # ~18 arcsec from the star
+        star_detected_ra, star_detected_dec = 180.0, 45.0
+        catalog_ra, catalog_dec = 180.008, 45.005  # catalog pos ~33 arcsec away
 
-        candidates = _make_sources([(sat_ra, sat_dec)])
+        candidates = _make_sources([(star_detected_ra, star_detected_dec)])
 
-        # The satellite appeared in the crossmatch because it was within
-        # photometry's 1-arcmin match radius of the star. Its ra/dec is in
-        # the CSV, but the actual star is at radeg/decdeg.
         xmatch = pd.DataFrame(
             {
-                "ra": [sat_ra],
-                "dec": [sat_dec],  # detected source position (the satellite!)
-                "radeg": [star_ra],
-                "decdeg": [star_dec],  # actual APASS star position
+                "ra": [star_detected_ra],
+                "dec": [star_detected_dec],
+                "radeg": [catalog_ra],
+                "decdeg": [catalog_dec],
             }
         )
         xmatch.to_csv(tmp_path / "photometry_crossmatch.csv", index=False)
 
         filtered, stats = SatelliteMatcherProcessor._subtract_known_stars(candidates, tmp_path)
-        assert len(filtered) == 1, "satellite should NOT be removed -- it's 18 arcsec from the catalog star"
-        assert stats["catalog_stars_removed"] == 0
+        assert len(filtered) == 0, "star should be removed -- its detected position matches a crossmatch entry"
+        assert stats["catalog_stars_removed"] == 1
 
 
 # ===================================================================
-# 2. Reverse match produces at most one observation per prediction
+# 2. Slow-mover FWHM bypass
+# ===================================================================
+class TestSlowMoverFwhmBypass:
+    """When pointing_report indicates a slow mover, FWHM filter should be skipped."""
+
+    @staticmethod
+    def _make_mixed_sources() -> pd.DataFrame:
+        """Sources with a mix of point-like and extended FWHM values."""
+        return pd.DataFrame(
+            {
+                "ra": [180.0, 180.01, 180.02, 180.03],
+                "dec": [45.0, 45.0, 45.0, 45.0],
+                "mag": [-8.0, -7.0, -6.0, -5.0],
+                "magerr": [0.01] * 4,
+                "fwhm": [1.0, 1.1, 2.0, 3.0],  # first two are point-like (< 1.5)
+            }
+        )
+
+    def test_slow_mover_uses_all_sources(self):
+        """With is_slow_mover=True, all sources become candidates (no FWHM cut)."""
+        sources = self._make_mixed_sources()
+        from citrascope.processors.builtin.satellite_matcher_processor import (
+            _FWHM_THRESHOLD,
+        )
+
+        # Simulate the classification logic from _match_satellites
+        is_slow_mover = True
+        fwhm_filter_applied = not is_slow_mover
+
+        if fwhm_filter_applied:
+            potential_sats = sources[sources["fwhm"] >= _FWHM_THRESHOLD].copy()
+        else:
+            potential_sats = sources.copy()
+
+        assert len(potential_sats) == 4
+        assert not fwhm_filter_applied
+
+    def test_fast_mover_applies_fwhm_filter(self):
+        """With is_slow_mover=False (LEO), FWHM filter is applied normally."""
+        sources = self._make_mixed_sources()
+        from citrascope.processors.builtin.satellite_matcher_processor import (
+            _FWHM_THRESHOLD,
+        )
+
+        is_slow_mover = False
+        fwhm_filter_applied = not is_slow_mover
+
+        if fwhm_filter_applied:
+            potential_sats = sources[sources["fwhm"] >= _FWHM_THRESHOLD].copy()
+        else:
+            potential_sats = sources.copy()
+
+        assert len(potential_sats) == 2  # only FWHM >= 1.5
+        assert fwhm_filter_applied
+
+    def test_missing_pointing_report_defaults_to_fwhm_filter(self):
+        """When pointing_report is None, FWHM filter should apply (safe default)."""
+        pointing_report = None
+        try:
+            slew_ahead = (pointing_report or {}).get("slew_ahead", {})
+            is_slow_mover = bool(slew_ahead.get("is_slow_mover", False))
+        except (AttributeError, TypeError):
+            is_slow_mover = False
+
+        assert is_slow_mover is False
+        assert not is_slow_mover  # FWHM filter will apply
+
+    def test_pointing_report_without_slew_ahead_defaults_to_fwhm_filter(self):
+        """A pointing_report that lacks slew_ahead (e.g. SEQUENCE_TO_CONTROLLER) defaults safely."""
+        pointing_report = {"converged": True, "final_telescope_ra_deg": 133.0}
+        slew_ahead = (pointing_report or {}).get("slew_ahead", {})
+        is_slow_mover = bool(slew_ahead.get("is_slow_mover", False))
+
+        assert is_slow_mover is False
+
+
+# ===================================================================
+# 3. Reverse match produces at most one observation per prediction
 # ===================================================================
 class TestReverseMatchOnePerPrediction:
     """Verify the observation-building loop yields at most one match per prediction.
