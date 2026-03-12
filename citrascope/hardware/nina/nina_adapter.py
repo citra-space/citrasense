@@ -509,7 +509,7 @@ class NinaAdvancedHttpAdapter(AbstractAstroHardwareAdapter):
             satellite_data: Satellite data including TLE information
 
         Returns:
-            str: Path to the captured image
+            list[str]: Paths to the captured images
         """
         assert self._event_listener is not None
         elset = satellite_data["most_recent_elset"]

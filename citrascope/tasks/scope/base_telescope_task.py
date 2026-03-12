@@ -145,6 +145,8 @@ class AbstractBaseTelescopeTask(ABC):
         Image captured. Queue for background processing and return immediately.
         Telescope is now free to start next task.
         """
+        if isinstance(filepaths, str):
+            raise TypeError("filepaths must be a list[str], not a bare str — wrap single paths in [path]")
 
         # Reset multi-image completion tracking
         with self._completion_lock:
