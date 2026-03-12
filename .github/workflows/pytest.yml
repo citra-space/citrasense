@@ -65,7 +65,7 @@ jobs:
         run: |
           pytest -m "not integration" --import-mode=importlib --override-ini="addopts=" --cov=citrascope --cov-report=term-missing --cov-report=xml --cov-branch
       - name: Upload coverage report
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         if: matrix.python-version == '3.12'
         with:
           name: coverage-xml
