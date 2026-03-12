@@ -88,6 +88,8 @@ class ProcessingQueue(BaseWorkQueue):
                 logger=self.logger,
             )
             processor_registry = item["context"].get("processor_registry")
+            if processor_registry is None:
+                raise ValueError(f"No processor_registry in context for task {task_id}")
             result = processor_registry.process_all(context)
 
             # Success

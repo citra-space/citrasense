@@ -212,13 +212,16 @@ class TaskManager:
             }
 
     def poll_tasks(self):
+        if self.telescope_record is None:
+            self.logger.error("poll_tasks called without telescope_record; cannot poll for tasks")
+            return
+
         while not self._stop_event.is_set():
             try:
-                if self.elset_cache and self.telescope_record:
+                if self.elset_cache:
                     interval_hours = self.settings.elset_refresh_interval_hours
                     self.elset_cache.refresh_if_stale(self.api_client, self.logger, interval_hours=interval_hours)
                 self._report_online()
-                assert self.telescope_record is not None
                 tasks = self.api_client.get_telescope_tasks(self.telescope_record["id"])
 
                 # If API call failed (timeout, network error, etc.), wait before retrying
@@ -301,7 +304,8 @@ class TaskManager:
         """
         PUT to /telescopes to report this telescope as online.
         """
-        assert self.telescope_record is not None
+        if self.telescope_record is None:
+            return
         telescope_id = self.telescope_record["id"]
         iso_timestamp = datetime.now(timezone.utc).isoformat()
         self.api_client.put_telescope_status([{"id": telescope_id, "last_connection_epoch": iso_timestamp}])
