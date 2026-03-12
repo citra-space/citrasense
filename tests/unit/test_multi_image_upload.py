@@ -141,7 +141,7 @@ class TestUploadImageAndMarkComplete:
         t = _make_task_instance()
         t.settings.processors_enabled = False
 
-        t.upload_image_and_mark_complete("/img1.fits")
+        t.upload_image_and_mark_complete(["/img1.fits"])
 
         assert t._pending_images == 1
 

@@ -137,7 +137,7 @@ class AbstractBaseTelescopeTask(ABC):
 
     def upload_image_and_mark_complete(
         self,
-        filepath: str | list[str],
+        filepaths: list[str],
         satellite_data: dict | None = None,
         pointing_report: dict | None = None,
     ) -> bool:
@@ -145,11 +145,6 @@ class AbstractBaseTelescopeTask(ABC):
         Image captured. Queue for background processing and return immediately.
         Telescope is now free to start next task.
         """
-        # Handle list input
-        if isinstance(filepath, str):
-            filepaths = [filepath]
-        else:
-            filepaths = filepath
 
         # Reset multi-image completion tracking
         with self._completion_lock:

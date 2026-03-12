@@ -167,8 +167,8 @@ class AbstractAstroHardwareAdapter(ABC):
         pass
 
     @abstractmethod
-    def perform_observation_sequence(self, task, satellite_data) -> str:
-        """For hardware driven by sequences, perform the observation sequence and return image path."""
+    def perform_observation_sequence(self, task, satellite_data) -> list[str]:
+        """For hardware driven by sequences, perform the observation sequence and return list of image paths."""
         pass
 
     def set_location_service(self, location_service) -> None:  # noqa: B027

@@ -488,7 +488,7 @@ class DummyAdapter(AbstractAstroHardwareAdapter):
         """Dummy adapter uses manual strategy."""
         return ObservationStrategy.MANUAL
 
-    def perform_observation_sequence(self, task, satellite_data) -> str:
+    def perform_observation_sequence(self, task, satellite_data) -> list[str]:
         """Not used for manual strategy."""
         raise NotImplementedError("DummyAdapter uses MANUAL strategy")
 

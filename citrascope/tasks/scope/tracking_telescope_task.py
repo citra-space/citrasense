@@ -50,7 +50,7 @@ class TrackingTelescopeTask(AbstractBaseTelescopeTask):
             self.task.set_status_msg(f"Exposing image ({exposure}s)...")
             filepath = self.hardware_adapter.take_image(self.task.id, exposure)
             return self.upload_image_and_mark_complete(
-                filepath, satellite_data=satellite_data, pointing_report=pointing_report
+                [filepath], satellite_data=satellite_data, pointing_report=pointing_report
             )
         finally:
             try:

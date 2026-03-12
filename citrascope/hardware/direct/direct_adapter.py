@@ -411,7 +411,7 @@ class DirectHardwareAdapter(AbstractAstroHardwareAdapter):
         """
         return ObservationStrategy.MANUAL
 
-    def perform_observation_sequence(self, task, satellite_data) -> str:
+    def perform_observation_sequence(self, task, satellite_data) -> list[str]:
         """Not implemented for manual observation strategy.
 
         Direct hardware adapter uses manual control - exposures are taken

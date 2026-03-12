@@ -195,7 +195,7 @@ class TestUploadImageAndMarkComplete:
         ct = ConcreteTask(MagicMock(), MagicMock(), MagicMock(), task_obj, **_daemon_kwargs(daemon))
 
         with patch("citrascope.tasks.scope.base_telescope_task.enrich_fits_metadata"):
-            result = ct.upload_image_and_mark_complete("/path/to/img.fits")
+            result = ct.upload_image_and_mark_complete(["/path/to/img.fits"])
 
         assert result is True
         daemon.task_manager.record_task_started.assert_called_once()
@@ -231,7 +231,7 @@ class TestUploadImageAndMarkComplete:
 
         with patch("citrascope.tasks.scope.base_telescope_task.enrich_fits_metadata"):
             with patch.object(ct, "_queue_for_upload") as mock_upload:
-                ct.upload_image_and_mark_complete("/img.fits")
+                ct.upload_image_and_mark_complete(["/img.fits"])
                 mock_upload.assert_called_once()
 
     def test_enrichment_failure_continues(self):
@@ -249,7 +249,7 @@ class TestUploadImageAndMarkComplete:
             "citrascope.tasks.scope.base_telescope_task.enrich_fits_metadata",
             side_effect=Exception("boom"),
         ):
-            result = ct.upload_image_and_mark_complete("/img.fits")
+            result = ct.upload_image_and_mark_complete(["/img.fits"])
             assert result is True
 
 

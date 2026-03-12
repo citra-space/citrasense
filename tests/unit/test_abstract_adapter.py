@@ -26,7 +26,7 @@ class StubAdapter(AbstractAstroHardwareAdapter):
         return ObservationStrategy.MANUAL
 
     def perform_observation_sequence(self, task, satellite_data):
-        return ""
+        return []
 
     def connect(self):
         return True

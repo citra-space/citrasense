@@ -686,5 +686,5 @@ class IndiAdapter(PyIndi.BaseClient, AbstractAstroHardwareAdapter):
     def get_observation_strategy(self) -> ObservationStrategy:
         return ObservationStrategy.MANUAL
 
-    def perform_observation_sequence(self, task, satellite_data) -> str:
+    def perform_observation_sequence(self, task, satellite_data) -> list[str]:
         raise NotImplementedError
