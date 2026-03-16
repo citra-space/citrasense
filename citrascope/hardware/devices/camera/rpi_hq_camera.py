@@ -219,7 +219,7 @@ class RaspberryPiHQCamera(AbstractCamera):
         save_path: Path | None = None,
         shutter_closed: bool = False,
     ) -> Path:
-        image_data = self.capture_array(duration, gain, offset, binning)
+        image_data = self.capture_array(duration, gain, offset, binning, shutter_closed=shutter_closed)
 
         if save_path is None:
             timestamp = time.strftime("%Y%m%d_%H%M%S")

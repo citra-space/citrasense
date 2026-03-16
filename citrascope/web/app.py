@@ -961,7 +961,7 @@ class CitraScopeWebApp:
                     if fp_int not in fm:
                         return JSONResponse({"error": f"Unknown filter position: {fp_int}"}, status_code=400)
                     request["filter_position"] = fp_int
-                    request["filter_name"] = fm[fp_int]["name"]
+                    request["filter_name"] = fm[fp_int].get("name", f"Filter {fp_int}")
 
                 ok, err = self.daemon.trigger_calibration(request)
                 if not ok:

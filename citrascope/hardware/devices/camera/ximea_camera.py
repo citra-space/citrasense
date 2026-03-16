@@ -353,7 +353,7 @@ class XimeaHyperspectralCamera(AbstractCamera):
         save_path: Path | None = None,
         shutter_closed: bool = False,
     ) -> Path:
-        data = self.capture_array(duration, gain, offset, binning)
+        data = self.capture_array(duration, gain, offset, binning, shutter_closed=shutter_closed)
 
         if save_path is None:
             timestamp = time.strftime("%Y%m%d_%H%M%S")

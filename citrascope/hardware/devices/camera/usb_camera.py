@@ -276,7 +276,7 @@ class UsbCamera(AbstractCamera):
         shutter_closed: bool = False,
     ) -> Path:
         assert self._cv2_module is not None
-        frame = self.capture_array(duration, gain, offset, binning)
+        frame = self.capture_array(duration, gain, offset, binning, shutter_closed=shutter_closed)
 
         if save_path is None:
             timestamp = time.strftime("%Y%m%d_%H%M%S")
