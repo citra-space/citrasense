@@ -190,6 +190,27 @@
                                 </small>
                             </div>
 
+                            <!-- Calibration readiness for current settings (from WebSocket status) -->
+                            <div class="mb-3" x-show="$store.citrascope.status?.calibration_status?.calibration_applicable">
+                                <template x-if="$store.citrascope.status?.calibration_status?.has_bias && $store.citrascope.status?.calibration_status?.has_dark && $store.citrascope.status?.calibration_status?.has_flat">
+                                    <div class="alert alert-success py-2 mb-0 small">
+                                        <i class="bi bi-check-circle-fill me-1"></i>
+                                        All calibration masters available for current settings.
+                                    </div>
+                                </template>
+                                <template x-if="$store.citrascope.status?.calibration_status && !($store.citrascope.status.calibration_status.has_bias && $store.citrascope.status.calibration_status.has_dark && $store.citrascope.status.calibration_status.has_flat)">
+                                    <div class="alert alert-warning py-2 mb-0 small">
+                                        <i class="bi bi-exclamation-triangle-fill me-1"></i>
+                                        <strong>Missing for current settings:</strong>
+                                        <ul class="mb-0 ps-3 mt-1">
+                                            <template x-for="m in ($store.citrascope.status?.calibration_status?.missing || [])" :key="m">
+                                                <li x-text="m"></li>
+                                            </template>
+                                        </ul>
+                                    </div>
+                                </template>
+                            </div>
+
                             <!-- Master frame status -->
                             <h6 class="text-muted mb-2">Master Frames</h6>
                             <div class="table-responsive mb-3">
