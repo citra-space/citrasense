@@ -89,7 +89,6 @@ class MasterBuilder:
     ) -> Path:
         """Capture and build a master dark frame (bias-subtracted if bias available)."""
         gain_val = gain if gain is not None else (self._profile.current_gain or 0)
-        temperature = self._profile.current_temperature
         label = f"dark g{gain_val} bin{binning} {exposure_time}s"
 
         raw_paths = self._capture_frames(
@@ -116,6 +115,8 @@ class MasterBuilder:
             logger.info("Subtracted master bias from dark")
 
         self._library.cleanup_tmp()
+
+        temperature = self._resolve_dark_temperature()
 
         return self._library.save_master(
             frame_type="dark",
@@ -189,6 +190,22 @@ class MasterBuilder:
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
+
+    def _resolve_dark_temperature(self) -> float | None:
+        """Determine the temperature to record for a dark master.
+
+        Uses the cooling target (operator intent) when available, since
+        the sensor reading drifts by fractions of a degree around it.
+        Falls back to a fresh sensor reading so the FITS header reflects
+        the actual post-capture temperature rather than a stale profile
+        snapshot.
+        """
+        if self._profile.target_temperature is not None:
+            return float(self._profile.target_temperature)
+        live = self._camera.get_temperature()
+        if live is not None:
+            return live
+        return self._profile.current_temperature
 
     def _capture_frames(
         self,
