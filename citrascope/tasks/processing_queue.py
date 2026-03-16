@@ -92,6 +92,19 @@ class ProcessingQueue(BaseWorkQueue):
                 raise ValueError(f"No processor_registry in context for task {task_id}")
             result = processor_registry.process_all(context)
 
+            # Promote final processed image back to the original file location
+            # so the upload queue sends the calibrated + plate-solved version.
+            # Save a copy of the raw original into the working dir first so
+            # operators can compare raw vs. processed when keep_processing_output is on.
+            if context.working_image_path != context.image_path:
+                raw_backup = working_dir / f"original_{context.image_path.name}"
+                shutil.copy2(context.image_path, raw_backup)
+                shutil.copy2(context.working_image_path, context.image_path)
+                self.logger.info(
+                    "[ProcessingWorker] Promoted processed image to %s (raw backup in working dir)",
+                    context.image_path.name,
+                )
+
             # Success
             self.logger.info(f"[ProcessingWorker] Task {task_id} processed in {result.total_time:.2f}s")
             return (True, result)

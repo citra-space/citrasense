@@ -47,10 +47,12 @@ from ctypes import (
 # ---------------------------------------------------------------------------
 
 # gxccd_get_boolean_parameter indexes
+GBP_SHUTTER = 3
 GBP_COOLER = 4
 GBP_FAN = 5
 GBP_FILTERS = 6
 GBP_WINDOW_HEATING = 8
+GBP_ELECTRONIC_SHUTTER = 14
 GBP_GPS = 15
 
 # gxccd_get_integer_parameter indexes
@@ -66,6 +68,7 @@ GIP_DEFAULT_READ_MODE = 12
 GIP_MAX_WINDOW_HEATING = 13
 GIP_MAX_FAN = 14
 GIP_MAX_GAIN = 16
+GIP_MAX_PIXEL_VALUE = 17
 
 # gxccd_get_string_parameter indexes
 GSP_CAMERA_DESCRIPTION = 0

@@ -121,12 +121,16 @@ class TestMoravianCameraConnect:
             13: 5,  # GIP_MAX_WINDOW_HEATING
             14: 3,  # GIP_MAX_FAN
             16: 255,
+            17: 65535,  # GIP_MAX_PIXEL_VALUE
         }[idx]
         mock_cam_instance.get_boolean_parameter.side_effect = lambda idx: {
+            3: True,  # GBP_SHUTTER
             4: True,  # GBP_COOLER
             5: True,  # GBP_FAN
             6: True,  # GBP_FILTERS
             8: True,  # GBP_WINDOW_HEATING
+            14: False,  # GBP_ELECTRONIC_SHUTTER
+            15: False,  # GBP_GPS
         }[idx]
         mock_cam_instance.enumerate_read_modes.return_value = ["Low Noise", "Fast Preview"]
         mock_cam_instance.get_value.return_value = -15.2

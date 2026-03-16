@@ -21,6 +21,7 @@ from citrascope.hardware.devices.camera import AbstractCamera
 from citrascope.hardware.devices.filter_wheel import AbstractFilterWheel
 
 if TYPE_CHECKING:
+    from citrascope.hardware.devices.camera.abstract_camera import CalibrationProfile
     from citrascope.hardware.devices.moravian_bindings import GxccdCamera
 
 
@@ -223,14 +224,18 @@ class MoravianCamera(AbstractCamera):
         self._integrated_fw: MoravianIntegratedFilterWheel | None = None
         self._last_exposure_start: datetime | None = None
         self._has_gps: bool = False
+        self._has_mechanical_shutter: bool = False
+        self._active_read_mode: str = ""
 
     def connect(self) -> bool:
         try:
             from citrascope.hardware.devices.moravian_bindings import (
                 GBP_COOLER,
+                GBP_ELECTRONIC_SHUTTER,
                 GBP_FAN,
                 GBP_FILTERS,
                 GBP_GPS,
+                GBP_SHUTTER,
                 GBP_WINDOW_HEATING,
                 GIP_CHIP_D,
                 GIP_CHIP_W,
@@ -238,6 +243,7 @@ class MoravianCamera(AbstractCamera):
                 GIP_FILTERS,
                 GIP_MAX_FAN,
                 GIP_MAX_GAIN,
+                GIP_MAX_PIXEL_VALUE,
                 GIP_MAX_WINDOW_HEATING,
                 GIP_PIXEL_D,
                 GIP_PIXEL_W,
@@ -284,6 +290,16 @@ class MoravianCamera(AbstractCamera):
                 "max_gain": max_gain,
             }
 
+            # Shutter capabilities
+            has_mechanical = cam.get_boolean_parameter(GBP_SHUTTER)
+            has_electronic = cam.get_boolean_parameter(GBP_ELECTRONIC_SHUTTER)
+            self.logger.info(
+                "Shutter: mechanical=%s, electronic=%s",
+                has_mechanical,
+                has_electronic,
+            )
+            self._has_mechanical_shutter = has_mechanical
+
             # Cooling and thermal capabilities
             self._has_cooler = cam.get_boolean_parameter(GBP_COOLER)
             self._has_fan = cam.get_boolean_parameter(GBP_FAN)
@@ -305,7 +321,7 @@ class MoravianCamera(AbstractCamera):
             except Exception as e:
                 self.logger.debug(f"Could not enumerate read modes: {e}")
 
-            # Apply default read mode
+            # Apply default read mode and determine bit depth
             if self._default_read_mode >= 0:
                 cam.set_read_mode(self._default_read_mode)
                 mode_label = (
@@ -317,6 +333,25 @@ class MoravianCamera(AbstractCamera):
             else:
                 default = cam.get_integer_parameter(GIP_DEFAULT_READ_MODE)
                 cam.set_read_mode(default)
+                mode_label = self._read_modes[default] if default < len(self._read_modes) else str(default)
+
+            # Determine actual bit depth from the active read mode name
+            self._active_read_mode = mode_label or ""
+            active_mode = mode_label.lower() if mode_label else ""
+            if "8-bit" in active_mode or "8bit" in active_mode:
+                self._camera_info["bit_depth"] = 8
+            elif "12-bit" in active_mode or "12bit" in active_mode:
+                self._camera_info["bit_depth"] = 12
+            elif "14-bit" in active_mode or "14bit" in active_mode:
+                self._camera_info["bit_depth"] = 14
+
+            max_pv = cam.get_integer_parameter(GIP_MAX_PIXEL_VALUE)
+            self.logger.info(
+                "Active read mode: %s → bit_depth=%d, max_pixel_value=%d",
+                mode_label,
+                self._camera_info["bit_depth"],
+                max_pv,
+            )
 
             # Integrated filter wheel
             has_filters = cam.get_boolean_parameter(GBP_FILTERS)
@@ -390,6 +425,7 @@ class MoravianCamera(AbstractCamera):
         gain: int | None = None,
         offset: int | None = None,
         binning: int = 1,
+        shutter_closed: bool = False,
     ) -> np.ndarray:
         if not self.is_connected():
             raise RuntimeError("Camera not connected")
@@ -403,9 +439,19 @@ class MoravianCamera(AbstractCamera):
         cam.set_gain(gain_val)
         cam.set_binning(binning, binning)
 
-        self.logger.debug(f"Starting {duration}s exposure (gain={gain_val}, binning={binning}x{binning})")
+        use_shutter = not shutter_closed
+        self.logger.info(
+            "Starting %.3fs exposure (gain=%d, binning=%dx%d, shutter=%s)",
+            duration,
+            gain_val,
+            binning,
+            binning,
+            "open" if use_shutter else "closed",
+        )
         self._last_exposure_start = datetime.now(timezone.utc)
-        cam.start_exposure(duration, True, 0, 0, w, h)
+        cam.start_exposure(duration, use_shutter, 0, 0, w, h)
+
+        t0 = time.monotonic()
 
         # Sleep for most of the exposure, then poll (per gxccd.h recommendation)
         if duration > 0.5:
@@ -413,13 +459,25 @@ class MoravianCamera(AbstractCamera):
         while not cam.image_ready():
             time.sleep(0.05)
 
+        self.logger.debug("image_ready after %.3fs (requested %.3fs)", time.monotonic() - t0, duration)
+
         binned_w = w // binning
         binned_h = h // binning
         buf_size = binned_w * 2 * binned_h
         buf = create_string_buffer(buf_size)
         cam.read_image(buf, buf_size)
 
-        return np.frombuffer(bytes(buf), dtype=np.uint16).reshape((binned_h, binned_w))
+        data = np.frombuffer(bytes(buf), dtype=np.uint16).reshape((binned_h, binned_w))
+        self.logger.debug(
+            "Exposure complete: %dx%d, min=%d, max=%d, median=%d, mean=%.0f",
+            binned_w,
+            binned_h,
+            int(data.min()),
+            int(data.max()),
+            int(np.median(data)),
+            float(data.mean()),
+        )
+        return data
 
     def _resolve_exposure_timestamp(self) -> tuple[datetime, str]:
         """Determine the best available exposure-start timestamp.
@@ -457,8 +515,9 @@ class MoravianCamera(AbstractCamera):
         offset: int | None = None,
         binning: int = 1,
         save_path: Path | None = None,
+        shutter_closed: bool = False,
     ) -> Path:
-        data = self.capture_array(duration, gain, offset, binning)
+        data = self.capture_array(duration, gain, offset, binning, shutter_closed=shutter_closed)
         exposure_start, date_src = self._resolve_exposure_timestamp()
 
         if save_path is None:
@@ -510,6 +569,7 @@ class MoravianCamera(AbstractCamera):
         hdr["DATE-OBS"] = (date_obs.isoformat(), "UTC exposure start")
         hdr["DATE-SRC"] = (date_src, "Timestamp source: gps or host")
         hdr["INSTRUME"] = (self._camera_info.get("model", ""), "Camera model")
+        hdr["READMODE"] = (self._active_read_mode or "default", "Camera read mode")
 
         serial = self._camera_info.get("serial_number", "")
         if serial:
@@ -615,6 +675,43 @@ class MoravianCamera(AbstractCamera):
 
     def get_camera_info(self) -> dict:
         return self._camera_info.copy()
+
+    def get_max_pixel_value(self, binning: int = 1) -> int:
+        """Query GIP_MAX_PIXEL_VALUE from the SDK, which accounts for read mode and binning."""
+        if self._gxccd is None:
+            return super().get_max_pixel_value(binning)
+        try:
+            from citrascope.hardware.devices.moravian_bindings import GIP_MAX_PIXEL_VALUE
+
+            self._gxccd.set_binning(binning, binning)
+            val = self._gxccd.get_integer_parameter(GIP_MAX_PIXEL_VALUE)
+            if val > 0:
+                return val
+        except Exception:
+            pass
+        return super().get_max_pixel_value(binning)
+
+    def get_calibration_profile(self) -> CalibrationProfile:
+        from citrascope.hardware.devices.camera.abstract_camera import CalibrationProfile
+
+        serial = self._camera_info.get("serial_number", "")
+        model = self._camera_info.get("model", "MoravianCamera")
+        max_gain = self._camera_info.get("max_gain", 0)
+        return CalibrationProfile(
+            calibration_applicable=True,
+            camera_id=serial or model,
+            model=model,
+            has_mechanical_shutter=self._has_mechanical_shutter,
+            has_cooling=self._has_cooler,
+            current_gain=self._default_gain,
+            current_binning=self._default_binning,
+            current_temperature=self.get_temperature(),
+            target_temperature=self._target_temp,
+            bit_depth=self._camera_info.get("bit_depth", 16),
+            read_mode=self._active_read_mode,
+            gain_range=(0, max_gain) if max_gain > 0 else None,
+            supported_binning=[1, 2, 3, 4],
+        )
 
 
 # ---------------------------------------------------------------------------

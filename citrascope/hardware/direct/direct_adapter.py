@@ -808,6 +808,7 @@ class DirectHardwareAdapter(AbstractAstroHardwareAdapter):
         gain: int | None = None,
         offset: int | None = None,
         count: int = 1,
+        shutter_closed: bool = False,
     ) -> str:
         """Take camera exposure(s).
 
@@ -816,6 +817,7 @@ class DirectHardwareAdapter(AbstractAstroHardwareAdapter):
             gain: Camera gain setting
             offset: Camera offset setting
             count: Number of exposures to take
+            shutter_closed: If True, request dark frame (shutter stays closed).
 
         Returns:
             Path to the last saved image
@@ -843,6 +845,7 @@ class DirectHardwareAdapter(AbstractAstroHardwareAdapter):
                 offset=offset,
                 binning=self._camera.get_default_binning(),
                 save_path=save_path,
+                shutter_closed=shutter_closed,
             )
 
             last_image_path = str(image_path)

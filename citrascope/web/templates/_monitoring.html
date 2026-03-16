@@ -17,7 +17,7 @@
                 <h6 class="mb-0">{{ label }}</h6>
                 <span class="badge bg-{{ color }}{% if color == 'warning' %} text-dark{% endif %} ms-auto"
                       x-show="$store.citrascope.status?.tasks_by_stage?.{{ stage }}?.length > 0"
-                      x-text="$store.citrascope.status.tasks_by_stage.{{ stage }}.length"></span>
+                      x-text="$store.citrascope.status?.tasks_by_stage?.{{ stage }}?.length"></span>
             </div>
             {% if caller is defined %}
             {{ caller() }}
@@ -36,9 +36,9 @@
                      }
                  })">
                 <div class="progress-bar bg-success" role="progressbar"
-                     :style="`width: ${(() => { const s = $store.citrascope.status.pipeline_stats.{{ stage }}; const r = s.successes + s.permanent_failures; return r > 0 ? (s.successes / r) * 100 : 0; })()}%`"></div>
+                     :style="`width: ${(() => { const s = $store.citrascope.status?.pipeline_stats?.{{ stage }}; if (!s) return 0; const r = s.successes + s.permanent_failures; return r > 0 ? (s.successes / r) * 100 : 0; })()}%`"></div>
                 <div class="progress-bar bg-danger" role="progressbar"
-                     :style="`width: ${(() => { const s = $store.citrascope.status.pipeline_stats.{{ stage }}; const r = s.successes + s.permanent_failures; return r > 0 ? (s.permanent_failures / r) * 100 : 0; })()}%`"></div>
+                     :style="`width: ${(() => { const s = $store.citrascope.status?.pipeline_stats?.{{ stage }}; if (!s) return 0; const r = s.successes + s.permanent_failures; return r > 0 ? (s.permanent_failures / r) * 100 : 0; })()}%`"></div>
             </div>
             {% endif %}
             {{ task_list(stage) }}
@@ -55,8 +55,8 @@
         </template>
         <template x-if="$store.citrascope.status?.tasks_by_stage?.{{ stage_name }}?.length > 0">
             <div>
-                <template x-for="(task, index) in $store.citrascope.status.tasks_by_stage.{{ stage_name }}" :key="task.task_id">
-                    <div class="mb-2" :class="index < $store.citrascope.status.tasks_by_stage.{{ stage_name }}.length - 1 ? 'pb-2 border-bottom border-secondary' : ''">
+                <template x-for="(task, index) in ($store.citrascope.status?.tasks_by_stage?.{{ stage_name }} || [])" :key="task.task_id">
+                    <div class="mb-2" :class="index < ($store.citrascope.status?.tasks_by_stage?.{{ stage_name }}?.length || 0) - 1 ? 'pb-2 border-bottom border-secondary' : ''">
                         <div>
                             <span class="fw-semibold" x-text="task.target_name || task.task_id"></span>
                             <span class="text-muted small ms-2" x-text="'(' + Math.floor(task.elapsed) + 's)'"></span>
@@ -130,10 +130,29 @@
 
                 <span class="badge rounded-pill"
                       data-bs-toggle="tooltip" data-bs-theme="dark"
-                      :data-bs-title="$store.citrascope.status?.camera_connected
-                          ? ('Camera connected' + ($store.citrascope.status?.camera_temperature != null ? ' \u00b7 ' + $store.citrascope.status.camera_temperature.toFixed(1) + ' \u00b0C' : ''))
-                          : 'Camera disconnected'"
-                      :class="$store.citrascope.status?.camera_connected ? 'bg-success' : 'bg-danger'"
+                      :data-bs-title="(() => {
+                          let s = $store.citrascope.status;
+                          if (!s?.camera_connected) return 'Camera disconnected';
+                          let tip = 'Camera connected';
+                          if (s.camera_temperature != null) tip += ' \u00b7 ' + s.camera_temperature.toFixed(1) + ' \u00b0C';
+                          let cal = s.calibration_status;
+                          if (cal && cal.calibration_applicable) {
+                              if (cal.has_bias && cal.has_dark && cal.has_flat) tip += ' \u00b7 Calibrated';
+                              else if (cal.missing_summary) tip += ' \u00b7 Missing: ' + cal.missing_summary;
+                              else tip += ' \u00b7 Uncalibrated';
+                          }
+                          return tip;
+                      })()"
+                      :class="(() => {
+                          let s = $store.citrascope.status;
+                          if (!s?.camera_connected) return 'bg-danger';
+                          let cal = s.calibration_status;
+                          if (cal && cal.calibration_applicable) {
+                              if (cal.has_bias && cal.has_dark && cal.has_flat) return 'bg-success';
+                              return 'bg-warning text-dark';
+                          }
+                          return 'bg-success';
+                      })()"
                       x-text="$store.citrascope.status?.camera_connected && $store.citrascope.status?.camera_temperature != null
                           ? 'Camera ' + $store.citrascope.status.camera_temperature.toFixed(1) + '\u00b0C'
                           : 'Camera'"></span>
@@ -819,9 +838,9 @@
                                         <template x-if="$store.citrascope.status?.pipeline_stats?.processors?.[name]?.runs > 0">
                                             <div class="progress" style="height: 3px;">
                                                 <div class="progress-bar bg-success" role="progressbar"
-                                                     :style="`width: ${(() => { const p = $store.citrascope.status.pipeline_stats.processors[name]; return p.runs > 0 ? ((p.runs - p.failures) / p.runs) * 100 : 0; })()}%`"></div>
+                                                     :style="`width: ${(() => { const p = $store.citrascope.status?.pipeline_stats?.processors?.[name]; if (!p) return 0; return p.runs > 0 ? ((p.runs - p.failures) / p.runs) * 100 : 0; })()}%`"></div>
                                                 <div class="progress-bar bg-danger" role="progressbar"
-                                                     :style="`width: ${(() => { const p = $store.citrascope.status.pipeline_stats.processors[name]; return p.runs > 0 ? (p.failures / p.runs) * 100 : 0; })()}%`"></div>
+                                                     :style="`width: ${(() => { const p = $store.citrascope.status?.pipeline_stats?.processors?.[name]; if (!p) return 0; return p.runs > 0 ? (p.failures / p.runs) * 100 : 0; })()}%`"></div>
                                             </div>
                                         </template>
                                     </template>

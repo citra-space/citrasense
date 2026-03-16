@@ -66,6 +66,321 @@
                 {% include '_config_hardware.html' %}
 
 
+                <!-- Calibration Card (only shown for direct camera control) -->
+                <div class="col-12"
+                     x-data="{
+                         calCardExpanded: $persist(false).as('calibrationCard'),
+                         calStatus: null,
+                         calLoading: false,
+                         calPollTimer: null,
+                         calFrameType: 'bias',
+                         calExposure: 2.0,
+                         calFilterPosition: null,
+                         async loadCalStatus() {
+                             try {
+                                 const resp = await fetch('/api/calibration/status');
+                                 this.calStatus = await resp.json();
+                             } catch(e) { this.calStatus = null; }
+                         },
+                         startPolling() {
+                             if (this.calPollTimer) return;
+                             this.calPollTimer = setInterval(async () => {
+                                 await this.loadCalStatus();
+                                 if (!this.calStatus?.capture_running && !this.calStatus?.capture_requested) {
+                                     this.stopPolling();
+                                 }
+                             }, 2000);
+                         },
+                         stopPolling() {
+                             if (this.calPollTimer) { clearInterval(this.calPollTimer); this.calPollTimer = null; }
+                         },
+                         async captureFrames() {
+                             try {
+                                 let body = {
+                                     frame_type: this.calFrameType,
+                                     count: this.calStatus?.frame_count_setting || 30,
+                                     gain: this.calStatus?.current_gain,
+                                     binning: this.calStatus?.current_binning,
+                                 };
+                                 if (this.calFrameType === 'dark' || this.calFrameType === 'flat') {
+                                     body.exposure_time = this.calExposure;
+                                 }
+                                 if (this.calFrameType === 'flat') {
+                                     body.filter_position = this.calFilterPosition;
+                                 }
+                                 await fetch('/api/calibration/capture', {
+                                     method: 'POST',
+                                     headers: {'Content-Type': 'application/json'},
+                                     body: JSON.stringify(body)
+                                 });
+                                 await this.loadCalStatus();
+                                 this.startPolling();
+                             } catch(e) { console.error(e); }
+                         },
+                         async cancelCapture() {
+                             await fetch('/api/calibration/cancel', { method: 'POST' });
+                         },
+                         async captureSuite(suiteName) {
+                             try {
+                                 const resp = await fetch('/api/calibration/capture-suite', {
+                                     method: 'POST',
+                                     headers: {'Content-Type': 'application/json'},
+                                     body: JSON.stringify({ suite: suiteName })
+                                 });
+                                 const data = await resp.json();
+                                 if (!resp.ok) {
+                                     alert(data.error || 'Failed to start suite');
+                                     return;
+                                 }
+                                 await this.loadCalStatus();
+                                 this.startPolling();
+                             } catch(e) { console.error(e); }
+                         },
+                         async deleteMaster(type, entry) {
+                             if (!confirm('Delete this master frame?')) return;
+                             await fetch('/api/calibration/master', {
+                                 method: 'DELETE',
+                                 headers: {'Content-Type': 'application/json'},
+                                 body: JSON.stringify({
+                                     frame_type: type,
+                                     camera_id: this.calStatus?.camera_id,
+                                     gain: entry.gain,
+                                     binning: entry.binning,
+                                     exposure_time: entry.exposure_time || 0,
+                                     temperature: entry.temperature,
+                                     filter_name: entry.filter || '',
+                                     read_mode: entry.read_mode || ''
+                                 })
+                             });
+                             this.loadCalStatus();
+                         }
+                     }"
+                     x-init="await loadCalStatus(); if (calStatus?.capture_running || calStatus?.capture_requested) startPolling(); $watch('calCardExpanded', v => { if(v) loadCalStatus(); })"
+                     x-show="$store.citrascope.status?.supports_direct_camera_control && calStatus?.available">
+                    <div class="card bg-dark text-light border-secondary">
+                        <div class="card-header d-flex justify-content-between align-items-center" style="cursor: pointer;" @click="calCardExpanded = !calCardExpanded">
+                            <div class="d-flex align-items-center gap-2">
+                                <i class="bi bi-grid-3x3"></i>
+                                <h5 class="mb-0">Calibration</h5>
+                                <small class="text-muted" x-show="!calCardExpanded"
+                                       x-text="calStatus?.camera_id ? calStatus.camera_id : ''"></small>
+                            </div>
+                            <i class="bi" :class="calCardExpanded ? 'bi-chevron-up' : 'bi-chevron-down'"></i>
+                        </div>
+                        <div class="card-body" x-show="calCardExpanded">
+                            <!-- Current camera info -->
+                            <div class="mb-3">
+                                <small class="text-muted">
+                                    Camera: <span x-text="calStatus?.model"></span>
+                                    (<span x-text="calStatus?.camera_id"></span>)
+                                    · Gain <span x-text="calStatus?.current_gain"></span>
+                                    · Bin <span x-text="calStatus?.current_binning"></span>x<span x-text="calStatus?.current_binning"></span>
+                                    · <span x-text="calStatus?.read_mode || 'default'"></span>
+                                    <template x-if="calStatus?.current_temperature != null">
+                                        <span> · <span x-text="calStatus.current_temperature.toFixed(1)"></span>°C
+                                            <template x-if="calStatus?.target_temperature != null">
+                                                <span class="text-muted">(target <span x-text="calStatus.target_temperature.toFixed(0)"></span>°C)</span>
+                                            </template>
+                                        </span>
+                                    </template>
+                                </small>
+                                <br>
+                                <small class="text-muted">
+                                    Masters: <span class="text-secondary" x-text="calStatus?.masters_dir || ''"></span>
+                                </small>
+                            </div>
+
+                            <!-- Calibration readiness for current settings (from WebSocket status) -->
+                            <div class="mb-3" x-show="$store.citrascope.status?.calibration_status?.calibration_applicable">
+                                <template x-if="$store.citrascope.status?.calibration_status?.has_bias && $store.citrascope.status?.calibration_status?.has_dark && $store.citrascope.status?.calibration_status?.has_flat">
+                                    <div class="alert alert-success py-2 mb-0 small">
+                                        <i class="bi bi-check-circle-fill me-1"></i>
+                                        All calibration masters available for current settings.
+                                    </div>
+                                </template>
+                                <template x-if="$store.citrascope.status?.calibration_status && !($store.citrascope.status.calibration_status.has_bias && $store.citrascope.status.calibration_status.has_dark && $store.citrascope.status.calibration_status.has_flat)">
+                                    <div class="alert alert-warning py-2 mb-0 small">
+                                        <i class="bi bi-exclamation-triangle-fill me-1"></i>
+                                        <strong>Missing for current settings:</strong>
+                                        <ul class="mb-0 ps-3 mt-1">
+                                            <template x-for="m in ($store.citrascope.status?.calibration_status?.missing || [])" :key="m">
+                                                <li x-text="m"></li>
+                                            </template>
+                                        </ul>
+                                    </div>
+                                </template>
+                            </div>
+
+                            <!-- Master frame status -->
+                            <h6 class="text-muted mb-2">Master Frames</h6>
+                            <div class="table-responsive mb-3">
+                                <table class="table table-dark table-sm table-bordered mb-0">
+                                    <thead>
+                                        <tr>
+                                            <th>Type</th>
+                                            <th>Mode</th>
+                                            <th>Gain</th>
+                                            <th>Bin</th>
+                                            <th>Exp</th>
+                                            <th>Temp</th>
+                                            <th>Filter</th>
+                                            <th>Frames</th>
+                                            <th>Date</th>
+                                            <th></th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        <template x-for="b in (calStatus?.library?.bias || [])" :key="b.filename">
+                                            <tr>
+                                                <td>Bias</td>
+                                                <td><small x-text="b.read_mode || '—'"></small></td>
+                                                <td x-text="b.gain"></td>
+                                                <td x-text="b.binning + 'x' + b.binning"></td>
+                                                <td class="text-muted">&mdash;</td>
+                                                <td class="text-muted">&mdash;</td>
+                                                <td class="text-muted">&mdash;</td>
+                                                <td x-text="b.ncombine"></td>
+                                                <td><small x-text="b.date ? new Date(b.date).toLocaleDateString() : ''"></small></td>
+                                                <td><button type="button" class="btn btn-outline-danger btn-sm py-0 px-1" @click="deleteMaster('bias', b)"><i class="bi bi-trash"></i></button></td>
+                                            </tr>
+                                        </template>
+                                        <template x-for="d in (calStatus?.library?.darks || [])" :key="d.filename">
+                                            <tr>
+                                                <td>Dark</td>
+                                                <td><small x-text="d.read_mode || '—'"></small></td>
+                                                <td x-text="d.gain"></td>
+                                                <td x-text="d.binning + 'x' + d.binning"></td>
+                                                <td x-text="d.exposure_time + 's'"></td>
+                                                <td x-text="d.temperature != null ? d.temperature.toFixed(1) + '°C' : '?'"></td>
+                                                <td class="text-muted">&mdash;</td>
+                                                <td x-text="d.ncombine"></td>
+                                                <td><small x-text="d.date ? new Date(d.date).toLocaleDateString() : ''"></small></td>
+                                                <td><button type="button" class="btn btn-outline-danger btn-sm py-0 px-1" @click="deleteMaster('dark', d)"><i class="bi bi-trash"></i></button></td>
+                                            </tr>
+                                        </template>
+                                        <template x-for="f in (calStatus?.library?.flats || [])" :key="f.filename">
+                                            <tr>
+                                                <td>Flat</td>
+                                                <td><small x-text="f.read_mode || '—'"></small></td>
+                                                <td x-text="f.gain"></td>
+                                                <td x-text="f.binning + 'x' + f.binning"></td>
+                                                <td class="text-muted">&mdash;</td>
+                                                <td class="text-muted">&mdash;</td>
+                                                <td x-text="f.filter || 'None'"></td>
+                                                <td x-text="f.ncombine"></td>
+                                                <td><small x-text="f.date ? new Date(f.date).toLocaleDateString() : ''"></small></td>
+                                                <td><button type="button" class="btn btn-outline-danger btn-sm py-0 px-1" @click="deleteMaster('flat', f)"><i class="bi bi-trash"></i></button></td>
+                                            </tr>
+                                        </template>
+                                        <tr x-show="!(calStatus?.library?.bias?.length || calStatus?.library?.darks?.length || calStatus?.library?.flats?.length)">
+                                            <td colspan="10" class="text-muted text-center">No master frames yet</td>
+                                        </tr>
+                                    </tbody>
+                                </table>
+                            </div>
+
+                            <!-- Capture controls -->
+                            <h6 class="text-muted mb-2">Capture</h6>
+
+                            <!-- Progress bar during capture (queued or running) -->
+                            <template x-if="calStatus?.capture_running || calStatus?.capture_requested">
+                                <div class="mb-3">
+                                    <template x-if="calStatus.capture_progress?.batch_total > 0">
+                                        <div class="d-flex justify-content-between mb-1">
+                                            <small class="text-info fw-bold" x-text="'Suite ' + (calStatus.capture_progress?.batch_current || 0) + '/' + calStatus.capture_progress.batch_total"></small>
+                                        </div>
+                                    </template>
+                                    <div class="d-flex justify-content-between mb-1">
+                                        <small x-text="calStatus.capture_progress?.status || (calStatus.capture_requested && !calStatus.capture_running ? 'Queued — waiting for imaging to finish...' : 'Capturing...')"></small>
+                                        <small x-show="calStatus.capture_progress?.total_frames" x-text="(calStatus.capture_progress?.current_frame || 0) + '/' + (calStatus.capture_progress?.total_frames || '?')"></small>
+                                    </div>
+                                    <div class="progress" style="height: 6px;">
+                                        <div class="progress-bar bg-info"
+                                             :class="{ 'progress-bar-striped progress-bar-animated': calStatus.capture_requested && !calStatus.capture_running }"
+                                             :style="'width: ' + (calStatus.capture_running ? ((calStatus.capture_progress?.current_frame || 0) / (calStatus.capture_progress?.total_frames || 1) * 100) : 100) + '%'"></div>
+                                    </div>
+                                    <template x-if="calStatus.capture_progress?.batch_total > 0">
+                                        <div class="progress mt-1" style="height: 3px;">
+                                            <div class="progress-bar bg-secondary"
+                                                 :style="'width: ' + ((calStatus.capture_progress?.batch_current || 0) / calStatus.capture_progress.batch_total * 100) + '%'"></div>
+                                        </div>
+                                    </template>
+                                    <button type="button" class="btn btn-outline-warning btn-sm mt-2" @click="cancelCapture()">Cancel</button>
+                                </div>
+                            </template>
+
+                            <template x-if="!calStatus?.capture_running && !calStatus?.capture_requested">
+                                <div>
+                                    <div class="row g-2 align-items-end mb-2">
+                                        <div class="col-auto">
+                                            <label class="form-label small mb-0">Frame type</label>
+                                            <select class="form-select form-select-sm" x-model="calFrameType">
+                                                <option value="bias">Bias</option>
+                                                <option value="dark">Dark</option>
+                                                <option value="flat">Flat</option>
+                                            </select>
+                                        </div>
+                                        <div class="col-auto" x-show="calFrameType !== 'bias'">
+                                            <label class="form-label small mb-0">Exposure (s)</label>
+                                            <input type="number" class="form-control form-control-sm" style="width: 90px;"
+                                                   x-model.number="calExposure" min="0.01" max="300" step="0.1"
+                                                   :disabled="calFrameType === 'bias'">
+                                        </div>
+                                        <div class="col-auto" x-show="calFrameType === 'flat'">
+                                            <label class="form-label small mb-0">Filter</label>
+                                            <select class="form-select form-select-sm" style="width: 140px;"
+                                                    x-model.number="calFilterPosition"
+                                                    :disabled="calFrameType !== 'flat'">
+                                                <option :value="null">Select filter…</option>
+                                                <template x-for="f in (calStatus?.filters || [])" :key="f.position">
+                                                    <option :value="f.position" x-text="f.name"></option>
+                                                </template>
+                                            </select>
+                                        </div>
+                                        <div class="col-auto">
+                                            <button type="button" class="btn btn-primary btn-sm" @click="captureFrames()" :disabled="calStatus?.capture_running || calStatus?.capture_requested">
+                                                Capture
+                                            </button>
+                                        </div>
+                                    </div>
+                                    <small class="text-muted" x-show="calFrameType === 'bias'">
+                                        Bias frames (0s exposure, shutter closed). Captures for all binning modes at current gain.
+                                    </small>
+                                    <small class="text-muted" x-show="calFrameType === 'dark'">
+                                        Dark frames (shutter closed).
+                                        <span x-show="!calStatus?.has_mechanical_shutter" class="text-warning">Cap your telescope before capturing.</span>
+                                    </small>
+                                    <small class="text-muted" x-show="calFrameType === 'flat'">
+                                        Flat frames (shutter open). Point at a uniform light source. Target ~50% saturation.
+                                    </small>
+
+                                    <!-- Suite buttons -->
+                                    <hr class="border-secondary my-3">
+                                    <h6 class="text-muted mb-2">One-Click Suites</h6>
+                                    <div class="d-flex gap-2 flex-wrap">
+                                        <button type="button" class="btn btn-outline-info btn-sm"
+                                                @click="captureSuite('bias_and_dark')"
+                                                :title="'Bias + 30s reference dark for binnings 1x1 & 2x2 at gain ' + (calStatus?.current_gain ?? 0) + '. Dark is scaled to any exposure at runtime.'">
+                                            <i class="bi bi-collection me-1"></i>Calibrate Bias &amp; Dark
+                                        </button>
+                                        <button type="button" class="btn btn-outline-info btn-sm"
+                                                @click="captureSuite('all_flats')"
+                                                :disabled="!calStatus?.filters?.length"
+                                                :title="calStatus?.filters?.length ? 'Flat for each filter at current binning' : 'No filters configured'">
+                                            <i class="bi bi-sun me-1"></i>Calibrate All Flats
+                                        </button>
+                                    </div>
+                                    <small class="text-muted d-block mt-1">
+                                        <strong>Bias &amp; Dark:</strong> Bias + 30s reference dark for binnings 1x1 &amp; 2x2 at current gain. The dark is linearly scaled to match any science exposure at runtime.
+                                        <strong>All Flats:</strong> Each enabled filter at current binning.
+                                    </small>
+                                </div>
+                            </template>
+                        </div>
+                    </div>
+                </div>
+
+
                 <!-- Observation Settings Card -->
                 <div class="col-12" x-data="{ observationCardExpanded: $persist(true).as('observationCard') }">
                     <div class="card bg-dark text-light border-secondary">
@@ -209,13 +524,13 @@
                                                              }
                                                          })">
                                                         <div class="progress-bar bg-success" role="progressbar"
-                                                             :style="`width: ${(($store.citrascope.status.pipeline_stats.processors[processor.name].runs - $store.citrascope.status.pipeline_stats.processors[processor.name].failures) / $store.citrascope.status.pipeline_stats.processors[processor.name].runs) * 100}%`"></div>
+                                                             :style="`width: ${(() => { const s = $store.citrascope.status?.pipeline_stats?.processors?.[processor.name]; return s ? ((s.runs - s.failures) / s.runs) * 100 : 0; })()}%`"></div>
                                                         <div class="progress-bar bg-danger" role="progressbar"
-                                                             :style="`width: ${($store.citrascope.status.pipeline_stats.processors[processor.name].failures / $store.citrascope.status.pipeline_stats.processors[processor.name].runs) * 100}%`"></div>
+                                                             :style="`width: ${(() => { const s = $store.citrascope.status?.pipeline_stats?.processors?.[processor.name]; return s ? (s.failures / s.runs) * 100 : 0; })()}%`"></div>
                                                     </div>
                                                     <small class="text-muted d-block mt-1"
-                                                           x-show="$store.citrascope.status.pipeline_stats.processors[processor.name].last_failure_reason"
-                                                           x-text="'Last failure: ' + $store.citrascope.status.pipeline_stats.processors[processor.name].last_failure_reason">
+                                                           x-show="$store.citrascope.status?.pipeline_stats?.processors?.[processor.name]?.last_failure_reason"
+                                                           x-text="'Last failure: ' + $store.citrascope.status?.pipeline_stats?.processors?.[processor.name]?.last_failure_reason">
                                                     </small>
                                                 </div>
                                             </div>

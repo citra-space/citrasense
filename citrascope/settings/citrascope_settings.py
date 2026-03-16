@@ -102,6 +102,9 @@ class CitraScopeSettings(BaseModel):
     # MSI / elset cache
     elset_refresh_interval_hours: float = 6
 
+    # Calibration
+    calibration_frame_count: int = 30
+
     # ── Non-persisted public attrs (excluded from model_dump) ─────────
     web_port: int = Field(default=DEFAULT_WEB_PORT, exclude=True)
     adapter_settings: dict[str, Any] = Field(default_factory=dict, exclude=True)
@@ -187,6 +190,20 @@ class CitraScopeSettings(BaseModel):
         if v < 0.01 or v > 300:
             clamped = max(0.01, min(300.0, v))
             CITRASCOPE_LOGGER.warning("exposure_seconds %.3f out of range [0.01, 300]. Clamped to %.3f.", v, clamped)
+            return clamped
+        return v
+
+    @field_validator("calibration_frame_count", mode="before")
+    @classmethod
+    def _validate_calibration_frame_count(cls, v: Any) -> int:
+        try:
+            v = int(v)
+        except (TypeError, ValueError):
+            CITRASCOPE_LOGGER.warning("Invalid calibration_frame_count (%r). Falling back to 30.", v)
+            return 30
+        if v < 5 or v > 100:
+            clamped = max(5, min(100, v))
+            CITRASCOPE_LOGGER.warning("calibration_frame_count %d out of range [5, 100]. Clamped to %d.", v, clamped)
             return clamped
         return v
 

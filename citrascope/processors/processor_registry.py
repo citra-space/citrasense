@@ -11,6 +11,7 @@ from astropy.io import fits
 from citrascope.processors.abstract_processor import AbstractImageProcessor
 from citrascope.processors.artifact_writer import dump_context_artifacts, dump_processing_summary
 from citrascope.processors.builtin.annotated_image_processor import AnnotatedImageProcessor
+from citrascope.processors.builtin.calibration_processor import CalibrationProcessor
 from citrascope.processors.builtin.photometry_processor import PhotometryProcessor
 from citrascope.processors.builtin.plate_solver_processor import PlateSolverProcessor
 from citrascope.processors.builtin.satellite_matcher_processor import SatelliteMatcherProcessor
@@ -33,11 +34,12 @@ class ProcessorRegistry:
 
         # Hardcode processor list (simple, explicit)
         self.processors: list[AbstractImageProcessor] = [
-            PlateSolverProcessor(),  # MSI step 1: 30-40s
-            SourceExtractorProcessor(),  # MSI step 2: 2-5s (requires plate solver)
-            PhotometryProcessor(),  # MSI step 3: 2-5s (requires source extractor)
-            SatelliteMatcherProcessor(),  # MSI step 4: 1-2s (requires photometry)
-            AnnotatedImageProcessor(),  # MSI step 5: <1s (renders visual overlay)
+            CalibrationProcessor(),  # Step 0: apply bias/dark/flat calibration
+            PlateSolverProcessor(),  # Step 1: 30-40s
+            SourceExtractorProcessor(),  # Step 2: 2-5s (requires plate solver)
+            PhotometryProcessor(),  # Step 3: 2-5s (requires source extractor)
+            SatelliteMatcherProcessor(),  # Step 4: 1-2s (requires photometry)
+            AnnotatedImageProcessor(),  # Step 5: <1s (renders visual overlay)
         ]
 
         # Per-processor lifetime stats — lock gives atomic multi-field snapshots in get_processor_stats().

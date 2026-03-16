@@ -146,7 +146,7 @@ class PlateSolverProcessor(AbstractImageProcessor):
     Plate solving processor using Pixelemon (Tetra3).
 
     Determines exact telescope pointing and embeds WCS (World Coordinate System)
-    into a .new FITS file. Updates context.working_image_path to point to that file.
+    into a *_wcs.fits file. Updates context.working_image_path to point to that file.
 
     Typical processing time: a few seconds (Tetra3).
     """
@@ -191,11 +191,11 @@ class PlateSolverProcessor(AbstractImageProcessor):
         return None
 
     def _solve_with_pixelemon(self, image_path: Path, context: ProcessingContext | None = None) -> Path:
-        """Run Pixelemon (Tetra3) plate solve and write WCS to a .new file.
+        """Run Pixelemon (Tetra3) plate solve and write WCS to a _wcs.fits file.
 
         Pixelemon internally fits a full 5th-degree SIP WCS from matched star centroids
         (equivalent to astrometry.net quality). We write that fitted WCS directly to the
-        .new file via image._wcs.to_header(relax=True), which includes the CD rotation
+        _wcs.fits file via image._wcs.to_header(relax=True), which includes the CD rotation
         matrix and SIP distortion coefficients.
 
         Args:
@@ -203,7 +203,7 @@ class PlateSolverProcessor(AbstractImageProcessor):
             context: Optional processing context (unused; for API consistency)
 
         Returns:
-            Path to .new file with full SIP WCS in header
+            Path to _wcs.fits file with full SIP WCS in header
 
         Raises:
             RuntimeError: If plate solving fails or solution is None
@@ -252,7 +252,7 @@ class PlateSolverProcessor(AbstractImageProcessor):
             if image._wcs is None:
                 raise RuntimeError("Pixelemon _wcs not available after successful plate solve")
             new_header.update(image._wcs.to_header(relax=True))
-            new_file = image_path.with_suffix(".new")
+            new_file = image_path.with_stem(image_path.stem + "_wcs").with_suffix(".fits")
             fits.writeto(new_file, primary.data, new_header, overwrite=True)
 
         return new_file

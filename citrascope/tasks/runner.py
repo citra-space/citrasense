@@ -8,6 +8,7 @@ from dateutil import parser as dtparser
 from citrascope.hardware.abstract_astro_hardware_adapter import AbstractAstroHardwareAdapter
 from citrascope.tasks.alignment_manager import AlignmentManager
 from citrascope.tasks.autofocus_manager import AutofocusManager
+from citrascope.tasks.calibration_manager import CalibrationManager
 from citrascope.tasks.homing_manager import HomingManager
 from citrascope.tasks.scope.static_telescope_task import StaticTelescopeTask
 from citrascope.tasks.scope.tracking_telescope_task import TrackingTelescopeTask
@@ -102,6 +103,7 @@ class TaskManager:
             self.hardware_adapter,
             imaging_queue=self.imaging_queue,
         )
+        self.calibration_manager: CalibrationManager | None = None
 
         # Lifetime task counters — lock gives atomic multi-field snapshots in get_task_stats().
         self._task_stats_lock = threading.Lock()
@@ -330,9 +332,14 @@ class TaskManager:
             self.homing_manager.check_and_execute()
             self.alignment_manager.check_and_execute()
             self.autofocus_manager.check_and_execute()
+            if self.calibration_manager:
+                self.calibration_manager.check_and_execute()
 
-            # Defer tasks while homing is active — mount is physically moving.
-            if self.homing_manager.is_running() or self.homing_manager.is_requested():
+            # Defer tasks while homing or calibration is active.
+            cal_busy = self.calibration_manager and (
+                self.calibration_manager.is_running() or self.calibration_manager.is_requested()
+            )
+            if self.homing_manager.is_running() or self.homing_manager.is_requested() or cal_busy:
                 self._stop_event.wait(1)
                 continue
 

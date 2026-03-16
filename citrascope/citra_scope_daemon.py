@@ -7,6 +7,10 @@ import time
 from importlib.metadata import PackageNotFoundError
 from importlib.metadata import version as pkg_version
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from citrascope.calibration.calibration_library import CalibrationLibrary
 
 from citrascope.api.citra_api_client import AbstractCitraApiClient, CitraApiClient
 from citrascope.api.dummy_api_client import DummyApiClient
@@ -59,6 +63,7 @@ class CitraScopeDaemon:
         self.safety_monitor = None
         self.configuration_error: str | None = None
         self.latest_annotated_image_path: str | None = None
+        self.calibration_library: CalibrationLibrary | None = None
         self._stop_requested = False
         self._shutdown_done = False
 
@@ -375,6 +380,25 @@ class CitraScopeDaemon:
                 CITRASCOPE_LOGGER.info(f"Restoring {len(old_uploading_tasks)} uploading task(s)")
                 self.task_manager.uploading_tasks.update(old_uploading_tasks)
 
+            # Initialize CalibrationManager if direct camera control is available
+            if self.hardware_adapter.supports_direct_camera_control():
+                from citrascope.calibration.calibration_library import CalibrationLibrary
+                from citrascope.processors.builtin.calibration_processor import CalibrationProcessor
+                from citrascope.tasks.calibration_manager import CalibrationManager
+
+                self.calibration_library = CalibrationLibrary()
+                self.task_manager.calibration_manager = CalibrationManager(
+                    CITRASCOPE_LOGGER,
+                    self.hardware_adapter,
+                    self.calibration_library,
+                    imaging_queue=self.task_manager.imaging_queue,
+                )
+                # Inject the library into the CalibrationProcessor
+                for proc in self.processor_registry.processors:
+                    if isinstance(proc, CalibrationProcessor):
+                        proc.library = self.calibration_library
+                        break
+
             self.task_manager.start()
 
             if self.settings and self.settings.align_on_startup:
@@ -550,6 +574,32 @@ class CitraScopeDaemon:
         if not self.task_manager:
             return False
         return self.task_manager.autofocus_manager.is_requested()
+
+    def trigger_calibration(self, params: dict) -> tuple[bool, str | None]:
+        """Request calibration capture at next safe point between tasks."""
+        if not self.task_manager or not self.task_manager.calibration_manager:
+            return False, "Calibration not available (no direct camera control)"
+        ok = self.task_manager.calibration_manager.request(params)
+        if not ok:
+            return False, "Calibration already in progress"
+        return True, None
+
+    def trigger_calibration_suite(self, jobs: list[dict]) -> tuple[bool, str | None]:
+        """Request a batch calibration suite at next safe point between tasks."""
+        if not self.task_manager or not self.task_manager.calibration_manager:
+            return False, "Calibration not available (no direct camera control)"
+        if not jobs:
+            return False, "No calibration jobs specified"
+        ok = self.task_manager.calibration_manager.request_suite(jobs)
+        if not ok:
+            return False, "Calibration already in progress"
+        return True, None
+
+    def cancel_calibration(self) -> bool:
+        """Cancel calibration whether queued or actively running."""
+        if not self.task_manager or not self.task_manager.calibration_manager:
+            return False
+        return self.task_manager.calibration_manager.cancel()
 
     def run(self):
         assert self.web_server is not None
