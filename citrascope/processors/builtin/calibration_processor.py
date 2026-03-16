@@ -81,7 +81,6 @@ class CalibrationProcessor(AbstractImageProcessor):
                 camera_id,
                 gain,
                 binning,
-                exposure,
                 float(temperature),  # type: ignore[arg-type]
                 read_mode,
             )
@@ -95,7 +94,7 @@ class CalibrationProcessor(AbstractImageProcessor):
             missing.append(f"bias (gain {gain}, bin {binning})")
         if not dark_path:
             temp_str = f"{temperature:.1f}C" if temperature is not None else "unknown temp"
-            missing.append(f"dark ({exposure}s at {temp_str}, gain {gain}, bin {binning})")
+            missing.append(f"dark (at {temp_str}, gain {gain}, bin {binning})")
         if filter_name and not flat_path:
             missing.append(f"flat ({filter_name}, gain {gain}, bin {binning})")
 
@@ -112,12 +111,36 @@ class CalibrationProcessor(AbstractImageProcessor):
         # Apply calibration
         calibrated = raw_data.astype(np.float32)
 
-        if dark_path:
+        if dark_path and bias_path:
+            with fits.open(bias_path) as hdul:
+                bias_data = hdul[0].data.astype(np.float32)  # type: ignore[index]
+            with fits.open(dark_path) as hdul:
+                dark_hdr = hdul[0].header  # type: ignore[index]
+                dark_data = hdul[0].data.astype(np.float32)  # type: ignore[index]
+            dark_exposure = float(dark_hdr.get("EXPTIME", exposure))
+            if dark_exposure > 0 and exposure > 0:
+                scale = exposure / dark_exposure
+                dark_thermal = dark_data - bias_data
+                scaled_dark = bias_data + dark_thermal * scale
+                calibrated = calibrated - scaled_dark
+                if logger:
+                    logger.info(
+                        "Applied dark scaling: %.1fs ref → %.1fs science (scale %.3f) from %s",
+                        dark_exposure,
+                        exposure,
+                        scale,
+                        dark_path.name,
+                    )
+            else:
+                calibrated = calibrated - dark_data
+                if logger:
+                    logger.info("Applied master dark (unscaled): %s", dark_path.name)
+        elif dark_path:
             with fits.open(dark_path) as hdul:
                 dark_data = hdul[0].data.astype(np.float32)  # type: ignore[index]
             calibrated = calibrated - dark_data
             if logger:
-                logger.info("Applied master dark: %s", dark_path.name)
+                logger.info("Applied master dark (no bias for scaling): %s", dark_path.name)
         elif bias_path:
             with fits.open(bias_path) as hdul:
                 bias_data = hdul[0].data.astype(np.float32)  # type: ignore[index]

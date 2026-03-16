@@ -66,7 +66,7 @@ class TestDarkMaster:
             temperature=-10.0,
             ncombine=20,
         )
-        found = library.get_master_dark("SN1234", gain=0, binning=1, exposure_time=2.0, temperature=-10.0)
+        found = library.get_master_dark("SN1234", gain=0, binning=1, temperature=-10.0)
         assert found is not None
 
     def test_within_temp_tolerance(self, library: CalibrationLibrary):
@@ -80,7 +80,7 @@ class TestDarkMaster:
             exposure_time=2.0,
             temperature=-10.0,
         )
-        found = library.get_master_dark("SN1234", gain=0, binning=1, exposure_time=2.0, temperature=-10.5)
+        found = library.get_master_dark("SN1234", gain=0, binning=1, temperature=-10.5)
         assert found is not None
 
     def test_outside_temp_tolerance(self, library: CalibrationLibrary):
@@ -94,10 +94,10 @@ class TestDarkMaster:
             exposure_time=2.0,
             temperature=-10.0,
         )
-        found = library.get_master_dark("SN1234", gain=0, binning=1, exposure_time=2.0, temperature=-12.0)
+        found = library.get_master_dark("SN1234", gain=0, binning=1, temperature=-12.0)
         assert found is None
 
-    def test_picks_closest_dark(self, library: CalibrationLibrary):
+    def test_picks_closest_temp(self, library: CalibrationLibrary):
         data = np.ones((50, 50), dtype=np.float32)
         library.save_master(
             "dark",
@@ -118,10 +118,35 @@ class TestDarkMaster:
             temperature=-10.3,
         )
         # Should pick -10.3 when science is at -10.2
-        found = library.get_master_dark("SN1234", gain=0, binning=1, exposure_time=2.0, temperature=-10.2)
+        found = library.get_master_dark("SN1234", gain=0, binning=1, temperature=-10.2)
         assert found is not None
         with fits.open(found) as hdul:
             assert float(hdul[0].header["CCD-TEMP"]) == pytest.approx(-10.3)  # type: ignore[index]
+
+    def test_prefers_longest_exposure(self, library: CalibrationLibrary):
+        data = np.ones((50, 50), dtype=np.float32)
+        library.save_master(
+            "dark",
+            "SN1234",
+            data,
+            gain=0,
+            binning=1,
+            exposure_time=2.0,
+            temperature=-10.0,
+        )
+        library.save_master(
+            "dark",
+            "SN1234",
+            data,
+            gain=0,
+            binning=1,
+            exposure_time=30.0,
+            temperature=-10.0,
+        )
+        found = library.get_master_dark("SN1234", gain=0, binning=1, temperature=-10.0)
+        assert found is not None
+        with fits.open(found) as hdul:
+            assert float(hdul[0].header["EXPTIME"]) == pytest.approx(30.0)  # type: ignore[index]
 
 
 class TestFlatMaster:

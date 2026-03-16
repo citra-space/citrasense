@@ -360,7 +360,7 @@
                                     <div class="d-flex gap-2 flex-wrap">
                                         <button type="button" class="btn btn-outline-info btn-sm"
                                                 @click="captureSuite('bias_and_dark')"
-                                                :title="'Bias + dark for binnings 1x1 & 2x2 at gain ' + (calStatus?.current_gain ?? 0) + ', ' + ($store.citrascope.config.exposure_seconds || '?') + 's darks'">
+                                                :title="'Bias + 30s reference dark for binnings 1x1 & 2x2 at gain ' + (calStatus?.current_gain ?? 0) + '. Dark is scaled to any exposure at runtime.'">
                                             <i class="bi bi-collection me-1"></i>Calibrate Bias &amp; Dark
                                         </button>
                                         <button type="button" class="btn btn-outline-info btn-sm"
@@ -371,7 +371,7 @@
                                         </button>
                                     </div>
                                     <small class="text-muted d-block mt-1">
-                                        <strong>Bias &amp; Dark:</strong> All binnings (1x1, 2x2) at current gain and exposure setting.
+                                        <strong>Bias &amp; Dark:</strong> Bias + 30s reference dark for binnings 1x1 &amp; 2x2 at current gain. The dark is linearly scaled to match any science exposure at runtime.
                                         <strong>All Flats:</strong> Each enabled filter at current binning.
                                     </small>
                                 </div>

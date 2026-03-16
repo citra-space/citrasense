@@ -1007,8 +1007,7 @@ class CitraScopeWebApp:
                 frame_count = self.daemon.settings.calibration_frame_count if self.daemon.settings else 30
 
                 if suite_name == "bias_and_dark":
-                    exp = self.daemon.settings.exposure_seconds if self.daemon.settings else 2.0
-                    jobs = bias_and_dark_suite(profile, exp, frame_count)
+                    jobs = bias_and_dark_suite(profile, frame_count)
                 elif suite_name == "all_flats":
                     filters: list[dict[str, Any]] = []
                     if hw.supports_filter_management():
@@ -1483,8 +1482,6 @@ class CitraScopeWebApp:
         temperature = profile.current_temperature
         read_mode = profile.read_mode
 
-        settings = self.daemon.settings
-        exposure = settings.exposure_seconds if settings else 2.0
         filter_name = ""
         filter_pos = hw.get_filter_position() if hasattr(hw, "get_filter_position") else None
         if filter_pos is not None and hasattr(hw, "filter_map"):
@@ -1493,7 +1490,7 @@ class CitraScopeWebApp:
 
         has_bias = lib.get_master_bias(cam_id, gain, binning, read_mode) is not None
         has_dark = (
-            lib.get_master_dark(cam_id, gain, binning, exposure, temperature or 0.0, read_mode) is not None
+            lib.get_master_dark(cam_id, gain, binning, temperature or 0.0, read_mode) is not None
             if temperature is not None
             else False
         )
@@ -1505,10 +1502,10 @@ class CitraScopeWebApp:
         if not has_bias:
             missing.append(f"bias (gain {gain}, bin {binning})")
         if not has_dark:
-            temp_str = f"{temperature:.1f}C" if temperature is not None else "unknown"
-            missing.append(f"dark ({exposure}s at {temp_str}, gain {gain}, bin {binning})")
+            temp_str = f"{temperature:.1f}°C" if temperature is not None else "unknown"
+            missing.append(f"dark (at {temp_str})")
         if filter_name and not has_flat:
-            missing.append(f"flat ({filter_name}, gain {gain}, bin {binning})")
+            missing.append(f"flat ({filter_name})")
 
         # CalibrationManager state
         tm = self.daemon.task_manager

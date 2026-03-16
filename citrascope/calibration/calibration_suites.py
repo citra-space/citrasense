@@ -13,10 +13,17 @@ if TYPE_CHECKING:
 
 SUITE_MAX_BINNING = 2
 
+DARK_REFERENCE_EXPOSURE_S = 30.0
+"""Long reference dark used for dark scaling.
+
+One 30 s dark per binning gives high SNR on the thermal signal.
+At runtime the calibration processor linearly scales it to match
+the science frame's actual exposure.
+"""
+
 
 def bias_and_dark_suite(
     profile: CalibrationProfile,
-    exposure_seconds: float,
     frame_count: int,
 ) -> list[dict[str, Any]]:
     """Generate ordered job list: all biases first, then all darks.
@@ -24,6 +31,10 @@ def bias_and_dark_suite(
     Biases are instant (0 s, shutter closed) so they run first without
     waiting for temperature.  Darks follow, sharing a single temp-wait
     gate in CalibrationManager.
+
+    Darks are captured at :data:`DARK_REFERENCE_EXPOSURE_S` (30 s) so
+    a single master can be linearly scaled to any science exposure at
+    runtime — no need to re-calibrate when changing exposure settings.
 
     Binning is limited to <= SUITE_MAX_BINNING (1x1, 2x2) since higher
     binnings are rarely used for satellite photometry.
@@ -41,7 +52,7 @@ def bias_and_dark_suite(
                 "count": frame_count,
                 "gain": gain,
                 "binning": binning,
-                "exposure_time": exposure_seconds,
+                "exposure_time": DARK_REFERENCE_EXPOSURE_S,
             }
         )
     return jobs

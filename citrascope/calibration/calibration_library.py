@@ -171,38 +171,44 @@ class CalibrationLibrary:
         camera_id: str,
         gain: int,
         binning: int,
-        exposure_time: float,
         temperature: float,
         read_mode: str = "",
     ) -> Path | None:
-        """Find the best matching dark master.
+        """Find the best dark master for dark-scaling.
 
-        Exact match on camera_id, gain, binning, read_mode.  Closest match
-        on exposure_time and temperature within tolerance.
+        Exact match on camera_id, gain, binning, read_mode.  Temperature
+        must be within ``DARK_TEMP_TOLERANCE_C``.  Among candidates that
+        pass the temperature gate, the **longest** exposure is preferred
+        because it gives the best signal-to-noise on the thermal component
+        used for dark scaling.
+
+        The caller reads the ``EXPTIME`` header of the returned file to
+        know the reference exposure for the scaling ratio.
         """
         rm = self._read_mode_slug(read_mode)
         prefix = f"master_dark_{self._safe_name(camera_id)}_g{gain}_bin{binning}_{rm}_"
-        candidates: list[tuple[float, Path]] = []
+        candidates: list[tuple[float, float, Path]] = []
 
         for p in self._masters_dir.glob(f"{prefix}*.fits"):
             try:
                 with fits.open(p) as hdul:
                     hdr = hdul[0].header  # type: ignore[index]
-                    d_exp = hdr.get("EXPTIME", 0.0)
+                    d_exp = float(hdr.get("EXPTIME", 0.0))
                     d_temp = hdr.get("CCD-TEMP")
                     if d_temp is None:
                         continue
                     if abs(float(d_temp) - temperature) > self.DARK_TEMP_TOLERANCE_C:
                         continue
-                    score = abs(float(d_exp) - exposure_time) + abs(float(d_temp) - temperature) * 0.1
-                    candidates.append((score, p))
+                    temp_penalty = abs(float(d_temp) - temperature)
+                    candidates.append((temp_penalty, d_exp, p))
             except Exception:
                 logger.debug("Skipping unreadable dark master: %s", p, exc_info=True)
 
         if not candidates:
             return None
-        candidates.sort(key=lambda t: t[0])
-        return candidates[0][1]
+        # Best temperature match first, then longest exposure (highest SNR)
+        candidates.sort(key=lambda t: (t[0], -t[1]))
+        return candidates[0][2]
 
     def get_master_flat(
         self,
