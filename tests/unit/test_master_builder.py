@@ -28,6 +28,12 @@ class FakeCamera:
         self._idx += 1
         return frame
 
+    def get_temperature(self) -> float | None:
+        return -10.0
+
+    def get_max_pixel_value(self, binning: int = 1) -> int:
+        return 65535
+
 
 @pytest.fixture
 def library(tmp_path):

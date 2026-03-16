@@ -360,7 +360,7 @@ class TestPixelemonDemoFits:
     DEMO_FITS = Path(__file__).parent / "test_assets" / "2025-11-11_18-38-11_r_-0.05_1.00s_0131.fits"
 
     def test_plate_solver_processor_solves_demo_fits(self, tmp_path, mock_settings):
-        """Run PlateSolverProcessor.process() on the demo FITS; assert success and valid .new file with WCS."""
+        """Run PlateSolverProcessor.process() on the demo FITS; assert success and valid _wcs.fits file with WCS."""
         if not self.DEMO_FITS.exists():
             pytest.skip("Demo FITS not found")
         if not check_pixelemon():
@@ -403,7 +403,7 @@ class TestPixelemonDemoFits:
         assert "ra_center" in result.extracted_data
         assert "dec_center" in result.extracted_data
         wcs_path = context.working_image_path
-        assert wcs_path.suffix == ".new"
+        assert wcs_path.suffix == ".fits"
         assert wcs_path.exists()
 
         with fits.open(wcs_path) as hdul:
@@ -488,7 +488,7 @@ class TestFullPipelineDemoFits:
         assert "satellite_matcher.num_satellites_detected" in result.extracted_data
         assert "satellite_matcher.satellite_observations" in result.extracted_data
         # Pipeline ran end-to-end against the FITS
-        assert context.working_image_path.suffix == ".new"
+        assert context.working_image_path.suffix == ".fits"
         assert context.working_image_path.exists()
 
     def test_full_pipeline_with_elset_cache_uses_multi_tle(self, tmp_path, run_from_repo_root):
