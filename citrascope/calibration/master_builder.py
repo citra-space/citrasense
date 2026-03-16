@@ -140,9 +140,24 @@ class MasterBuilder:
         cancel_event: threading.Event | None = None,
         on_progress: ProgressCallback | None = None,
     ) -> Path:
-        """Capture and build a master flat (bias-subtracted, normalised to median=1.0)."""
+        """Capture and build a master flat (bias-subtracted, normalised to median=1.0).
+
+        Runs auto-exposure before the main capture to find an exposure time
+        that places the median ADU at ~50% of the sensor's dynamic range.
+        """
         gain_val = gain if gain is not None else (self._profile.current_gain or 0)
-        label = f"flat g{gain_val} bin{binning}" + (f" {filter_name}" if filter_name else "")
+
+        exposure_time = self._auto_expose_flat(
+            initial_exposure=exposure_time,
+            gain=gain_val,
+            binning=binning,
+            on_progress=on_progress,
+            cancel_event=cancel_event,
+        )
+
+        label = f"flat g{gain_val} bin{binning} {exposure_time:.3f}s"
+        if filter_name:
+            label += f" {filter_name}"
 
         raw_paths = self._capture_frames(
             count=count,
@@ -190,6 +205,114 @@ class MasterBuilder:
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
+
+    TARGET_ADU_FRACTION = 0.50
+    ADU_TOLERANCE = 0.10
+    AUTO_EXPOSE_MIN_S = 0.001
+    AUTO_EXPOSE_MAX_S = 30.0
+    AUTO_EXPOSE_MAX_ITERATIONS = 8
+    AUTO_EXPOSE_MAX_STEP = 4.0
+
+    def _auto_expose_flat(
+        self,
+        initial_exposure: float,
+        gain: int,
+        binning: int,
+        on_progress: ProgressCallback | None,
+        cancel_event: threading.Event | None,
+    ) -> float:
+        """Find an exposure time that puts the flat at ~50% of the sensor's dynamic range.
+
+        Takes test frames, measures median ADU, and scales exposure linearly
+        (sensor response to uniform illumination is approximately linear).
+        Each step is clamped to at most 4x change to avoid jarring jumps.
+        Bails early if already at max exposure and still far below target.
+        Returns the tuned exposure time.
+        """
+        max_adu = float(self._camera.get_max_pixel_value(binning))
+        logger.info("Auto-expose using max_adu=%d for binning=%d", int(max_adu), binning)
+        target_adu = max_adu * self.TARGET_ADU_FRACTION
+        lo = max_adu * (self.TARGET_ADU_FRACTION - self.ADU_TOLERANCE)
+        hi = max_adu * (self.TARGET_ADU_FRACTION + self.ADU_TOLERANCE)
+
+        exposure = max(self.AUTO_EXPOSE_MIN_S, min(initial_exposure, self.AUTO_EXPOSE_MAX_S))
+
+        for attempt in range(self.AUTO_EXPOSE_MAX_ITERATIONS):
+            if cancel_event and cancel_event.is_set():
+                break
+
+            self._report(
+                on_progress,
+                0,
+                0,
+                "flat",
+                f"Auto-expose: testing {exposure:.3f}s (attempt {attempt + 1})",
+            )
+
+            data = self._camera.capture_array(
+                duration=exposure,
+                gain=gain,
+                binning=binning,
+                shutter_closed=False,
+            )
+            median_adu = float(np.median(data))
+            pct = (median_adu / max_adu) * 100
+
+            logger.info(
+                "Flat auto-expose attempt %d: %.3fs → median %.0f ADU (%.0f%% of max)",
+                attempt + 1,
+                exposure,
+                median_adu,
+                pct,
+            )
+            self._report(
+                on_progress,
+                0,
+                0,
+                "flat",
+                f"Auto-expose: {median_adu:.0f} ADU ({pct:.0f}%) at {exposure:.3f}s",
+            )
+
+            if lo <= median_adu <= hi:
+                logger.info("Flat auto-expose converged: %.3fs → %.0f ADU (%.0f%%)", exposure, median_adu, pct)
+                return exposure
+
+            if median_adu < 1.0:
+                new_exposure = exposure * self.AUTO_EXPOSE_MAX_STEP
+            else:
+                ratio = target_adu / median_adu
+                ratio = max(1.0 / self.AUTO_EXPOSE_MAX_STEP, min(ratio, self.AUTO_EXPOSE_MAX_STEP))
+                new_exposure = exposure * ratio
+
+            new_exposure = max(self.AUTO_EXPOSE_MIN_S, min(new_exposure, self.AUTO_EXPOSE_MAX_S))
+
+            if new_exposure == exposure and median_adu < lo:
+                logger.warning(
+                    "Flat auto-expose: at max exposure (%.1fs) but only %.0f ADU (%.0f%%). "
+                    "Light source may be too dim.",
+                    exposure,
+                    median_adu,
+                    pct,
+                )
+                break
+            if new_exposure == exposure and median_adu > hi:
+                logger.warning(
+                    "Flat auto-expose: at min exposure (%.4fs) but still %.0f ADU (%.0f%%). "
+                    "Light source may be too bright.",
+                    exposure,
+                    median_adu,
+                    pct,
+                )
+                break
+
+            exposure = new_exposure
+
+        logger.warning(
+            "Flat auto-expose did not converge after %d attempts, using %.3fs",
+            attempt + 1,
+            exposure,
+        )
+        return exposure
 
     def _resolve_dark_temperature(self) -> float | None:
         """Determine the temperature to record for a dark master.

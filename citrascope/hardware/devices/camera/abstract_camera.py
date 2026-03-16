@@ -32,6 +32,7 @@ class CalibrationProfile:
     current_binning: int
     current_temperature: float | None
     target_temperature: float | None = None
+    bit_depth: int = 16
     gain_range: tuple[int, int] | None = None
     supported_binning: list[int] = field(default_factory=lambda: [1])
 
@@ -191,6 +192,18 @@ class AbstractCamera(AbstractHardwareDevice):
             current_binning=1,
             current_temperature=None,
         )
+
+    def get_max_pixel_value(self, binning: int = 1) -> int:
+        """Return the maximum possible pixel value for the current camera settings.
+
+        Accounts for read mode, gain, and binning (e.g. pixel-adding binning
+        on Moravian C2 cameras multiplies the per-pixel max by binning^2).
+        Used by calibration auto-expose to know the true saturation point.
+
+        Override in subclasses that can query the hardware directly.
+        """
+        bit_depth = getattr(self, "_camera_info", {}).get("bit_depth", 16)
+        return (2**bit_depth) - 1
 
     def get_preferred_file_extension(self) -> str:
         """Get the preferred file extension for saved images.

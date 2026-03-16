@@ -47,10 +47,12 @@ from ctypes import (
 # ---------------------------------------------------------------------------
 
 # gxccd_get_boolean_parameter indexes
+GBP_SHUTTER = 3
 GBP_COOLER = 4
 GBP_FAN = 5
 GBP_FILTERS = 6
 GBP_WINDOW_HEATING = 8
+GBP_ELECTRONIC_SHUTTER = 14
 GBP_GPS = 15
 
 # gxccd_get_integer_parameter indexes
@@ -66,6 +68,7 @@ GIP_DEFAULT_READ_MODE = 12
 GIP_MAX_WINDOW_HEATING = 13
 GIP_MAX_FAN = 14
 GIP_MAX_GAIN = 16
+GIP_MAX_PIXEL_VALUE = 17
 
 # gxccd_get_string_parameter indexes
 GSP_CAMERA_DESCRIPTION = 0
@@ -178,6 +181,9 @@ def _init_camera_api(lib: ctypes.CDLL) -> None:
     lib.gxccd_set_filter.argtypes = [c_void_p, c_int]
     lib.gxccd_set_fan.argtypes = [c_void_p, ctypes.c_uint8]
     lib.gxccd_set_window_heating.argtypes = [c_void_p, ctypes.c_uint8]
+
+    lib.gxccd_open_shutter.argtypes = [c_void_p]
+    lib.gxccd_close_shutter.argtypes = [c_void_p]
 
     lib.gxccd_enumerate_read_modes.argtypes = [c_void_p, c_int, c_void_p, c_size_t]
     lib.gxccd_enumerate_read_modes.restype = c_int
@@ -383,6 +389,14 @@ class GxccdCamera:
     def read_image(self, buf: ctypes.Array, size: int) -> None:  # type: ignore[type-arg]
         assert self._handle is not None
         self._check(self._lib.gxccd_read_image(self._handle, buf, c_size_t(size)))
+
+    def open_shutter(self) -> None:
+        assert self._handle is not None
+        self._check(self._lib.gxccd_open_shutter(self._handle))
+
+    def close_shutter(self) -> None:
+        assert self._handle is not None
+        self._check(self._lib.gxccd_close_shutter(self._handle))
 
     # -- read modes --
 
