@@ -104,6 +104,39 @@ class TestCalibrationMath:
         # Right half: (130 - 30) / 0.5 = 200
         np.testing.assert_array_almost_equal(calibrated[:, 5:], 200.0)
 
+    def test_dark_scaling_with_bias(self, library: CalibrationLibrary, working_dir: Path, tmp_path: Path):
+        """Dark scaling: 30s reference dark scaled to a 2s science frame."""
+        bias = np.full((10, 10), 100.0, dtype=np.float32)
+        library.save_master("bias", "SN1234", bias, gain=0, binning=1)
+
+        # MasterBuilder subtracts bias before saving, so stored dark is
+        # pure thermal: raw_dark(30s) - bias = 150 - 100 = 50
+        thermal = np.full((10, 10), 50.0, dtype=np.float32)
+        library.save_master("dark", "SN1234", thermal, gain=0, binning=1, exposure_time=30.0, temperature=-10.0)
+
+        # Science frame: signal(500) + bias(100) + thermal_2s(50 * 2/30 ≈ 3.33)
+        raw_science = np.full((10, 10), 603.33, dtype=np.float32)
+        science_path = _make_fits(
+            tmp_path / "science.fits",
+            raw_science,
+            CAMSER="SN1234",
+            GAIN=0,
+            XBINNING=1,
+            EXPTIME=2.0,
+            **{"CCD-TEMP": -10.0},
+        )
+
+        proc = CalibrationProcessor(library=library)
+        ctx = _make_context(science_path, working_dir)
+        result = proc.process(ctx)
+
+        assert "bias" in result.extracted_data.get("calibration_applied", [])
+        assert "dark" in result.extracted_data.get("calibration_applied", [])
+
+        calibrated = fits.getdata(ctx.working_image_path)
+        # Expected: 603.33 - 100 (bias) - 50 * (2/30) (scaled thermal) = 500
+        np.testing.assert_array_almost_equal(calibrated, 500.0, decimal=1)
+
 
 class TestGracefulSkip:
     def test_no_library(self, working_dir: Path, tmp_path: Path):

@@ -118,11 +118,13 @@ class CalibrationProcessor(AbstractImageProcessor):
                 dark_hdr = hdul[0].header  # type: ignore[index]
                 dark_data = hdul[0].data.astype(np.float32)  # type: ignore[index]
             dark_exposure = float(dark_hdr.get("EXPTIME", exposure))
+            # dark_data is already bias-subtracted by MasterBuilder, so it
+            # contains only the thermal component D(T_ref).  Scale it to the
+            # science exposure and subtract the full bias separately:
+            #   calibrated = raw - bias - D(T_ref) * (T_science / T_ref)
             if dark_exposure > 0 and exposure > 0:
                 scale = exposure / dark_exposure
-                dark_thermal = dark_data - bias_data
-                scaled_dark = bias_data + dark_thermal * scale
-                calibrated = calibrated - scaled_dark
+                calibrated = calibrated - bias_data - dark_data * scale
                 if logger:
                     logger.info(
                         "Applied dark scaling: %.1fs ref → %.1fs science (scale %.3f) from %s",
@@ -132,9 +134,9 @@ class CalibrationProcessor(AbstractImageProcessor):
                         dark_path.name,
                     )
             else:
-                calibrated = calibrated - dark_data
+                calibrated = calibrated - bias_data - dark_data
                 if logger:
-                    logger.info("Applied master dark (unscaled): %s", dark_path.name)
+                    logger.info("Applied bias + dark (unscaled): %s", dark_path.name)
         elif dark_path:
             with fits.open(dark_path) as hdul:
                 dark_data = hdul[0].data.astype(np.float32)  # type: ignore[index]
@@ -168,10 +170,10 @@ class CalibrationProcessor(AbstractImageProcessor):
 
         elapsed = time.time() - start
         applied = []
+        if bias_path:
+            applied.append("bias")
         if dark_path:
             applied.append("dark")
-        elif bias_path:
-            applied.append("bias")
         if flat_path:
             applied.append("flat")
 
