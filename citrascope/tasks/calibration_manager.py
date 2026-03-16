@@ -174,10 +174,11 @@ class CalibrationManager:
                 )
                 return True
 
+            current_str = f"{current:.1f}" if current is not None else "?"
             with self._lock:
                 self._progress = {
                     "running": True,
-                    "status": f"Waiting for sensor: {current:.1f}°C → {target:.0f}°C ({remaining}s remaining)",
+                    "status": f"Waiting for sensor: {current_str}°C → {target:.0f}°C ({remaining}s remaining)",
                 }
             self._cancel_event.wait(self.TEMP_POLL_INTERVAL)
 
