@@ -285,7 +285,7 @@
                                                 <td class="text-muted">&mdash;</td>
                                                 <td class="text-muted">&mdash;</td>
                                                 <td x-text="b.ncombine"></td>
-                                                <td><small x-text="b.date ? new Date(b.date).toLocaleDateString() : ''"></small></td>
+                                                <td><small x-text="b.date ? new Date(b.date).toLocaleString([], {month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit'}) : ''"></small></td>
                                                 <td class="text-nowrap">
                                                     <a class="btn btn-outline-secondary btn-sm py-0 px-1 me-1" :href="'/api/calibration/master/download?filename=' + encodeURIComponent(b.filename)" title="Download"><i class="bi bi-download"></i></a>
                                                     <button type="button" class="btn btn-outline-danger btn-sm py-0 px-1" @click="deleteMaster('bias', b)" title="Delete"><i class="bi bi-trash"></i></button>
@@ -302,7 +302,7 @@
                                                 <td x-text="d.temperature != null ? d.temperature.toFixed(1) + '°C' : '?'"></td>
                                                 <td class="text-muted">&mdash;</td>
                                                 <td x-text="d.ncombine"></td>
-                                                <td><small x-text="d.date ? new Date(d.date).toLocaleDateString() : ''"></small></td>
+                                                <td><small x-text="d.date ? new Date(d.date).toLocaleString([], {month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit'}) : ''"></small></td>
                                                 <td class="text-nowrap">
                                                     <a class="btn btn-outline-secondary btn-sm py-0 px-1 me-1" :href="'/api/calibration/master/download?filename=' + encodeURIComponent(d.filename)" title="Download"><i class="bi bi-download"></i></a>
                                                     <button type="button" class="btn btn-outline-danger btn-sm py-0 px-1" @click="deleteMaster('dark', d)" title="Delete"><i class="bi bi-trash"></i></button>
@@ -319,7 +319,7 @@
                                                 <td class="text-muted">&mdash;</td>
                                                 <td x-text="f.filter || 'None'"></td>
                                                 <td x-text="f.ncombine"></td>
-                                                <td><small x-text="f.date ? new Date(f.date).toLocaleDateString() : ''"></small></td>
+                                                <td><small x-text="f.date ? new Date(f.date).toLocaleString([], {month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit'}) : ''"></small></td>
                                                 <td class="text-nowrap">
                                                     <a class="btn btn-outline-secondary btn-sm py-0 px-1 me-1" :href="'/api/calibration/master/download?filename=' + encodeURIComponent(f.filename)" title="Download"><i class="bi bi-download"></i></a>
                                                     <button type="button" class="btn btn-outline-danger btn-sm py-0 px-1" @click="deleteMaster('flat', f)" title="Delete"><i class="bi bi-trash"></i></button>
@@ -339,11 +339,6 @@
                             <!-- Progress bar during capture (queued or running) -->
                             <template x-if="calStatus?.capture_running || calStatus?.capture_requested">
                                 <div class="mb-3">
-                                    <template x-if="calStatus.capture_progress?.batch_total > 0">
-                                        <div class="d-flex justify-content-between mb-1">
-                                            <small class="text-info fw-bold" x-text="'Suite ' + (calStatus.capture_progress?.batch_current || 0) + '/' + calStatus.capture_progress.batch_total"></small>
-                                        </div>
-                                    </template>
                                     <div class="d-flex justify-content-between mb-1">
                                         <small x-text="calStatus.capture_progress?.status || (calStatus.capture_requested && !calStatus.capture_running ? 'Queued — waiting for imaging to finish...' : 'Capturing...')"></small>
                                         <small x-show="calStatus.capture_progress?.total_frames" x-text="(calStatus.capture_progress?.current_frame || 0) + '/' + (calStatus.capture_progress?.total_frames || '?')"></small>
@@ -353,7 +348,7 @@
                                              :class="{ 'progress-bar-striped progress-bar-animated': calStatus.capture_requested && !calStatus.capture_running }"
                                              :style="'width: ' + (calStatus.capture_running ? ((calStatus.capture_progress?.current_frame || 0) / (calStatus.capture_progress?.total_frames || 1) * 100) : 100) + '%'"></div>
                                     </div>
-                                    <template x-if="calStatus.capture_progress?.batch_total > 0">
+                                    <template x-if="calStatus.capture_progress?.batch_total > 1">
                                         <div class="progress mt-1" style="height: 3px;">
                                             <div class="progress-bar bg-secondary"
                                                  :style="'width: ' + ((calStatus.capture_progress?.batch_current || 0) / calStatus.capture_progress.batch_total * 100) + '%'"></div>

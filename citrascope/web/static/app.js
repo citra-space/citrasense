@@ -47,9 +47,11 @@ function updateStoreFromTasks(tasks) {
 }
 
 const MAX_CLIENT_LOGS = 500;
+let logSeq = 0;
 
 function appendLogToStore(log) {
     const store = Alpine.store('citrascope');
+    log._id = ++logSeq;
     const logs = [...store.logs, log];
     store.logs = logs.length > MAX_CLIENT_LOGS ? logs.slice(-MAX_CLIENT_LOGS) : logs;
     store.latestLog = log;
@@ -203,7 +205,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     const logsData = await getLogs(100);
     const store = Alpine.store('citrascope');
-    store.logs = (logsData.logs || []).map(log => ({ ...log }));
+    store.logs = (logsData.logs || []).map(log => ({ ...log, _id: ++logSeq }));
     if (store.logs.length > 0) {
         store.latestLog = store.logs[store.logs.length - 1];
     }
