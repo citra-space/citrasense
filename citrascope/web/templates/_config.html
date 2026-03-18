@@ -76,11 +76,48 @@
                          calFrameType: 'bias',
                          calExposure: 2.0,
                          calFilterPosition: null,
+                         twilightInfo: null,
+                         twilightTimer: null,
                          async loadCalStatus() {
                              try {
                                  const resp = await fetch('/api/calibration/status');
                                  this.calStatus = await resp.json();
                              } catch(e) { this.calStatus = null; }
+                         },
+                         async loadTwilight() {
+                             try {
+                                 const resp = await fetch('/api/twilight');
+                                 this.twilightInfo = await resp.json();
+                             } catch(e) { this.twilightInfo = null; }
+                         },
+                         startTwilightPolling() {
+                             if (this.twilightTimer) return;
+                             this.loadTwilight();
+                             this.twilightTimer = setInterval(() => this.loadTwilight(), 60000);
+                         },
+                         stopTwilightPolling() {
+                             if (this.twilightTimer) { clearInterval(this.twilightTimer); this.twilightTimer = null; }
+                         },
+                         formatTwilight() {
+                             const t = this.twilightInfo;
+                             if (!t || !t.location_available) return null;
+                             if (t.in_flat_window && t.flat_window) {
+                                 return { text: 'Flat window now — ends in ' + Math.round(t.flat_window.remaining_minutes) + 'm', cls: 'text-success' };
+                             }
+                             if (t.next_flat_window) {
+                                 const start = new Date(t.next_flat_window.start);
+                                 const now = new Date();
+                                 const diffMin = Math.round((start - now) / 60000);
+                                 const timeStr = start.toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'});
+                                 const typeStr = t.next_flat_window.type === 'morning' ? 'Morning' : 'Evening';
+                                 if (diffMin < 120) {
+                                     return { text: typeStr + ' flat window in ' + diffMin + 'm (' + timeStr + ')', cls: 'text-info' };
+                                 }
+                                 const hours = Math.floor(diffMin / 60);
+                                 const mins = diffMin % 60;
+                                 return { text: typeStr + ' flat window in ' + hours + 'h ' + mins + 'm (' + timeStr + ')', cls: 'text-muted' };
+                             }
+                             return { text: 'Sun alt: ' + t.current_sun_altitude + '°', cls: 'text-muted' };
                          },
                          startPolling() {
                              if (this.calPollTimer) return;
@@ -155,7 +192,7 @@
                              this.loadCalStatus();
                          }
                      }"
-                     x-init="await loadCalStatus(); if (calStatus?.capture_running || calStatus?.capture_requested) startPolling(); $watch('calCardExpanded', v => { if(v) loadCalStatus(); })"
+                     x-init="await loadCalStatus(); if (calStatus?.capture_running || calStatus?.capture_requested) startPolling(); $watch('calCardExpanded', v => { if(v) { loadCalStatus(); startTwilightPolling(); } else { stopTwilightPolling(); } }); if (calCardExpanded) startTwilightPolling();"
                      x-show="$store.citrascope.status?.supports_direct_camera_control && calStatus?.available">
                     <div class="card bg-dark text-light border-secondary">
                         <div class="card-header d-flex justify-content-between align-items-center" style="cursor: pointer;" @click="calCardExpanded = !calCardExpanded">
@@ -168,6 +205,14 @@
                             <i class="bi" :class="calCardExpanded ? 'bi-chevron-up' : 'bi-chevron-down'"></i>
                         </div>
                         <div class="card-body" x-show="calCardExpanded">
+                            <!-- Twilight flat window status -->
+                            <template x-if="formatTwilight()">
+                                <div class="mb-3 d-flex align-items-center gap-2">
+                                    <i class="bi bi-sun-fill" :class="twilightInfo?.in_flat_window ? 'text-success' : 'text-muted'"></i>
+                                    <small :class="formatTwilight()?.cls" x-text="formatTwilight()?.text"></small>
+                                </div>
+                            </template>
+
                             <!-- Current camera info -->
                             <div class="mb-3">
                                 <small class="text-muted">
@@ -240,8 +285,11 @@
                                                 <td class="text-muted">&mdash;</td>
                                                 <td class="text-muted">&mdash;</td>
                                                 <td x-text="b.ncombine"></td>
-                                                <td><small x-text="b.date ? new Date(b.date).toLocaleDateString() : ''"></small></td>
-                                                <td><button type="button" class="btn btn-outline-danger btn-sm py-0 px-1" @click="deleteMaster('bias', b)"><i class="bi bi-trash"></i></button></td>
+                                                <td><small x-text="b.date ? new Date(b.date).toLocaleString([], {month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit'}) : ''"></small></td>
+                                                <td class="text-nowrap">
+                                                    <a class="btn btn-outline-secondary btn-sm py-0 px-1 me-1" :href="'/api/calibration/master/download?filename=' + encodeURIComponent(b.filename)" title="Download"><i class="bi bi-download"></i></a>
+                                                    <button type="button" class="btn btn-outline-danger btn-sm py-0 px-1" @click="deleteMaster('bias', b)" title="Delete"><i class="bi bi-trash"></i></button>
+                                                </td>
                                             </tr>
                                         </template>
                                         <template x-for="d in (calStatus?.library?.darks || [])" :key="d.filename">
@@ -254,8 +302,11 @@
                                                 <td x-text="d.temperature != null ? d.temperature.toFixed(1) + '°C' : '?'"></td>
                                                 <td class="text-muted">&mdash;</td>
                                                 <td x-text="d.ncombine"></td>
-                                                <td><small x-text="d.date ? new Date(d.date).toLocaleDateString() : ''"></small></td>
-                                                <td><button type="button" class="btn btn-outline-danger btn-sm py-0 px-1" @click="deleteMaster('dark', d)"><i class="bi bi-trash"></i></button></td>
+                                                <td><small x-text="d.date ? new Date(d.date).toLocaleString([], {month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit'}) : ''"></small></td>
+                                                <td class="text-nowrap">
+                                                    <a class="btn btn-outline-secondary btn-sm py-0 px-1 me-1" :href="'/api/calibration/master/download?filename=' + encodeURIComponent(d.filename)" title="Download"><i class="bi bi-download"></i></a>
+                                                    <button type="button" class="btn btn-outline-danger btn-sm py-0 px-1" @click="deleteMaster('dark', d)" title="Delete"><i class="bi bi-trash"></i></button>
+                                                </td>
                                             </tr>
                                         </template>
                                         <template x-for="f in (calStatus?.library?.flats || [])" :key="f.filename">
@@ -268,8 +319,11 @@
                                                 <td class="text-muted">&mdash;</td>
                                                 <td x-text="f.filter || 'None'"></td>
                                                 <td x-text="f.ncombine"></td>
-                                                <td><small x-text="f.date ? new Date(f.date).toLocaleDateString() : ''"></small></td>
-                                                <td><button type="button" class="btn btn-outline-danger btn-sm py-0 px-1" @click="deleteMaster('flat', f)"><i class="bi bi-trash"></i></button></td>
+                                                <td><small x-text="f.date ? new Date(f.date).toLocaleString([], {month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit'}) : ''"></small></td>
+                                                <td class="text-nowrap">
+                                                    <a class="btn btn-outline-secondary btn-sm py-0 px-1 me-1" :href="'/api/calibration/master/download?filename=' + encodeURIComponent(f.filename)" title="Download"><i class="bi bi-download"></i></a>
+                                                    <button type="button" class="btn btn-outline-danger btn-sm py-0 px-1" @click="deleteMaster('flat', f)" title="Delete"><i class="bi bi-trash"></i></button>
+                                                </td>
                                             </tr>
                                         </template>
                                         <tr x-show="!(calStatus?.library?.bias?.length || calStatus?.library?.darks?.length || calStatus?.library?.flats?.length)">
@@ -285,11 +339,6 @@
                             <!-- Progress bar during capture (queued or running) -->
                             <template x-if="calStatus?.capture_running || calStatus?.capture_requested">
                                 <div class="mb-3">
-                                    <template x-if="calStatus.capture_progress?.batch_total > 0">
-                                        <div class="d-flex justify-content-between mb-1">
-                                            <small class="text-info fw-bold" x-text="'Suite ' + (calStatus.capture_progress?.batch_current || 0) + '/' + calStatus.capture_progress.batch_total"></small>
-                                        </div>
-                                    </template>
                                     <div class="d-flex justify-content-between mb-1">
                                         <small x-text="calStatus.capture_progress?.status || (calStatus.capture_requested && !calStatus.capture_running ? 'Queued — waiting for imaging to finish...' : 'Capturing...')"></small>
                                         <small x-show="calStatus.capture_progress?.total_frames" x-text="(calStatus.capture_progress?.current_frame || 0) + '/' + (calStatus.capture_progress?.total_frames || '?')"></small>
@@ -299,7 +348,7 @@
                                              :class="{ 'progress-bar-striped progress-bar-animated': calStatus.capture_requested && !calStatus.capture_running }"
                                              :style="'width: ' + (calStatus.capture_running ? ((calStatus.capture_progress?.current_frame || 0) / (calStatus.capture_progress?.total_frames || 1) * 100) : 100) + '%'"></div>
                                     </div>
-                                    <template x-if="calStatus.capture_progress?.batch_total > 0">
+                                    <template x-if="calStatus.capture_progress?.batch_total > 1">
                                         <div class="progress mt-1" style="height: 3px;">
                                             <div class="progress-bar bg-secondary"
                                                  :style="'width: ' + ((calStatus.capture_progress?.batch_current || 0) / calStatus.capture_progress.batch_total * 100) + '%'"></div>
@@ -357,22 +406,36 @@
                                     <!-- Suite buttons -->
                                     <hr class="border-secondary my-3">
                                     <h6 class="text-muted mb-2">One-Click Suites</h6>
+                                    <div class="row g-2 mb-3">
+                                        <div class="col-auto">
+                                            <label class="form-label small mb-0">Bias/Dark frame count</label>
+                                            <input type="number" class="form-control form-control-sm" style="width: 80px;"
+                                                   x-model.number="$store.citrascope.config.calibration_frame_count"
+                                                   min="5" max="100" step="1">
+                                        </div>
+                                        <div class="col-auto">
+                                            <label class="form-label small mb-0">Flat frame count</label>
+                                            <input type="number" class="form-control form-control-sm" style="width: 80px;"
+                                                   x-model.number="$store.citrascope.config.flat_frame_count"
+                                                   min="5" max="50" step="1">
+                                        </div>
+                                    </div>
                                     <div class="d-flex gap-2 flex-wrap">
                                         <button type="button" class="btn btn-outline-info btn-sm"
                                                 @click="captureSuite('bias_and_dark')"
-                                                :title="'Bias + 30s reference dark for binnings 1x1 & 2x2 at gain ' + (calStatus?.current_gain ?? 0) + '. Dark is scaled to any exposure at runtime.'">
+                                                :title="'Bias + 30s reference dark at current binning (' + (calStatus?.current_binning ?? 1) + 'x' + (calStatus?.current_binning ?? 1) + ') and gain ' + (calStatus?.current_gain ?? 0) + '. Dark is scaled to any exposure at runtime.'">
                                             <i class="bi bi-collection me-1"></i>Calibrate Bias &amp; Dark
                                         </button>
                                         <button type="button" class="btn btn-outline-info btn-sm"
                                                 @click="captureSuite('all_flats')"
                                                 :disabled="!calStatus?.filters?.length"
-                                                :title="calStatus?.filters?.length ? 'Flat for each filter at current binning' : 'No filters configured'">
+                                                :title="calStatus?.filters?.length ? 'Interleaved flats: cycles through all ' + calStatus.filters.length + ' filters in rounds (' + (calStatus?.flat_frame_count_setting || 15) + ' frames each)' : 'No filters configured'">
                                             <i class="bi bi-sun me-1"></i>Calibrate All Flats
                                         </button>
                                     </div>
                                     <small class="text-muted d-block mt-1">
-                                        <strong>Bias &amp; Dark:</strong> Bias + 30s reference dark for binnings 1x1 &amp; 2x2 at current gain. The dark is linearly scaled to match any science exposure at runtime.
-                                        <strong>All Flats:</strong> Each enabled filter at current binning.
+                                        <strong>Bias &amp; Dark:</strong> Bias + 30s reference dark at current binning and gain. The dark is linearly scaled to match any science exposure at runtime.
+                                        <strong>All Flats:</strong> Interleaved capture across all filters (<span x-text="calStatus?.flat_frame_count_setting || 15"></span> frames per filter). Cycles in rounds so each filter samples the full twilight gradient.
                                     </small>
                                 </div>
                             </template>

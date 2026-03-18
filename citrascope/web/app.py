@@ -23,6 +23,7 @@ from citrascope.constants import (
 )
 from citrascope.hardware.adapter_registry import get_adapter_schema as get_schema
 from citrascope.hardware.adapter_registry import list_adapters
+from citrascope.location.twilight import compute_twilight
 from citrascope.logging import CITRASCOPE_LOGGER
 
 # Standard astronomical filter names for the editable filter name dropdown.
@@ -944,6 +945,7 @@ class CitraScopeWebApp:
                 "capture_requested": cal_mgr.is_requested() if cal_mgr else False,
                 "capture_progress": cal_mgr.get_progress() if cal_mgr else {},
                 "frame_count_setting": self.daemon.settings.calibration_frame_count if self.daemon.settings else 30,
+                "flat_frame_count_setting": self.daemon.settings.flat_frame_count if self.daemon.settings else 15,
             }
 
         @self.app.post("/api/calibration/capture")
@@ -989,6 +991,7 @@ class CitraScopeWebApp:
             if not self.daemon:
                 return JSONResponse({"error": "Daemon not available"}, status_code=503)
             try:
+                from citrascope.calibration import FilterSlot
                 from citrascope.calibration.calibration_suites import all_flats_suite, bias_and_dark_suite
 
                 suite_name = request.get("suite", "")
@@ -1005,20 +1008,21 @@ class CitraScopeWebApp:
                     return JSONResponse({"error": "Camera does not support calibration"}, status_code=400)
 
                 frame_count = self.daemon.settings.calibration_frame_count if self.daemon.settings else 30
+                flat_count = self.daemon.settings.flat_frame_count if self.daemon.settings else 15
 
                 if suite_name == "bias_and_dark":
                     jobs = bias_and_dark_suite(profile, frame_count)
                 elif suite_name == "all_flats":
-                    filters: list[dict[str, Any]] = []
+                    filters: list[FilterSlot] = []
                     if hw.supports_filter_management():
                         filters = [
-                            {"name": f["name"], "position": int(pos)}
+                            FilterSlot(position=int(pos), name=f["name"])
                             for pos, f in hw.get_filter_config().items()
                             if f.get("enabled", True) and f.get("name")
                         ]
                     if not filters:
                         return JSONResponse({"error": "No filters configured"}, status_code=400)
-                    jobs = all_flats_suite(profile, filters, frame_count)
+                    jobs = all_flats_suite(profile, filters, flat_count)
                 else:
                     return JSONResponse({"error": f"Unknown suite: {suite_name}"}, status_code=400)
 
@@ -1056,6 +1060,51 @@ class CitraScopeWebApp:
             except Exception as e:
                 CITRASCOPE_LOGGER.error("Error deleting calibration master: %s", e, exc_info=True)
                 return JSONResponse({"error": str(e)}, status_code=500)
+
+        @self.app.get("/api/calibration/master/download")
+        async def download_calibration_master(filename: str):
+            """Download a master calibration FITS file by filename."""
+            if not self.daemon:
+                return JSONResponse({"error": "Daemon not available"}, status_code=503)
+            lib = getattr(self.daemon, "calibration_library", None)
+            if not lib:
+                return JSONResponse({"error": "Calibration not available"}, status_code=400)
+            safe_name = Path(filename).name
+            if not safe_name or safe_name != filename:
+                return JSONResponse({"error": "Invalid filename"}, status_code=400)
+            path = lib.masters_dir / safe_name
+            if not path.exists():
+                return JSONResponse({"error": "File not found"}, status_code=404)
+            if path.is_symlink() or not path.resolve().is_relative_to(lib.masters_dir.resolve()):
+                return JSONResponse({"error": "Invalid filename"}, status_code=400)
+            return FileResponse(path, filename=safe_name, media_type="application/fits")
+
+        @self.app.get("/api/twilight")
+        async def get_twilight_info():
+            """Return current/next nautical twilight flat window for the observatory.
+
+            The "flat window" is the nautical twilight band where the Sun
+            is between -6 deg (civil) and -12 deg (nautical) below the
+            horizon — bright enough for uniform sky illumination, dark
+            enough to avoid saturation.
+            """
+            if not self.daemon:
+                return JSONResponse({"error": "Daemon not available"}, status_code=503)
+
+            loc_svc = getattr(self.daemon, "location_service", None)
+            if not loc_svc:
+                return {"location_available": False}
+
+            location = loc_svc.get_current_location()
+            if not location:
+                return {"location_available": False}
+
+            try:
+                info = await asyncio.to_thread(compute_twilight, location["latitude"], location["longitude"])
+                return info.to_dict()
+            except Exception as e:
+                CITRASCOPE_LOGGER.error("Error computing twilight info: %s", e, exc_info=True)
+                return {"location_available": False, "error": str(e)}
 
         @self.app.post("/api/adapter/sync")
         async def manual_sync(request: dict[str, Any]):

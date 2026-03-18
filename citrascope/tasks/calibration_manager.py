@@ -12,6 +12,7 @@ import threading
 import time
 from typing import TYPE_CHECKING, Any
 
+from citrascope.calibration import FilterSlot
 from citrascope.calibration.calibration_library import CalibrationLibrary
 from citrascope.calibration.master_builder import MasterBuilder
 
@@ -181,6 +182,10 @@ class CalibrationManager:
             fname = params.get("filter_name", "")
             if fname:
                 label += f" {fname}"
+        elif ft == "interleaved_flat":
+            filters = params.get("filters", [])
+            names = [f["name"] for f in filters]
+            label = f"interleaved flats bin{binning} ({', '.join(names)})"
         return label
 
     # Temperature tolerance for considering the sensor "at target" (degrees C).
@@ -195,7 +200,7 @@ class CalibrationManager:
         without cooling.  Returns True if stable (or not applicable), False
         if cancelled or timed out.
         """
-        if frame_type in ("bias", "flat"):
+        if frame_type in ("bias", "flat", "interleaved_flat"):
             return True
 
         profile = camera.get_calibration_profile()
@@ -320,16 +325,18 @@ class CalibrationManager:
         binning = int(params.get("binning", profile.current_binning))
 
         if frame_type == "bias":
-            builder.build_bias(
+            result = builder.build_bias(
                 count=count,
                 gain=gain,
                 binning=binning,
                 cancel_event=self._cancel_event,
                 on_progress=self._on_progress,
             )
+            if result is None:
+                self.logger.warning("Bias capture returned no frames (cancelled?)")
         elif frame_type == "dark":
             exposure_time = float(params.get("exposure_time", 1.0))
-            builder.build_dark(
+            result = builder.build_dark(
                 count=count,
                 exposure_time=exposure_time,
                 gain=gain,
@@ -337,6 +344,8 @@ class CalibrationManager:
                 cancel_event=self._cancel_event,
                 on_progress=self._on_progress,
             )
+            if result is None:
+                self.logger.warning("Dark capture returned no frames (cancelled?)")
         elif frame_type == "flat":
             exposure_time = float(params.get("exposure_time", 1.0))
             filter_name = str(params.get("filter_name", ""))
@@ -354,10 +363,29 @@ class CalibrationManager:
                     self.logger.error("Failed to set filter %s (position %d)", filter_name, filter_position)
                     return
 
-            builder.build_flat(
+            result = builder.build_flat(
                 count=count,
                 exposure_time=exposure_time,
                 filter_name=filter_name,
+                gain=gain,
+                binning=binning,
+                cancel_event=self._cancel_event,
+                on_progress=self._on_progress,
+            )
+            if result is None:
+                self.logger.warning("Flat capture completed but master was rejected by quality validation")
+        elif frame_type == "interleaved_flat":
+            raw_filters = params.get("filters", [])
+            filters = [FilterSlot(**f) if isinstance(f, dict) else f for f in raw_filters]
+            if not filters:
+                self.logger.error("Interleaved flat job has no filters")
+                return
+            initial_exposure = float(params.get("initial_exposure", 1.0))
+            builder.build_interleaved_flats(
+                filters=filters,
+                set_filter=self.hardware_adapter.set_filter,
+                count=count,
+                initial_exposure=initial_exposure,
                 gain=gain,
                 binning=binning,
                 cancel_event=self._cancel_event,

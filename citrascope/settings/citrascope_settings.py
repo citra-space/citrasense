@@ -104,6 +104,7 @@ class CitraScopeSettings(BaseModel):
 
     # Calibration
     calibration_frame_count: int = 30
+    flat_frame_count: int = 15
 
     # ── Non-persisted public attrs (excluded from model_dump) ─────────
     web_port: int = Field(default=DEFAULT_WEB_PORT, exclude=True)
@@ -204,6 +205,20 @@ class CitraScopeSettings(BaseModel):
         if v < 5 or v > 100:
             clamped = max(5, min(100, v))
             CITRASCOPE_LOGGER.warning("calibration_frame_count %d out of range [5, 100]. Clamped to %d.", v, clamped)
+            return clamped
+        return v
+
+    @field_validator("flat_frame_count", mode="before")
+    @classmethod
+    def _validate_flat_frame_count(cls, v: Any) -> int:
+        try:
+            v = int(v)
+        except (TypeError, ValueError):
+            CITRASCOPE_LOGGER.warning("Invalid flat_frame_count (%r). Falling back to 15.", v)
+            return 15
+        if v < 5 or v > 50:
+            clamped = max(5, min(50, v))
+            CITRASCOPE_LOGGER.warning("flat_frame_count %d out of range [5, 50]. Clamped to %d.", v, clamped)
             return clamped
         return v
 
