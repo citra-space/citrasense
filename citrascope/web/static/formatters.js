@@ -177,6 +177,8 @@ export function formatGPSLocation(gpsLocation) {
  * @returns {{url: string, px: number, py: number}}
  */
 export function tileCoords(lat, lon, zoom = 12, tileSize = 256) {
+    lat = Math.max(-85.0511, Math.min(85.0511, lat));
+    lon = ((lon % 360) + 540) % 360 - 180;
     const n = Math.pow(2, zoom);
     const tx = Math.floor((lon + 180) / 360 * n);
     const r = lat * Math.PI / 180;

@@ -135,7 +135,7 @@
                                      get lat() { return $store.citrascope.status?.location_latitude; },
                                      get lon() { return $store.citrascope.status?.location_longitude; },
                                      showMap() {
-                                         if (!this.lat || this.popoverEl) return;
+                                         if (this.lat == null || this.lon == null || this.popoverEl) return;
                                          const t = $store.citrascope.tileCoords(this.lat, this.lon);
                                          const html = '<div style=&quot;position:relative;line-height:0;&quot;>'
                                              + '<img src=&quot;' + t.url + '&quot; width=&quot;256&quot; height=&quot;256&quot; style=&quot;display:block;opacity:0.85;&quot;>'

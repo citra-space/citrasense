@@ -1787,12 +1787,12 @@ class CitraScopeWebApp:
             # Resolve active operating location from data already fetched above
             # (avoids calling get_current_location() which can block on subprocess)
             gps = self.status.gps_location
-            if gps and gps.get("is_strong") and gps.get("latitude") is not None:
+            if gps and gps.get("is_strong") and gps.get("latitude") is not None and gps.get("longitude") is not None:
                 self.status.location_source = "gps"
                 self.status.location_latitude = gps["latitude"]
                 self.status.location_longitude = gps["longitude"]
                 self.status.location_altitude = gps.get("altitude")
-            elif self.status.ground_station_latitude is not None:
+            elif self.status.ground_station_latitude is not None and self.status.ground_station_longitude is not None:
                 self.status.location_source = "ground_station"
                 self.status.location_latitude = self.status.ground_station_latitude
                 self.status.location_longitude = self.status.ground_station_longitude

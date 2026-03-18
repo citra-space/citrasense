@@ -714,7 +714,8 @@
                                          x-data="{
                                              get divergenceKm() {
                                                  const s = $store.citrascope.status;
-                                                 if (!s?.gps_location?.latitude || s?.ground_station_latitude == null) return 0;
+                                                 if (s?.gps_location?.latitude == null || s?.gps_location?.longitude == null
+                                                     || s?.ground_station_latitude == null || s?.ground_station_longitude == null) return 0;
                                                  const dLat = (s.gps_location.latitude - s.ground_station_latitude) * 111.32;
                                                  const dLon = (s.gps_location.longitude - s.ground_station_longitude) * 111.32 * Math.cos(s.ground_station_latitude * Math.PI / 180);
                                                  return Math.sqrt(dLat * dLat + dLon * dLon);

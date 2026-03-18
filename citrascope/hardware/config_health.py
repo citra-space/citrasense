@@ -187,7 +187,7 @@ def assess_config_health(
             chk.observed_fmt = f"{hw_w}\u00d7{hw_h} px"
             chk.source = "camera"
             matches = hw_w == cfg_h_px and hw_h == cfg_v_px
-            chk.pct_diff = 0.0 if matches else _pct(cfg_h_px, hw_w)
+            chk.pct_diff = 0.0 if matches else max(_pct(cfg_h_px, hw_w), _pct(cfg_v_px, hw_h))
             chk.status = "ok" if matches else "warning"
         # Append sensor physical size as extra context
         if ps_um:
@@ -209,7 +209,7 @@ def assess_config_health(
             unit="\u00b0",
         )
         if observed_fov_w is not None and observed_fov_h is not None:
-            pct = _pct(cfg_fov_w, observed_fov_w)
+            pct = max(_pct(cfg_fov_w, observed_fov_w), _pct(cfg_fov_h, observed_fov_h))
             chk.observed = round(observed_fov_w, 2)
             chk.observed_fmt = f"{observed_fov_w:.2f}\u00b0 \u00d7 {observed_fov_h:.2f}\u00b0"
             chk.source = "plate_solve"
