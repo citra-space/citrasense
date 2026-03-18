@@ -93,6 +93,33 @@ def test_gps_monitor_query_gpsd_no_position():
         assert gm._query_gpsd() is None
 
 
+def test_gps_fix_metadata_only_not_strong():
+    fix = GPSFix(gpsd_version="3.25")
+    assert fix.is_strong_fix is False
+    assert fix.latitude is None
+
+
+def test_gps_monitor_query_gpsd_metadata_only():
+    gm = GPSMonitor()
+    gpsd_output = (
+        '{"class":"VERSION","release":"3.25","rev":"release-3.25"}\n'
+        '{"class":"DEVICES","devices":[{"path":"/dev/ttyACM0","driver":"u-blox"}]}\n'
+    )
+    mock_result = MagicMock()
+    mock_result.returncode = 0
+    mock_result.stdout = gpsd_output
+
+    with patch("subprocess.run", return_value=mock_result):
+        fix = gm._query_gpsd()
+
+    assert fix is not None
+    assert fix.gpsd_version == "3.25"
+    assert fix.device_path == "/dev/ttyACM0"
+    assert fix.device_driver == "u-blox"
+    assert fix.latitude is None
+    assert fix.longitude is None
+
+
 def test_gps_monitor_query_gpsd_subprocess_error():
     gm = GPSMonitor()
     with patch("subprocess.run", side_effect=FileNotFoundError):

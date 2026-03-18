@@ -15,7 +15,13 @@ from citrascope.logging import CITRASCOPE_LOGGER
 
 @dataclass
 class GPSFix:
-    """GPS fix information."""
+    """GPS fix information.
+
+    An instance may carry only gpsd diagnostics (``gpsd_version``,
+    ``device_path``) without position data — ``latitude`` and ``longitude``
+    will be ``None`` in that case.  Always check coordinates before using
+    them for position calculations.
+    """
 
     latitude: float | None = None  # degrees
     longitude: float | None = None  # degrees

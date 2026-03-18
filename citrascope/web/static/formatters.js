@@ -167,6 +167,29 @@ export function formatGPSLocation(gpsLocation) {
 }
 
 /**
+ * Compute slippy-map tile coordinates for a given lat/lon.
+ * Returns { url, px, py } where url is the tile image URL and px/py are the
+ * pixel offsets of the point within that tile.
+ * @param {number} lat - Latitude in degrees
+ * @param {number} lon - Longitude in degrees
+ * @param {number} [zoom=12] - Zoom level
+ * @param {number} [tileSize=256] - Tile pixel size
+ * @returns {{url: string, px: number, py: number}}
+ */
+export function tileCoords(lat, lon, zoom = 12, tileSize = 256) {
+    const n = Math.pow(2, zoom);
+    const tx = Math.floor((lon + 180) / 360 * n);
+    const r = lat * Math.PI / 180;
+    const ty = Math.floor((1 - Math.log(Math.tan(r) + 1 / Math.cos(r)) / Math.PI) / 2 * n);
+    const xFrac = (lon + 180) / 360 * n;
+    const yFrac = (1 - Math.log(Math.tan(r) + 1 / Math.cos(r)) / Math.PI) / 2 * n;
+    const px = Math.round((xFrac - tx) * tileSize);
+    const py = Math.round((yFrac - ty) * tileSize);
+    const url = `https://a.basemaps.cartocdn.com/dark_all/${zoom}/${tx}/${ty}.png`;
+    return { url, px, py };
+}
+
+/**
  * Format operating location as compact coordinate string for the Telescope card.
  * @param {Object} status - SystemStatus object with location_latitude/longitude/altitude
  * @returns {string} e.g. "38.840°N, 104.821°W, 2743m"
