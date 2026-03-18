@@ -89,14 +89,16 @@ class CalibrationLibrary:
         gain: int,
         binning: int,
         exposure_time: float,
-        temperature: float,
+        temperature: float | None,
         read_mode: str = "",
     ) -> str:
         cam = cls._safe_name(camera_id)
         rm = cls._read_mode_slug(read_mode)
         exp_ms = round(exposure_time * 1000)
-        temp_str = f"{temperature:+.1f}".replace("+", "p").replace("-", "m").replace(".", "d")
-        return f"master_dark_{cam}_g{gain}_bin{binning}_{rm}_{exp_ms}ms_{temp_str}C.fits"
+        if temperature is not None:
+            temp_str = f"{temperature:+.1f}".replace("+", "p").replace("-", "m").replace(".", "d")
+            return f"master_dark_{cam}_g{gain}_bin{binning}_{rm}_{exp_ms}ms_{temp_str}C.fits"
+        return f"master_dark_{cam}_g{gain}_bin{binning}_{rm}_{exp_ms}ms_noTemp.fits"
 
     @classmethod
     def _flat_filename(cls, camera_id: str, gain: int, binning: int, filter_name: str, read_mode: str = "") -> str:
@@ -128,7 +130,7 @@ class CalibrationLibrary:
         if frame_type == "bias":
             name = self._bias_filename(camera_id, gain, binning, read_mode)
         elif frame_type == "dark":
-            name = self._dark_filename(camera_id, gain, binning, exposure_time, temperature or 0.0, read_mode)
+            name = self._dark_filename(camera_id, gain, binning, exposure_time, temperature, read_mode)
         elif frame_type == "flat":
             name = self._flat_filename(camera_id, gain, binning, filter_name, read_mode)
         else:
@@ -174,23 +176,29 @@ class CalibrationLibrary:
         camera_id: str,
         gain: int,
         binning: int,
-        temperature: float,
+        temperature: float | None = None,
         read_mode: str = "",
     ) -> Path | None:
         """Find the best dark master for dark-scaling.
 
-        Exact match on camera_id, gain, binning, read_mode.  Temperature
-        must be within ``DARK_TEMP_TOLERANCE_C``.  Among candidates that
-        pass the temperature gate, the **longest** exposure is preferred
-        because it gives the best signal-to-noise on the thermal component
-        used for dark scaling.
+        Exact match on camera_id, gain, binning, read_mode.  When
+        *temperature* is provided, candidates must be within
+        ``DARK_TEMP_TOLERANCE_C``.  Among candidates that pass the
+        temperature gate, the **longest** exposure is preferred because
+        it gives the best signal-to-noise on the thermal component used
+        for dark scaling.
+
+        Falls back to temperature-agnostic darks (those built by cameras
+        without a temperature sensor) when no temperature-matched dark is
+        found or when *temperature* is ``None``.
 
         The caller reads the ``EXPTIME`` header of the returned file to
         know the reference exposure for the scaling ratio.
         """
         rm = self._read_mode_slug(read_mode)
         prefix = f"master_dark_{self._safe_name(camera_id)}_g{gain}_bin{binning}_{rm}_"
-        candidates: list[tuple[float, float, Path]] = []
+        temp_matched: list[tuple[float, float, Path]] = []
+        no_temp: list[tuple[float, Path]] = []
 
         for p in self._masters_dir.glob(f"{prefix}*.fits"):
             try:
@@ -199,19 +207,23 @@ class CalibrationLibrary:
                     d_exp = float(hdr.get("EXPTIME", 0.0))
                     d_temp = hdr.get("CCD-TEMP")
                     if d_temp is None:
+                        no_temp.append((d_exp, p))
                         continue
-                    if abs(float(d_temp) - temperature) > self.DARK_TEMP_TOLERANCE_C:
-                        continue
-                    temp_penalty = abs(float(d_temp) - temperature)
-                    candidates.append((temp_penalty, d_exp, p))
+                    if temperature is not None:
+                        if abs(float(d_temp) - temperature) > self.DARK_TEMP_TOLERANCE_C:
+                            continue
+                        temp_penalty = abs(float(d_temp) - temperature)
+                        temp_matched.append((temp_penalty, d_exp, p))
             except Exception:
                 logger.debug("Skipping unreadable dark master: %s", p, exc_info=True)
 
-        if not candidates:
-            return None
-        # Best temperature match first, then longest exposure (highest SNR)
-        candidates.sort(key=lambda t: (t[0], -t[1]))
-        return candidates[0][2]
+        if temp_matched:
+            temp_matched.sort(key=lambda t: (t[0], -t[1]))
+            return temp_matched[0][2]
+        if no_temp:
+            no_temp.sort(key=lambda t: -t[0])
+            return no_temp[0][1]
+        return None
 
     def get_master_flat(
         self,
@@ -244,7 +256,7 @@ class CalibrationLibrary:
         if frame_type == "bias":
             name = self._bias_filename(camera_id, gain, binning, read_mode)
         elif frame_type == "dark":
-            name = self._dark_filename(camera_id, gain, binning, exposure_time, temperature or 0.0, read_mode)
+            name = self._dark_filename(camera_id, gain, binning, exposure_time, temperature, read_mode)
         elif frame_type == "flat":
             name = self._flat_filename(camera_id, gain, binning, filter_name, read_mode)
         else:

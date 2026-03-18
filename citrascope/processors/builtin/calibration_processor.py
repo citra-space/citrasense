@@ -75,15 +75,13 @@ class CalibrationProcessor(AbstractImageProcessor):
 
         # Look up matching masters
         bias_path = self._library.get_master_bias(camera_id, gain, binning, read_mode)
-        dark_path = None
-        if temperature is not None:
-            dark_path = self._library.get_master_dark(
-                camera_id,
-                gain,
-                binning,
-                float(temperature),  # type: ignore[arg-type]
-                read_mode,
-            )
+        dark_path = self._library.get_master_dark(
+            camera_id,
+            gain,
+            binning,
+            float(temperature) if temperature is not None else None,  # type: ignore[arg-type]
+            read_mode,
+        )
         flat_path = (
             self._library.get_master_flat(camera_id, gain, binning, filter_name, read_mode) if filter_name else None
         )
@@ -140,14 +138,31 @@ class CalibrationProcessor(AbstractImageProcessor):
                     if logger:
                         logger.info("Applied bias + dark (unscaled): %s", dark_path.name)
             elif not dark_bias_subtracted:
-                # Dark still contains bias+thermal. Scale the whole thing;
-                # don't subtract bias separately or it'll be double-counted.
-                if dark_exposure > 0 and exposure > 0:
+                # Dark still contains bias+thermal.  If a bias master is
+                # available we can separate them: subtract bias from both
+                # the raw frame and the dark, then scale only the thermal
+                # component.  Without bias we scale the whole dark, which
+                # leaves a bias*(1-scale) residual — best we can do.
+                if bias_path and dark_exposure > 0 and exposure > 0:
+                    scale = exposure / dark_exposure
+                    with fits.open(bias_path) as hdul:
+                        bias_data = hdul[0].data.astype(np.float32)  # type: ignore[index]
+                    calibrated = calibrated - bias_data - (dark_data - bias_data) * scale
+                    if logger:
+                        logger.info(
+                            "Applied dark scaling (bias-incl'd ref, bias separated): " "%.1fs → %.1fs (×%.3f) from %s",
+                            dark_exposure,
+                            exposure,
+                            scale,
+                            dark_path.name,
+                        )
+                elif dark_exposure > 0 and exposure > 0:
                     scale = exposure / dark_exposure
                     calibrated = calibrated - dark_data * scale
                     if logger:
                         logger.info(
-                            "Applied dark scaling (bias-incl'd ref): %.1fs → %.1fs (×%.3f) from %s",
+                            "Applied dark scaling (bias-incl'd ref, no bias available): "
+                            "%.1fs → %.1fs (×%.3f) from %s",
                             dark_exposure,
                             exposure,
                             scale,

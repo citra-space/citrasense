@@ -944,6 +944,7 @@ class CitraScopeWebApp:
                 "capture_requested": cal_mgr.is_requested() if cal_mgr else False,
                 "capture_progress": cal_mgr.get_progress() if cal_mgr else {},
                 "frame_count_setting": self.daemon.settings.calibration_frame_count if self.daemon.settings else 30,
+                "flat_frame_count_setting": self.daemon.settings.flat_frame_count if self.daemon.settings else 15,
             }
 
         @self.app.post("/api/calibration/capture")
@@ -1005,6 +1006,7 @@ class CitraScopeWebApp:
                     return JSONResponse({"error": "Camera does not support calibration"}, status_code=400)
 
                 frame_count = self.daemon.settings.calibration_frame_count if self.daemon.settings else 30
+                flat_count = self.daemon.settings.flat_frame_count if self.daemon.settings else 15
 
                 if suite_name == "bias_and_dark":
                     jobs = bias_and_dark_suite(profile, frame_count)
@@ -1018,7 +1020,7 @@ class CitraScopeWebApp:
                         ]
                     if not filters:
                         return JSONResponse({"error": "No filters configured"}, status_code=400)
-                    jobs = all_flats_suite(profile, filters, frame_count)
+                    jobs = all_flats_suite(profile, filters, flat_count)
                 else:
                     return JSONResponse({"error": f"Unknown suite: {suite_name}"}, status_code=400)
 
@@ -1056,6 +1058,120 @@ class CitraScopeWebApp:
             except Exception as e:
                 CITRASCOPE_LOGGER.error("Error deleting calibration master: %s", e, exc_info=True)
                 return JSONResponse({"error": str(e)}, status_code=500)
+
+        @self.app.get("/api/calibration/master/download")
+        async def download_calibration_master(filename: str):
+            """Download a master calibration FITS file by filename."""
+            if not self.daemon:
+                return JSONResponse({"error": "Daemon not available"}, status_code=503)
+            lib = getattr(self.daemon, "calibration_library", None)
+            if not lib:
+                return JSONResponse({"error": "Calibration not available"}, status_code=400)
+            safe_name = Path(filename).name
+            if not safe_name or safe_name != filename:
+                return JSONResponse({"error": "Invalid filename"}, status_code=400)
+            path = lib.masters_dir / safe_name
+            if not path.exists():
+                return JSONResponse({"error": "File not found"}, status_code=404)
+            return FileResponse(path, filename=safe_name, media_type="application/fits")
+
+        @self.app.get("/api/twilight")
+        async def get_twilight_info():
+            """Return current/next nautical twilight flat window for the observatory.
+
+            The "flat window" is the nautical twilight band where the Sun
+            is between -6 deg (civil) and -12 deg (nautical) below the
+            horizon — bright enough for uniform sky illumination, dark
+            enough to avoid saturation.
+            """
+            if not self.daemon:
+                return JSONResponse({"error": "Daemon not available"}, status_code=503)
+
+            loc_svc = getattr(self.daemon, "location_service", None)
+            if not loc_svc:
+                return {"location_available": False}
+
+            location = loc_svc.get_current_location()
+            if not location:
+                return {"location_available": False}
+
+            try:
+                from datetime import datetime, timedelta, timezone
+
+                from skyfield import almanac
+                from skyfield.api import load, wgs84
+
+                CIVIL_DEG = -6.0
+                NAUTICAL_DEG = -12.0
+
+                ts = load.timescale()
+                eph = load("de421.bsp")
+                topos = wgs84.latlon(location["latitude"], location["longitude"])
+                observer = eph["earth"] + topos
+
+                now_utc = datetime.now(timezone.utc)
+                t_now = ts.from_datetime(now_utc)
+                t_end = ts.from_datetime(now_utc + timedelta(hours=36))
+
+                current_alt = observer.at(t_now).observe(eph["sun"]).apparent().altaz()[0].degrees
+
+                # Find crossings at -6 deg and -12 deg
+                civil_times, civil_events = almanac.find_discrete(
+                    t_now,
+                    t_end,
+                    almanac.risings_and_settings(eph, eph["sun"], topos, horizon_degrees=CIVIL_DEG),
+                )
+                nautical_times, nautical_events = almanac.find_discrete(
+                    t_now,
+                    t_end,
+                    almanac.risings_and_settings(eph, eph["sun"], topos, horizon_degrees=NAUTICAL_DEG),
+                )
+
+                # Build flat windows by pairing crossings:
+                #   Evening: civil set (-6 deg down) → nautical set (-12 deg down)
+                #   Morning: nautical rise (-12 deg up) → civil rise (-6 deg up)
+                civil_sets = [t.utc_iso() for t, ev in zip(civil_times, civil_events, strict=True) if not ev]
+                civil_rises = [t.utc_iso() for t, ev in zip(civil_times, civil_events, strict=True) if ev]
+                nautical_sets = [t.utc_iso() for t, ev in zip(nautical_times, nautical_events, strict=True) if not ev]
+                nautical_rises = [t.utc_iso() for t, ev in zip(nautical_times, nautical_events, strict=True) if ev]
+
+                flat_windows: list[dict[str, Any]] = []
+                for cs in civil_sets:
+                    for ns in nautical_sets:
+                        if ns > cs:
+                            flat_windows.append({"start": cs, "end": ns, "type": "evening"})
+                            break
+                for nr in nautical_rises:
+                    for cr in civil_rises:
+                        if cr > nr:
+                            flat_windows.append({"start": nr, "end": cr, "type": "morning"})
+                            break
+
+                flat_windows.sort(key=lambda w: w["start"])
+
+                in_flat_window = bool(NAUTICAL_DEG <= current_alt <= CIVIL_DEG)
+                current_window = None
+                next_window = None
+                now_iso = t_now.utc_iso()
+
+                for w in flat_windows:
+                    if w["start"] <= now_iso <= w["end"]:
+                        end_dt = datetime.fromisoformat(w["end"].replace("Z", "+00:00"))
+                        remaining = (end_dt - now_utc).total_seconds() / 60
+                        current_window = {**w, "remaining_minutes": round(max(remaining, 0), 1)}
+                    elif w["start"] > now_iso and next_window is None:
+                        next_window = w
+
+                return {
+                    "location_available": True,
+                    "current_sun_altitude": round(float(current_alt), 1),
+                    "in_flat_window": in_flat_window,
+                    "flat_window": current_window,
+                    "next_flat_window": next_window,
+                }
+            except Exception as e:
+                CITRASCOPE_LOGGER.error("Error computing twilight info: %s", e, exc_info=True)
+                return {"location_available": False, "error": str(e)}
 
         @self.app.post("/api/adapter/sync")
         async def manual_sync(request: dict[str, Any]):

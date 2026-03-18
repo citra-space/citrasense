@@ -181,6 +181,10 @@ class CalibrationManager:
             fname = params.get("filter_name", "")
             if fname:
                 label += f" {fname}"
+        elif ft == "interleaved_flat":
+            filters = params.get("filters", [])
+            names = [f["name"] for f in filters]
+            label = f"interleaved flats bin{binning} ({', '.join(names)})"
         return label
 
     # Temperature tolerance for considering the sensor "at target" (degrees C).
@@ -358,6 +362,22 @@ class CalibrationManager:
                 count=count,
                 exposure_time=exposure_time,
                 filter_name=filter_name,
+                gain=gain,
+                binning=binning,
+                cancel_event=self._cancel_event,
+                on_progress=self._on_progress,
+            )
+        elif frame_type == "interleaved_flat":
+            filters = params.get("filters", [])
+            if not filters:
+                self.logger.error("Interleaved flat job has no filters")
+                return
+            initial_exposure = float(params.get("initial_exposure", 1.0))
+            builder.build_interleaved_flats(
+                filters=filters,
+                set_filter=self.hardware_adapter.set_filter,
+                count=count,
+                initial_exposure=initial_exposure,
                 gain=gain,
                 binning=binning,
                 cancel_event=self._cancel_event,

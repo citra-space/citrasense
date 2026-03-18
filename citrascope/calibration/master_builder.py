@@ -11,6 +11,7 @@ import threading
 import time
 from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 from astropy.io import fits  # type: ignore[attr-defined]
@@ -189,14 +190,20 @@ class MasterBuilder:
             master = master - bias_data
             logger.info("Subtracted master bias from flat")
 
+        self._library.cleanup_tmp()
+
+        max_adu = float(self._camera.get_max_pixel_value(binning))
+        ok, reason = self._validate_flat_quality(master, max_adu, filter_name)
+        if not ok:
+            logger.warning("Flat quality check failed for %s: %s — master NOT saved", filter_name or "nofilter", reason)
+            return Path()
+
         # Normalise to median = 1.0
         med = float(np.median(master))
         if med > 0:
             master = master / med
         else:
             logger.warning("Flat master median is zero — normalisation skipped")
-
-        self._library.cleanup_tmp()
 
         return self._library.save_master(
             frame_type="flat",
@@ -209,6 +216,214 @@ class MasterBuilder:
             camera_model=self._profile.model,
             read_mode=rm,
         )
+
+    def build_interleaved_flats(
+        self,
+        filters: list[dict[str, Any]],
+        set_filter: Callable[[int], bool],
+        count: int,
+        initial_exposure: float = 1.0,
+        gain: int | None = None,
+        binning: int = 1,
+        reexpose_interval: int = 3,
+        cancel_event: threading.Event | None = None,
+        on_progress: ProgressCallback | None = None,
+    ) -> list[Path]:
+        """Capture interleaved flat frames across all filters, then stack per filter.
+
+        Cycles through filters in rounds so every filter samples across
+        the sky-brightness gradient during twilight.  Raw frames are written
+        to temp FITS on disk (not held in memory) so the capture phase stays
+        bounded regardless of frame count or sensor resolution.  Stacking
+        loads one filter at a time.
+
+        Args:
+            filters: List of ``{"position": int, "name": str}`` dicts.
+            set_filter: Callback to switch the filter wheel.
+            count: Number of frames per filter.
+            initial_exposure: Starting exposure for auto-expose (seconds).
+            gain: Camera gain (None = use profile default).
+            binning: Pixel binning factor.
+            reexpose_interval: Re-check auto-expose every N rounds.
+            cancel_event: Threading event for cancellation.
+            on_progress: Progress callback ``(current, total, type, status)``.
+
+        Returns:
+            List of saved master flat paths (one per filter that passed
+            quality validation).
+        """
+        gain_val = gain if gain is not None else (self._profile.current_gain or 0)
+        max_adu = float(self._camera.get_max_pixel_value(binning))
+        target_adu = max_adu * self.TARGET_ADU_FRACTION
+        lo = max_adu * (self.TARGET_ADU_FRACTION - self.ADU_TOLERANCE)
+
+        # Per-filter state: file paths on disk, not in-memory arrays
+        frame_paths: dict[str, list[Path]] = {f["name"]: [] for f in filters}
+        exposures: dict[str, float] = {}
+        last_median: dict[str, float] = {}
+
+        # --- Phase 1: auto-expose each filter (carry forward) ----------
+        carry_exposure = initial_exposure
+        for fi, filt in enumerate(filters):
+            if cancel_event and cancel_event.is_set():
+                return []
+            fname = filt["name"]
+            self._report(
+                on_progress,
+                0,
+                0,
+                "flat",
+                f"Auto-expose filter {fi + 1}/{len(filters)}: {fname}",
+            )
+            if not set_filter(filt["position"]):
+                logger.error("Failed to set filter %s (position %d)", fname, filt["position"])
+                continue
+            converged = self._auto_expose_flat(
+                initial_exposure=carry_exposure,
+                gain=gain_val,
+                binning=binning,
+                on_progress=on_progress,
+                cancel_event=cancel_event,
+            )
+            exposures[fname] = converged
+            carry_exposure = converged
+
+        if not exposures:
+            logger.error("No filters could auto-expose — aborting interleaved flats")
+            return []
+
+        # --- Phase 2: round-robin capture (disk-backed) ----------------
+        round_start = time.monotonic()
+        round_times: list[float] = []
+        total_captures = count * len(filters)
+
+        for rnd in range(1, count + 1):
+            if cancel_event and cancel_event.is_set():
+                logger.info("Interleaved flat capture cancelled at round %d/%d", rnd, count)
+                break
+
+            rnd_t0 = time.monotonic()
+            for fi, filt in enumerate(filters):
+                if cancel_event and cancel_event.is_set():
+                    break
+                fname = filt["name"]
+                if fname not in exposures:
+                    continue
+
+                captured_so_far = (rnd - 1) * len(filters) + fi
+                eta_str = ""
+                if round_times:
+                    avg_round = sum(round_times) / len(round_times)
+                    remaining_rounds = count - rnd + 1
+                    eta_s = avg_round * remaining_rounds
+                    if eta_s >= 60:
+                        eta_str = f" [ETA {eta_s / 60:.0f}m{eta_s % 60:.0f}s]"
+                    else:
+                        eta_str = f" [ETA {eta_s:.0f}s]"
+
+                self._report(
+                    on_progress,
+                    captured_so_far + 1,
+                    total_captures,
+                    "flat",
+                    f"Round {rnd}/{count}: {fname}{eta_str}",
+                )
+
+                if not set_filter(filt["position"]):
+                    logger.warning("Filter switch failed for %s in round %d", fname, rnd)
+                    continue
+
+                data = self._camera.capture_array(
+                    duration=exposures[fname],
+                    gain=gain_val,
+                    binning=binning,
+                    shutter_closed=False,
+                )
+                last_median[fname] = float(np.median(data))
+
+                safe_fname = fname.replace(" ", "_").replace("/", "-").replace("\\", "-")
+                tmp_path = self._library.tmp_dir / f"flat_{safe_fname}_{rnd:04d}_{int(time.time())}.fits"
+                hdu = fits.PrimaryHDU(data)
+                hdu.writeto(tmp_path, overwrite=True)
+                frame_paths[fname].append(tmp_path)
+
+            rnd_elapsed = time.monotonic() - rnd_t0
+            round_times.append(rnd_elapsed)
+
+            if rnd % reexpose_interval == 0 and rnd < count:
+                self._reexpose_check(
+                    filters,
+                    exposures,
+                    last_median,
+                    set_filter,
+                    gain_val,
+                    binning,
+                    target_adu,
+                    lo,
+                    on_progress,
+                    cancel_event,
+                )
+
+        # --- Phase 3: stack one filter at a time, validate, save -------
+        saved_paths: list[Path] = []
+        rm = self._profile.read_mode
+        bias_path = self._library.get_master_bias(self._profile.camera_id, gain_val, binning, rm)
+        bias_data: np.ndarray | None = None
+        if bias_path:
+            with fits.open(bias_path) as hdul:
+                bias_data = hdul[0].data.astype(np.float32)  # type: ignore[index]
+
+        for filt in filters:
+            fname = filt["name"]
+            paths = frame_paths.get(fname, [])
+            if len(paths) < 3:
+                logger.warning("Skipping flat for %s — only %d frames captured (need >= 3)", fname, len(paths))
+                continue
+
+            self._report(on_progress, 0, 0, "flat", f"Stacking {len(paths)} frames for {fname}...")
+            master = self._median_stack(paths)
+
+            if bias_data is not None:
+                master = master - bias_data
+                logger.info("Subtracted master bias from flat %s", fname)
+
+            ok, reason = self._validate_flat_quality(master, max_adu, fname)
+            if not ok:
+                logger.warning("Flat quality check FAILED for %s: %s — master NOT saved", fname, reason)
+                self._report(on_progress, 0, 0, "flat", f"REJECTED {fname}: {reason}")
+                continue
+
+            med = float(np.median(master))
+            if med > 0:
+                master = master / med
+            else:
+                logger.warning("Flat master median is zero for %s — normalisation skipped", fname)
+                continue
+
+            path = self._library.save_master(
+                frame_type="flat",
+                camera_id=self._profile.camera_id,
+                data=master,
+                gain=gain_val,
+                binning=binning,
+                filter_name=fname,
+                ncombine=len(paths),
+                camera_model=self._profile.model,
+                read_mode=rm,
+            )
+            saved_paths.append(path)
+            self._report(on_progress, 0, 0, "flat", f"Saved master flat for {fname}")
+
+        self._library.cleanup_tmp()
+
+        total_elapsed = time.monotonic() - round_start
+        logger.info(
+            "Interleaved flats complete: %d/%d filters saved in %.0fs",
+            len(saved_paths),
+            len(filters),
+            total_elapsed,
+        )
+        return saved_paths
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -371,6 +586,96 @@ class MasterBuilder:
             paths.append(tmp_path)
 
         return paths
+
+    ADU_DRIFT_THRESHOLD = 0.20
+
+    FLAT_MAX_OVER_MEDIAN = 5.0
+    """Reject flats where max/median exceeds this (indicates stars)."""
+
+    FLAT_MIN_SIGNAL_FRACTION = 0.05
+    """Reject flats where pre-normalisation median is below this fraction of max ADU."""
+
+    FLAT_HIGH_VARIANCE_RATIO = 0.30
+    """Warn (but allow) flats where std/median exceeds this."""
+
+    def _reexpose_check(
+        self,
+        filters: list[dict[str, Any]],
+        exposures: dict[str, float],
+        last_median: dict[str, float],
+        set_filter: Callable[[int], bool],
+        gain: int,
+        binning: int,
+        target_adu: float,
+        lo_adu: float,
+        on_progress: ProgressCallback | None,
+        cancel_event: threading.Event | None,
+    ) -> None:
+        """Check ADU drift on the most recent frame per filter; re-expose if needed."""
+        for filt in filters:
+            if cancel_event and cancel_event.is_set():
+                return
+            fname = filt["name"]
+            if fname not in last_median or fname not in exposures:
+                continue
+
+            latest_median = last_median[fname]
+            drift = abs(latest_median - target_adu) / target_adu if target_adu > 0 else 0
+
+            if drift > self.ADU_DRIFT_THRESHOLD and latest_median < lo_adu:
+                logger.info(
+                    "ADU drift %.0f%% for %s (median %.0f, target %.0f) — re-exposing",
+                    drift * 100,
+                    fname,
+                    latest_median,
+                    target_adu,
+                )
+                self._report(on_progress, 0, 0, "flat", f"Re-exposing {fname} (ADU drifted {drift * 100:.0f}%)")
+                if not set_filter(filt["position"]):
+                    continue
+                new_exp = self._auto_expose_flat(
+                    initial_exposure=exposures[fname],
+                    gain=gain,
+                    binning=binning,
+                    on_progress=on_progress,
+                    cancel_event=cancel_event,
+                )
+                exposures[fname] = new_exp
+
+    @staticmethod
+    def _validate_flat_quality(
+        master: np.ndarray,
+        max_adu: float,
+        filter_name: str,
+    ) -> tuple[bool, str]:
+        """Check a normalised flat master for obvious defects.
+
+        Returns ``(True, "")`` if acceptable, ``(False, reason)`` if the
+        master should be rejected.
+        """
+        med = float(np.median(master))
+        peak = float(np.max(master))
+        std = float(np.std(master))
+
+        if med <= 0:
+            return False, "median is zero or negative"
+
+        ratio = peak / med
+        if ratio > MasterBuilder.FLAT_MAX_OVER_MEDIAN:
+            return False, f"star contamination (max/median={ratio:.1f}, threshold {MasterBuilder.FLAT_MAX_OVER_MEDIAN})"
+
+        min_signal = MasterBuilder.FLAT_MIN_SIGNAL_FRACTION * max_adu
+        if med < min_signal:
+            return False, f"insufficient signal (median={med:.0f}, need >{min_signal:.0f})"
+
+        if std / med > MasterBuilder.FLAT_HIGH_VARIANCE_RATIO:
+            logger.warning(
+                "Flat %s has high variance (std/median=%.2f) — saving but may indicate issues",
+                filter_name,
+                std / med,
+            )
+
+        return True, ""
 
     @staticmethod
     def _median_stack(paths: list[Path]) -> np.ndarray:

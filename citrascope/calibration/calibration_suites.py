@@ -11,14 +11,12 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from citrascope.hardware.devices.camera.abstract_camera import CalibrationProfile
 
-SUITE_MAX_BINNING = 2
-
 DARK_REFERENCE_EXPOSURE_S = 30.0
 """Long reference dark used for dark scaling.
 
-One 30 s dark per binning gives high SNR on the thermal signal.
-At runtime the calibration processor linearly scales it to match
-the science frame's actual exposure.
+One 30 s dark at the current binning gives high SNR on the thermal
+signal.  At runtime the calibration processor linearly scales it to
+match the science frame's actual exposure.
 """
 
 
@@ -26,7 +24,7 @@ def bias_and_dark_suite(
     profile: CalibrationProfile,
     frame_count: int,
 ) -> list[dict[str, Any]]:
-    """Generate ordered job list: all biases first, then all darks.
+    """Generate ordered job list: bias then dark at the current binning.
 
     Biases are instant (0 s, shutter closed) so they run first without
     waiting for temperature.  Darks follow, sharing a single temp-wait
@@ -36,26 +34,21 @@ def bias_and_dark_suite(
     a single master can be linearly scaled to any science exposure at
     runtime — no need to re-calibrate when changing exposure settings.
 
-    Binning is limited to <= SUITE_MAX_BINNING (1x1, 2x2) since higher
-    binnings are rarely used for satellite photometry.
+    Only the current binning is calibrated; re-run the suite after
+    switching binning modes.
     """
-    jobs: list[dict[str, Any]] = []
     gain = profile.current_gain or 0
-    suite_binnings = sorted(b for b in profile.supported_binning if b <= SUITE_MAX_BINNING)
-
-    for binning in suite_binnings:
-        jobs.append({"frame_type": "bias", "count": frame_count, "gain": gain, "binning": binning})
-    for binning in suite_binnings:
-        jobs.append(
-            {
-                "frame_type": "dark",
-                "count": frame_count,
-                "gain": gain,
-                "binning": binning,
-                "exposure_time": DARK_REFERENCE_EXPOSURE_S,
-            }
-        )
-    return jobs
+    binning = profile.current_binning
+    return [
+        {"frame_type": "bias", "count": frame_count, "gain": gain, "binning": binning},
+        {
+            "frame_type": "dark",
+            "count": frame_count,
+            "gain": gain,
+            "binning": binning,
+            "exposure_time": DARK_REFERENCE_EXPOSURE_S,
+        },
+    ]
 
 
 def all_flats_suite(
@@ -64,24 +57,23 @@ def all_flats_suite(
     frame_count: int,
     initial_exposure: float = 1.0,
 ) -> list[dict[str, Any]]:
-    """Generate one flat job per enabled filter at current binning.
+    """Generate a single interleaved flat job covering all enabled filters.
 
-    Auto-expose runs independently for each filter so the operator just
-    needs a uniform light source (twilight sky, flat panel, etc.).
+    Instead of one monolithic job per filter (which exhausts the twilight
+    window on early filters), returns a single ``interleaved_flat`` job.
+    The :class:`~citrascope.calibration.master_builder.MasterBuilder`
+    cycles through filters in rounds, so each filter samples across the
+    brightness gradient and the median stack averages out drift.
     """
-    jobs: list[dict[str, Any]] = []
     gain = profile.current_gain or 0
     binning = profile.current_binning
-    for f in filters:
-        jobs.append(
-            {
-                "frame_type": "flat",
-                "count": frame_count,
-                "gain": gain,
-                "binning": binning,
-                "exposure_time": initial_exposure,
-                "filter_position": f["position"],
-                "filter_name": f["name"],
-            }
-        )
-    return jobs
+    return [
+        {
+            "frame_type": "interleaved_flat",
+            "count": frame_count,
+            "gain": gain,
+            "binning": binning,
+            "initial_exposure": initial_exposure,
+            "filters": [{"position": f["position"], "name": f["name"]} for f in filters],
+        }
+    ]
