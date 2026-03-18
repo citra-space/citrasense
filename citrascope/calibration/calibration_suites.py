@@ -8,6 +8,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from citrascope.calibration import FilterSlot
+
 if TYPE_CHECKING:
     from citrascope.hardware.devices.camera.abstract_camera import CalibrationProfile
 
@@ -53,7 +55,7 @@ def bias_and_dark_suite(
 
 def all_flats_suite(
     profile: CalibrationProfile,
-    filters: list[dict[str, Any]],
+    filters: list[FilterSlot],
     frame_count: int,
     initial_exposure: float = 1.0,
 ) -> list[dict[str, Any]]:
@@ -74,6 +76,6 @@ def all_flats_suite(
             "gain": gain,
             "binning": binning,
             "initial_exposure": initial_exposure,
-            "filters": [{"position": f["position"], "name": f["name"]} for f in filters],
+            "filters": [f._asdict() for f in filters],
         }
     ]

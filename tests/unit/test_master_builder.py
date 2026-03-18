@@ -7,6 +7,7 @@ import numpy as np
 import pytest
 from astropy.io import fits
 
+from citrascope.calibration import FilterSlot
 from citrascope.calibration.calibration_library import CalibrationLibrary
 from citrascope.calibration.master_builder import MasterBuilder
 from citrascope.hardware.devices.camera.abstract_camera import CalibrationProfile
@@ -180,9 +181,9 @@ class TestInterleavedFlats:
     @pytest.fixture
     def filters_list(self):
         return [
-            {"position": 0, "name": "sloan_g"},
-            {"position": 1, "name": "sloan_r"},
-            {"position": 2, "name": "sloan_i"},
+            FilterSlot(position=0, name="sloan_g"),
+            FilterSlot(position=1, name="sloan_r"),
+            FilterSlot(position=2, name="sloan_i"),
         ]
 
     def test_round_robin_order(self, library: CalibrationLibrary, profile: CalibrationProfile, filters_list):
@@ -217,7 +218,7 @@ class TestInterleavedFlats:
             for fi, filt in enumerate(filters_list):
                 idx = rnd * 3 + fi
                 if idx < len(round_robin_calls):
-                    assert round_robin_calls[idx] == filt["position"]
+                    assert round_robin_calls[idx] == filt.position
 
     def test_exposure_carry_forward(self, library: CalibrationLibrary, profile: CalibrationProfile, filters_list):
         """Verify that auto-expose carries exposure forward between filters."""

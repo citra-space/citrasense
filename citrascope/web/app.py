@@ -23,6 +23,7 @@ from citrascope.constants import (
 )
 from citrascope.hardware.adapter_registry import get_adapter_schema as get_schema
 from citrascope.hardware.adapter_registry import list_adapters
+from citrascope.location.twilight import compute_twilight
 from citrascope.logging import CITRASCOPE_LOGGER
 
 # Standard astronomical filter names for the editable filter name dropdown.
@@ -990,6 +991,7 @@ class CitraScopeWebApp:
             if not self.daemon:
                 return JSONResponse({"error": "Daemon not available"}, status_code=503)
             try:
+                from citrascope.calibration import FilterSlot
                 from citrascope.calibration.calibration_suites import all_flats_suite, bias_and_dark_suite
 
                 suite_name = request.get("suite", "")
@@ -1011,10 +1013,10 @@ class CitraScopeWebApp:
                 if suite_name == "bias_and_dark":
                     jobs = bias_and_dark_suite(profile, frame_count)
                 elif suite_name == "all_flats":
-                    filters: list[dict[str, Any]] = []
+                    filters: list[FilterSlot] = []
                     if hw.supports_filter_management():
                         filters = [
-                            {"name": f["name"], "position": int(pos)}
+                            FilterSlot(position=int(pos), name=f["name"])
                             for pos, f in hw.get_filter_config().items()
                             if f.get("enabled", True) and f.get("name")
                         ]
@@ -1073,6 +1075,8 @@ class CitraScopeWebApp:
             path = lib.masters_dir / safe_name
             if not path.exists():
                 return JSONResponse({"error": "File not found"}, status_code=404)
+            if path.is_symlink() or not path.resolve().is_relative_to(lib.masters_dir.resolve()):
+                return JSONResponse({"error": "Invalid filename"}, status_code=400)
             return FileResponse(path, filename=safe_name, media_type="application/fits")
 
         @self.app.get("/api/twilight")
@@ -1096,79 +1100,8 @@ class CitraScopeWebApp:
                 return {"location_available": False}
 
             try:
-                from datetime import datetime, timedelta, timezone
-
-                from skyfield import almanac
-                from skyfield.api import load, wgs84
-
-                CIVIL_DEG = -6.0
-                NAUTICAL_DEG = -12.0
-
-                ts = load.timescale()
-                eph = load("de421.bsp")
-                topos = wgs84.latlon(location["latitude"], location["longitude"])
-                observer = eph["earth"] + topos
-
-                now_utc = datetime.now(timezone.utc)
-                t_now = ts.from_datetime(now_utc)
-                t_end = ts.from_datetime(now_utc + timedelta(hours=36))
-
-                current_alt = observer.at(t_now).observe(eph["sun"]).apparent().altaz()[0].degrees
-
-                # Find crossings at -6 deg and -12 deg
-                civil_times, civil_events = almanac.find_discrete(
-                    t_now,
-                    t_end,
-                    almanac.risings_and_settings(eph, eph["sun"], topos, horizon_degrees=CIVIL_DEG),
-                )
-                nautical_times, nautical_events = almanac.find_discrete(
-                    t_now,
-                    t_end,
-                    almanac.risings_and_settings(eph, eph["sun"], topos, horizon_degrees=NAUTICAL_DEG),
-                )
-
-                # Build flat windows by pairing crossings:
-                #   Evening: civil set (-6 deg down) → nautical set (-12 deg down)
-                #   Morning: nautical rise (-12 deg up) → civil rise (-6 deg up)
-                civil_sets = [t.utc_iso() for t, ev in zip(civil_times, civil_events, strict=True) if not ev]
-                civil_rises = [t.utc_iso() for t, ev in zip(civil_times, civil_events, strict=True) if ev]
-                nautical_sets = [t.utc_iso() for t, ev in zip(nautical_times, nautical_events, strict=True) if not ev]
-                nautical_rises = [t.utc_iso() for t, ev in zip(nautical_times, nautical_events, strict=True) if ev]
-
-                flat_windows: list[dict[str, Any]] = []
-                for cs in civil_sets:
-                    for ns in nautical_sets:
-                        if ns > cs:
-                            flat_windows.append({"start": cs, "end": ns, "type": "evening"})
-                            break
-                for nr in nautical_rises:
-                    for cr in civil_rises:
-                        if cr > nr:
-                            flat_windows.append({"start": nr, "end": cr, "type": "morning"})
-                            break
-
-                flat_windows.sort(key=lambda w: w["start"])
-
-                in_flat_window = bool(NAUTICAL_DEG <= current_alt <= CIVIL_DEG)
-                current_window = None
-                next_window = None
-                now_iso = t_now.utc_iso()
-
-                for w in flat_windows:
-                    if w["start"] <= now_iso <= w["end"]:
-                        end_dt = datetime.fromisoformat(w["end"].replace("Z", "+00:00"))
-                        remaining = (end_dt - now_utc).total_seconds() / 60
-                        current_window = {**w, "remaining_minutes": round(max(remaining, 0), 1)}
-                    elif w["start"] > now_iso and next_window is None:
-                        next_window = w
-
-                return {
-                    "location_available": True,
-                    "current_sun_altitude": round(float(current_alt), 1),
-                    "in_flat_window": in_flat_window,
-                    "flat_window": current_window,
-                    "next_flat_window": next_window,
-                }
+                info = await asyncio.to_thread(compute_twilight, location["latitude"], location["longitude"])
+                return info.to_dict()
             except Exception as e:
                 CITRASCOPE_LOGGER.error("Error computing twilight info: %s", e, exc_info=True)
                 return {"location_available": False, "error": str(e)}

@@ -12,6 +12,7 @@ import threading
 import time
 from typing import TYPE_CHECKING, Any
 
+from citrascope.calibration import FilterSlot
 from citrascope.calibration.calibration_library import CalibrationLibrary
 from citrascope.calibration.master_builder import MasterBuilder
 
@@ -324,16 +325,18 @@ class CalibrationManager:
         binning = int(params.get("binning", profile.current_binning))
 
         if frame_type == "bias":
-            builder.build_bias(
+            result = builder.build_bias(
                 count=count,
                 gain=gain,
                 binning=binning,
                 cancel_event=self._cancel_event,
                 on_progress=self._on_progress,
             )
+            if result is None:
+                self.logger.warning("Bias capture returned no frames (cancelled?)")
         elif frame_type == "dark":
             exposure_time = float(params.get("exposure_time", 1.0))
-            builder.build_dark(
+            result = builder.build_dark(
                 count=count,
                 exposure_time=exposure_time,
                 gain=gain,
@@ -341,6 +344,8 @@ class CalibrationManager:
                 cancel_event=self._cancel_event,
                 on_progress=self._on_progress,
             )
+            if result is None:
+                self.logger.warning("Dark capture returned no frames (cancelled?)")
         elif frame_type == "flat":
             exposure_time = float(params.get("exposure_time", 1.0))
             filter_name = str(params.get("filter_name", ""))
@@ -370,7 +375,8 @@ class CalibrationManager:
             if result is None:
                 self.logger.warning("Flat capture completed but master was rejected by quality validation")
         elif frame_type == "interleaved_flat":
-            filters = params.get("filters", [])
+            raw_filters = params.get("filters", [])
+            filters = [FilterSlot(**f) if isinstance(f, dict) else f for f in raw_filters]
             if not filters:
                 self.logger.error("Interleaved flat job has no filters")
                 return

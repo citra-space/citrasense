@@ -11,11 +11,11 @@ import threading
 import time
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any
 
 import numpy as np
 from astropy.io import fits  # type: ignore[attr-defined]
 
+from citrascope.calibration import FilterSlot
 from citrascope.calibration.calibration_library import CalibrationLibrary
 from citrascope.hardware.devices.camera.abstract_camera import AbstractCamera, CalibrationProfile
 
@@ -48,8 +48,12 @@ class MasterBuilder:
         binning: int = 1,
         cancel_event: threading.Event | None = None,
         on_progress: ProgressCallback | None = None,
-    ) -> Path:
-        """Capture and build a master bias frame."""
+    ) -> Path | None:
+        """Capture and build a master bias frame.
+
+        Returns the saved master path, or ``None`` if no frames were
+        captured (e.g. immediate cancellation).
+        """
         gain_val = gain if gain is not None else (self._profile.current_gain or 0)
         label = f"bias g{gain_val} bin{binning}"
 
@@ -67,7 +71,7 @@ class MasterBuilder:
 
         if not raw_paths:
             self._library.cleanup_tmp()
-            raise ValueError("No bias frames captured (cancelled?)")
+            return None
 
         self._report(on_progress, count, count, "bias", f"Stacking {len(raw_paths)} frames...")
         master = self._median_stack(raw_paths)
@@ -92,8 +96,12 @@ class MasterBuilder:
         binning: int = 1,
         cancel_event: threading.Event | None = None,
         on_progress: ProgressCallback | None = None,
-    ) -> Path:
-        """Capture and build a master dark frame (bias-subtracted if bias available)."""
+    ) -> Path | None:
+        """Capture and build a master dark frame (bias-subtracted if bias available).
+
+        Returns the saved master path, or ``None`` if no frames were
+        captured (e.g. immediate cancellation).
+        """
         gain_val = gain if gain is not None else (self._profile.current_gain or 0)
         label = f"dark g{gain_val} bin{binning} {exposure_time}s"
 
@@ -111,7 +119,7 @@ class MasterBuilder:
 
         if not raw_paths:
             self._library.cleanup_tmp()
-            raise ValueError("No dark frames captured (cancelled?)")
+            return None
 
         self._report(on_progress, count, count, "dark", f"Stacking {len(raw_paths)} frames...")
         master = self._median_stack(raw_paths)
@@ -234,7 +242,7 @@ class MasterBuilder:
 
     def build_interleaved_flats(
         self,
-        filters: list[dict[str, Any]],
+        filters: list[FilterSlot],
         set_filter: Callable[[int], bool],
         count: int,
         initial_exposure: float = 1.0,
@@ -253,7 +261,7 @@ class MasterBuilder:
         loads one filter at a time.
 
         Args:
-            filters: List of ``{"position": int, "name": str}`` dicts.
+            filters: Enabled filter slots to cycle through.
             set_filter: Callback to switch the filter wheel.
             count: Number of frames per filter.
             initial_exposure: Starting exposure for auto-expose (seconds).
@@ -274,7 +282,7 @@ class MasterBuilder:
         hi = max_adu * (self.TARGET_ADU_FRACTION + self.ADU_TOLERANCE)
 
         # Per-filter state: file paths on disk, not in-memory arrays
-        frame_paths: dict[str, list[Path]] = {f["name"]: [] for f in filters}
+        frame_paths: dict[str, list[Path]] = {f.name: [] for f in filters}
         exposures: dict[str, float] = {}
         last_median: dict[str, float] = {}
 
@@ -283,7 +291,7 @@ class MasterBuilder:
         for fi, filt in enumerate(filters):
             if cancel_event and cancel_event.is_set():
                 return []
-            fname = filt["name"]
+            fname = filt.name
             self._report(
                 on_progress,
                 0,
@@ -291,8 +299,8 @@ class MasterBuilder:
                 "flat",
                 f"Auto-expose filter {fi + 1}/{len(filters)}: {fname}",
             )
-            if not set_filter(filt["position"]):
-                logger.error("Failed to set filter %s (position %d)", fname, filt["position"])
+            if not set_filter(filt.position):
+                logger.error("Failed to set filter %s (position %d)", fname, filt.position)
                 continue
             converged = self._auto_expose_flat(
                 initial_exposure=carry_exposure,
@@ -322,7 +330,7 @@ class MasterBuilder:
             for fi, filt in enumerate(filters):
                 if cancel_event and cancel_event.is_set():
                     break
-                fname = filt["name"]
+                fname = filt.name
                 if fname not in exposures:
                     continue
 
@@ -345,7 +353,7 @@ class MasterBuilder:
                     f"Round {rnd}/{count}: {fname}{eta_str}",
                 )
 
-                if not set_filter(filt["position"]):
+                if not set_filter(filt.position):
                     logger.warning("Filter switch failed for %s in round %d", fname, rnd)
                     continue
 
@@ -391,7 +399,7 @@ class MasterBuilder:
                 bias_data = hdul[0].data.astype(np.float32)  # type: ignore[index]
 
         for filt in filters:
-            fname = filt["name"]
+            fname = filt.name
             paths = frame_paths.get(fname, [])
             if len(paths) < 3:
                 logger.warning("Skipping flat for %s — only %d frames captured (need >= 3)", fname, len(paths))
@@ -617,7 +625,7 @@ class MasterBuilder:
 
     def _reexpose_check(
         self,
-        filters: list[dict[str, Any]],
+        filters: list[FilterSlot],
         exposures: dict[str, float],
         last_median: dict[str, float],
         set_filter: Callable[[int], bool],
@@ -633,7 +641,7 @@ class MasterBuilder:
         for filt in filters:
             if cancel_event and cancel_event.is_set():
                 return
-            fname = filt["name"]
+            fname = filt.name
             if fname not in last_median or fname not in exposures:
                 continue
 
@@ -649,7 +657,7 @@ class MasterBuilder:
                     target_adu,
                 )
                 self._report(on_progress, 0, 0, "flat", f"Re-exposing {fname} (ADU drifted {drift * 100:.0f}%)")
-                if not set_filter(filt["position"]):
+                if not set_filter(filt.position):
                     continue
                 new_exp = self._auto_expose_flat(
                     initial_exposure=exposures[fname],
@@ -666,7 +674,7 @@ class MasterBuilder:
         max_adu: float,
         filter_name: str,
     ) -> tuple[bool, str]:
-        """Check a normalised flat master for obvious defects.
+        """Check a stacked (pre-normalization) flat master for obvious defects.
 
         Returns ``(True, "")`` if acceptable, ``(False, reason)`` if the
         master should be rejected.

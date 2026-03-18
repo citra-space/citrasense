@@ -1,5 +1,6 @@
 """Tests for calibration suite generators."""
 
+from citrascope.calibration import FilterSlot
 from citrascope.calibration.calibration_suites import all_flats_suite, bias_and_dark_suite
 from citrascope.hardware.devices.camera.abstract_camera import CalibrationProfile
 
@@ -46,9 +47,9 @@ class TestAllFlatsSuite:
     def test_returns_single_interleaved_job(self):
         """Should return exactly one interleaved_flat job, not per-filter jobs."""
         filters = [
-            {"position": 0, "name": "sloan_g"},
-            {"position": 1, "name": "sloan_r"},
-            {"position": 2, "name": "sloan_i"},
+            FilterSlot(position=0, name="sloan_g"),
+            FilterSlot(position=1, name="sloan_r"),
+            FilterSlot(position=2, name="sloan_i"),
         ]
         jobs = all_flats_suite(_profile(current_binning=1), filters, frame_count=15)
 
@@ -63,7 +64,7 @@ class TestAllFlatsSuite:
         assert job["filters"][2]["position"] == 2
 
     def test_carries_initial_exposure(self):
-        filters = [{"position": 0, "name": "Lum"}]
+        filters = [FilterSlot(position=0, name="Lum")]
         jobs = all_flats_suite(_profile(), filters, frame_count=10, initial_exposure=2.5)
         assert jobs[0]["initial_exposure"] == 2.5
 
