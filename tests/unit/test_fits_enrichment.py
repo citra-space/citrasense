@@ -142,7 +142,7 @@ def test_add_location_from_ground_station():
     _add_location_metadata(header, ground_station_record=gs)
     assert header["SITELAT"] == 35.0
     assert header["SITELONG"] == -120.0
-    assert header["SITEELEV"] == 300.0
+    assert header["SITEALT"] == 300.0
 
 
 def test_add_location_no_source():

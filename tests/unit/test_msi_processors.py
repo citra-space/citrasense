@@ -450,7 +450,7 @@ class TestFullPipelineDemoFits:
 
         class FakeLocationService:
             def get_current_location(self):
-                # Coordinates from demo FITS SITELAT/SITELONG/SITEELEV header keywords
+                # Coordinates from demo FITS SITELAT/SITELONG/SITEALT header keywords
                 return {"latitude": 31.9070277777778, "longitude": -109.021111111111, "altitude": 1250.0}
 
         working_dir = tmp_path / "working"
@@ -527,7 +527,7 @@ class TestFullPipelineDemoFits:
 
         class FakeLocationService:
             def get_current_location(self):
-                # Coordinates from demo FITS SITELAT/SITELONG/SITEELEV header keywords
+                # Coordinates from demo FITS SITELAT/SITELONG/SITEALT header keywords
                 return {"latitude": 31.9070277777778, "longitude": -109.021111111111, "altitude": 1250.0}
 
         working_dir = tmp_path / "working"
@@ -672,7 +672,7 @@ class TestSatelliteMatcherProcessor:
 
         class FakeLocationService:
             def get_current_location(self):
-                # Coordinates from demo FITS SITELAT/SITELONG/SITEELEV header keywords
+                # Coordinates from demo FITS SITELAT/SITELONG/SITEALT header keywords
                 return {"latitude": 31.9070277777778, "longitude": -109.021111111111, "altitude": 1250.0}
 
         context = ProcessingContext(

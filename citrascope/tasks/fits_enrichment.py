@@ -34,7 +34,7 @@ def enrich_fits_metadata(
         Location (from GPS or ground station):
             - SITELAT: Observatory latitude (degrees)
             - SITELONG: Observatory longitude (degrees)
-            - SITEELEV: Observatory elevation (meters)
+            - SITEALT: Observatory elevation (meters)
             - COMMENT: Location source (gps/ground_station)
 
         Observation Context (from task):
@@ -111,7 +111,7 @@ def _add_location_metadata(header, location_service=None, ground_station_record:
     if location and location.get("latitude") is not None:
         header["SITELAT"] = (location["latitude"], "Observatory latitude (deg)")
         header["SITELONG"] = (location["longitude"], "Observatory longitude (deg)")
-        header["SITEELEV"] = (location["altitude"], "Observatory elevation (m)")
+        header["SITEALT"] = (location["altitude"], "Observatory elevation (m)")
         header["COMMENT"] = f"Location source: {location['source']}"
 
 
