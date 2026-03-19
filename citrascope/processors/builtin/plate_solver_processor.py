@@ -311,7 +311,7 @@ class PlateSolverProcessor(AbstractImageProcessor):
                 "dec": np.asarray(dec, dtype=np.float64),
                 "mag": np.asarray(-2.5 * np.log10(flux[mask] / image.exposure_time), dtype=np.float64),
                 "magerr": np.zeros(int(mask.sum()), dtype=np.float64),
-                "fwhm": np.asarray((objects["a"] / objects["b"])[mask], dtype=np.float64),
+                "elongation": np.asarray((objects["a"] / objects["b"])[mask], dtype=np.float64),
             }
         )
 
@@ -351,10 +351,11 @@ class PlateSolverProcessor(AbstractImageProcessor):
                 naxis1 = int(header.get("NAXIS1", 0))  # type: ignore[arg-type]
                 naxis2 = int(header.get("NAXIS2", 0))  # type: ignore[arg-type]
                 try:
-                    pixel_scale = float(proj_plane_pixel_scales(WCS(header)).mean()) * 3600
+                    wcs_obj = WCS(header)
+                    pixel_scale = float(proj_plane_pixel_scales(wcs_obj).mean()) * 3600
                 except Exception:
                     pixel_scale = 0.0
-                wcs_obj = WCS(header)
+                    wcs_obj = WCS(header)
 
             field_width_deg = naxis1 * pixel_scale / 3600 if pixel_scale and naxis1 > 0 else None
             field_height_deg = naxis2 * pixel_scale / 3600 if pixel_scale and naxis2 > 0 else None
@@ -414,5 +415,5 @@ class PlateSolverProcessor(AbstractImageProcessor):
             for _, row in sources_df.iterrows():
                 f.write(
                     f"  {row['mag']:12.4f} {row['magerr']:12.4f}"
-                    f" {row['ra']:14.7f} {row['dec']:+14.7f} {row['fwhm']:8.3f}\n"
+                    f" {row['ra']:14.7f} {row['dec']:+14.7f} {row['elongation']:8.3f}\n"
                 )

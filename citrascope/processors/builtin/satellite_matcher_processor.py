@@ -22,9 +22,9 @@ from citrascope.processors.abstract_processor import AbstractImageProcessor
 from citrascope.processors.artifact_writer import dump_json, dump_processor_result
 from citrascope.processors.processor_result import ProcessingContext, ProcessorResult
 
-from .processor_dependencies import normalize_fits_timestamp
+from .processor_dependencies import normalize_fits_timestamp, read_source_catalog
 
-_FWHM_THRESHOLD = 1.5
+_ELONGATION_THRESHOLD = 1.5
 _FIELD_RADIUS_DEG = 2.0
 _MATCH_RADIUS_DEG = 1.0 / 60.0  # 1 arcminute
 _STAR_MATCH_TOLERANCE_DEG = 1.0 / 3600.0  # 1 arcsecond — tight match for star subtraction
@@ -116,7 +116,7 @@ class SatelliteMatcherProcessor(AbstractImageProcessor):
         Returns (observations, debug_info) where debug_info contains the full diagnostic
         bundle for satellite_matcher_debug.json.
         """
-        # GEO/slow-mover detection: skip FWHM filter when the target barely moves,
+        # GEO/slow-mover detection: skip elongation filter when the target barely moves,
         # because point-like GEO satellites are indistinguishable from stars by shape.
         is_slow_mover = False
         try:
@@ -125,37 +125,37 @@ class SatelliteMatcherProcessor(AbstractImageProcessor):
         except (AttributeError, TypeError):
             pass
 
-        fwhm_filter_applied = not is_slow_mover
+        elongation_filter_applied = not is_slow_mover
 
         debug: dict[str, Any] = {
             "tracking_mode": tracking_mode,
             "is_slow_mover": is_slow_mover,
-            "fwhm_filter_applied": fwhm_filter_applied,
-            "fwhm_threshold": _FWHM_THRESHOLD,
+            "elongation_filter_applied": elongation_filter_applied,
+            "elongation_threshold": _ELONGATION_THRESHOLD,
             "field_radius_deg": _FIELD_RADIUS_DEG,
             "match_radius_arcmin": _MATCH_RADIUS_DEG * 60.0,
         }
 
-        if fwhm_filter_applied:
+        if elongation_filter_applied:
             if tracking_mode == "rate":
-                potential_sats = sources[sources["fwhm"] < _FWHM_THRESHOLD].copy()
-                star_like_count = int((sources["fwhm"] >= _FWHM_THRESHOLD).sum())
+                potential_sats = sources[sources["elongation"] < _ELONGATION_THRESHOLD].copy()
+                star_like_count = int((sources["elongation"] >= _ELONGATION_THRESHOLD).sum())
             else:
-                potential_sats = sources[sources["fwhm"] >= _FWHM_THRESHOLD].copy()
-                star_like_count = int((sources["fwhm"] < _FWHM_THRESHOLD).sum())
+                potential_sats = sources[sources["elongation"] >= _ELONGATION_THRESHOLD].copy()
+                star_like_count = int((sources["elongation"] < _ELONGATION_THRESHOLD).sum())
         else:
             potential_sats = sources.copy()
             star_like_count = 0
 
-        fwhm_vals = sources["fwhm"]
+        elong_vals = sources["elongation"]
         debug["source_classification"] = {
             "total_sources": len(sources),
             "satellite_candidate_count": len(potential_sats),
             "star_like_count": star_like_count,
-            "fwhm_min": float(fwhm_vals.min()) if len(fwhm_vals) else None,
-            "fwhm_max": float(fwhm_vals.max()) if len(fwhm_vals) else None,
-            "fwhm_median": float(fwhm_vals.median()) if len(fwhm_vals) else None,
-            "fwhm_mean": float(fwhm_vals.mean()) if len(fwhm_vals) else None,
+            "elongation_min": float(elong_vals.min()) if len(elong_vals) else None,
+            "elongation_max": float(elong_vals.max()) if len(elong_vals) else None,
+            "elongation_median": float(elong_vals.median()) if len(elong_vals) else None,
+            "elongation_mean": float(elong_vals.mean()) if len(elong_vals) else None,
         }
 
         # Subtract known catalog stars from candidates
@@ -163,7 +163,7 @@ class SatelliteMatcherProcessor(AbstractImageProcessor):
         debug["star_subtraction"] = star_sub_stats
 
         if potential_sats.empty:
-            debug["early_exit"] = "no satellite candidates after FWHM filtering and star subtraction"
+            debug["early_exit"] = "no satellite candidates after elongation filtering and star subtraction"
             return [], debug
 
         # Observer location
@@ -337,7 +337,7 @@ class SatelliteMatcherProcessor(AbstractImageProcessor):
             detail: dict[str, Any] = {
                 "source_ra": float(row["ra"]),
                 "source_dec": float(row["dec"]),
-                "source_fwhm": float(row["fwhm"]),
+                "source_elongation": float(row["elongation"]),
                 "source_mag": float(row["mag"]),
                 "nearest_prediction_distance_arcmin": round(dist_deg * 60.0, 4),
                 "within_match_radius": bool(valid_mask[i]),
@@ -369,7 +369,7 @@ class SatelliteMatcherProcessor(AbstractImageProcessor):
                 src_row = potential_sats.iloc[src_idx]
                 entry["nearest_source_ra"] = float(src_row["ra"])
                 entry["nearest_source_dec"] = float(src_row["dec"])
-                entry["nearest_source_fwhm"] = float(src_row["fwhm"])
+                entry["nearest_source_elongation"] = float(src_row["elongation"])
                 entry["nearest_source_mag"] = float(src_row["mag"])
             reverse_match.append(entry)
         debug["reverse_match"] = reverse_match
@@ -397,7 +397,7 @@ class SatelliteMatcherProcessor(AbstractImageProcessor):
                     "filter": filter_name,
                     "timestamp": timestamp_str,
                     "phase_angle": round(p["phase_angle"], 1),
-                    "fwhm": float(row["fwhm"]),
+                    "elongation": float(row["elongation"]),
                 }
             )
 
@@ -415,30 +415,22 @@ class SatelliteMatcherProcessor(AbstractImageProcessor):
         """
         start_time = time.time()
 
-        # Prefer in-memory sources from plate solver; fall back to output.cat on disk
-        if context.detected_sources is not None:
-            sources_df = context.detected_sources
-        else:
-            catalog_path = context.working_dir / "output.cat"
-            if not catalog_path.exists():
-                return ProcessorResult(
-                    should_upload=True,
-                    extracted_data={},
-                    confidence=0.0,
-                    reason="Source catalog not found",
-                    processing_time_seconds=time.time() - start_time,
-                    processor_name=self.name,
-                )
-            sources_df = pd.read_csv(
-                catalog_path,
-                sep=r"\s+",
-                comment="#",
-                header=None,
-                usecols=[4, 5, 8, 9, 10],
-                names=["mag", "magerr", "ra", "dec", "fwhm"],
-            )
-
         try:
+            # Prefer in-memory sources from plate solver; fall back to output.cat on disk
+            if context.detected_sources is not None:
+                sources_df = context.detected_sources
+            else:
+                catalog_path = context.working_dir / "output.cat"
+                if not catalog_path.exists():
+                    return ProcessorResult(
+                        should_upload=True,
+                        extracted_data={},
+                        confidence=0.0,
+                        reason="Source catalog not found (plate solving must succeed first)",
+                        processing_time_seconds=time.time() - start_time,
+                        processor_name=self.name,
+                    )
+                sources_df = read_source_catalog(catalog_path)
 
             tracking_mode = context.tracking_mode or "sidereal"
             satellite_observations, debug_info = self._match_satellites(

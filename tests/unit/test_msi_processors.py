@@ -157,7 +157,7 @@ class TestPlateSolverProcessor:
         new_file = tmp_path / "test_image.new"
         mock_solve.return_value = (new_file, MagicMock())
         mock_extract.return_value = pd.DataFrame(
-            {"ra": [120.1], "dec": [45.1], "mag": [-5.0], "magerr": [0.0], "fwhm": [1.1]}
+            {"ra": [120.1], "dec": [45.1], "mag": [-5.0], "magerr": [0.0], "elongation": [1.1]}
         )
 
         mock_primary = MagicMock(spec=fits.PrimaryHDU)
@@ -682,7 +682,7 @@ class TestSEPvsSExtractorParity:
             comment="#",
             header=None,
             usecols=[4, 5, 8, 9, 10],
-            names=["mag", "magerr", "ra", "dec", "fwhm"],
+            names=["mag", "magerr", "ra", "dec", "elongation"],
         )
 
     @pytest.mark.parametrize("image_cfg", IMAGES, ids=[img["name"] for img in IMAGES])
@@ -741,17 +741,19 @@ class TestSEPvsSExtractorParity:
         )
 
         # 2. Cross-match by RA/Dec (5 arcsec tolerance)
+        import numpy as np
+
         sep_coords = sep_df[["ra", "dec"]].values
         sex_coords = sex_df[["ra", "dec"]].values
         sex_tree = KDTree(sex_coords)
         dists, indices = sex_tree.query(sep_coords)
         match_mask = dists < (5.0 / 3600.0)  # 5 arcsec in degrees
-        n_matched = int(match_mask.sum())
 
-        # At least 50% of SExtractor sources should have an SEP match
-        match_fraction = n_matched / len(sex_df) if len(sex_df) > 0 else 0
+        # Count unique SExtractor sources that have at least one SEP match
+        unique_sex_matched = len({int(i) for i, m in zip(indices, match_mask, strict=True) if m})
+        match_fraction = unique_sex_matched / len(sex_df) if len(sex_df) > 0 else 0
         assert match_fraction >= 0.5, (
-            f"[{name}] Only {n_matched}/{len(sex_df)} SExtractor sources matched "
+            f"[{name}] Only {unique_sex_matched}/{len(sex_df)} SExtractor sources matched "
             f"({match_fraction:.1%}) — expected >= 50%"
         )
 
@@ -761,9 +763,8 @@ class TestSEPvsSExtractorParity:
         assert rms_arcsec < 5.0, f"[{name}] Positional RMS {rms_arcsec:.2f} arcsec >= 5.0 arcsec"
 
         # 4. Elongation correlation for matched sources
-        matched_sep_elong = sep_df["fwhm"].values[match_mask]
-        matched_sex_elong = sex_df["fwhm"].values[indices[match_mask]]
-        import numpy as np
+        matched_sep_elong = sep_df["elongation"].values[match_mask]
+        matched_sex_elong = sex_df["elongation"].values[np.asarray(indices)[match_mask]]
 
         if len(matched_sep_elong) > 10:
             corr = float(np.corrcoef(matched_sep_elong, matched_sex_elong)[0, 1])
@@ -772,12 +773,12 @@ class TestSEPvsSExtractorParity:
         log = logging.getLogger(__name__)
         log.info(
             "SEP vs SExtractor Parity — %s: SEP=%d, SExtractor=%d, ratio=%.2f, "
-            "matched=%d (%.1f%%), RMS=%.2f arcsec%s",
+            "matched=%d unique (%.1f%%), RMS=%.2f arcsec%s",
             name,
             len(sep_df),
             len(sex_df),
             ratio,
-            n_matched,
+            unique_sex_matched,
             match_fraction * 100,
             rms_arcsec,
             f", elongation_corr={corr:.3f}" if len(matched_sep_elong) > 10 else "",

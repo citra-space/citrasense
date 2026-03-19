@@ -71,8 +71,8 @@ class ProcessingContext:
     tracking_mode: str | None = None
 
     # Source catalog extracted by the plate solver (SEP detections converted to sky coords).
-    # Columns: ra, dec, mag, magerr, fwhm.  Populated by PlateSolverProcessor after a
-    # successful solve so downstream processors don't need an external SExtractor binary.
+    # Columns: ra, dec, mag, magerr, elongation (a/b axis ratio).  Populated by
+    # PlateSolverProcessor after a successful solve.
     detected_sources: pd.DataFrame | None = field(default=None, repr=False)
 
     # Logging

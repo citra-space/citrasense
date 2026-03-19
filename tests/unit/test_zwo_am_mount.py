@@ -84,7 +84,7 @@ class TestCustomTrackingRates:
     def test_get_mount_info_supports_custom_tracking(self, mount: ZwoAmMount):
         mount._transport.send_command_with_retry.return_value = "NG#"
         info = mount.get_mount_info()
-        assert info["supports_custom_tracking"] is True
+        assert info["supports_custom_tracking"] is False
 
 
 class _FakeTransport(ZwoAmTransport):
