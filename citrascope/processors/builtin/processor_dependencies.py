@@ -1,6 +1,11 @@
-"""Dependency checking for MSI science processors."""
+"""Dependency checking and shared utilities for MSI science processors."""
+
+from __future__ import annotations
 
 import shutil
+from pathlib import Path
+
+import pandas as pd
 
 
 def normalize_fits_timestamp(timestamp: str) -> str:
@@ -54,3 +59,36 @@ def check_sextractor() -> bool:
         True if source-extractor or sex command is available
     """
     return shutil.which("source-extractor") is not None or shutil.which("sex") is not None
+
+
+def read_source_catalog(catalog_path: Path) -> pd.DataFrame:
+    """Read an output.cat source catalog, auto-detecting the format.
+
+    Supports both the new 5-column layout written by PlateSolverProcessor
+    (mag, magerr, ra, dec, elongation) and the legacy 11-column SExtractor
+    layout (columns 4,5,8,9,10 → mag, magerr, ra, dec, elongation).
+    """
+    with open(catalog_path) as f:
+        for line in f:
+            if not line.startswith("#"):
+                ncols = len(line.split())
+                break
+        else:
+            ncols = 5
+
+    if ncols <= 5:
+        return pd.read_csv(
+            catalog_path,
+            sep=r"\s+",
+            comment="#",
+            header=None,
+            names=["mag", "magerr", "ra", "dec", "elongation"],
+        )
+    return pd.read_csv(
+        catalog_path,
+        sep=r"\s+",
+        comment="#",
+        header=None,
+        usecols=[4, 5, 8, 9, 10],
+        names=["mag", "magerr", "ra", "dec", "elongation"],
+    )

@@ -15,7 +15,6 @@ from citrascope.processors.builtin.calibration_processor import CalibrationProce
 from citrascope.processors.builtin.photometry_processor import PhotometryProcessor
 from citrascope.processors.builtin.plate_solver_processor import PlateSolverProcessor
 from citrascope.processors.builtin.satellite_matcher_processor import SatelliteMatcherProcessor
-from citrascope.processors.builtin.source_extractor_processor import SourceExtractorProcessor
 from citrascope.processors.processor_result import AggregatedResult, ProcessingContext, ProcessorResult
 
 
@@ -32,14 +31,15 @@ class ProcessorRegistry:
         self.settings = settings
         self.logger = logger
 
-        # Hardcode processor list (simple, explicit)
+        # Hardcode processor list (simple, explicit).
+        # Source extraction is handled inline by PlateSolverProcessor (reuses SEP
+        # detections from the plate solve pass) — no separate SExtractor step needed.
         self.processors: list[AbstractImageProcessor] = [
             CalibrationProcessor(),  # Step 0: apply bias/dark/flat calibration
-            PlateSolverProcessor(),  # Step 1: 30-40s
-            SourceExtractorProcessor(),  # Step 2: 2-5s (requires plate solver)
-            PhotometryProcessor(),  # Step 3: 2-5s (requires source extractor)
-            SatelliteMatcherProcessor(),  # Step 4: 1-2s (requires photometry)
-            AnnotatedImageProcessor(),  # Step 5: <1s (renders visual overlay)
+            PlateSolverProcessor(),  # Step 1: plate solve + source extraction
+            PhotometryProcessor(),  # Step 2: 2-5s (uses context.detected_sources)
+            SatelliteMatcherProcessor(),  # Step 3: 1-2s (requires photometry)
+            AnnotatedImageProcessor(),  # Step 4: <1s (renders visual overlay)
         ]
 
         # Per-processor lifetime stats — lock gives atomic multi-field snapshots in get_processor_stats().

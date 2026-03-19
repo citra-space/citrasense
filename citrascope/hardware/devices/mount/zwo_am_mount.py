@@ -386,7 +386,7 @@ class ZwoAmMount(AbstractMount):
             "mount_mode": mode.value,
             "supports_sync": True,
             "supports_guide_pulse": True,
-            "supports_custom_tracking": True,
+            "supports_custom_tracking": False,
         }
 
     def set_custom_tracking_rates(self, ra_rate: float, dec_rate: float) -> bool:

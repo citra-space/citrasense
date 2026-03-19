@@ -146,5 +146,11 @@ hip_main.dat
 nina_sequence_*.json
 nina_focus_positions.json
 
+# Test artifacts produced by slow pipeline tests (annotated images, WCS copies, previews).
+# The original FITS, .cat baselines, and .tle fixtures are intentionally tracked.
+tests/unit/test_assets/*_annotated.png
+tests/unit/test_assets/latest_preview.png
+tests/unit/test_assets/*_wcs.fits
+
 citrascope-env/
 test_data/

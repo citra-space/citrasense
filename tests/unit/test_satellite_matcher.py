@@ -15,7 +15,7 @@ from citrascope.processors.builtin.satellite_matcher_processor import (
 # ===================================================================
 # 1. Star subtraction
 # ===================================================================
-def _make_sources(coords: list[tuple[float, float]], fwhm: float = 2.0) -> pd.DataFrame:
+def _make_sources(coords: list[tuple[float, float]], elongation: float = 2.0) -> pd.DataFrame:
     """Create a minimal source DataFrame from (ra, dec) pairs."""
     return pd.DataFrame(
         {
@@ -23,7 +23,7 @@ def _make_sources(coords: list[tuple[float, float]], fwhm: float = 2.0) -> pd.Da
             "dec": [c[1] for c in coords],
             "mag": [12.0] * len(coords),
             "magerr": [0.01] * len(coords),
-            "fwhm": [fwhm] * len(coords),
+            "elongation": [elongation] * len(coords),
         }
     )
 
@@ -114,63 +114,62 @@ class TestSubtractKnownStars:
 
 
 # ===================================================================
-# 2. Slow-mover FWHM bypass
+# 2. Slow-mover elongation bypass
 # ===================================================================
-class TestSlowMoverFwhmBypass:
-    """When pointing_report indicates a slow mover, FWHM filter should be skipped."""
+class TestSlowMoverElongationBypass:
+    """When pointing_report indicates a slow mover, elongation filter should be skipped."""
 
     @staticmethod
     def _make_mixed_sources() -> pd.DataFrame:
-        """Sources with a mix of point-like and extended FWHM values."""
+        """Sources with a mix of point-like and extended elongation values."""
         return pd.DataFrame(
             {
                 "ra": [180.0, 180.01, 180.02, 180.03],
                 "dec": [45.0, 45.0, 45.0, 45.0],
                 "mag": [-8.0, -7.0, -6.0, -5.0],
                 "magerr": [0.01] * 4,
-                "fwhm": [1.0, 1.1, 2.0, 3.0],  # first two are point-like (< 1.5)
+                "elongation": [1.0, 1.1, 2.0, 3.0],  # first two are point-like (< 1.5)
             }
         )
 
     def test_slow_mover_uses_all_sources(self):
-        """With is_slow_mover=True, all sources become candidates (no FWHM cut)."""
+        """With is_slow_mover=True, all sources become candidates (no elongation cut)."""
         sources = self._make_mixed_sources()
         from citrascope.processors.builtin.satellite_matcher_processor import (
-            _FWHM_THRESHOLD,
+            _ELONGATION_THRESHOLD,
         )
 
-        # Simulate the classification logic from _match_satellites
         is_slow_mover = True
-        fwhm_filter_applied = not is_slow_mover
+        elongation_filter_applied = not is_slow_mover
 
-        if fwhm_filter_applied:
-            potential_sats = sources[sources["fwhm"] >= _FWHM_THRESHOLD].copy()
+        if elongation_filter_applied:
+            potential_sats = sources[sources["elongation"] >= _ELONGATION_THRESHOLD].copy()
         else:
             potential_sats = sources.copy()
 
         assert len(potential_sats) == 4
-        assert not fwhm_filter_applied
+        assert not elongation_filter_applied
 
-    def test_fast_mover_applies_fwhm_filter(self):
-        """With is_slow_mover=False (LEO), FWHM filter is applied normally."""
+    def test_fast_mover_applies_elongation_filter(self):
+        """With is_slow_mover=False (LEO), elongation filter is applied normally."""
         sources = self._make_mixed_sources()
         from citrascope.processors.builtin.satellite_matcher_processor import (
-            _FWHM_THRESHOLD,
+            _ELONGATION_THRESHOLD,
         )
 
         is_slow_mover = False
-        fwhm_filter_applied = not is_slow_mover
+        elongation_filter_applied = not is_slow_mover
 
-        if fwhm_filter_applied:
-            potential_sats = sources[sources["fwhm"] >= _FWHM_THRESHOLD].copy()
+        if elongation_filter_applied:
+            potential_sats = sources[sources["elongation"] >= _ELONGATION_THRESHOLD].copy()
         else:
             potential_sats = sources.copy()
 
-        assert len(potential_sats) == 2  # only FWHM >= 1.5
-        assert fwhm_filter_applied
+        assert len(potential_sats) == 2  # only elongation >= 1.5
+        assert elongation_filter_applied
 
-    def test_missing_pointing_report_defaults_to_fwhm_filter(self):
-        """When pointing_report is None, FWHM filter should apply (safe default)."""
+    def test_missing_pointing_report_defaults_to_elongation_filter(self):
+        """When pointing_report is None, elongation filter should apply (safe default)."""
         pointing_report = None
         try:
             slew_ahead = (pointing_report or {}).get("slew_ahead", {})
@@ -179,10 +178,10 @@ class TestSlowMoverFwhmBypass:
             is_slow_mover = False
 
         assert is_slow_mover is False
-        assert not is_slow_mover  # FWHM filter will apply
+        assert not is_slow_mover  # elongation filter will apply
 
-    def test_pointing_report_without_slew_ahead_defaults_to_fwhm_filter(self):
-        """A pointing_report that lacks slew_ahead (e.g. SEQUENCE_TO_CONTROLLER) defaults safely."""
+    def test_pointing_report_without_slew_ahead_defaults_to_elongation_filter(self):
+        """A pointing_report that lacks slew_ahead defaults safely."""
         pointing_report = {"converged": True, "final_telescope_ra_deg": 133.0}
         slew_ahead = (pointing_report or {}).get("slew_ahead", {})
         is_slow_mover = bool(slew_ahead.get("is_slow_mover", False))

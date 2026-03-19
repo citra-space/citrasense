@@ -1,12 +1,16 @@
 """Plate solving processor using Pixelemon (Tetra3)."""
 
+from __future__ import annotations
+
 import logging
 import math
 import tempfile
 import time
 from pathlib import Path
-from typing import Any, Optional
+from typing import TYPE_CHECKING, Any
 
+import numpy as np
+import pandas as pd
 from astropy.io import fits
 from astropy.wcs import WCS
 from astropy.wcs.utils import proj_plane_pixel_scales
@@ -20,8 +24,16 @@ from citrascope.processors.processor_result import ProcessingContext, ProcessorR
 
 from .processor_dependencies import check_pixelemon, normalize_fits_timestamp
 
+if TYPE_CHECKING:
+    from pixelemon import TelescopeImage
 
-def _build_telescope_for_image(image_path: Path, context: Optional["ProcessingContext"] = None):
+# Minimum per-source SNR for the catalog passed to downstream processors.
+# SEP detects at 2-sigma (good for plate solving), but sources below 3-sigma
+# are not statistically reliable for photometry or satellite matching.
+_MIN_SOURCE_SNR = 3.0
+
+
+def _build_telescope_for_image(image_path: Path, context: ProcessingContext | None = None):
     """Build a Pixelemon Telescope from telescope_record and FITS binning info.
 
     telescope_record (from the Citra API) must supply the physical sensor specifications:
@@ -210,7 +222,9 @@ class PlateSolverProcessor(AbstractImageProcessor):
                     return float(ra), float(dec)
         return None
 
-    def _solve_with_pixelemon(self, image_path: Path, context: ProcessingContext | None = None) -> Path:
+    def _solve_with_pixelemon(
+        self, image_path: Path, context: ProcessingContext | None = None
+    ) -> tuple[Path, TelescopeImage]:
         """Run Pixelemon (Tetra3) plate solve and write WCS to a _wcs.fits file.
 
         Pixelemon internally fits a full 5th-degree SIP WCS from matched star centroids
@@ -218,23 +232,21 @@ class PlateSolverProcessor(AbstractImageProcessor):
         _wcs.fits file via image._wcs.to_header(relax=True), which includes the CD rotation
         matrix and SIP distortion coefficients.
 
-        Args:
-            image_path: Path to FITS image to solve
-            context: Optional processing context (unused; for API consistency)
-
         Returns:
-            Path to _wcs.fits file with full SIP WCS in header
+            (wcs_fits_path, telescope_image) — the WCS FITS and the Pixelemon image
+            whose detections and _wcs are still available for source extraction.
 
         Raises:
             RuntimeError: If plate solving fails or solution is None
         """
-        from pixelemon import TelescopeImage, TetraSolver
+        from pixelemon import TelescopeImage as _TelescopeImage
+        from pixelemon import TetraSolver
 
         if not PlateSolverProcessor._tetra_loaded:
             TetraSolver.high_memory()
             PlateSolverProcessor._tetra_loaded = True
         telescope = _build_telescope_for_image(image_path, context)
-        image = TelescopeImage.from_fits_file(image_path, telescope)
+        image = _TelescopeImage.from_fits_file(image_path, telescope)
         solve = image.plate_solve  # triggers internal fit_wcs_from_points(sip_degree=5)
 
         if solve is None:
@@ -249,35 +261,59 @@ class PlateSolverProcessor(AbstractImageProcessor):
                 raise RuntimeError("FITS image has invalid dimensions")
 
             new_header = primary.header.copy()
-            # Clear any legacy WCS scale/rotation keys from the original FITS before
-            # applying Pixelemon's new solution.  This prevents ambiguous headers where
-            # both a CD matrix and CDELT+PC keywords coexist.  The update() call below
-            # will then write exactly the keywords Pixelemon's fitted WCS requires.
             for stale_key in (
                 "CD1_1",
                 "CD1_2",
                 "CD2_1",
-                "CD2_2",  # CD-matrix convention
+                "CD2_2",
                 "CDELT1",
-                "CDELT2",  # CDELT+PC convention
+                "CDELT2",
                 "PC1_1",
                 "PC1_2",
                 "PC2_1",
                 "PC2_2",
                 "CROTA1",
-                "CROTA2",  # deprecated rotation
+                "CROTA2",
             ):
                 new_header.remove(stale_key, ignore_missing=True)
-            # Use Pixelemon's fitted SIP WCS (includes rotation matrix + distortion coefficients).
-            # _wcs is always initialised in from_fits_file and updated by fit_wcs_from_points
-            # during plate_solve; the assertion guards against unexpected library changes.
             if image._wcs is None:
                 raise RuntimeError("Pixelemon _wcs not available after successful plate solve")
             new_header.update(image._wcs.to_header(relax=True))
             new_file = image_path.with_stem(image_path.stem + "_wcs").with_suffix(".fits")
             fits.writeto(new_file, primary.data, new_header, overwrite=True)
 
-        return new_file
+        return new_file, image
+
+    @staticmethod
+    def _extract_sources(image: TelescopeImage, wcs: WCS) -> pd.DataFrame:
+        """Convert Pixelemon SEP detections to a sky-coordinate source catalog.
+
+        Reuses the detections already computed during plate solving so there is
+        no redundant source-extraction pass.  Applies a per-source SNR floor
+        (_MIN_SOURCE_SNR) so downstream processors only receive statistically
+        reliable detections.
+        """
+        objects = image.detections._objects
+
+        flux = objects["flux"]
+        npix = objects["npix"]
+        noise = image.background.globalrms * np.sqrt(npix.astype(np.float64))
+        snr = flux / noise
+        mask = snr >= _MIN_SOURCE_SNR
+
+        x = objects["x"][mask]
+        y = objects["y"][mask]
+        ra, dec = wcs.all_pix2world(x, y, 0)
+
+        return pd.DataFrame(
+            {
+                "ra": np.asarray(ra, dtype=np.float64),
+                "dec": np.asarray(dec, dtype=np.float64),
+                "mag": np.asarray(-2.5 * np.log10(flux[mask] / image.exposure_time), dtype=np.float64),
+                "magerr": np.zeros(int(mask.sum()), dtype=np.float64),
+                "elongation": np.asarray((objects["a"] / objects["b"])[mask], dtype=np.float64),
+            }
+        )
 
     def process(self, context: ProcessingContext) -> ProcessorResult:
         """Process image with plate solving.
@@ -303,7 +339,7 @@ class PlateSolverProcessor(AbstractImageProcessor):
         try:
             path_to_solve = _ensure_fits_has_observer_location(context.working_image_path, context, context.working_dir)
             context.working_image_path = path_to_solve
-            wcs_image_path = self._solve_with_pixelemon(path_to_solve, context)
+            wcs_image_path, pix_image = self._solve_with_pixelemon(path_to_solve, context)
             context.working_image_path = wcs_image_path
 
             with fits.open(wcs_image_path) as hdul:
@@ -314,14 +350,24 @@ class PlateSolverProcessor(AbstractImageProcessor):
                 dec_center = header.get("CRVAL2")
                 naxis1 = int(header.get("NAXIS1", 0))  # type: ignore[arg-type]
                 naxis2 = int(header.get("NAXIS2", 0))  # type: ignore[arg-type]
-                # proj_plane_pixel_scales handles both CDELT and CD-matrix WCS conventions
                 try:
-                    pixel_scale = float(proj_plane_pixel_scales(WCS(header)).mean()) * 3600
+                    wcs_obj = WCS(header)
+                    pixel_scale = float(proj_plane_pixel_scales(wcs_obj).mean()) * 3600
                 except Exception:
                     pixel_scale = 0.0
+                    wcs_obj = WCS(header)
 
             field_width_deg = naxis1 * pixel_scale / 3600 if pixel_scale and naxis1 > 0 else None
             field_height_deg = naxis2 * pixel_scale / 3600 if pixel_scale and naxis2 > 0 else None
+
+            # Extract source catalog from Pixelemon's SEP detections (reuses the
+            # detections already computed during plate solving — no second pass).
+            sources_df = self._extract_sources(pix_image, wcs_obj)
+            context.detected_sources = sources_df
+            num_sources = len(sources_df)
+
+            # Write an output.cat artifact for debugging / offline inspection
+            self._write_source_catalog(sources_df, context.working_dir / "output.cat")
 
             elapsed = time.time() - start_time
 
@@ -335,9 +381,10 @@ class PlateSolverProcessor(AbstractImageProcessor):
                     "field_width_deg": field_width_deg,
                     "field_height_deg": field_height_deg,
                     "wcs_image_path": str(wcs_image_path),
+                    "num_sources": num_sources,
                 },
                 confidence=1.0,
-                reason=f"Plate solved in {elapsed:.1f}s",
+                reason=f"Plate solved in {elapsed:.1f}s, {num_sources} sources extracted",
                 processing_time_seconds=elapsed,
                 processor_name=self.name,
             )
@@ -355,3 +402,18 @@ class PlateSolverProcessor(AbstractImageProcessor):
             )
             dump_processor_result(context.working_dir, "plate_solver_result.json", result)
             return result
+
+    @staticmethod
+    def _write_source_catalog(sources_df: pd.DataFrame, path: Path) -> None:
+        """Write a SExtractor-compatible ASCII catalog for artifact preservation."""
+        with open(path, "w") as f:
+            f.write("#   1 MAG          Instrumental magnitude\n")
+            f.write("#   2 MAGERR       Magnitude error\n")
+            f.write("#   3 RA           Right ascension (J2000) [deg]\n")
+            f.write("#   4 DEC          Declination (J2000) [deg]\n")
+            f.write("#   5 ELONGATION   a/b axis ratio\n")
+            for _, row in sources_df.iterrows():
+                f.write(
+                    f"  {row['mag']:12.4f} {row['magerr']:12.4f}"
+                    f" {row['ra']:14.7f} {row['dec']:+14.7f} {row['elongation']:8.3f}\n"
+                )
