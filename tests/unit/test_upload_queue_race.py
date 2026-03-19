@@ -78,7 +78,7 @@ class TestQueueForUploadGuard:
         stub.logger.warning.assert_called_once()
         msg = stub.logger.warning.call_args[0][0]
         assert "task-1" in msg
-        assert "stopped" in msg.lower()
+        assert "not queueing" in msg.lower()
 
     def test_running_queue_submits_normally(self):
         stub = _make_stub_task(upload_queue_running=True)
