@@ -63,6 +63,17 @@ class MockCitraApiClient(AbstractCitraApiClient):
         """Simulate fetching a satellite by ID."""
         return {"id": satellite_id, "name": "Mock Satellite"}
 
+    def get_best_elset(self, satellite_id) -> dict | None:
+        """Simulate fetching the best elset for a satellite."""
+        return {
+            "tle": [
+                "1 00000U 00000A   25001.00000000  .00000000  00000-0  00000-0 0    09",
+                "2 00000   0.0000   0.0000 0000000   0.0000   0.0000  1.00000000    07",
+            ],
+            "epoch": "2025-01-01T00:00:00Z",
+            "creationEpoch": "2025-01-01T00:00:00Z",
+        }
+
     def get_telescope_tasks(self, telescope_id):
         """Simulate fetching tasks for a telescope."""
         return [{"task_id": 1, "description": "Mock Task"}]

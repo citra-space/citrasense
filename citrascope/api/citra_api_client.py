@@ -80,6 +80,13 @@ class CitraApiClient(AbstractCitraApiClient):
         """Fetch satellite details from /satellites/{satellite_id}"""
         return self._request("GET", f"/satellites/{satellite_id}")
 
+    def get_best_elset(self, satellite_id) -> dict | None:
+        """Fetch the server-canonical best elset for a satellite."""
+        result = self._request("GET", f"/satellites/{satellite_id}/elsets?limit=1")
+        if not result or not isinstance(result, list) or len(result) == 0:
+            return None
+        return result[0]
+
     def get_telescope_tasks(self, telescope_id):
         """Fetch tasks for a given telescope."""
         return self._request("GET", f"/telescopes/{telescope_id}/tasks")

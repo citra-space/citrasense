@@ -282,6 +282,26 @@ class DummyApiClient(AbstractCitraApiClient):
                 self.logger.debug(f"DummyApiClient: get_satellite({satellite_id})")
             return satellite
 
+    def get_best_elset(self, satellite_id) -> dict | None:
+        """Return the single elset for a dummy satellite (mimics server's best-elset logic)."""
+        with self._data_lock:
+            satellites = self.data.get("satellites", {})
+            satellite = satellites.get(satellite_id)
+            if not satellite:
+                if satellite_id in self._satellite_catalog:
+                    cat = self._satellite_catalog[satellite_id]
+                    now_iso = datetime.now(timezone.utc).isoformat()
+                    return {
+                        "tle": [cat["tle_line1"], cat["tle_line2"]],
+                        "epoch": now_iso,
+                        "creationEpoch": now_iso,
+                    }
+                return None
+            elsets = satellite.get("elsets", [])
+            if not elsets:
+                return None
+            return elsets[0]
+
     def get_telescope_tasks(self, telescope_id):
         """Fetch tasks for telescope (returns only Pending/Scheduled).
 

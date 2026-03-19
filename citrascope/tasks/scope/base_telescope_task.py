@@ -110,28 +110,35 @@ class AbstractBaseTelescopeTask(ABC):
         if not satellite_data:
             self.logger.error(f"Could not fetch satellite data for {self.task.satelliteId}")
             return None
-        elsets = satellite_data.get("elsets", [])
-        if not elsets:
+
+        best_elset = self.api_client.get_best_elset(self.task.satelliteId)
+        if best_elset:
+            satellite_data["most_recent_elset"] = best_elset
+        else:
+            self.logger.warning(
+                f"get_best_elset returned nothing for {self.task.satelliteId}, "
+                f"falling back to client-side selection"
+            )
+            satellite_data["most_recent_elset"] = self._get_most_recent_elset(satellite_data)
+
+        if not satellite_data.get("most_recent_elset"):
             self.logger.error(f"No elsets found for satellite {self.task.satelliteId}")
             return None
-        satellite_data["most_recent_elset"] = self._get_most_recent_elset(satellite_data)
+
         return satellite_data
 
     def _get_most_recent_elset(self, satellite_data) -> dict | None:
+        """Client-side fallback: pick the elset with the latest element epoch."""
         if "most_recent_elset" in satellite_data:
             return satellite_data["most_recent_elset"]
 
         elsets = satellite_data.get("elsets", [])
         if not elsets:
-            self.logger.error(f"No elsets found for satellite {self.task.satelliteId}")
             return None
+        _EPOCH_FLOOR = dtparser.isoparse("1970-01-01T00:00:00Z")
         most_recent_elset = max(
             elsets,
-            key=lambda e: (
-                dtparser.isoparse(e["creationEpoch"])
-                if e.get("creationEpoch")
-                else dtparser.isoparse("1970-01-01T00:00:00Z")
-            ),
+            key=lambda e: dtparser.isoparse(e["epoch"]) if e.get("epoch") else _EPOCH_FLOOR,
         )
         return most_recent_elset
 
