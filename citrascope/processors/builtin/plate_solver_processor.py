@@ -27,6 +27,11 @@ from .processor_dependencies import check_pixelemon, normalize_fits_timestamp
 if TYPE_CHECKING:
     from pixelemon import TelescopeImage
 
+# Minimum per-source SNR for the catalog passed to downstream processors.
+# SEP detects at 2-sigma (good for plate solving), but sources below 3-sigma
+# are not statistically reliable for photometry or satellite matching.
+_MIN_SOURCE_SNR = 3.0
+
 
 def _build_telescope_for_image(image_path: Path, context: ProcessingContext | None = None):
     """Build a Pixelemon Telescope from telescope_record and FITS binning info.
@@ -284,21 +289,29 @@ class PlateSolverProcessor(AbstractImageProcessor):
         """Convert Pixelemon SEP detections to a sky-coordinate source catalog.
 
         Reuses the detections already computed during plate solving so there is
-        no redundant source-extraction pass.
+        no redundant source-extraction pass.  Applies a per-source SNR floor
+        (_MIN_SOURCE_SNR) so downstream processors only receive statistically
+        reliable detections.
         """
-        detections = image.detections
-        x = detections.x_array
-        y = detections.y_array
+        objects = image.detections._objects
 
+        flux = objects["flux"]
+        npix = objects["npix"]
+        noise = image.background.globalrms * np.sqrt(npix.astype(np.float64))
+        snr = flux / noise
+        mask = snr >= _MIN_SOURCE_SNR
+
+        x = objects["x"][mask]
+        y = objects["y"][mask]
         ra, dec = wcs.all_pix2world(x, y, 0)
 
         return pd.DataFrame(
             {
                 "ra": np.asarray(ra, dtype=np.float64),
                 "dec": np.asarray(dec, dtype=np.float64),
-                "mag": np.asarray(detections.instrumental_magnitude_array, dtype=np.float64),
-                "magerr": np.zeros(len(x), dtype=np.float64),
-                "fwhm": np.asarray(detections.elongation_array, dtype=np.float64),
+                "mag": np.asarray(-2.5 * np.log10(flux[mask] / image.exposure_time), dtype=np.float64),
+                "magerr": np.zeros(int(mask.sum()), dtype=np.float64),
+                "fwhm": np.asarray((objects["a"] / objects["b"])[mask], dtype=np.float64),
             }
         )
 
