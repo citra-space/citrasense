@@ -240,6 +240,10 @@ class AbstractBaseTelescopeTask(ABC):
 
     def _queue_for_upload(self, filepath: str, processing_result):
         """Queue image for background upload."""
+        if not self.task_manager.upload_queue.running:
+            self.logger.warning(f"Upload queue is stopped — not queueing upload for task {self.task.id}")
+            return
+
         # Capture sensor location now (GPS-enhanced if available) so the upload worker
         # can attach it to optical observations without accessing the daemon later.
         try:
