@@ -75,5 +75,10 @@ class ProcessingContext:
     # PlateSolverProcessor after a successful solve.
     detected_sources: pd.DataFrame | None = field(default=None, repr=False)
 
+    # Photometric zero point computed by PhotometryProcessor.  Downstream processors
+    # (e.g. SatelliteMatcherProcessor) use this to convert instrumental magnitudes
+    # to calibrated magnitudes: calibrated = instrumental + zero_point.
+    zero_point: float | None = None
+
     # Logging
     logger: Any | None = None  # Logger instance for debugging

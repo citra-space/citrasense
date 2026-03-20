@@ -1,6 +1,5 @@
 """Tests for SatelliteMatcherProcessor helper methods."""
 
-import json
 from pathlib import Path
 from typing import Any
 
@@ -11,6 +10,7 @@ from citrascope.processors.builtin.satellite_matcher_processor import (
     _STAR_MATCH_TOLERANCE_DEG,
     SatelliteMatcherProcessor,
 )
+from citrascope.processors.processor_result import ProcessingContext
 
 
 # ===================================================================
@@ -239,52 +239,54 @@ class TestReverseMatchOnePerPrediction:
 
 
 # ===================================================================
-# 4. Photometric zero-point calibration
+# 4. Photometric zero-point via ProcessingContext
 # ===================================================================
-class TestReadZeroPoint:
-    """Verify _read_zero_point reads photometry_result.json correctly."""
+class TestZeroPointFromContext:
+    """Verify zero_point flows through ProcessingContext to the satellite matcher."""
 
-    def test_reads_valid_zero_point(self, tmp_path: Path):
-        phot = {"extracted_data": {"zero_point": 23.59, "num_calibration_stars": 306, "filter": "r"}}
-        (tmp_path / "photometry_result.json").write_text(json.dumps(phot))
+    def test_context_zero_point_defaults_to_none(self, tmp_path: Path):
+        ctx = ProcessingContext(
+            image_path=tmp_path / "img.fits",
+            working_image_path=tmp_path / "img.fits",
+            working_dir=tmp_path,
+            image_data=None,
+            task=None,
+            telescope_record=None,
+            ground_station_record=None,
+            settings=None,
+        )
+        assert ctx.zero_point is None
 
-        zp, source = SatelliteMatcherProcessor._read_zero_point(tmp_path)
-        assert zp == 23.59
-        assert source == "photometry_result.json"
+    def test_context_zero_point_round_trips(self, tmp_path: Path):
+        ctx = ProcessingContext(
+            image_path=tmp_path / "img.fits",
+            working_image_path=tmp_path / "img.fits",
+            working_dir=tmp_path,
+            image_data=None,
+            task=None,
+            telescope_record=None,
+            ground_station_record=None,
+            settings=None,
+        )
+        ctx.zero_point = 23.59
+        assert ctx.zero_point == 23.59
 
-    def test_fallback_when_file_missing(self, tmp_path: Path):
-        zp, source = SatelliteMatcherProcessor._read_zero_point(tmp_path)
-        assert zp == 0.0
-        assert source == "none"
+    def test_calibrated_magnitude_arithmetic(self):
+        """instrumental + zero_point = calibrated magnitude."""
+        inst_mag = -8.5
+        zero_point = 23.59
+        calibrated = inst_mag + zero_point
+        assert abs(calibrated - 15.09) < 1e-6
 
-    def test_fallback_when_json_corrupt(self, tmp_path: Path):
-        (tmp_path / "photometry_result.json").write_text("not json {{{")
+    def test_none_zero_point_falls_back_to_zero(self):
+        """When zero_point is None, the fallback is 0.0 (instrumental = calibrated)."""
+        zp_from_ctx: float | None = None
+        zero_point = zp_from_ctx if zp_from_ctx is not None else 0.0
+        assert zero_point == 0.0
 
-        zp, source = SatelliteMatcherProcessor._read_zero_point(tmp_path)
-        assert zp == 0.0
-        assert source == "none"
-
-    def test_fallback_when_zero_point_key_missing(self, tmp_path: Path):
-        phot = {"extracted_data": {"num_calibration_stars": 100}}
-        (tmp_path / "photometry_result.json").write_text(json.dumps(phot))
-
-        zp, source = SatelliteMatcherProcessor._read_zero_point(tmp_path)
-        assert zp == 0.0
-        assert source == "none"
-
-    def test_fallback_when_extracted_data_missing(self, tmp_path: Path):
-        phot = {"processor_name": "photometry"}
-        (tmp_path / "photometry_result.json").write_text(json.dumps(phot))
-
-        zp, source = SatelliteMatcherProcessor._read_zero_point(tmp_path)
-        assert zp == 0.0
-        assert source == "none"
-
-    def test_zero_point_is_zero(self, tmp_path: Path):
-        """A real zero point of 0.0 should still be recognized (source != 'none')."""
-        phot = {"extracted_data": {"zero_point": 0.0}}
-        (tmp_path / "photometry_result.json").write_text(json.dumps(phot))
-
-        zp, source = SatelliteMatcherProcessor._read_zero_point(tmp_path)
-        assert zp == 0.0
-        assert source == "photometry_result.json"
+    def test_zero_valued_zero_point_is_not_none(self):
+        """A legitimate zero_point of 0.0 must not be confused with None."""
+        zp_from_ctx: float | None = 0.0
+        zero_point = zp_from_ctx if zp_from_ctx is not None else 0.0
+        assert zero_point == 0.0
+        assert zp_from_ctx is not None

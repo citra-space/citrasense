@@ -204,6 +204,7 @@ class PhotometryProcessor(AbstractImageProcessor):
                 sources_df, context.working_image_path, filter_name or "Clear"
             )
 
+            context.zero_point = zero_point
             elapsed = time.time() - start_time
 
             result = ProcessorResult(

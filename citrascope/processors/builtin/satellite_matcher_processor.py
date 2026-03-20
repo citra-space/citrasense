@@ -1,6 +1,5 @@
 """Satellite association processor using TLE propagation."""
 
-import json
 import math
 import time
 from datetime import datetime, timedelta, timezone
@@ -95,26 +94,6 @@ class SatelliteMatcherProcessor(AbstractImageProcessor):
             "catalog_stars_removed": removed,
         }
         return filtered, stats
-
-    @staticmethod
-    def _read_zero_point(working_dir: Path) -> tuple[float, str]:
-        """Read the photometric zero point written by PhotometryProcessor.
-
-        Returns (zero_point, source_label). Falls back to (0.0, "none") when the
-        photometry result is missing or unparseable.
-        """
-        photometry_path = working_dir / "photometry_result.json"
-        if not photometry_path.exists():
-            return 0.0, "none"
-        try:
-            with open(photometry_path) as f:
-                phot_result = json.load(f)
-            zp_val = phot_result.get("extracted_data", {}).get("zero_point")
-            if zp_val is not None:
-                return float(zp_val), "photometry_result.json"
-        except (json.JSONDecodeError, ValueError, TypeError):
-            pass
-        return 0.0, "none"
 
     def _parse_fits_timestamp(self, timestamp_str: str) -> ktime.Epoch:
         """Parse FITS DATE-OBS timestamp into a Keplemon Epoch.
@@ -222,9 +201,9 @@ class SatelliteMatcherProcessor(AbstractImageProcessor):
         debug["exptime"] = exptime
         debug["mid_exposure_offset_s"] = exptime / 2.0 if exptime > 0 else 0.0
 
-        zero_point, zp_source = self._read_zero_point(context.working_dir)
+        zero_point = context.zero_point if context.zero_point is not None else 0.0
         debug["zero_point"] = zero_point
-        debug["zero_point_source"] = zp_source
+        debug["zero_point_available"] = context.zero_point is not None
 
         # Sun position (km, J2000/ECI) via astropy ERFA — no external ephemeris file required
         _t = AstropyTime(epoch.to_datetime())
