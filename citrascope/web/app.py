@@ -251,7 +251,7 @@ class CitraScopeWebApp:
         @self.app.get("/", response_class=HTMLResponse)
         async def root(request: Request):
             """Serve the main dashboard page."""
-            return self.templates.TemplateResponse("dashboard.html", {"request": request})
+            return self.templates.TemplateResponse(request, "dashboard.html")
 
         @self.app.get("/api/status")
         async def get_status():
