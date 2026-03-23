@@ -1,4 +1,5 @@
 import os
+from datetime import datetime, timezone
 
 import httpx
 from keplemon.elements import TopocentricElements
@@ -107,6 +108,19 @@ class CitraApiClient(AbstractCitraApiClient):
         response = self._request("PATCH", "/telescopes", json=payload)
         return response is not None
 
+    @staticmethod
+    def _normalize_timestamp_for_keplemon(raw_ts: str) -> str:
+        """Normalize an ISO timestamp to the Z-terminated format keplemon expects.
+
+        Keplemon's Epoch.from_iso requires ``YYYY-MM-DDTHH:MM:SSZ`` — no microseconds,
+        no ``+00:00`` offset.  The satellite matcher can produce either format depending
+        on whether mid-exposure offset was applied.
+        """
+        dt = datetime.fromisoformat(raw_ts.replace("Z", "+00:00") if "Z" in raw_ts else raw_ts)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt.strftime("%Y-%m-%dT%H:%M:%SZ")
+
     def upload_optical_observations(
         self,
         observations: list,
@@ -120,6 +134,11 @@ class CitraApiClient(AbstractCitraApiClient):
         angularNoise and spectral wavelength bounds come from the telescope record; sensor position
         from sensor_location. Returns True on success, False otherwise.
         """
+        if self.logger:
+            self.logger.info(
+                f"upload_optical_observations: preparing {len(observations)} observation(s) for task {task_id}"
+            )
+
         telescope_id = telescope_record.get("id")
         angular_noise = telescope_record.get("angularNoise")
         min_wavelength = telescope_record.get("spectralMinWavelengthNm")
@@ -127,16 +146,34 @@ class CitraApiClient(AbstractCitraApiClient):
 
         altitude_km = sensor_location.get("altitude", 0.0) / 1000.0
 
+        if self.logger:
+            self.logger.debug(
+                f"upload_optical_observations: telescope_id={telescope_id}, angular_noise={angular_noise}, "
+                f"sensor=({sensor_location.get('latitude')}, {sensor_location.get('longitude')}, "
+                f"alt={sensor_location.get('altitude')}m -> {altitude_km:.3f}km)"
+            )
+
         payload = []
+        skipped = 0
         for obs in observations:
-            # Convert J2000/ICRS astrometric RA/Dec to topocentric TEME (server convention)
-            obs_epoch = Epoch.from_iso(obs["timestamp"], time_system=TimeSystem.UTC)
-            topo = TopocentricElements.from_j2000(obs_epoch, obs["ra"], obs["dec"])
+            try:
+                normalized_ts = self._normalize_timestamp_for_keplemon(obs["timestamp"])
+                obs_epoch = Epoch.from_iso(normalized_ts, time_system=TimeSystem.UTC)
+                topo = TopocentricElements.from_j2000(obs_epoch, obs["ra"], obs["dec"])
+            except Exception as e:
+                skipped += 1
+                if self.logger:
+                    self.logger.error(
+                        f"upload_optical_observations: coordinate conversion failed for "
+                        f"satellite {obs.get('norad_id')}, timestamp='{obs.get('timestamp')}', "
+                        f"ra={obs.get('ra')}, dec={obs.get('dec')}: {e}"
+                    )
+                continue
 
             entry = {
                 "satelliteId": obs["norad_id"],
                 "telescopeId": telescope_id,
-                "epoch": obs["timestamp"],
+                "epoch": normalized_ts,
                 "rightAscension": topo.right_ascension,
                 "declination": topo.declination,
                 "sensorLatitude": sensor_location["latitude"],
@@ -154,15 +191,37 @@ class CitraApiClient(AbstractCitraApiClient):
                 entry["maxWavelength"] = max_wavelength
             payload.append(entry)
 
+            if self.logger:
+                self.logger.debug(
+                    f"upload_optical_observations: built entry for satellite {obs['norad_id']} "
+                    f"at epoch={normalized_ts}, teme_ra={topo.right_ascension:.4f}, "
+                    f"teme_dec={topo.declination:.4f}"
+                )
+
+        if skipped and self.logger:
+            self.logger.warning(
+                f"upload_optical_observations: skipped {skipped}/{len(observations)} observation(s) "
+                f"due to conversion errors"
+            )
+
         if not payload:
             if self.logger:
-                self.logger.warning("upload_optical_observations: no observations to upload")
+                self.logger.warning("upload_optical_observations: no observations to upload after conversion")
             return False
+
+        if self.logger:
+            self.logger.info(
+                f"upload_optical_observations: POSTing {len(payload)} observation(s) to /observations/optical "
+                f"for task {task_id}"
+            )
 
         result = self._request("POST", "/observations/optical", json=payload)
         if result is None:
             if self.logger:
-                self.logger.error("upload_optical_observations: POST /observations/optical failed")
+                self.logger.error(
+                    f"upload_optical_observations: POST /observations/optical failed for task {task_id} "
+                    f"({len(payload)} observations)"
+                )
             return False
 
         if self.logger:

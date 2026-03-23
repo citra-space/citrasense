@@ -109,6 +109,13 @@ class UploadQueue(BaseWorkQueue):
         sensor_location = item.get("sensor_location")
         can_upload_obs = bool(sat_obs and telescope_record and sensor_location)
 
+        self.logger.info(
+            f"[UploadWorker] Upload path decision for task {task_id}: "
+            f"sat_obs={len(sat_obs)}, telescope_record={'yes' if telescope_record else 'NO'}, "
+            f"sensor_location={'yes' if sensor_location else 'NO'} -> "
+            f"{'observations' if can_upload_obs else 'FITS image'}"
+        )
+
         if can_upload_obs:
             # Observations-only path: post structured data, no FITS needed
             if task_obj:
