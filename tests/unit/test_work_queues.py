@@ -156,16 +156,18 @@ def test_clear_maxes_retry_counts():
 
 def test_clear_epoch_discards_in_flight_result():
     """After clear(), an in-flight task's result is discarded via epoch check."""
+    started = threading.Event()
     barrier = threading.Event()
 
     def slow_fail(item):
+        started.set()
         barrier.wait(5)
         return (False, None)
 
     q = StubQueue(execute_fn=slow_fail, max_retries=3, initial_delay=0.1, max_delay=0.2)
     q.start()
     q.work_queue.put({"task_id": "t1", "task": MagicMock()})
-    time.sleep(0.1)
+    assert started.wait(5), "worker did not start executing in time"
 
     q.clear()
     barrier.set()
