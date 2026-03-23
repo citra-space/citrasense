@@ -27,6 +27,9 @@ from .processor_dependencies import normalize_fits_timestamp, read_source_catalo
 _ELONGATION_THRESHOLD = 1.5
 _FIELD_RADIUS_DEG = 2.0
 _MATCH_RADIUS_DEG = 1.0 / 60.0  # 1 arcminute
+_GEO_MATCH_RADIUS_DEG = 5.0 / 60.0  # 5 arcminutes — wider for GEO TLE propagation accuracy
+_GEO_MEAN_MOTION_LOW = 0.9  # rev/day lower bound for GEO orbit classification
+_GEO_MEAN_MOTION_HIGH = 1.1  # rev/day upper bound for GEO orbit classification
 _STAR_MATCH_TOLERANCE_DEG = 1.0 / 3600.0  # 1 arcsecond — tight match for star subtraction
 _STAR_SUBTRACTION_ENABLED = False
 
@@ -254,6 +257,42 @@ class SatelliteMatcherProcessor(AbstractImageProcessor):
             target_section["cache_tle_note"] = "target satellite not found in elset cache"
         debug["target_satellite"] = target_section
 
+        # TLE-based GEO detection: override is_slow_mover when the target satellite's
+        # mean motion indicates a geosynchronous orbit (~1.0 rev/day). This catches GEO
+        # targets when pointing_report is absent (e.g. SEQUENCE_TO_CONTROLLER strategy).
+        geo_detected_from_tle = False
+        target_elset = cache_match or next((e for e in elsets if len(e.get("tle", [])) >= 2), None)
+        if target_elset:
+            _geo_tle_lines = target_elset.get("tle", [])
+            if len(_geo_tle_lines) >= 2:
+                try:
+                    _geo_tle = TLE.from_lines(_geo_tle_lines[0], _geo_tle_lines[1])
+                    geo_detected_from_tle = _GEO_MEAN_MOTION_LOW <= _geo_tle.mean_motion <= _GEO_MEAN_MOTION_HIGH
+                except Exception:
+                    pass
+
+        if geo_detected_from_tle and not is_slow_mover:
+            is_slow_mover = True
+            elongation_filter_applied = False
+            potential_sats = sources.copy()
+            debug.update({
+                "is_slow_mover": True,
+                "is_slow_mover_source": "tle_mean_motion",
+                "elongation_filter_applied": False,
+            })
+            debug["source_classification"].update({
+                "satellite_candidate_count": len(potential_sats),
+                "star_like_count": 0,
+            })
+            if _STAR_SUBTRACTION_ENABLED:
+                potential_sats, star_sub_stats = self._subtract_known_stars(potential_sats, context.working_dir)
+                debug["star_subtraction"] = star_sub_stats
+
+        debug["geo_detected_from_tle"] = geo_detected_from_tle
+
+        match_radius_deg = _GEO_MATCH_RADIUS_DEG if is_slow_mover else _MATCH_RADIUS_DEG
+        debug["match_radius_arcmin"] = match_radius_deg * 60.0
+
         # Propagate all TLEs, keep only those within the field, collect predictions
         predictions: list[dict[str, Any]] = []
         all_propagations: list[dict[str, Any]] = []
@@ -331,7 +370,7 @@ class SatelliteMatcherProcessor(AbstractImageProcessor):
         # Query without upper bound so we always get the nearest distance for diagnostics
         source_coords = potential_sats[["ra", "dec"]].values
         distances, indices = tree.query(source_coords)
-        valid_mask = np.asarray(distances) < _MATCH_RADIUS_DEG
+        valid_mask = np.asarray(distances) < match_radius_deg
 
         # Record match details for every satellite candidate source
         match_details: list[dict[str, Any]] = []
@@ -368,7 +407,7 @@ class SatelliteMatcherProcessor(AbstractImageProcessor):
                 "predicted_ra": p["ra"],
                 "predicted_dec": p["dec"],
                 "nearest_source_distance_arcmin": round(dist_deg * 60.0, 4),
-                "within_match_radius": dist_deg < _MATCH_RADIUS_DEG,
+                "within_match_radius": dist_deg < match_radius_deg,
             }
             if 0 <= src_idx < len(potential_sats):
                 src_row = potential_sats.iloc[src_idx]
@@ -386,7 +425,7 @@ class SatelliteMatcherProcessor(AbstractImageProcessor):
         observations: list[dict[str, Any]] = []
         for i, p in enumerate(predictions):
             dist_deg = float(np.asarray(pred_distances)[i])
-            if dist_deg >= _MATCH_RADIUS_DEG:
+            if dist_deg >= match_radius_deg:
                 continue
             src_idx = int(np.asarray(pred_indices)[i])
             if src_idx < 0 or src_idx >= len(potential_sats):

@@ -7,6 +7,10 @@ import numpy as np
 import pandas as pd
 
 from citrascope.processors.builtin.satellite_matcher_processor import (
+    _GEO_MATCH_RADIUS_DEG,
+    _GEO_MEAN_MOTION_HIGH,
+    _GEO_MEAN_MOTION_LOW,
+    _MATCH_RADIUS_DEG,
     _STAR_MATCH_TOLERANCE_DEG,
     SatelliteMatcherProcessor,
 )
@@ -386,3 +390,170 @@ class TestZeroPointFromContext:
         zero_point = zp_from_ctx if zp_from_ctx is not None else 0.0
         assert zero_point == 0.0
         assert zp_from_ctx is not None
+
+
+# ===================================================================
+# 6. GEO detection from TLE mean motion
+# ===================================================================
+class TestGeoDetectionFromTle:
+    """GEO satellites (mean motion ~1.0 rev/day) should be detected from their TLE
+    and treated as slow movers even when pointing_report is absent."""
+
+    # Real DIRECTV 15 TLE from the bug report (synthetic NORAD 99999, GEO orbit)
+    GEO_TLE = [
+        "1 99999U          26080.16980148 +.00000000  00000+0  00000+0 0 00009",
+        "2 99999   0.0283  89.4455 0000437 118.9551 288.5311  1.00277561000006",
+    ]
+    # ISS-like LEO TLE (~15.5 rev/day)
+    LEO_TLE = [
+        "1 25544U 98067A   26080.00000000  .00016717  00000-0  10270-3 0  9005",
+        "2 25544  51.6400 200.0000 0006000 200.0000 160.0000 15.50000000100008",
+    ]
+    # GPS-like MEO TLE (~2.0 rev/day)
+    MEO_TLE = [
+        "1 28874U 05038A   26080.00000000  .00000000  00000+0  00000+0 0  9994",
+        "2 28874  55.0000 200.0000 0100000 200.0000 160.0000  2.00563000100008",
+    ]
+
+    def test_geo_detected_from_mean_motion(self):
+        """A GEO TLE (mean motion ~1.0) is classified as GEO."""
+        from keplemon.elements import TLE
+
+        tle = TLE.from_lines(self.GEO_TLE[0], self.GEO_TLE[1])
+        assert _GEO_MEAN_MOTION_LOW <= tle.mean_motion <= _GEO_MEAN_MOTION_HIGH
+
+    def test_leo_not_detected_as_geo(self):
+        """A LEO TLE (mean motion ~15.5) is not classified as GEO."""
+        from keplemon.elements import TLE
+
+        tle = TLE.from_lines(self.LEO_TLE[0], self.LEO_TLE[1])
+        assert not (_GEO_MEAN_MOTION_LOW <= tle.mean_motion <= _GEO_MEAN_MOTION_HIGH)
+
+    def test_meo_not_detected_as_geo(self):
+        """A MEO TLE (mean motion ~2.0) is not classified as GEO."""
+        from keplemon.elements import TLE
+
+        tle = TLE.from_lines(self.MEO_TLE[0], self.MEO_TLE[1])
+        assert not (_GEO_MEAN_MOTION_LOW <= tle.mean_motion <= _GEO_MEAN_MOTION_HIGH)
+
+    def test_geo_boundary_low(self):
+        """Mean motion exactly at 0.9 is within GEO range."""
+        assert _GEO_MEAN_MOTION_LOW <= 0.9 <= _GEO_MEAN_MOTION_HIGH
+
+    def test_geo_boundary_high(self):
+        """Mean motion exactly at 1.1 is within GEO range."""
+        assert _GEO_MEAN_MOTION_LOW <= 1.1 <= _GEO_MEAN_MOTION_HIGH
+
+    def test_geo_boundary_just_outside_low(self):
+        """Mean motion at 0.89 is outside GEO range."""
+        assert not (_GEO_MEAN_MOTION_LOW <= 0.89 <= _GEO_MEAN_MOTION_HIGH)
+
+    def test_geo_boundary_just_outside_high(self):
+        """Mean motion at 1.11 is outside GEO range."""
+        assert not (_GEO_MEAN_MOTION_LOW <= 1.11 <= _GEO_MEAN_MOTION_HIGH)
+
+
+# ===================================================================
+# 7. Adaptive match radius
+# ===================================================================
+class TestAdaptiveMatchRadius:
+    """GEO/slow-mover targets use a wider match radius than LEO targets."""
+
+    def test_geo_gets_wider_radius(self):
+        """When is_slow_mover is True, the wider GEO radius is selected."""
+        is_slow_mover = True
+        match_radius_deg = _GEO_MATCH_RADIUS_DEG if is_slow_mover else _MATCH_RADIUS_DEG
+        assert match_radius_deg == _GEO_MATCH_RADIUS_DEG
+        assert match_radius_deg * 60.0 == 5.0  # 5 arcminutes
+
+    def test_leo_gets_standard_radius(self):
+        """When is_slow_mover is False, the standard LEO radius is selected."""
+        is_slow_mover = False
+        match_radius_deg = _GEO_MATCH_RADIUS_DEG if is_slow_mover else _MATCH_RADIUS_DEG
+        assert match_radius_deg == _MATCH_RADIUS_DEG
+        assert match_radius_deg * 60.0 == 1.0  # 1 arcminute
+
+    def test_geo_radius_is_wider_than_leo(self):
+        assert _GEO_MATCH_RADIUS_DEG > _MATCH_RADIUS_DEG
+
+
+# ===================================================================
+# 8. Multi-GEO matching with wider radius
+# ===================================================================
+class TestMultiGeoMatching:
+    """GEO predictions 1-4 arcmin from sources should match with the wider radius
+    but fail with the standard 1-arcmin radius. This mirrors the real bug where
+    DIRECTV 15 (1.38'), SKYNET 1 (1.31'), SES 20 (2.28'), and DIRECTV 12 (3.37')
+    were all missed at 1 arcmin but SES 18 (0.28') was the only match."""
+
+    @staticmethod
+    def _build_reverse_match_observations(
+        potential_sats: pd.DataFrame,
+        predictions: list[dict[str, Any]],
+        match_radius_deg: float,
+    ) -> list[dict[str, Any]]:
+        """Replicate the reverse-match observation builder with a configurable radius."""
+        from scipy.spatial import KDTree
+
+        source_coords = potential_sats[["ra", "dec"]].values
+        pred_coords = np.array([[p["ra"], p["dec"]] for p in predictions])
+        source_tree = KDTree(source_coords)
+        pred_distances, pred_indices = source_tree.query(pred_coords)
+
+        observations: list[dict[str, Any]] = []
+        for i, p in enumerate(predictions):
+            dist_deg = float(np.asarray(pred_distances)[i])
+            if dist_deg >= match_radius_deg:
+                continue
+            src_idx = int(np.asarray(pred_indices)[i])
+            if src_idx < 0 or src_idx >= len(potential_sats):
+                continue
+            row = potential_sats.iloc[src_idx]
+            observations.append({"norad_id": p["satellite_id"], "name": p["name"], "ra": float(row["ra"])})
+        return observations
+
+    def test_geo_radius_catches_all_geo_satellites(self):
+        """With 5-arcmin radius, predictions at 0.3-3.4 arcmin offsets all match."""
+        # Sources at known positions (simulating detected GEO satellites)
+        source_positions = [
+            (145.770, -5.130),  # SES 18 position
+            (146.200, -5.100),  # DIRECTV 15 position
+            (146.210, -5.050),  # DIRECTV 12 position
+            (145.900, -5.200),  # SES 20 position
+        ]
+        sources = _make_sources(source_positions, elongation=1.0)
+
+        # Predictions offset from sources by realistic GEO TLE errors
+        predictions = [
+            {"ra": 145.7705, "dec": -5.1304, "satellite_id": "SES-18", "name": "SES 18", "phase_angle": 35.0},
+            {"ra": 146.223, "dec": -5.100, "satellite_id": "DTV-15", "name": "DIRECTV 15", "phase_angle": 30.0},
+            {"ra": 146.265, "dec": -5.050, "satellite_id": "DTV-12", "name": "DIRECTV 12", "phase_angle": 32.0},
+            {"ra": 145.938, "dec": -5.200, "satellite_id": "SES-20", "name": "SES 20", "phase_angle": 28.0},
+        ]
+
+        # Distances: SES 18 ~0.3', DIRECTV 15 ~1.4', DIRECTV 12 ~3.3', SES 20 ~2.3'
+        obs_geo = self._build_reverse_match_observations(sources, predictions, _GEO_MATCH_RADIUS_DEG)
+        assert len(obs_geo) == 4
+        detected_ids = {o["norad_id"] for o in obs_geo}
+        assert detected_ids == {"SES-18", "DTV-15", "DTV-12", "SES-20"}
+
+    def test_standard_radius_misses_most_geo_satellites(self):
+        """With 1-arcmin radius, only the closest prediction matches (the original bug)."""
+        source_positions = [
+            (145.770, -5.130),
+            (146.200, -5.100),
+            (146.210, -5.050),
+            (145.900, -5.200),
+        ]
+        sources = _make_sources(source_positions, elongation=1.0)
+
+        predictions = [
+            {"ra": 145.7705, "dec": -5.1304, "satellite_id": "SES-18", "name": "SES 18", "phase_angle": 35.0},
+            {"ra": 146.223, "dec": -5.100, "satellite_id": "DTV-15", "name": "DIRECTV 15", "phase_angle": 30.0},
+            {"ra": 146.265, "dec": -5.050, "satellite_id": "DTV-12", "name": "DIRECTV 12", "phase_angle": 32.0},
+            {"ra": 145.938, "dec": -5.200, "satellite_id": "SES-20", "name": "SES 20", "phase_angle": 28.0},
+        ]
+
+        obs_leo = self._build_reverse_match_observations(sources, predictions, _MATCH_RADIUS_DEG)
+        assert len(obs_leo) == 1
+        assert obs_leo[0]["norad_id"] == "SES-18"
