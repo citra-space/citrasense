@@ -38,6 +38,7 @@ def _make_hardware_adapter(**overrides):
 def _make_daemon():
     daemon = MagicMock()
     daemon.settings.processors_enabled = True
+    daemon.settings.skip_upload = False
     daemon.telescope_record = {"id": "tel-1"}
     daemon.ground_station = {"id": "gs-1"}
     daemon.location_service.get_current_location.return_value = {
