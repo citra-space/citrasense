@@ -14,6 +14,16 @@ export function adapterField(field) {
     return {
         field: field,
 
+        init() {
+            if (this.field && this.field.visible_when) {
+                this.$watch('isVisible', (visible) => {
+                    if (visible && this.field.default && !this.field.value) {
+                        this.field.value = this.field.default;
+                    }
+                });
+            }
+        },
+
         get inputId() {
             if (!this.field || !this.field.name) return '';
             return 'adapter_' + this.field.name;

@@ -235,6 +235,11 @@ class AbstractBaseTelescopeTask(ABC):
             if annotated and Path(annotated).exists() and self._on_annotated_image:
                 self._on_annotated_image(annotated)
 
+        if self.settings.skip_upload:
+            self.logger.info("Skipping upload (skip_upload enabled in settings)")
+            self._on_image_done(task_id, success=True)
+            return
+
         # Queue for upload
         self._queue_for_upload(filepath, processing_result=result)
 
