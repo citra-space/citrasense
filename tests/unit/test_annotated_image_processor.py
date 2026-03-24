@@ -235,10 +235,10 @@ class TestDrawAnnotations:
 
         matches = [{"ra": 180.0, "dec": 45.0, "name": "ISS"}]
         proc = AnnotatedImageProcessor()
-        proc._draw_matches(draw, wcs, matches, font)
+        proc._draw_matches(draw, wcs, matches, font, img.height)
 
         arr = np.array(img)
-        assert arr.sum() > 0  # something was drawn
+        assert arr.sum() > 0
 
     def test_draws_dashed_prediction_circle(self):
         img = Image.new("RGB", (200, 200), color=(0, 0, 0))
@@ -250,7 +250,7 @@ class TestDrawAnnotations:
 
         predictions = [{"predicted_ra_deg": 181.0, "predicted_dec_deg": 44.0, "name": "GOES-16"}]
         proc = AnnotatedImageProcessor()
-        proc._draw_predictions(draw, wcs, predictions, font)
+        proc._draw_predictions(draw, wcs, predictions, font, img.height)
 
         arr = np.array(img)
         assert arr.sum() > 0
@@ -265,3 +265,110 @@ class TestDrawAnnotations:
         arr = np.array(img)
         top_strip = arr[:36, :, :]
         assert top_strip.sum() > 0
+
+
+class TestRadecToPixelFlip:
+    """Verify _radec_to_pixel inverts Y for display-flipped images."""
+
+    def test_y_is_flipped_relative_to_image_height(self):
+        wcs = MagicMock()
+        wcs.world_to_pixel_values.return_value = (50.0, 30.0)
+        px, py = AnnotatedImageProcessor._radec_to_pixel(wcs, 180.0, 45.0, img_height=200)
+        assert px == 50
+        assert py == 200 - 1 - 30  # 169
+
+    def test_bottom_row_maps_to_top_of_display(self):
+        wcs = MagicMock()
+        wcs.world_to_pixel_values.return_value = (10.0, 0.0)
+        _px, py = AnnotatedImageProcessor._radec_to_pixel(wcs, 180.0, 45.0, img_height=100)
+        assert py == 99
+
+    def test_top_row_maps_to_bottom_of_display(self):
+        wcs = MagicMock()
+        wcs.world_to_pixel_values.return_value = (10.0, 99.0)
+        _px, py = AnnotatedImageProcessor._radec_to_pixel(wcs, 180.0, 45.0, img_height=100)
+        assert py == 0
+
+    def test_wcs_error_returns_none(self):
+        wcs = MagicMock()
+        wcs.world_to_pixel_values.side_effect = RuntimeError("bad coord")
+        px, py = AnnotatedImageProcessor._radec_to_pixel(wcs, 180.0, 45.0, img_height=100)
+        assert px is None
+        assert py is None
+
+
+class TestDrawStars:
+    """Verify star crosshair markers are drawn from detected_sources."""
+
+    def test_draws_crosshairs_on_point_sources(self):
+        import pandas as pd
+
+        img = Image.new("RGB", (200, 200), color=(0, 0, 0))
+        draw = ImageDraw.Draw(img)
+        wcs = MagicMock()
+        wcs.world_to_pixel_values.return_value = (100.0, 100.0)
+
+        sources = pd.DataFrame({"ra": [180.0], "dec": [45.0], "mag": [-5.0], "elongation": [1.1]})
+        proc = AnnotatedImageProcessor()
+        proc._draw_stars(draw, wcs, sources, img.height)
+
+        arr = np.array(img)
+        assert arr.sum() > 0
+
+    def test_skips_elongated_sources(self):
+        import pandas as pd
+
+        img = Image.new("RGB", (200, 200), color=(0, 0, 0))
+        draw = ImageDraw.Draw(img)
+        wcs = MagicMock()
+        wcs.world_to_pixel_values.return_value = (100.0, 100.0)
+
+        sources = pd.DataFrame({"ra": [180.0], "dec": [45.0], "mag": [-5.0], "elongation": [3.0]})
+        proc = AnnotatedImageProcessor()
+        proc._draw_stars(draw, wcs, sources, img.height)
+
+        arr = np.array(img)
+        assert arr.sum() == 0
+
+    def test_limits_to_max_markers(self):
+        import pandas as pd
+
+        wcs = MagicMock()
+        call_count = 0
+
+        def counting_radec(wcs, ra, dec, h):
+            nonlocal call_count
+            call_count += 1
+            return 100, 100
+
+        sources = pd.DataFrame(
+            {
+                "ra": np.linspace(170, 190, 100),
+                "dec": np.linspace(40, 50, 100),
+                "mag": np.linspace(-10, 0, 100),
+                "elongation": np.ones(100) * 1.1,
+            }
+        )
+
+        img = Image.new("RGB", (200, 200), color=(0, 0, 0))
+        draw = ImageDraw.Draw(img)
+        proc = AnnotatedImageProcessor()
+
+        with patch.object(AnnotatedImageProcessor, "_radec_to_pixel", side_effect=counting_radec):
+            proc._draw_stars(draw, wcs, sources, img.height)
+
+        assert call_count == 50
+
+    def test_empty_sources_is_noop(self):
+        import pandas as pd
+
+        img = Image.new("RGB", (200, 200), color=(0, 0, 0))
+        draw = ImageDraw.Draw(img)
+        wcs = MagicMock()
+
+        sources = pd.DataFrame({"ra": [], "dec": [], "mag": [], "elongation": []})
+        proc = AnnotatedImageProcessor()
+        proc._draw_stars(draw, wcs, sources, img.height)
+
+        arr = np.array(img)
+        assert arr.sum() == 0

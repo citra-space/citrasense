@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import time
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import numpy as np
 from astropy.io import fits
@@ -13,6 +14,9 @@ from PIL import Image, ImageDraw, ImageFont
 
 from citrascope.processors.abstract_processor import AbstractImageProcessor
 from citrascope.processors.processor_result import ProcessingContext, ProcessorResult
+
+if TYPE_CHECKING:
+    import pandas as pd
 
 _STRETCH_LO_PERCENTILE = 2.0
 _STRETCH_HI_PERCENTILE = 98.0
@@ -28,6 +32,11 @@ _LABEL_OFFSET = 6
 _OVERLAY_HEIGHT = 36
 _STROKE_WIDTH = 2
 _IMAGE_FORMAT = "PNG"
+
+_STAR_COLOR = (0, 255, 0)
+_STAR_MARKER_SIZE = 6
+_MAX_STAR_MARKERS = 50
+_STAR_ELONGATION_LIMIT = 1.5
 
 
 class AnnotatedImageProcessor(AbstractImageProcessor):
@@ -63,8 +72,10 @@ class AnnotatedImageProcessor(AbstractImageProcessor):
             font = self._get_font()
 
             if wcs is not None:
-                self._draw_matches(draw, wcs, matched_sats, font)
-                self._draw_predictions(draw, wcs, unmatched_preds, font)
+                self._draw_matches(draw, wcs, matched_sats, font, img.height)
+                self._draw_predictions(draw, wcs, unmatched_preds, font, img.height)
+                if context.detected_sources is not None:
+                    self._draw_stars(draw, wcs, context.detected_sources, img.height)
 
             task_name = context.task.satelliteName if context.task else None
             self._draw_overlay(draw, img.width, task_name, epoch_str, match_count, font)
@@ -125,6 +136,7 @@ class AnnotatedImageProcessor(AbstractImageProcessor):
             hi = lo + 1.0
 
         stretched = np.clip((arr - lo) / (hi - lo) * 255.0, 0, 255).astype(np.uint8)
+        stretched = np.flipud(stretched)
 
         if stretched.ndim == 2:
             return Image.fromarray(stretched, mode="L").convert("RGB")
@@ -169,26 +181,30 @@ class AnnotatedImageProcessor(AbstractImageProcessor):
         epoch_str = debug.get("epoch")
         return observations, unmatched, epoch_str, match_count
 
-    def _draw_matches(self, draw: ImageDraw.ImageDraw, wcs: WCS, matches: list[dict], font) -> None:
+    def _draw_matches(
+        self, draw: ImageDraw.ImageDraw, wcs: WCS, matches: list[dict], font, img_height: int
+    ) -> None:
         for sat in matches:
             ra, dec = sat.get("ra"), sat.get("dec")
             name = sat.get("name", "?")
             if ra is None or dec is None:
                 continue
-            px, py = self._radec_to_pixel(wcs, ra, dec)
+            px, py = self._radec_to_pixel(wcs, ra, dec, img_height)
             if px is None or py is None:
                 continue
             self._draw_circle(draw, px, py, _MATCH_COLOR)
             self._safe_text(draw, (px + _CIRCLE_RADIUS + _LABEL_OFFSET, py - _FONT_SIZE // 4), name, _MATCH_COLOR, font)
 
-    def _draw_predictions(self, draw: ImageDraw.ImageDraw, wcs: WCS, predictions: list[dict], font) -> None:
+    def _draw_predictions(
+        self, draw: ImageDraw.ImageDraw, wcs: WCS, predictions: list[dict], font, img_height: int
+    ) -> None:
         for pred in predictions:
             ra = pred.get("predicted_ra_deg")
             dec = pred.get("predicted_dec_deg")
             name = pred.get("name", "?")
             if ra is None or dec is None:
                 continue
-            px, py = self._radec_to_pixel(wcs, ra, dec)
+            px, py = self._radec_to_pixel(wcs, ra, dec, img_height)
             if px is None or py is None:
                 continue
             self._draw_dashed_circle(draw, px, py, _PREDICTION_COLOR)
@@ -196,11 +212,30 @@ class AnnotatedImageProcessor(AbstractImageProcessor):
                 draw, (px + _CIRCLE_RADIUS + _LABEL_OFFSET, py - _FONT_SIZE // 4), name, _PREDICTION_COLOR, font
             )
 
+    def _draw_stars(
+        self, draw: ImageDraw.ImageDraw, wcs: WCS, sources: pd.DataFrame, img_height: int
+    ) -> None:
+        """Draw green crosshair markers on the brightest point-like detected sources."""
+        if sources.empty:
+            return
+
+        point_like = sources[sources["elongation"] < _STAR_ELONGATION_LIMIT]
+        brightest = point_like.nsmallest(_MAX_STAR_MARKERS, "mag")
+
+        s = _STAR_MARKER_SIZE
+        for _, row in brightest.iterrows():
+            px, py = self._radec_to_pixel(wcs, row["ra"], row["dec"], img_height)
+            if px is None or py is None:
+                continue
+            draw.line((px - s, py, px + s, py), fill=_STAR_COLOR, width=_STROKE_WIDTH)
+            draw.line((px, py - s, px, py + s), fill=_STAR_COLOR, width=_STROKE_WIDTH)
+
     @staticmethod
-    def _radec_to_pixel(wcs: WCS, ra_deg: float, dec_deg: float) -> tuple[int | None, int | None]:
+    def _radec_to_pixel(wcs: WCS, ra_deg: float, dec_deg: float, img_height: int) -> tuple[int | None, int | None]:
         try:
             result = wcs.world_to_pixel_values(ra_deg, dec_deg)
-            px, py = round(float(result[0])), round(float(result[1]))
+            px = round(float(result[0]))
+            py = img_height - 1 - round(float(result[1]))
             return px, py
         except Exception:
             return None, None
