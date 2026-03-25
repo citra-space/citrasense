@@ -445,7 +445,7 @@ class AnnotatedImageProcessor(AbstractImageProcessor):
         for name in ("DejaVuSans.ttf", "Arial.ttf", "Helvetica", "FreeSans.ttf"):
             try:
                 return ImageFont.truetype(name, size)
-            except OSError:
+            except Exception:
                 continue
 
         for path in (
@@ -456,7 +456,7 @@ class AnnotatedImageProcessor(AbstractImageProcessor):
         ):
             try:
                 return ImageFont.truetype(path, size)
-            except OSError:
+            except Exception:
                 continue
 
         return ImageFont.load_default()
