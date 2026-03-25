@@ -236,8 +236,8 @@ class AbstractBaseTelescopeTask(ABC):
                 self._on_annotated_image(annotated)
 
         if self.settings.skip_upload:
-            self.logger.info("Skipping upload (skip_upload enabled in settings)")
-            self._on_image_done(task_id, success=True)
+            self.logger.info("Upload skipped (skip_upload enabled) — task will not be marked complete on API")
+            self._finalize_skipped_upload(task_id)
             return
 
         # Queue for upload
@@ -315,6 +315,28 @@ class AbstractBaseTelescopeTask(ABC):
             self.logger.error(f"Task {task_id} failed — all {self._completed_images} image(s) failed to upload")
 
         self.task_manager.remove_task_from_all_stages(task_id)
+
+    def _finalize_skipped_upload(self, task_id: str) -> None:
+        """Advance the image counter and clean up tracking without calling the API.
+
+        Used when skip_upload is enabled: the processing pipeline ran but no
+        data was uploaded, so we must not mark the task complete on the server
+        or inflate success/failure counters.
+        """
+        with self._completion_lock:
+            self._completed_images += 1
+            should_finalize = (
+                self._completed_images >= self._pending_images and self._pending_images > 0 and not self._finalized
+            )
+            if should_finalize:
+                self._finalized = True
+
+        if should_finalize:
+            self.logger.info(
+                f"Task {task_id}: all {self._completed_images} image(s) processed, upload skipped — "
+                "not marking complete on API"
+            )
+            self.task_manager.remove_task_from_all_stages(task_id)
 
     def _mark_complete_with_retry(self, task_id: str, attempts: int = 3, delay: float = 2.0) -> bool:
         """Try to mark a task complete on the server, retrying on transient failures."""

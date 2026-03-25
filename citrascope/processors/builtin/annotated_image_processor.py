@@ -50,10 +50,10 @@ class AnnotatedImageProcessor(AbstractImageProcessor):
     """Renders a stretched PNG with four concentric annotation layers overlaid.
 
     Reads satellite_matcher_debug.json and detected_sources to draw (outer to inner):
-    - Green circles: Plate Solver Stars (point-like sources, elongation < 1.5)
-    - Blue circles: Plate Solver Detections (elongated sources / satellite streaks)
+    - Teal circles: Plate Solver Stars (point-like sources, elongation < 1.5)
+    - Yellow-green circles: Plate Solver Detections (elongated sources / satellite streaks)
     - Yellow dashed circles + labels: TLE Predicted positions
-    - Purple circles + labels: Satellite Matched (confirmed matches)
+    - Orange circles + labels: Satellite Matched (confirmed matches)
 
     Includes a header strip with satellite name, timestamp, match count,
     and an inline color legend.
@@ -221,7 +221,7 @@ class AnnotatedImageProcessor(AbstractImageProcessor):
             self._draw_label_below(draw, px, py, name, _PREDICTION_COLOR, font)
 
     def _draw_stars(self, draw: ImageDraw.ImageDraw, wcs: WCS, sources: pd.DataFrame, img_height: int) -> None:
-        """Draw green circles on the brightest point-like detected sources."""
+        """Draw teal circles on the brightest point-like detected sources."""
         if sources.empty:
             return
 
@@ -242,7 +242,7 @@ class AnnotatedImageProcessor(AbstractImageProcessor):
         img_height: int,
         tracking_mode: str | None,
     ) -> None:
-        """Draw blue circles on elongated sources likely to be satellite streaks.
+        """Draw yellow-green circles on elongated sources likely to be satellite streaks.
 
         In sidereal tracking, satellites appear as elongated streaks (elongation >= threshold).
         In rate tracking, the mount follows the satellite so it appears round while stars

@@ -295,6 +295,17 @@ class TestOnProcessingComplete:
         ct._on_processing_complete("/img.fits", "task-1", result)
         ct.api_client.mark_task_complete.assert_called_once_with("task-1")
 
+    def test_settings_skip_upload_does_not_mark_complete(self):
+        ct = self._make_concrete()
+        ct.settings.skip_upload = True
+        ct._pending_images = 1
+        result = MagicMock()
+        result.should_upload = True
+        result.extracted_data = {}
+        ct._on_processing_complete("/img.fits", "task-1", result)
+        ct.api_client.mark_task_complete.assert_not_called()
+        ct.task_manager.remove_task_from_all_stages.assert_called_once_with("task-1")
+
     def test_feeds_plate_solve_to_adapter(self):
         ct = self._make_concrete()
         result = MagicMock()
