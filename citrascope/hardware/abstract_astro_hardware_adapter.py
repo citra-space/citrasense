@@ -29,7 +29,7 @@ class SettingSchemaEntry(TypedDict, total=False):
     max: float  # Maximum value for numeric types
     step: float  # Step increment for numeric inputs (HTML step attribute)
     pattern: str  # Regex pattern for string validation
-    options: list[str] | list[dict[str, Any]]  # Plain strings or {"value": ..., "label": ...} dicts
+    options: list[str]  # List of valid options for select/dropdown inputs
     group: str  # Group name for organizing settings in UI (e.g., 'Camera', 'Mount', 'Advanced')
     visible_when: dict[str, str]  # Conditional visibility: {"field": "other_field_name", "value": "expected_value"}
 

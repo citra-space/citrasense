@@ -3,7 +3,6 @@
 import datetime
 import logging
 import math
-import shutil
 import threading
 import time
 from collections.abc import Callable
@@ -26,11 +25,6 @@ from citrascope.hardware.devices.mount.mount_state_cache import MountStateCache
 # Default observer location — Pikes Peak, matches DummyApiClient.
 _OBSERVER_LAT_DEG = 38.8409
 _OBSERVER_LON_DEG = -105.0423
-
-# Resolved at import time; only valid for editable installs, which is
-# the only context the DummyAdapter is used in.
-_REPO_ROOT = Path(__file__).resolve().parent.parent.parent
-_DEFAULT_TEST_FITS_DIR = str(_REPO_ROOT / "test-fits")
 
 
 def _current_lst_deg() -> float:
@@ -434,33 +428,11 @@ class DummyAdapter(AbstractAstroHardwareAdapter):
             logger: Logger instance
             images_dir: Path to images directory
             **kwargs: Additional settings including 'simulate_slow_operations'
-                      and 'fits_directory'
         """
         super().__init__(images_dir, **kwargs)
         self.logger = logger
         self.simulate_slow = kwargs.get("simulate_slow_operations", False)
         self.slow_delay = kwargs.get("slow_delay_seconds", 2.0)
-
-        # FITS injection: serve real images as option to test
-        # vs. default synthetic starfields option
-        image_source = kwargs.get("image_source", "generated")
-        fits_dir = kwargs.get("fits_directory", "")
-        self._fits_injection_files: list[Path] = []
-        self._fits_injection_index = 0
-        if image_source == "fits_directory" and fits_dir:
-            p = Path(fits_dir)
-            if p.is_dir():
-                self._fits_injection_files = sorted(f for f in p.iterdir() if f.suffix.lower() in (".fits", ".fit"))
-                if self._fits_injection_files:
-                    logger.info(
-                        "DummyAdapter: FITS injection enabled — %d file(s) from %s",
-                        len(self._fits_injection_files),
-                        p,
-                    )
-                else:
-                    logger.warning("DummyAdapter: fits_directory %s contains no FITS files", p)
-            else:
-                logger.warning("DummyAdapter: fits_directory %s is not a valid directory", p)
 
         # Fake hardware state
         self._connected = False
@@ -491,33 +463,6 @@ class DummyAdapter(AbstractAstroHardwareAdapter):
         """Return configuration schema for dummy adapter."""
         return [
             {
-                "name": "image_source",
-                "friendly_name": "Image Source",
-                "type": "str",
-                "default": "generated",
-                "description": "Where take_image() gets its FITS data",
-                "required": False,
-                "options": [
-                    {"value": "generated", "label": "Generated Starfields"},
-                    {"value": "fits_directory", "label": "FITS Image(s)"},
-                ],
-                "group": "Imaging",
-            },
-            {
-                "name": "fits_directory",
-                "friendly_name": "FITS Directory",
-                "type": "str",
-                "default": _DEFAULT_TEST_FITS_DIR,
-                "description": (
-                    "Absolute path to a folder of user-provided FITS images for testing. "
-                    "One or more files are served round-robin. "
-                    "See test-fits/README.md in the repo for the full workflow."
-                ),
-                "required": False,
-                "group": "Imaging",
-                "visible_when": {"field": "image_source", "value": "fits_directory"},
-            },
-            {
                 "name": "simulate_slow_operations",
                 "friendly_name": "Simulate Slow Operations",
                 "type": "bool",
@@ -536,7 +481,6 @@ class DummyAdapter(AbstractAstroHardwareAdapter):
                 "description": "Duration of artificial delays when slow simulation is enabled",
                 "required": False,
                 "group": "Testing",
-                "visible_when": {"field": "simulate_slow_operations", "value": "true"},
             },
         ]
 
@@ -660,28 +604,8 @@ class DummyAdapter(AbstractAstroHardwareAdapter):
         self._camera_connected = True
         return True
 
-    def _serve_injected_fits(self, task_id: str) -> str:
-        """Copy the next FITS file from the injection directory into images_dir.
-
-        Round-robins through the sorted file list so a single file can be
-        re-served across multiple exposures without the pipeline overwriting
-        the user's original.
-        """
-        src = self._fits_injection_files[self._fits_injection_index % len(self._fits_injection_files)]
-        self._fits_injection_index += 1
-
-        timestamp = int(time.time())
-        dest = self.images_dir / f"injected_{task_id}_{timestamp}{src.suffix}"
-        dest.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(src, dest)
-        self.logger.info("DummyAdapter: Serving injected FITS %s → %s", src.name, dest)
-        return str(dest)
-
     def take_image(self, task_id: str, exposure_duration_seconds=1.0) -> str:
         """Simulate image capture, producing a synthetic starfield FITS."""
-        if self._fits_injection_files:
-            return self._serve_injected_fits(task_id)
-
         self.logger.info(f"DummyAdapter: Starting {exposure_duration_seconds}s exposure for task {task_id}")
         self._simulate_delay(exposure_duration_seconds)
 
