@@ -38,6 +38,7 @@ def _make_hardware_adapter(**overrides):
 def _make_daemon():
     daemon = MagicMock()
     daemon.settings.processors_enabled = True
+    daemon.settings.skip_upload = False
     daemon.telescope_record = {"id": "tel-1"}
     daemon.ground_station = {"id": "gs-1"}
     daemon.location_service.get_current_location.return_value = {
@@ -293,6 +294,17 @@ class TestOnProcessingComplete:
         result.skip_reason = "Test skip"
         ct._on_processing_complete("/img.fits", "task-1", result)
         ct.api_client.mark_task_complete.assert_called_once_with("task-1")
+
+    def test_settings_skip_upload_does_not_mark_complete(self):
+        ct = self._make_concrete()
+        ct.settings.skip_upload = True
+        ct._pending_images = 1
+        result = MagicMock()
+        result.should_upload = True
+        result.extracted_data = {}
+        ct._on_processing_complete("/img.fits", "task-1", result)
+        ct.api_client.mark_task_complete.assert_not_called()
+        ct.task_manager.remove_task_from_all_stages.assert_called_once_with("task-1")
 
     def test_feeds_plate_solve_to_adapter(self):
         ct = self._make_concrete()
