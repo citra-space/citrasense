@@ -8,6 +8,26 @@ from keplemon.time import Epoch
 from .abstract_api_client import AbstractCitraApiClient
 
 
+def _build_filter_wavelength_lookup(telescope_record: dict) -> dict[str, tuple[float, float]]:
+    """Build filter name -> (min_nm, max_nm) from discrete spectralConfig.
+
+    For telescopes with discrete filters, each filter's wavelength band is
+    [central - bandwidth/2, central + bandwidth/2]. Returns an empty dict
+    if the telescope has no discrete spectral config.
+    """
+    spectral = telescope_record.get("spectralConfig")
+    if not spectral or spectral.get("type") != "discrete":
+        return {}
+    lookup: dict[str, tuple[float, float]] = {}
+    for f in spectral.get("filters") or []:
+        name = f.get("name")
+        center = f.get("central_wavelength_nm")
+        bw = f.get("bandwidth_nm")
+        if name and center is not None and bw is not None:
+            lookup[name] = (center - bw / 2, center + bw / 2)
+    return lookup
+
+
 class CitraApiClient(AbstractCitraApiClient):
     @property
     def cache_source_key(self) -> str:
@@ -130,6 +150,12 @@ class CitraApiClient(AbstractCitraApiClient):
         min_wavelength = telescope_record.get("spectralMinWavelengthNm")
         max_wavelength = telescope_record.get("spectralMaxWavelengthNm")
 
+        # For discrete-filter (MSI) telescopes the static bounds are null;
+        # derive per-observation wavelength from the filter config instead.
+        filter_wavelengths: dict[str, tuple[float, float]] = {}
+        if min_wavelength is None and max_wavelength is None:
+            filter_wavelengths = _build_filter_wavelength_lookup(telescope_record)
+
         altitude_km = sensor_location.get("altitude", 0.0) / 1000.0
 
         if self.logger:
@@ -174,10 +200,23 @@ class CitraApiClient(AbstractCitraApiClient):
                 entry["visualMagnitude"] = obs["mag"]
             if task_id is not None:
                 entry["taskId"] = task_id
-            if min_wavelength is not None:
-                entry["minWavelength"] = min_wavelength
-            if max_wavelength is not None:
-                entry["maxWavelength"] = max_wavelength
+
+            obs_min_wl = min_wavelength
+            obs_max_wl = max_wavelength
+            if obs_min_wl is None and obs_max_wl is None and filter_wavelengths:
+                filter_name = obs.get("filter")
+                if filter_name and filter_name in filter_wavelengths:
+                    obs_min_wl, obs_max_wl = filter_wavelengths[filter_name]
+                elif filter_name and self.logger:
+                    self.logger.warning(
+                        f"upload_optical_observations: filter '{filter_name}' not found in "
+                        f"telescope spectralConfig — omitting wavelength for satellite {obs.get('norad_id')}"
+                    )
+            if obs_min_wl is not None:
+                entry["minWavelength"] = obs_min_wl
+            if obs_max_wl is not None:
+                entry["maxWavelength"] = obs_max_wl
+
             payload.append(entry)
 
             if self.logger:

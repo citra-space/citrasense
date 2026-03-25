@@ -5,7 +5,7 @@ from unittest.mock import MagicMock, patch
 import httpx
 import pytest
 
-from citrascope.api.citra_api_client import CitraApiClient
+from citrascope.api.citra_api_client import CitraApiClient, _build_filter_wavelength_lookup
 
 
 @pytest.fixture
@@ -233,3 +233,148 @@ def test_upload_optical_observations_api_failure(client):
     obs = [{"norad_id": "25544", "timestamp": "2026-01-01T00:00:00Z", "ra": 0, "dec": 0}]
     with patch.object(client.client, "request", return_value=err):
         assert client.upload_optical_observations(obs, {"id": "t"}, {"latitude": 0, "longitude": 0}) is False
+
+
+# ---------------------------------------------------------------------------
+# _build_filter_wavelength_lookup
+# ---------------------------------------------------------------------------
+
+
+def test_build_filter_wavelength_lookup_discrete():
+    tel = {
+        "spectralConfig": {
+            "type": "discrete",
+            "filters": [
+                {"name": "r", "central_wavelength_nm": 623.0, "bandwidth_nm": 137.0},
+                {"name": "g", "central_wavelength_nm": 477.0, "bandwidth_nm": 137.0},
+            ],
+        }
+    }
+    lookup = _build_filter_wavelength_lookup(tel)
+    assert lookup["r"] == pytest.approx((623.0 - 137.0 / 2, 623.0 + 137.0 / 2))
+    assert lookup["g"] == pytest.approx((477.0 - 137.0 / 2, 477.0 + 137.0 / 2))
+
+
+def test_build_filter_wavelength_lookup_no_spectral_config():
+    assert _build_filter_wavelength_lookup({}) == {}
+    assert _build_filter_wavelength_lookup({"spectralConfig": None}) == {}
+
+
+def test_build_filter_wavelength_lookup_non_discrete():
+    tel = {"spectralConfig": {"type": "tunable", "min_wavelength_nm": 400, "max_wavelength_nm": 900}}
+    assert _build_filter_wavelength_lookup(tel) == {}
+
+
+def test_build_filter_wavelength_lookup_skips_incomplete_filters():
+    tel = {
+        "spectralConfig": {
+            "type": "discrete",
+            "filters": [
+                {"name": "r", "central_wavelength_nm": 623.0, "bandwidth_nm": 137.0},
+                {"name": "bad", "central_wavelength_nm": None, "bandwidth_nm": 100.0},
+                {"name": None, "central_wavelength_nm": 500.0, "bandwidth_nm": 100.0},
+            ],
+        }
+    }
+    lookup = _build_filter_wavelength_lookup(tel)
+    assert len(lookup) == 1
+    assert "r" in lookup
+
+
+# ---------------------------------------------------------------------------
+# upload_optical_observations — per-filter wavelength
+# ---------------------------------------------------------------------------
+
+
+_OBS_BASE = {"norad_id": "25544", "timestamp": "2026-01-01T00:00:00Z", "ra": 180.0, "dec": 45.0, "mag": 2.5}
+_LOC = {"latitude": 34.0, "longitude": -118.0, "altitude": 500.0}
+
+
+def _tel_discrete(**overrides):
+    """Build a telescope record with discrete filters (null static bounds)."""
+    tel = {
+        "id": "tel-1",
+        "angularNoise": 0.1,
+        "spectralMinWavelengthNm": None,
+        "spectralMaxWavelengthNm": None,
+        "spectralConfig": {
+            "type": "discrete",
+            "filters": [
+                {"name": "r", "central_wavelength_nm": 623.0, "bandwidth_nm": 137.0},
+                {"name": "g", "central_wavelength_nm": 477.0, "bandwidth_nm": 137.0},
+            ],
+        },
+    }
+    tel.update(overrides)
+    return tel
+
+
+def _capture_payload(client, mock_response, obs_list, tel, loc=_LOC, task_id="t1"):
+    """Run upload and return the JSON payload that was POSTed."""
+    mock_response.json.return_value = {"created": len(obs_list)}
+    with patch.object(client.client, "request", return_value=mock_response) as mock_req:
+        result = client.upload_optical_observations(obs_list, tel, loc, task_id=task_id)
+    posted = mock_req.call_args
+    return result, posted.kwargs["json"] if posted else None
+
+
+def test_discrete_filter_sets_wavelength(client, mock_response):
+    obs = [{**_OBS_BASE, "filter": "r"}]
+    ok, payload = _capture_payload(client, mock_response, obs, _tel_discrete())
+    assert ok is True
+    assert payload[0]["minWavelength"] == pytest.approx(623.0 - 137.0 / 2)
+    assert payload[0]["maxWavelength"] == pytest.approx(623.0 + 137.0 / 2)
+
+
+def test_discrete_filter_unmatched_omits_wavelength(client, mock_response):
+    obs = [{**_OBS_BASE, "filter": "z"}]
+    ok, payload = _capture_payload(client, mock_response, obs, _tel_discrete())
+    assert ok is True
+    assert "minWavelength" not in payload[0]
+    assert "maxWavelength" not in payload[0]
+
+
+def test_discrete_filter_no_filter_key_omits_wavelength(client, mock_response):
+    obs = [{**_OBS_BASE}]  # no "filter" key
+    ok, payload = _capture_payload(client, mock_response, obs, _tel_discrete())
+    assert ok is True
+    assert "minWavelength" not in payload[0]
+    assert "maxWavelength" not in payload[0]
+
+
+def test_static_bounds_take_priority(client, mock_response):
+    tel = {
+        "id": "tel-1",
+        "angularNoise": 0.1,
+        "spectralMinWavelengthNm": 400.0,
+        "spectralMaxWavelengthNm": 700.0,
+        "spectralConfig": {
+            "type": "discrete",
+            "filters": [{"name": "r", "central_wavelength_nm": 623.0, "bandwidth_nm": 137.0}],
+        },
+    }
+    obs = [{**_OBS_BASE, "filter": "r"}]
+    ok, payload = _capture_payload(client, mock_response, obs, tel)
+    assert ok is True
+    assert payload[0]["minWavelength"] == 400.0
+    assert payload[0]["maxWavelength"] == 700.0
+
+
+def test_no_spectral_config_omits_wavelength(client, mock_response):
+    tel = {"id": "tel-1", "angularNoise": 0.1, "spectralMinWavelengthNm": None, "spectralMaxWavelengthNm": None}
+    obs = [{**_OBS_BASE, "filter": "r"}]
+    ok, payload = _capture_payload(client, mock_response, obs, tel)
+    assert ok is True
+    assert "minWavelength" not in payload[0]
+    assert "maxWavelength" not in payload[0]
+
+
+def test_multiple_obs_different_filters(client, mock_response):
+    obs = [
+        {**_OBS_BASE, "norad_id": "25544", "filter": "r"},
+        {**_OBS_BASE, "norad_id": "25545", "filter": "g"},
+    ]
+    ok, payload = _capture_payload(client, mock_response, obs, _tel_discrete())
+    assert ok is True
+    assert payload[0]["minWavelength"] == pytest.approx(623.0 - 137.0 / 2)
+    assert payload[1]["minWavelength"] == pytest.approx(477.0 - 137.0 / 2)

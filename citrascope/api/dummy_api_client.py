@@ -205,6 +205,15 @@ class DummyApiClient(AbstractCitraApiClient):
                 "angularNoise": 2.0,
                 "spectralMinWavelengthNm": None,
                 "spectralMaxWavelengthNm": None,
+                "spectralConfig": {
+                    "type": "discrete",
+                    "filters": [
+                        {"name": "Luminance", "central_wavelength_nm": 550.0, "bandwidth_nm": 300.0},
+                        {"name": "Red", "central_wavelength_nm": 658.0, "bandwidth_nm": 138.0},
+                        {"name": "Green", "central_wavelength_nm": 551.0, "bandwidth_nm": 88.0},
+                        {"name": "Blue", "central_wavelength_nm": 445.0, "bandwidth_nm": 94.0},
+                    ],
+                },
             },
             "ground_station": {
                 "id": "dummy-gs-001",
