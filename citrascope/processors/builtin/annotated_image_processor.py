@@ -276,9 +276,12 @@ class AnnotatedImageProcessor(AbstractImageProcessor):
 
     @staticmethod
     def _draw_circle(draw: ImageDraw.ImageDraw, cx: int, cy: int, color: tuple, radius: int):
-        bbox = (cx - radius, cy - radius, cx + radius, cy + radius)
-        draw.ellipse(bbox, outline=_OUTLINE_COLOR, width=_OUTLINE_WIDTH)
-        draw.ellipse(bbox, outline=color, width=_STROKE_WIDTH)
+        extend = (_OUTLINE_WIDTH - _STROKE_WIDTH) // 2
+        outline_r = radius + extend
+        outline_bbox = (cx - outline_r, cy - outline_r, cx + outline_r, cy + outline_r)
+        color_bbox = (cx - radius, cy - radius, cx + radius, cy + radius)
+        draw.ellipse(outline_bbox, outline=_OUTLINE_COLOR, width=_OUTLINE_WIDTH)
+        draw.ellipse(color_bbox, outline=color, width=_STROKE_WIDTH)
 
     @staticmethod
     def _draw_dashed_circle(
@@ -290,16 +293,19 @@ class AnnotatedImageProcessor(AbstractImageProcessor):
         dash_count: int = 16,
     ):
         """Draw a dashed circle as alternating arcs with a dark outline."""
-        bbox = (cx - radius, cy - radius, cx + radius, cy + radius)
+        extend = (_OUTLINE_WIDTH - _STROKE_WIDTH) // 2
+        outline_r = radius + extend
+        outline_bbox = (cx - outline_r, cy - outline_r, cx + outline_r, cy + outline_r)
+        color_bbox = (cx - radius, cy - radius, cx + radius, cy + radius)
         arc_span = 360.0 / dash_count
         for i in range(0, dash_count, 2):
             start_angle = i * arc_span
             end_angle = start_angle + arc_span
-            draw.arc(bbox, start=start_angle, end=end_angle, fill=_OUTLINE_COLOR, width=_OUTLINE_WIDTH)
+            draw.arc(outline_bbox, start=start_angle, end=end_angle, fill=_OUTLINE_COLOR, width=_OUTLINE_WIDTH)
         for i in range(0, dash_count, 2):
             start_angle = i * arc_span
             end_angle = start_angle + arc_span
-            draw.arc(bbox, start=start_angle, end=end_angle, fill=color, width=_STROKE_WIDTH)
+            draw.arc(color_bbox, start=start_angle, end=end_angle, fill=color, width=_STROKE_WIDTH)
 
     @staticmethod
     def _safe_text(draw: ImageDraw.ImageDraw, xy: tuple, text: str, color: tuple, font) -> None:
