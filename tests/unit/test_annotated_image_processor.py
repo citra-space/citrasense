@@ -255,16 +255,16 @@ class TestDrawAnnotations:
         arr = np.array(img)
         assert arr.sum() > 0  # something was drawn
 
-    def test_overlay_strip_includes_task_name(self):
-        img = Image.new("RGB", (400, 200), color=(0, 0, 0))
+    def test_overlay_strip_includes_task_name_and_legend(self):
+        img = Image.new("RGB", (8000, 400), color=(0, 0, 0))
         draw = ImageDraw.Draw(img)
         font = AnnotatedImageProcessor._get_font()
 
-        AnnotatedImageProcessor._draw_overlay(draw, 400, "ISS", "2026-03-10T03:45:00Z", 3, font)
+        AnnotatedImageProcessor._draw_overlay(draw, 8000, "ISS", "2026-03-10T03:45:00Z", 3, font)
 
         arr = np.array(img)
-        top_strip = arr[:36, :, :]
-        assert top_strip.sum() > 0
+        top_half = arr[: arr.shape[0] // 2, :, :]
+        assert top_half.sum() > 0
 
 
 class TestRadecToPixelFlip:
@@ -298,9 +298,9 @@ class TestRadecToPixelFlip:
 
 
 class TestDrawStars:
-    """Verify star crosshair markers are drawn from detected_sources."""
+    """Verify star circle markers are drawn from detected_sources."""
 
-    def test_draws_crosshairs_on_point_sources(self):
+    def test_draws_circles_on_point_sources(self):
         import pandas as pd
 
         img = Image.new("RGB", (200, 200), color=(0, 0, 0))
@@ -313,7 +313,8 @@ class TestDrawStars:
         proc._draw_stars(draw, wcs, sources, img.height)
 
         arr = np.array(img)
-        assert arr.sum() > 0  # something was drawn
+        assert arr.sum() > 0
+        assert arr[:, :, 1].max() == 151  # _STAR_COLOR green channel (#40978A)
 
     def test_skips_elongated_sources(self):
         import pandas as pd
@@ -369,6 +370,85 @@ class TestDrawStars:
         sources = pd.DataFrame({"ra": [], "dec": [], "mag": [], "elongation": []})
         proc = AnnotatedImageProcessor()
         proc._draw_stars(draw, wcs, sources, img.height)
+
+        arr = np.array(img)
+        assert arr.sum() == 0
+
+
+class TestDrawDetections:
+    """Verify satellite detection (elongated source) markers."""
+
+    def test_draws_blue_circles_on_elongated_sources_sidereal(self):
+        import pandas as pd
+
+        img = Image.new("RGB", (200, 200), color=(0, 0, 0))
+        draw = ImageDraw.Draw(img)
+        wcs = MagicMock()
+        wcs.world_to_pixel_values.return_value = (100.0, 100.0)
+
+        sources = pd.DataFrame({"ra": [180.0], "dec": [45.0], "mag": [-5.0], "elongation": [3.0]})
+        proc = AnnotatedImageProcessor()
+        proc._draw_detections(draw, wcs, sources, img.height, tracking_mode="sidereal")
+
+        arr = np.array(img)
+        assert arr.sum() > 0
+        assert arr[:, :, 1].max() == 186  # _DETECTION_COLOR green channel (#9ABA38)
+
+    def test_skips_point_sources_in_sidereal(self):
+        import pandas as pd
+
+        img = Image.new("RGB", (200, 200), color=(0, 0, 0))
+        draw = ImageDraw.Draw(img)
+        wcs = MagicMock()
+        wcs.world_to_pixel_values.return_value = (100.0, 100.0)
+
+        sources = pd.DataFrame({"ra": [180.0], "dec": [45.0], "mag": [-5.0], "elongation": [1.1]})
+        proc = AnnotatedImageProcessor()
+        proc._draw_detections(draw, wcs, sources, img.height, tracking_mode="sidereal")
+
+        arr = np.array(img)
+        assert arr.sum() == 0
+
+    def test_rate_tracking_flips_elongation_filter(self):
+        import pandas as pd
+
+        img = Image.new("RGB", (200, 200), color=(0, 0, 0))
+        draw = ImageDraw.Draw(img)
+        wcs = MagicMock()
+        wcs.world_to_pixel_values.return_value = (100.0, 100.0)
+
+        sources = pd.DataFrame({"ra": [180.0], "dec": [45.0], "mag": [-5.0], "elongation": [1.1]})
+        proc = AnnotatedImageProcessor()
+        proc._draw_detections(draw, wcs, sources, img.height, tracking_mode="rate")
+
+        arr = np.array(img)
+        assert arr.sum() > 0  # point-like sources are satellite candidates in rate mode
+
+    def test_none_tracking_mode_defaults_to_sidereal(self):
+        import pandas as pd
+
+        img = Image.new("RGB", (200, 200), color=(0, 0, 0))
+        draw = ImageDraw.Draw(img)
+        wcs = MagicMock()
+        wcs.world_to_pixel_values.return_value = (100.0, 100.0)
+
+        sources = pd.DataFrame({"ra": [180.0], "dec": [45.0], "mag": [-5.0], "elongation": [3.0]})
+        proc = AnnotatedImageProcessor()
+        proc._draw_detections(draw, wcs, sources, img.height, tracking_mode=None)
+
+        arr = np.array(img)
+        assert arr.sum() > 0  # elongated sources drawn when tracking_mode is None
+
+    def test_empty_sources_is_noop(self):
+        import pandas as pd
+
+        img = Image.new("RGB", (200, 200), color=(0, 0, 0))
+        draw = ImageDraw.Draw(img)
+        wcs = MagicMock()
+
+        sources = pd.DataFrame({"ra": [], "dec": [], "mag": [], "elongation": []})
+        proc = AnnotatedImageProcessor()
+        proc._draw_detections(draw, wcs, sources, img.height, tracking_mode="sidereal")
 
         arr = np.array(img)
         assert arr.sum() == 0
