@@ -98,6 +98,12 @@ class ElsetCache:
             finally:
                 tmp_path.unlink(missing_ok=True)
 
+            # load_from_file() overwrites _source and _last_refresh_epoch with
+            # values from the temp file — restore snapshot semantics.
+            with cache._lock:
+                cache._source = "snapshot"
+                cache._last_refresh_epoch = time.time()
+
         return cache
 
     def _clear(self) -> None:

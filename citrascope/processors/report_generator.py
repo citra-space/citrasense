@@ -216,7 +216,7 @@ def _section_plate_solve(plate: dict | None, sat_debug: dict | None) -> str:
         ts = sat_debug["target_satellite"]
         tle_match = ts.get("tle_match")
         match_text = "Match" if tle_match else ("Different" if tle_match is False else "Unknown")
-        match_class = "ok" if tle_match else "fail"
+        match_class = "ok" if tle_match is True else ("fail" if tle_match is False else "unknown")
         tle_info = f"""
             <span class="label">Pointing TLE vs Cache</span>
             <span class="badge {match_class}">{match_text}</span>
@@ -247,6 +247,11 @@ def _section_source_classification(sat_debug: dict | None) -> str:
     sc = sat_debug.get("source_classification")
     if not sc:
         return ""
+    e_min = _fmt(sc.get("elongation_min"), 2)
+    e_med = _fmt(sc.get("elongation_median"), 2)
+    e_max = _fmt(sc.get("elongation_max"), 2)
+    e_thresh = _fmt(sat_debug.get("elongation_threshold"), 2)
+    e_applied = "Applied" if sat_debug.get("elongation_filter_applied") else "Not applied"
     return f"""
     <div class="section">
         <h2>Source Classification</h2>
@@ -254,13 +259,11 @@ def _section_source_classification(sat_debug: dict | None) -> str:
             <span class="label">Total Sources</span><span>{sc.get('total_sources', 'N/A')}</span>
             <span class="label">Satellite Candidates</span><span>{sc.get('satellite_candidate_count', 'N/A')}</span>
             <span class="label">Star-like</span><span>{sc.get('star_like_count', 'N/A')}</span>
-            <span class="label">Tracking Mode</span><span>{_esc(str(sat_debug.get('tracking_mode', 'N/A')))}</span>
+            <span class="label">Tracking Mode</span><span>{_esc(sat_debug.get('tracking_mode', 'N/A'))}</span>
             <span class="label">Elongation Filter</span>
-            <span>{'Applied' if sat_debug.get('elongation_filter_applied') else 'Not applied'}
-            (threshold: {_fmt(sat_debug.get('elongation_threshold'), 2)})</span>
+            <span>{e_applied} (threshold: {e_thresh})</span>
             <span class="label">Elongation (min / median / max)</span>
-            <span>{_fmt(sc.get('elongation_min'), 2)} / {_fmt(sc.get('elongation_median'), 2)} \
-/ {_fmt(sc.get('elongation_max'), 2)}</span>
+            <span>{e_min} / {e_med} / {e_max}</span>
         </div>
     </div>"""
 
@@ -387,7 +390,7 @@ def _section_target_tle(sat_debug: dict | None) -> str:
         return ""
     tle_match = ts.get("tle_match")
     match_text = "Identical" if tle_match else ("Different" if tle_match is False else "Unknown")
-    match_class = "ok" if tle_match else "fail"
+    match_class = "ok" if tle_match is True else ("fail" if tle_match is False else "unknown")
 
     pointing_tle = ts.get("pointing_tle") or ["N/A", "N/A"]
     cache_tle = ts.get("cache_tle") or ["N/A", "N/A"]
@@ -412,25 +415,27 @@ def _section_observation_details(fits_header: dict | None, sat_debug: dict | Non
     if not fits_header:
         return ""
     tracking = (sat_debug or {}).get("tracking_mode", "N/A")
+    lat = fits_header.get("SITELAT", "N/A")
+    lon = fits_header.get("SITELONG", "N/A")
+    alt = fits_header.get("SITEALT", "N/A")
     return f"""
     <div class="section">
         <h2>Observation Details</h2>
         <div class="kv-grid">
             <span class="label">Date/Time (UTC)</span>
-            <span>{_esc(str(fits_header.get('DATE-OBS', 'N/A')))}</span>
+            <span>{_esc(fits_header.get('DATE-OBS', 'N/A'))}</span>
             <span class="label">Exposure</span><span>{fits_header.get('EXPTIME', 'N/A')}s</span>
-            <span class="label">Filter</span><span>{_esc(str(fits_header.get('FILTER', 'N/A')))}</span>
+            <span class="label">Filter</span><span>{_esc(fits_header.get('FILTER', 'N/A'))}</span>
             <span class="label">Binning</span>
             <span>{fits_header.get('XBINNING', '?')} &times; {fits_header.get('YBINNING', '?')}</span>
             <span class="label">Image Size</span>
             <span>{fits_header.get('NAXIS1', '?')} &times; {fits_header.get('NAXIS2', '?')} px</span>
-            <span class="label">Camera</span><span>{_esc(str(fits_header.get('INSTRUME', 'N/A')))}</span>
+            <span class="label">Camera</span><span>{_esc(fits_header.get('INSTRUME', 'N/A'))}</span>
             <span class="label">Gain</span><span>{fits_header.get('GAIN', 'N/A')}</span>
-            <span class="label">Telescope</span><span>{_esc(str(fits_header.get('TELESCOP', 'N/A')))}</span>
-            <span class="label">Tracking Mode</span><span>{_esc(str(tracking))}</span>
+            <span class="label">Telescope</span><span>{_esc(fits_header.get('TELESCOP', 'N/A'))}</span>
+            <span class="label">Tracking Mode</span><span>{_esc(tracking)}</span>
             <span class="label">Site Location</span>
-            <span>{fits_header.get('SITELAT', 'N/A')}, {fits_header.get('SITELONG', 'N/A')} \
-(alt {fits_header.get('SITEALT', 'N/A')}m)</span>
+            <span>{lat}, {lon} (alt {alt}m)</span>
         </div>
     </div>"""
 
@@ -458,9 +463,12 @@ def _section_task_metadata(task: dict | None) -> str:
     </div>"""
 
 
-def _esc(text: str) -> str:
-    """Minimal HTML escaping."""
-    return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace('"', "&quot;")
+def _esc(text: Any) -> str:
+    """Minimal HTML escaping.  Accepts any type; None becomes empty string."""
+    if text is None:
+        return ""
+    s = str(text)
+    return s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace('"', "&quot;")
 
 
 # ---------------------------------------------------------------------------
@@ -507,6 +515,7 @@ th { color: var(--text-dim); font-weight: 600; font-size: 0.8em; text-transform:
 }
 .badge.ok { background: rgba(76,175,80,0.15); color: var(--ok); }
 .badge.fail { background: rgba(244,67,54,0.15); color: var(--fail); }
+.badge.unknown { background: rgba(255,255,255,0.08); color: var(--text-dim); }
 .kv-grid {
     display: grid; grid-template-columns: 200px 1fr;
     gap: 6px 16px; align-items: baseline;

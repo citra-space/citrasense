@@ -159,6 +159,10 @@ def load_context_from_debug_dir(
 
     output_dir.mkdir(parents=True, exist_ok=True)
 
+    existing = list(output_dir.iterdir())
+    if existing:
+        log.warning("Output directory is not empty (%d items) — stale artifacts may contaminate results", len(existing))
+
     # --- FITS image ---
     if image_override:
         source_fits = image_override
