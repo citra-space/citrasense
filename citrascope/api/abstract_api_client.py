@@ -94,3 +94,16 @@ class AbstractCitraApiClient(ABC):
         Returns True on success, False otherwise.
         """
         pass
+
+    @abstractmethod
+    def get_catalog_download_url(self, catalog_name: str) -> dict | None:
+        """Get a signed download URL for a reference catalog.
+
+        Args:
+            catalog_name: Catalog identifier (e.g. "apass_dr10")
+
+        Returns:
+            Dict with keys: url (str), sha256 (str | None), version (str | None),
+            or None if the catalog is not available for download.
+        """
+        pass

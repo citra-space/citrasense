@@ -609,7 +609,7 @@ class DummyAdapter(AbstractAstroHardwareAdapter):
         self.logger.info(f"DummyAdapter: Starting {exposure_duration_seconds}s exposure for task {task_id}")
         self._simulate_delay(exposure_duration_seconds)
 
-        timestamp = int(time.time())
+        timestamp = time.time_ns()
         filename = f"dummy_{task_id}_{timestamp}.fits"
         filepath = self.images_dir / filename
         filepath.parent.mkdir(parents=True, exist_ok=True)
@@ -619,7 +619,7 @@ class DummyAdapter(AbstractAstroHardwareAdapter):
             ra,
             dec,
             exposure_duration_seconds,
-            seed=timestamp,
+            seed=timestamp % (2**31),
         )
 
         hdu = fits.PrimaryHDU(image_data, header=wcs.to_header())

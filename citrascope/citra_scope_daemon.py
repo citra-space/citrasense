@@ -14,6 +14,7 @@ if TYPE_CHECKING:
 
 from citrascope.api.citra_api_client import AbstractCitraApiClient, CitraApiClient
 from citrascope.api.dummy_api_client import DummyApiClient
+from citrascope.catalogs.apass_catalog import ApassCatalog
 from citrascope.elset_cache import ElsetCache
 from citrascope.hardware.abstract_astro_hardware_adapter import AbstractAstroHardwareAdapter
 from citrascope.hardware.adapter_registry import get_adapter_class
@@ -72,6 +73,9 @@ class CitraScopeDaemon:
 
         # Elset cache for satellite matcher (file-backed; warm-start from disk, full refresh at init)
         self.elset_cache = ElsetCache()
+
+        # APASS catalog for local photometry (file-backed; downloaded on first authenticated startup)
+        self.apass_catalog = ApassCatalog()
 
         # Note: Work queues and stage tracking now managed by TaskManager
 
@@ -202,6 +206,9 @@ class CitraScopeDaemon:
             # Warm-start elset cache from disk (source-aware: discards if API source changed)
             self.elset_cache.load_from_file(expected_source=self.api_client.cache_source_key)
             self._refresh_elset_cache_with_retry()
+
+            # Download APASS catalog if not already present (non-fatal if it fails)
+            self.apass_catalog.ensure_available(self.api_client, logger=CITRASCOPE_LOGGER)
 
             # Initialize hardware adapter
             self.hardware_adapter = self._create_hardware_adapter()
@@ -359,6 +366,7 @@ class CitraScopeDaemon:
                 self.settings,
                 self.processor_registry,
                 elset_cache=self.elset_cache,
+                apass_catalog=self.apass_catalog,
                 safety_monitor=self.safety_monitor,
                 location_service=self.location_service,
                 telescope_record=self.telescope_record,

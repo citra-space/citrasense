@@ -263,6 +263,10 @@ class CitraApiClient(AbstractCitraApiClient):
                 self.logger.error(f"Failed to update telescope spectral config: {e}")
             return None
 
+    def get_catalog_download_url(self, catalog_name: str) -> dict | None:
+        """GET /catalogs/{name}/download — returns signed CloudFront URL + metadata."""
+        return self._request("GET", f"/citrascope-data/signed-url?key={catalog_name}")
+
     def update_ground_station_location(self, ground_station_id, latitude, longitude, altitude):
         """Update ground station's GPS location (for mobile stations).
 

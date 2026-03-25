@@ -55,6 +55,7 @@ class ProcessingContext:
     # Services injected by ProcessingQueue (None when not available or in tests)
     location_service: Any | None = None  # LocationService instance
     elset_cache: Any | None = None  # ElsetCache instance
+    apass_catalog: Any | None = None  # ApassCatalog instance for local photometry
 
     # Satellite data fetched from API during task execution (includes most_recent_elset with the TLE used for pointing)
     satellite_data: dict | None = None

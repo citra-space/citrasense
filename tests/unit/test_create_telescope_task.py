@@ -27,6 +27,7 @@ def _make_manager(observation_mode: str, supports_custom_tracking: bool) -> Task
     mgr.telescope_record = {"id": "tel-1"}
     mgr.ground_station = {"id": "gs-1"}
     mgr.elset_cache = None
+    mgr.apass_catalog = None
     mgr._on_annotated_image = None
     return mgr
 

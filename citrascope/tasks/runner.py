@@ -27,6 +27,7 @@ class TaskManager:
         settings,
         processor_registry,
         elset_cache=None,
+        apass_catalog=None,
         safety_monitor=None,
         location_service=None,
         telescope_record: dict | None = None,
@@ -39,6 +40,7 @@ class TaskManager:
         self.settings = settings
         self.processor_registry = processor_registry
         self.elset_cache = elset_cache
+        self.apass_catalog = apass_catalog
         self.safety_monitor = safety_monitor
         self.location_service = location_service
         self.telescope_record = telescope_record
@@ -479,6 +481,7 @@ class TaskManager:
             telescope_record=self.telescope_record,
             ground_station=self.ground_station,
             elset_cache=self.elset_cache,
+            apass_catalog=self.apass_catalog,
             processor_registry=self.processor_registry,
             on_annotated_image=self._set_latest_annotated_image,
         )

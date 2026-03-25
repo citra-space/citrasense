@@ -82,6 +82,7 @@ class ProcessingQueue(BaseWorkQueue):
                 settings=item["context"].get("settings"),
                 location_service=item["context"].get("location_service"),
                 elset_cache=item["context"].get("elset_cache"),
+                apass_catalog=item["context"].get("apass_catalog"),
                 satellite_data=item["context"].get("satellite_data"),
                 pointing_report=item["context"].get("pointing_report"),
                 tracking_mode=item["context"].get("tracking_mode"),

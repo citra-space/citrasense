@@ -64,6 +64,7 @@ class AbstractBaseTelescopeTask(ABC):
         ground_station: dict | None,
         elset_cache,
         processor_registry,
+        apass_catalog=None,
         on_annotated_image: Callable[[str], None] | None = None,
     ):
         self.api_client = api_client
@@ -76,6 +77,7 @@ class AbstractBaseTelescopeTask(ABC):
         self.telescope_record = telescope_record
         self.ground_station = ground_station
         self.elset_cache = elset_cache
+        self.apass_catalog = apass_catalog
         self.processor_registry = processor_registry
         self._on_annotated_image = on_annotated_image
         self._cancelled = threading.Event()
@@ -186,6 +188,7 @@ class AbstractBaseTelescopeTask(ABC):
                         "settings": self.settings,
                         "location_service": self.location_service,
                         "elset_cache": self.elset_cache,
+                        "apass_catalog": self.apass_catalog,
                         "processor_registry": self.processor_registry,
                         "satellite_data": satellite_data,
                         "pointing_report": pointing_report,

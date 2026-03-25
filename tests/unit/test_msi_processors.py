@@ -273,13 +273,13 @@ class TestPhotometryProcessor:
         assert "APASS" in processor.description
 
     def test_missing_catalog(self, mock_context):
-        """Test processor fails gracefully when catalog missing."""
+        """Test processor fails gracefully when APASS catalog is not available."""
         processor = PhotometryProcessor()
         result = processor.process(mock_context)
 
         assert result.should_upload is True
         assert result.confidence == 0.0
-        assert "catalog not found" in result.reason
+        assert "not available" in result.reason.lower() or "skipped" in result.reason.lower()
 
     @patch("citrascope.processors.builtin.photometry_processor.PhotometryProcessor._calibrate_photometry")
     @patch("pandas.read_csv")
@@ -288,6 +288,11 @@ class TestPhotometryProcessor:
         # Create mock catalog file (processor expects output.cat in working_dir)
         (mock_context.working_dir / "output.cat").touch()
         mock_context.working_image_path = tmp_path / "test_image.fits"
+
+        # Provide a mock APASS catalog so the processor doesn't bail out early
+        mock_apass = Mock()
+        mock_apass.is_available.return_value = True
+        mock_context.apass_catalog = mock_apass
 
         # Mock catalog reading
         sources = pd.DataFrame({"ra": [120.1, 120.2], "dec": [45.1, 45.2], "mag": [10.5, 11.2]})

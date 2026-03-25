@@ -580,6 +580,12 @@ class DummyApiClient(AbstractCitraApiClient):
             self.logger.info(f"DummyApiClient: upload_optical_observations({len(observations)} obs, task={task_id})")
         return True
 
+    def get_catalog_download_url(self, catalog_name: str) -> dict | None:
+        """Dummy: no catalog download in test mode."""
+        if self.logger:
+            self.logger.debug(f"DummyApiClient: get_catalog_download_url({catalog_name}) -> None")
+        return None
+
     # Additional methods used by the system
 
     def upload_image(self, task_id, telescope_id, filepath):
