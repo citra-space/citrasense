@@ -413,6 +413,28 @@ class NinaAdvancedHttpAdapter(AbstractAstroHardwareAdapter):
             self.logger.error(f"Failed to get telescope status: {mount_info.get('Error')}")
             return False
 
+    def get_camera_info(self) -> dict | None:
+        """Query NINA camera info endpoint for sensor specs."""
+        try:
+            resp = requests.get(f"{self.nina_api_path}{self.CAM_URL}info", timeout=2).json()
+            if not resp.get("Success"):
+                return None
+            r = resp.get("Response", {})
+            if not r.get("Connected"):
+                return None
+            info: dict = {}
+            if r.get("XSize"):
+                info["width"] = int(r["XSize"])
+            if r.get("YSize"):
+                info["height"] = int(r["YSize"])
+            if r.get("PixelSizeX"):
+                info["pixel_size_um"] = float(r["PixelSizeX"])
+            if r.get("Name"):
+                info["model"] = r["Name"]
+            return info if info else None
+        except Exception:
+            return None
+
     def select_camera(self, device_name: str) -> bool:
         return True
 
@@ -424,6 +446,10 @@ class NinaAdvancedHttpAdapter(AbstractAstroHardwareAdapter):
 
     def get_tracking_rate(self) -> tuple[float, float]:
         return (0, 0)  # TODO: make real
+
+    @property
+    def sequence_provides_tracking(self) -> bool:
+        return True
 
     def _get_sequence_template(self) -> str:
         """Load the sequence template as a string for placeholder replacement."""

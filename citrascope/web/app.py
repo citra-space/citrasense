@@ -23,6 +23,7 @@ from citrascope.constants import (
 )
 from citrascope.hardware.adapter_registry import get_adapter_schema as get_schema
 from citrascope.hardware.adapter_registry import list_adapters
+from citrascope.location.twilight import compute_twilight
 from citrascope.logging import CITRASCOPE_LOGGER
 
 # Standard astronomical filter names for the editable filter name dropdown.
@@ -86,6 +87,13 @@ class SystemStatus(BaseModel):
     ground_station_id: str | None = None
     ground_station_name: str | None = None
     ground_station_url: str | None = None
+    ground_station_latitude: float | None = None
+    ground_station_longitude: float | None = None
+    ground_station_altitude: float | None = None
+    location_source: str | None = None  # "gps" or "ground_station"
+    location_latitude: float | None = None
+    location_longitude: float | None = None
+    location_altitude: float | None = None
     autofocus_requested: bool = False
     autofocus_running: bool = False
     autofocus_progress: str = ""
@@ -125,6 +133,7 @@ class SystemStatus(BaseModel):
     elset_health: dict[str, Any] | None = None
     latest_task_image_url: str | None = None
     calibration_status: dict[str, Any] | None = None
+    config_health: dict[str, Any] | None = None
 
 
 class HardwareConfig(BaseModel):
@@ -242,7 +251,7 @@ class CitraScopeWebApp:
         @self.app.get("/", response_class=HTMLResponse)
         async def root(request: Request):
             """Serve the main dashboard page."""
-            return self.templates.TemplateResponse("dashboard.html", {"request": request})
+            return self.templates.TemplateResponse(request, "dashboard.html")
 
         @self.app.get("/api/status")
         async def get_status():
@@ -944,6 +953,7 @@ class CitraScopeWebApp:
                 "capture_requested": cal_mgr.is_requested() if cal_mgr else False,
                 "capture_progress": cal_mgr.get_progress() if cal_mgr else {},
                 "frame_count_setting": self.daemon.settings.calibration_frame_count if self.daemon.settings else 30,
+                "flat_frame_count_setting": self.daemon.settings.flat_frame_count if self.daemon.settings else 15,
             }
 
         @self.app.post("/api/calibration/capture")
@@ -989,6 +999,7 @@ class CitraScopeWebApp:
             if not self.daemon:
                 return JSONResponse({"error": "Daemon not available"}, status_code=503)
             try:
+                from citrascope.calibration import FilterSlot
                 from citrascope.calibration.calibration_suites import all_flats_suite, bias_and_dark_suite
 
                 suite_name = request.get("suite", "")
@@ -1005,20 +1016,21 @@ class CitraScopeWebApp:
                     return JSONResponse({"error": "Camera does not support calibration"}, status_code=400)
 
                 frame_count = self.daemon.settings.calibration_frame_count if self.daemon.settings else 30
+                flat_count = self.daemon.settings.flat_frame_count if self.daemon.settings else 15
 
                 if suite_name == "bias_and_dark":
                     jobs = bias_and_dark_suite(profile, frame_count)
                 elif suite_name == "all_flats":
-                    filters: list[dict[str, Any]] = []
+                    filters: list[FilterSlot] = []
                     if hw.supports_filter_management():
                         filters = [
-                            {"name": f["name"], "position": int(pos)}
+                            FilterSlot(position=int(pos), name=f["name"])
                             for pos, f in hw.get_filter_config().items()
                             if f.get("enabled", True) and f.get("name")
                         ]
                     if not filters:
                         return JSONResponse({"error": "No filters configured"}, status_code=400)
-                    jobs = all_flats_suite(profile, filters, frame_count)
+                    jobs = all_flats_suite(profile, filters, flat_count)
                 else:
                     return JSONResponse({"error": f"Unknown suite: {suite_name}"}, status_code=400)
 
@@ -1056,6 +1068,51 @@ class CitraScopeWebApp:
             except Exception as e:
                 CITRASCOPE_LOGGER.error("Error deleting calibration master: %s", e, exc_info=True)
                 return JSONResponse({"error": str(e)}, status_code=500)
+
+        @self.app.get("/api/calibration/master/download")
+        async def download_calibration_master(filename: str):
+            """Download a master calibration FITS file by filename."""
+            if not self.daemon:
+                return JSONResponse({"error": "Daemon not available"}, status_code=503)
+            lib = getattr(self.daemon, "calibration_library", None)
+            if not lib:
+                return JSONResponse({"error": "Calibration not available"}, status_code=400)
+            safe_name = Path(filename).name
+            if not safe_name or safe_name != filename:
+                return JSONResponse({"error": "Invalid filename"}, status_code=400)
+            path = lib.masters_dir / safe_name
+            if not path.exists():
+                return JSONResponse({"error": "File not found"}, status_code=404)
+            if path.is_symlink() or not path.resolve().is_relative_to(lib.masters_dir.resolve()):
+                return JSONResponse({"error": "Invalid filename"}, status_code=400)
+            return FileResponse(path, filename=safe_name, media_type="application/fits")
+
+        @self.app.get("/api/twilight")
+        async def get_twilight_info():
+            """Return current/next nautical twilight flat window for the observatory.
+
+            The "flat window" is the nautical twilight band where the Sun
+            is between -6 deg (civil) and -12 deg (nautical) below the
+            horizon — bright enough for uniform sky illumination, dark
+            enough to avoid saturation.
+            """
+            if not self.daemon:
+                return JSONResponse({"error": "Daemon not available"}, status_code=503)
+
+            loc_svc = getattr(self.daemon, "location_service", None)
+            if not loc_svc:
+                return {"location_available": False}
+
+            location = loc_svc.get_current_location()
+            if not location:
+                return {"location_available": False}
+
+            try:
+                info = await asyncio.to_thread(compute_twilight, location["latitude"], location["longitude"])
+                return info.to_dict()
+            except Exception as e:
+                CITRASCOPE_LOGGER.error("Error computing twilight info: %s", e, exc_info=True)
+                return {"location_available": False, "error": str(e)}
 
         @self.app.post("/api/adapter/sync")
         async def manual_sync(request: dict[str, Any]):
@@ -1701,6 +1758,9 @@ class CitraScopeWebApp:
                         "eph": gps_fix.eph,
                         "sep": gps_fix.sep,
                         "source": "gps",
+                        "gpsd_version": gps_fix.gpsd_version,
+                        "device_path": gps_fix.device_path,
+                        "device_driver": gps_fix.device_driver,
                     }
                 else:
                     self.status.gps_location = None
@@ -1720,6 +1780,28 @@ class CitraScopeWebApp:
                 self.status.ground_station_id = gs_id
                 self.status.ground_station_name = gs_name
                 self.status.ground_station_url = f"{base_url}/ground-stations/{gs_id}" if gs_id else None
+                self.status.ground_station_latitude = gs_record.get("latitude")
+                self.status.ground_station_longitude = gs_record.get("longitude")
+                self.status.ground_station_altitude = gs_record.get("altitude")
+
+            # Resolve active operating location from data already fetched above
+            # (avoids calling get_current_location() which can block on subprocess)
+            gps = self.status.gps_location
+            if gps and gps.get("is_strong") and gps.get("latitude") is not None and gps.get("longitude") is not None:
+                self.status.location_source = "gps"
+                self.status.location_latitude = gps["latitude"]
+                self.status.location_longitude = gps["longitude"]
+                self.status.location_altitude = gps.get("altitude")
+            elif self.status.ground_station_latitude is not None and self.status.ground_station_longitude is not None:
+                self.status.location_source = "ground_station"
+                self.status.location_latitude = self.status.ground_station_latitude
+                self.status.location_longitude = self.status.ground_station_longitude
+                self.status.location_altitude = self.status.ground_station_altitude
+            else:
+                self.status.location_source = None
+                self.status.location_latitude = None
+                self.status.location_longitude = None
+                self.status.location_altitude = None
 
             # Update task processing state
             if hasattr(self.daemon, "task_manager") and self.daemon.task_manager:
@@ -1788,6 +1870,24 @@ class CitraScopeWebApp:
 
             # Calibration status
             self.status.calibration_status = self._build_calibration_status()
+
+            # Config health: compare server telescope record vs hardware + plate solve
+            adapter = self.daemon.hardware_adapter
+            if self.daemon.telescope_record and adapter:
+                from citrascope.hardware.config_health import assess_config_health
+
+                camera_info = adapter.get_camera_info()
+                health = assess_config_health(
+                    telescope_record=self.daemon.telescope_record,
+                    camera_info=camera_info,
+                    observed_pixel_scale=adapter.observed_pixel_scale_arcsec,
+                    observed_fov_w=adapter.observed_fov_w_deg,
+                    observed_fov_h=adapter.observed_fov_h_deg,
+                    observed_slew_rate=adapter.observed_slew_rate_deg_per_s,
+                )
+                self.status.config_health = health.to_dict()
+            else:
+                self.status.config_health = None
 
             self.status.last_update = datetime.now().isoformat()
 

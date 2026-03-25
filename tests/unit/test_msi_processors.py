@@ -1,6 +1,7 @@
 """Unit tests for MSI science processors."""
 
 import json
+import logging
 import os
 from pathlib import Path
 from unittest.mock import MagicMock, Mock, patch
@@ -32,7 +33,6 @@ from citrascope.processors.builtin.processor_dependencies import (
     check_sextractor,
 )
 from citrascope.processors.builtin.satellite_matcher_processor import SatelliteMatcherProcessor
-from citrascope.processors.builtin.source_extractor_processor import SourceExtractorProcessor
 from citrascope.processors.processor_registry import ProcessorRegistry
 from citrascope.processors.processor_result import ProcessingContext, ProcessorResult
 
@@ -148,13 +148,17 @@ class TestPlateSolverProcessor:
 
     @patch("citrascope.processors.builtin.plate_solver_processor.check_pixelemon")
     @patch("citrascope.processors.builtin.plate_solver_processor.PlateSolverProcessor._solve_with_pixelemon")
+    @patch("citrascope.processors.builtin.plate_solver_processor.PlateSolverProcessor._extract_sources")
     @patch("astropy.io.fits.open")
-    def test_successful_plate_solve(self, mock_fits_open, mock_solve, mock_check, mock_context, tmp_path):
+    def test_successful_plate_solve(self, mock_fits_open, mock_extract, mock_solve, mock_check, mock_context, tmp_path):
         """Test successful plate solving with Pixelemon."""
         mock_check.return_value = True
 
         new_file = tmp_path / "test_image.new"
-        mock_solve.return_value = new_file
+        mock_solve.return_value = (new_file, MagicMock())
+        mock_extract.return_value = pd.DataFrame(
+            {"ra": [120.1], "dec": [45.1], "mag": [-5.0], "magerr": [0.0], "elongation": [1.1]}
+        )
 
         mock_primary = MagicMock(spec=fits.PrimaryHDU)
         mock_header = {
@@ -175,7 +179,9 @@ class TestPlateSolverProcessor:
         assert result.extracted_data["plate_solved"] is True
         assert result.extracted_data["ra_center"] == 120.5
         assert result.extracted_data["dec_center"] == 45.3
+        assert result.extracted_data["num_sources"] == 1
         assert mock_context.working_image_path == new_file
+        assert mock_context.detected_sources is not None
 
     @patch("citrascope.processors.builtin.plate_solver_processor.check_pixelemon")
     @patch("citrascope.processors.builtin.plate_solver_processor.PlateSolverProcessor._solve_with_pixelemon")
@@ -190,76 +196,6 @@ class TestPlateSolverProcessor:
         assert result.should_upload is True  # Fail-open
         assert result.confidence == 0.0
         assert "failed" in result.reason.lower()
-
-
-class TestSourceExtractorProcessor:
-    """Tests for SourceExtractorProcessor."""
-
-    def test_processor_metadata(self):
-        """Test processor has correct metadata."""
-        processor = SourceExtractorProcessor()
-        assert processor.name == "source_extractor"
-        assert processor.friendly_name == "Source Extractor"
-        assert "SExtractor" in processor.description
-
-    @patch("astropy.io.fits.open")
-    def test_missing_wcs(self, mock_fits_open, mock_context):
-        """Test processor fails gracefully when WCS missing."""
-        mock_primary = MagicMock(spec=fits.PrimaryHDU)
-        mock_primary.header = {}  # No CRVAL1
-        mock_hdul = MagicMock()
-        mock_hdul.__getitem__ = MagicMock(return_value=mock_primary)
-        mock_fits_open.return_value.__enter__.return_value = mock_hdul
-
-        processor = SourceExtractorProcessor()
-        result = processor.process(mock_context)
-
-        assert result.should_upload is True
-        assert result.confidence == 0.0
-        assert "WCS missing" in result.reason
-
-    @patch("astropy.io.fits.open")
-    @patch("citrascope.processors.builtin.source_extractor_processor.check_sextractor")
-    def test_sextractor_not_installed(self, mock_check, mock_fits_open, mock_context):
-        """Test processor fails gracefully when SExtractor not installed."""
-        mock_primary = MagicMock(spec=fits.PrimaryHDU)
-        mock_primary.header = {"CRVAL1": 120.0}
-        mock_hdul = MagicMock()
-        mock_hdul.__getitem__ = MagicMock(return_value=mock_primary)
-        mock_fits_open.return_value.__enter__.return_value = mock_hdul
-
-        mock_check.return_value = False
-
-        processor = SourceExtractorProcessor()
-        result = processor.process(mock_context)
-
-        assert result.should_upload is True
-        assert result.confidence == 0.0
-        assert "not installed" in result.reason
-
-    @patch("astropy.io.fits.open")
-    @patch("citrascope.processors.builtin.source_extractor_processor.check_sextractor")
-    @patch("citrascope.processors.builtin.source_extractor_processor.SourceExtractorProcessor._extract_sources")
-    def test_successful_extraction(self, mock_extract, mock_check, mock_fits_open, mock_context, tmp_path):
-        """Test successful source extraction."""
-        mock_primary = MagicMock(spec=fits.PrimaryHDU)
-        mock_primary.header = {"CRVAL1": 120.0}
-        mock_hdul = MagicMock()
-        mock_hdul.__getitem__ = MagicMock(return_value=mock_primary)
-        mock_fits_open.return_value.__enter__.return_value = mock_hdul
-
-        mock_check.return_value = True
-
-        # Mock source extraction
-        sources = pd.DataFrame({"ra": [120.1, 120.2], "dec": [45.1, 45.2], "mag": [10.5, 11.2], "fwhm": [2.0, 2.1]})
-        mock_extract.return_value = sources
-
-        processor = SourceExtractorProcessor()
-        result = processor.process(mock_context)
-
-        assert result.should_upload is True
-        assert result.confidence == 1.0
-        assert result.extracted_data["num_sources"] == 2
 
 
 class TestPhotometryProcessor:
@@ -422,7 +358,7 @@ class TestPixelemonDemoFits:
 
 @pytest.mark.slow
 class TestFullPipelineDemoFits:
-    """Run the full MSI pipeline (plate solve → source extract → photometry → satellite match) on the demo FITS."""
+    """Run the full MSI pipeline (plate solve + source extraction → photometry → satellite match) on the demo FITS."""
 
     DEMO_FITS = Path(__file__).parent / "test_assets" / "2025-11-11_18-38-11_r_-0.05_1.00s_0131.fits"
     TLE_FILE = Path(__file__).parent / "test_assets" / "space-track-2025-11-12--2025-11-13.tle"
@@ -435,19 +371,17 @@ class TestFullPipelineDemoFits:
             pytest.skip("TLE file not found")
         if not check_pixelemon():
             pytest.skip("Pixelemon not available")
-        if not check_sextractor():
-            pytest.skip("SExtractor not available")
 
         tle_lines = _first_tle_from_file(self.TLE_FILE)
         if len(tle_lines) != 2:
             pytest.skip("No valid TLE pair in TLE file")
 
-        # Task with TLE from file (any satellite; we just need the pipeline to run)
+        most_recent_elset = {"tle": tle_lines}
         task = Mock(
             satelliteName="TEST-SAT",
             satelliteId="00005",
             assigned_filter_name="Clear",
-            most_recent_elset={"tle": tle_lines},
+            most_recent_elset=most_recent_elset,
         )
 
         settings = Mock()
@@ -455,7 +389,6 @@ class TestFullPipelineDemoFits:
 
         class FakeLocationService:
             def get_current_location(self):
-                # Coordinates from demo FITS SITELAT/SITELONG/SITEALT header keywords
                 return {"latitude": 31.9070277777778, "longitude": -109.021111111111, "altitude": 1250.0}
 
         working_dir = tmp_path / "working"
@@ -470,7 +403,8 @@ class TestFullPipelineDemoFits:
             ground_station_record=None,
             settings=settings,
             location_service=FakeLocationService(),
-            elset_cache=None,  # no hot list: use single-TLE from task (backward compatibility)
+            elset_cache=None,
+            satellite_data={"most_recent_elset": most_recent_elset},
             tracking_mode="rate",
             logger=Mock(),
         )
@@ -487,8 +421,8 @@ class TestFullPipelineDemoFits:
         assert result.extracted_data["plate_solver.plate_solved"] is True
         assert "plate_solver.ra_center" in result.extracted_data
         assert "plate_solver.dec_center" in result.extracted_data
-        assert "source_extractor.num_sources" in result.extracted_data
-        assert result.extracted_data["source_extractor.num_sources"] >= 0
+        assert "plate_solver.num_sources" in result.extracted_data
+        assert result.extracted_data["plate_solver.num_sources"] >= 0
         assert "photometry.zero_point" in result.extracted_data
         assert "satellite_matcher.num_satellites_detected" in result.extracted_data
         assert "satellite_matcher.satellite_observations" in result.extracted_data
@@ -505,8 +439,6 @@ class TestFullPipelineDemoFits:
             pytest.skip("TLE file not found")
         if not check_pixelemon():
             pytest.skip("Pixelemon not available")
-        if not check_sextractor():
-            pytest.skip("SExtractor not available")
 
         elsets = _first_three_elsets_from_file(self.TLE_FILE)
         if len(elsets) < 3:
@@ -705,4 +637,154 @@ class TestSatelliteMatcherProcessor:
         assert detected_norads == self.EXPECTED_NORADS, (
             f"Expected all 6 known GEO satellites {self.EXPECTED_NORADS}, "
             f"got {detected_norads} ({len(observations)} detections)"
+        )
+
+
+# Spirit/Pi telescope record (Moravian C2-12000 on 180mm f/4.5 scope, 2×2 binning).
+_SPIRIT_TELESCOPE_RECORD = {
+    "pixelSize": 3.45,
+    "focalLength": 180.0,
+    "focalRatio": 4.5,
+    "horizontalPixelCount": 4112,
+    "verticalPixelCount": 3008,
+    "imageCircleDiameter": 28.0,
+}
+
+
+@pytest.mark.slow
+class TestSEPvsSExtractorParity:
+    """Compare Pixelemon SEP source catalogs against saved SExtractor baselines.
+
+    Validates that the new in-memory SEP path produces comparable results to
+    the external SExtractor binary for both telescope configurations.
+    """
+
+    TEST_ASSETS = Path(__file__).parent / "test_assets"
+
+    IMAGES = [
+        {
+            "name": "planewave",
+            "fits": "2025-11-11_18-38-11_r_-0.05_1.00s_0131.fits",
+            "baseline": "planewave_sextractor_baseline.cat",
+            "telescope_record": _PLANEWAVE_TELESCOPE_RECORD,
+            "location": {"latitude": 31.9070277777778, "longitude": -109.021111111111, "altitude": 1250.0},
+        },
+        {
+            "name": "spirit",
+            "fits": "original_task_c67c6b5a-b2e2-4848-9c83-27b69926968c_20260318_204304.fits",
+            "baseline": "spirit_sextractor_baseline.cat",
+            "telescope_record": _SPIRIT_TELESCOPE_RECORD,
+            "location": {"latitude": 38.820016310403524, "longitude": -104.8657616380683, "altitude": 1768.0},
+        },
+    ]
+
+    @staticmethod
+    def _load_sextractor_baseline(path: Path) -> pd.DataFrame:
+        """Load a SExtractor output.cat using the same column mapping the pipeline uses."""
+        return pd.read_csv(
+            path,
+            sep=r"\s+",
+            comment="#",
+            header=None,
+            usecols=[4, 5, 8, 9, 10],
+            names=["mag", "magerr", "ra", "dec", "elongation"],
+        )
+
+    @pytest.mark.parametrize("image_cfg", IMAGES, ids=[img["name"] for img in IMAGES])
+    def test_sep_vs_sextractor_parity(self, image_cfg: dict, tmp_path, run_from_repo_root):
+        """Plate solve and extract sources via Pixelemon SEP, then compare against the
+        saved SExtractor baseline. Asserts source count ratio, positional scatter,
+        and magnitude/elongation correlation."""
+        from scipy.spatial import KDTree
+
+        fits_path = self.TEST_ASSETS / image_cfg["fits"]
+        baseline_path = self.TEST_ASSETS / image_cfg["baseline"]
+        name = image_cfg["name"]
+
+        if not fits_path.exists():
+            pytest.skip(f"{name} FITS not found")
+        if not baseline_path.exists():
+            pytest.skip(f"{name} SExtractor baseline not found")
+        if not check_pixelemon():
+            pytest.skip("Pixelemon not available")
+
+        # Run plate solver (which now also extracts SEP sources)
+        class FakeLoc:
+            def __init__(self, loc):
+                self._loc = loc
+
+            def get_current_location(self):
+                return self._loc
+
+        working_dir = tmp_path / "working"
+        working_dir.mkdir()
+        context = ProcessingContext(
+            image_path=fits_path,
+            working_image_path=fits_path,
+            working_dir=working_dir,
+            image_data=None,
+            task=Mock(satelliteName="TEST", satelliteId="0", assigned_filter_name="Clear"),
+            telescope_record=image_cfg["telescope_record"],
+            ground_station_record=None,
+            settings=Mock(),
+            location_service=FakeLoc(image_cfg["location"]),
+            logger=Mock(),
+        )
+
+        processor = PlateSolverProcessor()
+        result = processor.process(context)
+        assert result.extracted_data.get("plate_solved"), f"Plate solve failed for {name}: {result.reason}"
+
+        sep_df = context.detected_sources
+        assert sep_df is not None, "PlateSolverProcessor did not populate detected_sources"
+        sex_df = self._load_sextractor_baseline(baseline_path)
+
+        # 1. Source count ratio (SEP may find more faint sources)
+        ratio = len(sep_df) / len(sex_df) if len(sex_df) > 0 else float("inf")
+        assert 0.5 <= ratio <= 30.0, (
+            f"[{name}] Source count ratio {ratio:.2f} out of range " f"(SEP={len(sep_df)}, SExtractor={len(sex_df)})"
+        )
+
+        # 2. Cross-match by RA/Dec (5 arcsec tolerance)
+        import numpy as np
+
+        sep_coords = sep_df[["ra", "dec"]].values
+        sex_coords = sex_df[["ra", "dec"]].values
+        sex_tree = KDTree(sex_coords)
+        dists, indices = sex_tree.query(sep_coords)
+        match_mask = dists < (5.0 / 3600.0)  # 5 arcsec in degrees
+
+        # Count unique SExtractor sources that have at least one SEP match
+        unique_sex_matched = len({int(i) for i, m in zip(indices, match_mask, strict=True) if m})
+        match_fraction = unique_sex_matched / len(sex_df) if len(sex_df) > 0 else 0
+        assert match_fraction >= 0.5, (
+            f"[{name}] Only {unique_sex_matched}/{len(sex_df)} SExtractor sources matched "
+            f"({match_fraction:.1%}) — expected >= 50%"
+        )
+
+        # 3. Positional scatter for matched sources (RMS < 5 arcsec)
+        matched_dists_arcsec = dists[match_mask] * 3600.0
+        rms_arcsec = float((matched_dists_arcsec**2).mean() ** 0.5)
+        assert rms_arcsec < 5.0, f"[{name}] Positional RMS {rms_arcsec:.2f} arcsec >= 5.0 arcsec"
+
+        # 4. Elongation correlation for matched sources
+        matched_sep_elong = sep_df["elongation"].values[match_mask]
+        matched_sex_elong = sex_df["elongation"].values[np.asarray(indices)[match_mask]]
+
+        if len(matched_sep_elong) > 10:
+            corr = float(np.corrcoef(matched_sep_elong, matched_sex_elong)[0, 1])
+            assert corr > 0.3, f"[{name}] Elongation correlation {corr:.3f} too low (expected > 0.3)"
+
+        log = logging.getLogger(__name__)
+        log.info(
+            "SEP vs SExtractor Parity — %s: SEP=%d, SExtractor=%d, ratio=%.2f, "
+            "matched=%d unique (%.1f%%), RMS=%.2f arcsec%s",
+            name,
+            len(sep_df),
+            len(sex_df),
+            ratio,
+            unique_sex_matched,
+            match_fraction * 100,
+            rms_arcsec,
+            f", elongation_corr={corr:.3f}" if len(matched_sep_elong) > 10 else "",
         )

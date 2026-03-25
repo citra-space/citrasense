@@ -176,6 +176,13 @@ body {
     text-decoration: underline;
 }
 
+/* Location map popover — minimal chrome around the tile */
+.location-map-popover .popover-body {
+    padding: 0;
+    border-radius: 4px;
+    overflow: hidden;
+}
+
 /* Log entry components */
 .log-entry {
     margin-bottom: 2px;

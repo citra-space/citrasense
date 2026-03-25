@@ -61,6 +61,18 @@ class AbstractCitraApiClient(ABC):
         pass
 
     @abstractmethod
+    def get_best_elset(self, satellite_id) -> dict | None:
+        """GET /satellites/{satellite_id}/elsets?limit=1 — server-canonical best elset.
+
+        Uses XP priority logic: prefers MEAN_BROUWER_XP elsets within 24h of the
+        latest, falls back to the absolute latest by epoch.
+
+        Returns a single elset dict (with tle, epoch, creationEpoch, type, etc.)
+        or None on failure.
+        """
+        pass
+
+    @abstractmethod
     def get_elsets_latest(self, days: int = 14):
         """
         GET /elsets/latest - fetch all latest elsets (for satellite matching hot list).

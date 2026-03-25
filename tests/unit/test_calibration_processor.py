@@ -137,16 +137,16 @@ class TestCalibrationMath:
         # Expected: 603.33 - 100 (bias) - 50 * (2/30) (scaled thermal) = 500
         np.testing.assert_array_almost_equal(calibrated, 500.0, decimal=1)
 
-    def test_dark_scaling_no_bias_at_build_time(self, library: CalibrationLibrary, working_dir: Path, tmp_path: Path):
-        """Dark built without bias (BIASSUB=False), then bias available at processing time.
+    def test_dark_scaling_biassub_false_with_bias(self, library: CalibrationLibrary, working_dir: Path, tmp_path: Path):
+        """Dark built without bias (BIASSUB=False), bias available at processing time.
 
-        The processor must NOT subtract bias separately — the dark already
-        includes it, so scaling the dark is sufficient.
+        The processor separates bias from thermal: raw - bias - (dark - bias) * scale.
+        This correctly recovers the signal even at low scale factors.
         """
         bias = np.full((10, 10), 100.0, dtype=np.float32)
         library.save_master("bias", "SN1234", bias, gain=0, binning=1)
 
-        # Dark was built WITHOUT bias subtraction: raw_dark = bias(100) + thermal(50) = 150
+        # Dark was built WITHOUT bias subtraction: raw_dark = bias(100) + thermal_30s(50) = 150
         raw_dark = np.full((10, 10), 150.0, dtype=np.float32)
         library.save_master(
             "dark",
@@ -159,7 +159,48 @@ class TestCalibrationMath:
             bias_subtracted=False,
         )
 
-        # Science: signal(500) + bias(100) + thermal_2s(150 * 2/30 = 10)
+        # Science: signal(500) + bias(100) + thermal_2s = 500 + 100 + 50*(2/30) ≈ 603.33
+        thermal_2s = 50.0 * (2.0 / 30.0)
+        raw_science = np.full((10, 10), 500.0 + 100.0 + thermal_2s, dtype=np.float32)
+        science_path = _make_fits(
+            tmp_path / "science.fits",
+            raw_science,
+            CAMSER="SN1234",
+            GAIN=0,
+            XBINNING=1,
+            EXPTIME=2.0,
+            **{"CCD-TEMP": -10.0},
+        )
+
+        proc = CalibrationProcessor(library=library)
+        ctx = _make_context(science_path, working_dir)
+        result = proc.process(ctx)
+
+        assert "dark" in result.extracted_data.get("calibration_applied", [])
+
+        calibrated = fits.getdata(ctx.working_image_path)
+        # raw - bias - (dark - bias) * scale = 603.33 - 100 - 50*(2/30) = 500
+        np.testing.assert_array_almost_equal(calibrated, 500.0, decimal=1)
+
+    def test_dark_scaling_biassub_false_no_bias(self, library: CalibrationLibrary, working_dir: Path, tmp_path: Path):
+        """Dark built without bias (BIASSUB=False), NO bias available.
+
+        Without a bias, the processor falls back to scaling the full dark.
+        """
+        # No bias saved — only a dark
+        raw_dark = np.full((10, 10), 150.0, dtype=np.float32)
+        library.save_master(
+            "dark",
+            "SN1234",
+            raw_dark,
+            gain=0,
+            binning=1,
+            exposure_time=30.0,
+            temperature=-10.0,
+            bias_subtracted=False,
+        )
+
+        # Science: 610 ADU
         raw_science = np.full((10, 10), 610.0, dtype=np.float32)
         science_path = _make_fits(
             tmp_path / "science.fits",
@@ -178,9 +219,62 @@ class TestCalibrationMath:
         assert "dark" in result.extracted_data.get("calibration_applied", [])
 
         calibrated = fits.getdata(ctx.working_image_path)
-        # Expected: 610 - 150 * (2/30) = 610 - 10 = 600
-        # Note: bias is NOT subtracted separately because dark includes it
+        # 610 - 150 * (2/30) = 610 - 10 = 600
         np.testing.assert_array_almost_equal(calibrated, 600.0, decimal=1)
+
+
+class TestUncooledCameraDark:
+    def test_uncooled_camera_dark_applied(self, library: CalibrationLibrary, working_dir: Path, tmp_path: Path):
+        """Dark saved without CCD-TEMP is found and applied to science frame without CCD-TEMP."""
+        dark = np.full((10, 10), 30.0, dtype=np.float32)
+        library.save_master("dark", "SN1234", dark, gain=0, binning=1, exposure_time=2.0, temperature=None)
+
+        science = np.full((10, 10), 230.0, dtype=np.float32)
+        science_path = _make_fits(
+            tmp_path / "science.fits",
+            science,
+            CAMSER="SN1234",
+            GAIN=0,
+            XBINNING=1,
+            EXPTIME=2.0,
+        )
+
+        proc = CalibrationProcessor(library=library)
+        ctx = _make_context(science_path, working_dir)
+        result = proc.process(ctx)
+
+        assert "dark" in result.extracted_data.get("calibration_applied", [])
+        calibrated = fits.getdata(ctx.working_image_path)
+        np.testing.assert_array_almost_equal(calibrated, 200.0)
+
+    def test_temp_matched_dark_preferred_over_noTemp(
+        self, library: CalibrationLibrary, working_dir: Path, tmp_path: Path
+    ):
+        """When both a temp-matched and a noTemp dark exist, the temp-matched one is preferred."""
+        dark_temp = np.full((10, 10), 40.0, dtype=np.float32)
+        library.save_master("dark", "SN1234", dark_temp, gain=0, binning=1, exposure_time=2.0, temperature=-10.0)
+
+        dark_noTemp = np.full((10, 10), 20.0, dtype=np.float32)
+        library.save_master("dark", "SN1234", dark_noTemp, gain=0, binning=1, exposure_time=2.0, temperature=None)
+
+        science = np.full((10, 10), 240.0, dtype=np.float32)
+        science_path = _make_fits(
+            tmp_path / "science.fits",
+            science,
+            CAMSER="SN1234",
+            GAIN=0,
+            XBINNING=1,
+            EXPTIME=2.0,
+            **{"CCD-TEMP": -10.0},
+        )
+
+        proc = CalibrationProcessor(library=library)
+        ctx = _make_context(science_path, working_dir)
+        proc.process(ctx)
+
+        calibrated = fits.getdata(ctx.working_image_path)
+        # Should use the -10C dark (40), not the noTemp dark (20)
+        np.testing.assert_array_almost_equal(calibrated, 200.0)
 
 
 class TestGracefulSkip:

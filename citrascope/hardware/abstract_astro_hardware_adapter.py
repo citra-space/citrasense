@@ -61,6 +61,9 @@ class AbstractAstroHardwareAdapter(ABC):
     scope_slew_rate_degrees_per_second: float = 0.0
     telescope_record: dict | None = None
     observed_fov_short_deg: float | None = None
+    observed_fov_w_deg: float | None = None
+    observed_fov_h_deg: float | None = None
+    observed_pixel_scale_arcsec: float | None = None
     observed_slew_rate_deg_per_s: float | None = None
     DEFAULT_FOCUS_POSITION: int = 0  # Default focus position, can be overridden by subclasses
 
@@ -120,6 +123,21 @@ class AbstractAstroHardwareAdapter(ABC):
     @property
     def camera(self) -> AbstractCamera | None:
         """Direct camera device, or None for orchestration adapters."""
+        return None
+
+    def get_camera_info(self) -> dict | None:
+        """Return camera hardware info dict, or None if unavailable.
+
+        Direct adapters delegate to camera.get_camera_info().
+        Orchestration adapters (NINA, KStars) should override to query their API.
+        Returns dict with optional keys: width, height, pixel_size_um, model, etc.
+        """
+        cam = self.camera
+        if cam is not None and self.is_camera_connected():
+            try:
+                return cam.get_camera_info()
+            except Exception:
+                return None
         return None
 
     def point_telescope(self, ra: float, dec: float):
@@ -255,6 +273,19 @@ class AbstractAstroHardwareAdapter(ABC):
         """Whether the connected mount supports custom RA/Dec tracking rates.
 
         Returns False by default. Adapters with capable mounts should override.
+        """
+        return False
+
+    @property
+    def sequence_provides_tracking(self) -> bool:
+        """Whether the adapter's observation sequence handles TLE rate tracking internally.
+
+        When True and the observation strategy is SEQUENCE_TO_CONTROLLER, the
+        processing pipeline will treat images as rate-tracked (tracking_mode="rate")
+        even though citrascope did not call set_custom_tracking_rate().
+
+        Returns False by default. Override in adapters whose sequence controller
+        (e.g. NINA with PlaneWave TLE plugins) manages satellite tracking.
         """
         return False
 

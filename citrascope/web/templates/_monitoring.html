@@ -82,157 +82,8 @@
     {% endmacro %}
 
     <div id="monitoringSection" x-show="$store.citrascope.currentSection === 'monitoring'"
-        x-effect="$store.citrascope.status && $nextTick(() => { document.querySelectorAll('[data-bs-toggle=tooltip]').forEach(el => { try { bootstrap.Tooltip.getOrCreateInstance(el); } catch (_) {} }); })">
+        x-effect="$store.citrascope.status && $nextTick(() => { document.querySelectorAll('#monitoringSection [data-bs-toggle=tooltip]').forEach(el => { try { bootstrap.Tooltip.getOrCreateInstance(el); } catch (_) {} }); })">
         <div class="container">
-
-            <!-- ═══════════════ Status LED Row ═══════════════ -->
-            <div class="d-flex align-items-center flex-wrap gap-3 bg-dark rounded border border-secondary px-3 py-2 mb-3"
-                 x-data="{
-                     get safetyChecks() { return $store.citrascope.status?.safety_status?.checks || []; },
-                     get safetyWorst() {
-                         const order = ['safe','warn','stop','emergency'];
-                         let w = 'safe';
-                         for (const c of this.safetyChecks) {
-                             if (order.indexOf(c.action) > order.indexOf(w)) w = c.action;
-                         }
-                         return w;
-                     },
-                     get safetyWatchdog() { return $store.citrascope.status?.safety_status?.watchdog_alive; },
-                     get safetyTip() {
-                         if (!this.safetyChecks.length) return 'No safety checks active';
-                         const labels = { safe: '\u2713', warn: '\u26A0', stop: '\u23F8', emergency: '\u2716' };
-                         const names = { operator_stop: 'Operator Stop', cable_wrap: 'Cable Wrap', disk_space: 'Disk Space', time_health: 'Time Health' };
-                         let lines = this.safetyChecks.map(c =>
-                             (labels[c.action] || '?') + ' ' + (names[c.name] || c.name)
-                         );
-                         if (this.safetyWatchdog === false) lines.push('\u2716 Watchdog offline');
-                         return lines.join('\n');
-                     }
-                 }">
-
-                <span class="badge rounded-pill"
-                      data-bs-toggle="tooltip" data-bs-theme="dark"
-                      style="white-space:pre-line;" :data-bs-title="safetyTip"
-                      x-show="safetyChecks.length > 0"
-                      :class="safetyWorst === 'emergency' ? 'bg-danger' : safetyWorst === 'stop' ? 'bg-warning text-dark' : safetyWorst === 'warn' ? 'bg-warning text-dark' : (safetyWatchdog === false ? 'bg-secondary' : 'bg-success')"
-                      x-text="safetyWorst === 'emergency' ? 'Emergency' : safetyWorst === 'stop' ? 'Safety: Hold' : safetyWorst === 'warn' ? 'Safety: Warning' : (safetyWatchdog === false ? 'Safety: Offline' : 'Safety: ' + safetyChecks.length + ' OK')"></span>
-
-                <span class="badge rounded-pill"
-                      data-bs-toggle="tooltip" data-bs-theme="dark"
-                      :data-bs-title="$store.citrascope.wsConnected ? 'Connected \u2014 receiving live updates' : ($store.citrascope.wsReconnecting ? 'Reconnecting\u2026' : 'Daemon disconnected')"
-                      :class="$store.citrascope.wsConnected ? 'bg-success' : ($store.citrascope.wsReconnecting ? 'bg-warning text-dark' : 'bg-danger')"
-                      x-text="$store.citrascope.wsReconnecting ? 'Reconnecting' : 'Daemon'"></span>
-
-                <span class="badge rounded-pill"
-                      data-bs-toggle="tooltip" data-bs-theme="dark"
-                      :data-bs-title="$store.citrascope.status?.telescope_connected ? 'Telescope connected' : 'Telescope disconnected'"
-                      :class="$store.citrascope.status?.telescope_connected ? 'bg-success' : 'bg-danger'">Telescope</span>
-
-                <span class="badge rounded-pill"
-                      data-bs-toggle="tooltip" data-bs-theme="dark"
-                      :data-bs-title="(() => {
-                          let s = $store.citrascope.status;
-                          if (!s?.camera_connected) return 'Camera disconnected';
-                          let tip = 'Camera connected';
-                          if (s.camera_temperature != null) tip += ' \u00b7 ' + s.camera_temperature.toFixed(1) + ' \u00b0C';
-                          let cal = s.calibration_status;
-                          if (cal && cal.calibration_applicable) {
-                              if (cal.has_bias && cal.has_dark && cal.has_flat) tip += ' \u00b7 Calibrated';
-                              else if (cal.missing_summary) tip += ' \u00b7 Missing: ' + cal.missing_summary;
-                              else tip += ' \u00b7 Uncalibrated';
-                          }
-                          return tip;
-                      })()"
-                      :class="(() => {
-                          let s = $store.citrascope.status;
-                          if (!s?.camera_connected) return 'bg-danger';
-                          let cal = s.calibration_status;
-                          if (cal && cal.calibration_applicable) {
-                              if (cal.has_bias && cal.has_dark && cal.has_flat) return 'bg-success';
-                              return 'bg-warning text-dark';
-                          }
-                          return 'bg-success';
-                      })()"
-                      x-text="$store.citrascope.status?.camera_connected && $store.citrascope.status?.camera_temperature != null
-                          ? 'Camera ' + $store.citrascope.status.camera_temperature.toFixed(1) + '\u00b0C'
-                          : 'Camera'"></span>
-
-                <span class="badge rounded-pill"
-                      data-bs-toggle="tooltip" data-bs-theme="dark"
-                      :data-bs-title="$store.citrascope.status?.focuser_connected
-                          ? ('Focuser connected' + ($store.citrascope.status?.focuser_temperature != null ? ' \u00b7 ' + $store.citrascope.status.focuser_temperature.toFixed(1) + ' \u00b0C' : ''))
-                          : 'No focuser'"
-                      :class="$store.citrascope.status?.focuser_connected ? 'bg-success' : 'bg-secondary'"
-                      x-text="$store.citrascope.status?.focuser_connected && $store.citrascope.status?.focuser_temperature != null
-                          ? 'Focuser ' + $store.citrascope.status.focuser_temperature.toFixed(1) + '\u00b0C'
-                          : 'Focuser'"></span>
-
-                <span class="badge rounded-pill"
-                      data-bs-toggle="tooltip" data-bs-theme="dark"
-                      :data-bs-title="$store.citrascope.status?.time_health?.status === 'ok' ? 'Time sync OK' : ($store.citrascope.status?.time_health?.status === 'critical' ? 'Time drift critical' : 'Time sync unknown')"
-                      :class="$store.citrascope.status?.time_health?.status === 'ok' ? 'bg-success' : ($store.citrascope.status?.time_health?.status === 'critical' ? 'bg-danger' : 'bg-secondary')"
-                      x-text="'Time: ' + $store.citrascope.formatTimeOffset($store.citrascope.status?.time_health)"></span>
-
-                <span class="badge rounded-pill"
-                      data-bs-toggle="tooltip" data-bs-theme="dark"
-                      :data-bs-title="$store.citrascope.status?.gps_location ? ($store.citrascope.status.gps_location.is_strong ? 'GPS fix' : 'GPS weak/no fix') : 'GPS unavailable'"
-                      x-show="$store.citrascope.config?.gps_location_updates_enabled !== false"
-                      :class="$store.citrascope.status?.gps_location?.is_strong ? 'bg-success' : 'bg-secondary'"
-                      x-text="'GPS: ' + $store.citrascope.formatGPSLocation($store.citrascope.status?.gps_location)"></span>
-
-                <span class="badge rounded-pill"
-                      data-bs-toggle="tooltip" data-bs-theme="dark"
-                      x-show="$store.citrascope.status?.elset_health"
-                      :data-bs-title="(() => {
-                          const h = $store.citrascope.status?.elset_health;
-                          if (!h) return 'TLE cache not loaded';
-                          const src = h.source || 'unknown';
-                          const ago = h.last_refresh > 0
-                              ? Math.round((Date.now() / 1000 - h.last_refresh) / 60) + 'm ago'
-                              : 'never';
-                          return src + ' \u00b7 refreshed ' + ago;
-                      })()"
-                      :class="(() => {
-                          const c = $store.citrascope.status?.elset_health?.elset_count || 0;
-                          if (c >= 25000) return 'bg-success';
-                          if (c > 0) return 'bg-warning text-dark';
-                          return 'bg-danger';
-                      })()"
-                      x-text="'TLEs: ' + ($store.citrascope.status?.elset_health?.elset_count || 0).toLocaleString()"></span>
-
-                <!-- Right side: toggles + E-Stop -->
-                <div class="ms-auto d-flex align-items-center gap-2">
-                    <div class="d-flex flex-column flex-md-row align-items-end align-items-md-center gap-1">
-                        <div class="d-flex align-items-center gap-1"
-                             data-bs-toggle="tooltip" data-bs-theme="dark"
-                             title="Automated scheduling — server assigns tasks to this telescope">
-                            <small class="text-muted text-nowrap">Scheduling</small>
-                            <div class="form-check form-switch mb-0">
-                                <input class="form-check-input" type="checkbox"
-                                       :checked="$store.citrascope.status?.automated_scheduling"
-                                       @change="$store.citrascope.toggleAutomatedScheduling($event.target.checked)">
-                            </div>
-                        </div>
-                        <div class="d-flex align-items-center gap-1"
-                             data-bs-toggle="tooltip" data-bs-theme="dark"
-                             title="Task processing — daemon executes queued tasks">
-                            <small class="text-muted text-nowrap">Processing</small>
-                            <div class="form-check form-switch mb-0">
-                                <input class="form-check-input" type="checkbox"
-                                       :checked="$store.citrascope.status?.processing_active !== false"
-                                       @change="$store.citrascope.toggleProcessing($event.target.checked)">
-                            </div>
-                        </div>
-                    </div>
-                    <button class="btn btn-sm btn-danger"
-                            x-show="$store.citrascope.wsConnected"
-                            @click="emergencyStop()"
-                            data-bs-toggle="tooltip" data-bs-theme="dark" data-bs-placement="bottom"
-                            title="Stop mount, pause tasks, cancel imaging">
-                        <i class="bi bi-stop-circle-fill"></i> Stop
-                    </button>
-                </div>
-            </div>
 
             <!-- Missing Dependencies Alert -->
             <div class="alert alert-warning mb-3" role="alert"
@@ -260,6 +111,60 @@
                     <div class="card bg-dark text-light border-secondary h-100">
                         <div class="card-header"><i class="bi bi-crosshair me-1"></i>Telescope</div>
                         <div class="card-body">
+
+                            <!-- Ground Station -->
+                            <div class="row mb-2">
+                                <div class="col-6 fw-semibold">Ground Station</div>
+                                <div class="col-6">
+                                    <template x-if="$store.citrascope.status?.ground_station_name && $store.citrascope.status?.ground_station_url">
+                                        <a :href="$store.citrascope.status.ground_station_url" target="_blank" class="ground-station-link" x-text="$store.citrascope.status.ground_station_name + ' \u2197'"></a>
+                                    </template>
+                                    <template x-if="$store.citrascope.status?.ground_station_name && !$store.citrascope.status?.ground_station_url">
+                                        <span x-text="$store.citrascope.status.ground_station_name"></span>
+                                    </template>
+                                    <template x-if="!$store.citrascope.status?.ground_station_name">
+                                        <span>-</span>
+                                    </template>
+                                </div>
+                            </div>
+
+                            <!-- Operating Location (click for map) -->
+                            <div class="row mb-2"
+                                 x-data="{
+                                     popoverEl: null,
+                                     get lat() { return $store.citrascope.status?.location_latitude; },
+                                     get lon() { return $store.citrascope.status?.location_longitude; },
+                                     showMap() {
+                                         if (this.lat == null || this.lon == null || this.popoverEl) return;
+                                         const t = $store.citrascope.tileCoords(this.lat, this.lon);
+                                         const html = '<div style=&quot;position:relative;line-height:0;&quot;>'
+                                             + '<img src=&quot;' + t.url + '&quot; width=&quot;256&quot; height=&quot;256&quot; style=&quot;display:block;opacity:0.85;&quot;>'
+                                             + '<div style=&quot;position:absolute;top:' + t.py + 'px;left:' + t.px + 'px;width:12px;height:12px;background:#dc3545;border:2px solid #fff;border-radius:50%;transform:translate(-50%,-50%);box-shadow:0 0 6px rgba(0,0,0,0.7);&quot;></div>'
+                                             + '</div>';
+                                         this.popoverEl = new bootstrap.Popover($refs.locTrigger, {
+                                             html: true, content: html, placement: 'bottom',
+                                             trigger: 'focus', customClass: 'location-map-popover'
+                                         });
+                                         this.popoverEl.show();
+                                     },
+                                     hideMap() {
+                                         if (this.popoverEl) { this.popoverEl.dispose(); this.popoverEl = null; }
+                                     }
+                                 }">
+                                <div class="col-6 fw-semibold">Location</div>
+                                <div class="col-6">
+                                    <template x-if="lat != null">
+                                        <span class="font-monospace small" style="cursor: pointer; border-bottom: 1px dashed var(--bs-secondary);"
+                                              x-ref="locTrigger" tabindex="0"
+                                              @click="showMap()" @blur="hideMap()"
+                                              x-text="$store.citrascope.formatCompactLocation($store.citrascope.status)"></span>
+                                    </template>
+                                    <template x-if="lat == null">
+                                        <span>-</span>
+                                    </template>
+                                </div>
+                            </div>
+
                             <div class="row mb-2">
                                 <div class="col-6 fw-semibold">Adapter</div>
                                 <div class="col-6" x-text="$store.citrascope.status?.hardware_adapter || '-'"></div>
@@ -375,21 +280,19 @@
                                 </div>
                             </div>
 
-                            <!-- Ground Station -->
-                            <div class="row mb-2">
-                                <div class="col-6 fw-semibold">Ground Station</div>
-                                <div class="col-6">
-                                    <template x-if="$store.citrascope.status?.ground_station_name && $store.citrascope.status?.ground_station_url">
-                                        <a :href="$store.citrascope.status.ground_station_url" target="_blank" class="ground-station-link" x-text="$store.citrascope.status.ground_station_name + ' \u2197'"></a>
-                                    </template>
-                                    <template x-if="$store.citrascope.status?.ground_station_name && !$store.citrascope.status?.ground_station_url">
-                                        <span x-text="$store.citrascope.status.ground_station_name"></span>
-                                    </template>
-                                    <template x-if="!$store.citrascope.status?.ground_station_name">
-                                        <span>-</span>
-                                    </template>
+                            <!-- Telescope-group config checks (slew rate, etc.) -->
+                            <template x-for="chk in ($store.citrascope.status?.config_health?.checks || []).filter(c => c.group === 'telescope')" :key="chk.name">
+                                <div class="row mb-2">
+                                    <div class="col-6 fw-semibold" x-text="chk.label"></div>
+                                    <div class="col-6">
+                                        <span class="font-monospace small" x-text="chk.configured_fmt"></span>
+                                        <template x-if="chk.observed_fmt">
+                                            <span class="font-monospace small text-info ms-1"
+                                                  x-text="'(obs: ' + chk.observed_fmt + ')'"></span>
+                                        </template>
+                                    </div>
                                 </div>
-                            </div>
+                            </template>
 
                             <!-- Mount Controls (direct hardware adapters only) -->
                             <div x-show="$store.citrascope.status?.supports_direct_mount_control"
@@ -533,6 +436,35 @@
                             </div>
                         </div>
                         <div class="card-body">
+
+                            <!-- ─── Config Health / Optics (pre-computed in Python, UI only renders) ─── -->
+                            <div x-show="($store.citrascope.status?.config_health?.checks || []).filter(c => c.group === 'optics').length"
+                                 x-data="{ get checks() { return ($store.citrascope.status?.config_health?.checks || []).filter(c => c.group === 'optics'); } }">
+                                <div class="row g-1 small font-monospace text-muted mb-2">
+                                    <template x-for="chk in checks" :key="chk.name">
+                                        <div class="col-6 col-md-3">
+                                            <span class="d-block text-secondary" style="font-size:.65rem" x-text="chk.label.toUpperCase()"></span>
+                                            <span x-text="chk.configured_fmt"></span>
+                                            <template x-if="chk.observed_fmt">
+                                                <span :class="chk.status === 'warning' ? 'text-warning' : 'text-success'"
+                                                      x-text="' \u2192 ' + chk.observed_fmt"></span>
+                                            </template>
+                                        </div>
+                                    </template>
+                                </div>
+                                <!-- Mismatch warning banner -->
+                                <template x-if="$store.citrascope.status?.config_health?.has_warnings">
+                                    <div class="alert alert-warning py-1 px-2 mb-2 small d-flex align-items-center">
+                                        <i class="bi bi-exclamation-triangle-fill me-2"></i>
+                                        <span>Hardware differs from server config &mdash; check telescope settings in Citra.
+                                            <template x-for="w in ($store.citrascope.status?.config_health?.checks || []).filter(c => c.status === 'warning')" :key="w.name">
+                                                <span class="d-block" x-text="w.label + ': ' + w.configured_fmt + ' \u2192 ' + w.observed_fmt + ' (' + w.pct_diff + '% off, from ' + w.source + ')'"></span>
+                                            </template>
+                                        </span>
+                                    </div>
+                                </template>
+                                <hr class="border-secondary my-2">
+                            </div>
 
                             <!-- ─── Preview Image (visible for all adapters when an image is available) ─── -->
                             <div x-show="$store.citrascope.previewDataUrl || ($store.citrascope.status?.camera_connected && $store.citrascope.status?.supports_direct_camera_control)">

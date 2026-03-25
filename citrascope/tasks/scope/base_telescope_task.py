@@ -112,28 +112,34 @@ class AbstractBaseTelescopeTask(ABC):
         if not satellite_data:
             self.logger.error(f"Could not fetch satellite data for {self.task.satelliteId}")
             return None
-        elsets = satellite_data.get("elsets", [])
-        if not elsets:
+
+        best_elset = self.api_client.get_best_elset(self.task.satelliteId)
+        if best_elset:
+            satellite_data["most_recent_elset"] = best_elset
+        else:
+            self.logger.warning(
+                f"get_best_elset returned nothing for {self.task.satelliteId}, "
+                f"falling back to client-side selection"
+            )
+            satellite_data["most_recent_elset"] = self._get_most_recent_elset(satellite_data)
+
+        if not satellite_data.get("most_recent_elset"):
             self.logger.error(f"No elsets found for satellite {self.task.satelliteId}")
             return None
-        satellite_data["most_recent_elset"] = self._get_most_recent_elset(satellite_data)
+
         return satellite_data
 
     def _get_most_recent_elset(self, satellite_data) -> dict | None:
+        """Client-side fallback: pick the elset with the latest element epoch."""
         if "most_recent_elset" in satellite_data:
             return satellite_data["most_recent_elset"]
 
         elsets = satellite_data.get("elsets", [])
         if not elsets:
-            self.logger.error(f"No elsets found for satellite {self.task.satelliteId}")
             return None
         most_recent_elset = max(
             elsets,
-            key=lambda e: (
-                dtparser.isoparse(e["creationEpoch"])
-                if e.get("creationEpoch")
-                else dtparser.isoparse("1970-01-01T00:00:00Z")
-            ),
+            key=lambda e: dtparser.isoparse(e.get("epoch") or e.get("creationEpoch") or "1970-01-01T00:00:00Z"),
         )
         return most_recent_elset
 
@@ -232,11 +238,20 @@ class AbstractBaseTelescopeTask(ABC):
             if annotated and Path(annotated).exists() and self._on_annotated_image:
                 self._on_annotated_image(annotated)
 
+        if self.settings.skip_upload:
+            self.logger.info("Upload skipped (skip_upload enabled) — task will not be marked complete on API")
+            self._finalize_skipped_upload(task_id)
+            return
+
         # Queue for upload
         self._queue_for_upload(filepath, processing_result=result)
 
     def _queue_for_upload(self, filepath: str, processing_result):
         """Queue image for background upload."""
+        if not self.task_manager.upload_queue.running:
+            self.logger.warning(f"Upload queue is stopped — not queueing upload for task {self.task.id}")
+            return
+
         # Capture sensor location now (GPS-enhanced if available) so the upload worker
         # can attach it to optical observations without accessing the daemon later.
         try:
@@ -303,6 +318,28 @@ class AbstractBaseTelescopeTask(ABC):
             self.logger.error(f"Task {task_id} failed — all {self._completed_images} image(s) failed to upload")
 
         self.task_manager.remove_task_from_all_stages(task_id)
+
+    def _finalize_skipped_upload(self, task_id: str) -> None:
+        """Advance the image counter and clean up tracking without calling the API.
+
+        Used when skip_upload is enabled: the processing pipeline ran but no
+        data was uploaded, so we must not mark the task complete on the server
+        or inflate success/failure counters.
+        """
+        with self._completion_lock:
+            self._completed_images += 1
+            should_finalize = (
+                self._completed_images >= self._pending_images and self._pending_images > 0 and not self._finalized
+            )
+            if should_finalize:
+                self._finalized = True
+
+        if should_finalize:
+            self.logger.info(
+                f"Task {task_id}: all {self._completed_images} image(s) processed, upload skipped — "
+                "not marking complete on API"
+            )
+            self.task_manager.remove_task_from_all_stages(task_id)
 
     def _mark_complete_with_retry(self, task_id: str, attempts: int = 3, delay: float = 2.0) -> bool:
         """Try to mark a task complete on the server, retrying on transient failures."""
@@ -634,13 +671,23 @@ class AbstractBaseTelescopeTask(ABC):
             return
 
         adapter.observed_fov_short_deg = min(field_w, field_h)
+        adapter.observed_fov_w_deg = field_w
+        adapter.observed_fov_h_deg = field_h
+
+        raw_scale = extracted_data.get("plate_solver.pixel_scale")
+        solved_scale: float | None = None
+        if raw_scale is not None:
+            try:
+                solved_scale = float(raw_scale)
+                adapter.observed_pixel_scale_arcsec = solved_scale
+            except (TypeError, ValueError):
+                pass
 
         tr = adapter.telescope_record
         if tr:
             try:
                 nominal_scale = float(tr["pixelSize"]) / float(tr["focalLength"]) * 206.265
-                solved_scale = extracted_data.get("plate_solver.pixel_scale")
-                if solved_scale and nominal_scale > 0:
+                if solved_scale is not None and nominal_scale > 0:
                     pct_diff = abs(solved_scale - nominal_scale) / nominal_scale
                     if pct_diff > 0.1:
                         self.logger.warning(

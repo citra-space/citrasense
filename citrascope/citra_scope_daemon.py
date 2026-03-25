@@ -381,12 +381,16 @@ class CitraScopeDaemon:
             if old_imaging_tasks:
                 CITRASCOPE_LOGGER.info(f"Restoring {len(old_imaging_tasks)} imaging task(s)")
                 self.task_manager.imaging_tasks.update(old_imaging_tasks)
-            if old_processing_tasks:
-                CITRASCOPE_LOGGER.info(f"Restoring {len(old_processing_tasks)} processing task(s)")
-                self.task_manager.processing_tasks.update(old_processing_tasks)
-            if old_uploading_tasks:
-                CITRASCOPE_LOGGER.info(f"Restoring {len(old_uploading_tasks)} uploading task(s)")
-                self.task_manager.uploading_tasks.update(old_uploading_tasks)
+
+            # Don't restore processing_tasks or uploading_tasks — those represent
+            # in-flight work that died with the old queues.  The tasks still exist
+            # in task_dict and on the API, so the next poll cycle will see them as
+            # unassigned and re-queue them from scratch.
+            dropped = len(old_processing_tasks) + len(old_uploading_tasks)
+            if dropped:
+                CITRASCOPE_LOGGER.info(
+                    f"Dropping {dropped} in-flight processing/uploading task(s) — will be re-queued on next poll"
+                )
 
             # Initialize CalibrationManager if direct camera control is available
             if self.hardware_adapter.supports_direct_camera_control():

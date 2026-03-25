@@ -5,6 +5,15 @@ from citrascope.tasks.scope.base_telescope_task import AbstractBaseTelescopeTask
 
 
 class StaticTelescopeTask(AbstractBaseTelescopeTask):
+    @property
+    def tracking_mode(self) -> str:
+        if (
+            self.hardware_adapter.get_observation_strategy() == ObservationStrategy.SEQUENCE_TO_CONTROLLER
+            and self.hardware_adapter.sequence_provides_tracking
+        ):
+            return "rate"
+        return "sidereal"
+
     def execute(self):
 
         self.task.set_status_msg("Fetching satellite data...")

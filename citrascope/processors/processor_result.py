@@ -1,12 +1,17 @@
 """Data classes for image processor input and output."""
 
-from dataclasses import dataclass
+from __future__ import annotations
+
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
 from citrascope.tasks.task import Task
+
+if TYPE_CHECKING:
+    import pandas as pd
 
 
 @dataclass
@@ -65,6 +70,16 @@ class ProcessingContext:
 
     # Tracking mode used during imaging: "sidereal" or "rate". Set by the telescope task at queue time.
     tracking_mode: str | None = None
+
+    # Source catalog extracted by the plate solver (SEP detections converted to sky coords).
+    # Columns: ra, dec, mag, magerr, elongation (a/b axis ratio).  Populated by
+    # PlateSolverProcessor after a successful solve.
+    detected_sources: pd.DataFrame | None = field(default=None, repr=False)
+
+    # Photometric zero point computed by PhotometryProcessor.  Downstream processors
+    # (e.g. SatelliteMatcherProcessor) use this to convert instrumental magnitudes
+    # to calibrated magnitudes: calibrated = instrumental + zero_point.
+    zero_point: float | None = None
 
     # Logging
     logger: Any | None = None  # Logger instance for debugging

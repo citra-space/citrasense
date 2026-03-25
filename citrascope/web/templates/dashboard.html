@@ -54,6 +54,7 @@
 
     </div>
 
+    {% include '_status_bar.html' %}
 
     {% include '_monitoring.html' %}
 
@@ -131,7 +132,7 @@
                              @scroll="autoScroll = ($el.scrollTop + $el.clientHeight >= $el.scrollHeight - 30)"
                              x-effect="if ($store.citrascope.logs.length && autoScroll) { $nextTick(() => $el.scrollTop = $el.scrollHeight) }">
                             <p class="text-muted-dark" x-show="$store.citrascope.logs.length === 0">No logs available</p>
-                            <template x-for="(log, index) in $store.citrascope.logs" :key="index">
+                            <template x-for="log in $store.citrascope.logs" :key="log._id">
                                 <div x-data="logEntry(log)" class="log-entry">
                                     <span class="log-timestamp" x-text="timestamp"></span>
                                     <span class="log-level" :class="levelClass" x-text="log.level"></span>

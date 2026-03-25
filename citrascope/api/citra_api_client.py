@@ -1,11 +1,31 @@
 import os
+from datetime import datetime, timezone
 
 import httpx
 from keplemon.elements import TopocentricElements
-from keplemon.enums import TimeSystem
 from keplemon.time import Epoch
 
 from .abstract_api_client import AbstractCitraApiClient
+
+
+def _build_filter_wavelength_lookup(telescope_record: dict) -> dict[str, tuple[float, float]]:
+    """Build filter name -> (min_nm, max_nm) from discrete spectralConfig.
+
+    For telescopes with discrete filters, each filter's wavelength band is
+    [central - bandwidth/2, central + bandwidth/2]. Returns an empty dict
+    if the telescope has no discrete spectral config.
+    """
+    spectral = telescope_record.get("spectralConfig")
+    if not spectral or spectral.get("type") != "discrete":
+        return {}
+    lookup: dict[str, tuple[float, float]] = {}
+    for f in spectral.get("filters") or []:
+        name = f.get("name")
+        center = f.get("central_wavelength_nm")
+        bw = f.get("bandwidth_nm")
+        if name and center is not None and bw is not None:
+            lookup[name] = (center - bw / 2, center + bw / 2)
+    return lookup
 
 
 class CitraApiClient(AbstractCitraApiClient):
@@ -80,6 +100,13 @@ class CitraApiClient(AbstractCitraApiClient):
         """Fetch satellite details from /satellites/{satellite_id}"""
         return self._request("GET", f"/satellites/{satellite_id}")
 
+    def get_best_elset(self, satellite_id) -> dict | None:
+        """Fetch the server-canonical best elset for a satellite."""
+        result = self._request("GET", f"/satellites/{satellite_id}/elsets?limit=1")
+        if not result or not isinstance(result, list) or len(result) == 0:
+            return None
+        return result[0]
+
     def get_telescope_tasks(self, telescope_id):
         """Fetch tasks for a given telescope."""
         return self._request("GET", f"/telescopes/{telescope_id}/tasks")
@@ -113,23 +140,55 @@ class CitraApiClient(AbstractCitraApiClient):
         angularNoise and spectral wavelength bounds come from the telescope record; sensor position
         from sensor_location. Returns True on success, False otherwise.
         """
+        if self.logger:
+            self.logger.info(
+                f"upload_optical_observations: preparing {len(observations)} observation(s) for task {task_id}"
+            )
+
         telescope_id = telescope_record.get("id")
         angular_noise = telescope_record.get("angularNoise")
         min_wavelength = telescope_record.get("spectralMinWavelengthNm")
         max_wavelength = telescope_record.get("spectralMaxWavelengthNm")
 
+        # For discrete-filter (MSI) telescopes the static bounds are null;
+        # derive per-observation wavelength from the filter config instead.
+        filter_wavelengths: dict[str, tuple[float, float]] = {}
+        if min_wavelength is None and max_wavelength is None:
+            filter_wavelengths = _build_filter_wavelength_lookup(telescope_record)
+
         altitude_km = sensor_location.get("altitude", 0.0) / 1000.0
 
+        if self.logger:
+            self.logger.debug(
+                f"upload_optical_observations: telescope_id={telescope_id}, angular_noise={angular_noise}, "
+                f"sensor=({sensor_location.get('latitude')}, {sensor_location.get('longitude')}, "
+                f"alt={sensor_location.get('altitude')}m -> {altitude_km:.3f}km)"
+            )
+
         payload = []
+        skipped = 0
         for obs in observations:
-            # Convert J2000/ICRS astrometric RA/Dec to topocentric TEME (server convention)
-            obs_epoch = Epoch.from_iso(obs["timestamp"], time_system=TimeSystem.UTC)
-            topo = TopocentricElements.from_j2000(obs_epoch, obs["ra"], obs["dec"])
+            try:
+                dt = datetime.fromisoformat(obs["timestamp"].replace("Z", "+00:00"))
+                if dt.tzinfo is None:
+                    dt = dt.replace(tzinfo=timezone.utc)
+                obs_epoch = Epoch.from_datetime(dt)
+                epoch_str = dt.isoformat().replace("+00:00", "Z")
+                topo = TopocentricElements.from_j2000(obs_epoch, obs["ra"], obs["dec"])
+            except Exception as e:
+                skipped += 1
+                if self.logger:
+                    self.logger.error(
+                        f"upload_optical_observations: coordinate conversion failed for "
+                        f"satellite {obs.get('norad_id')}, timestamp='{obs.get('timestamp')}', "
+                        f"ra={obs.get('ra')}, dec={obs.get('dec')}: {e}"
+                    )
+                continue
 
             entry = {
                 "satelliteId": obs["norad_id"],
                 "telescopeId": telescope_id,
-                "epoch": obs["timestamp"],
+                "epoch": epoch_str,
                 "rightAscension": topo.right_ascension,
                 "declination": topo.declination,
                 "sensorLatitude": sensor_location["latitude"],
@@ -141,21 +200,56 @@ class CitraApiClient(AbstractCitraApiClient):
                 entry["visualMagnitude"] = obs["mag"]
             if task_id is not None:
                 entry["taskId"] = task_id
-            if min_wavelength is not None:
-                entry["minWavelength"] = min_wavelength
-            if max_wavelength is not None:
-                entry["maxWavelength"] = max_wavelength
+
+            obs_min_wl = min_wavelength
+            obs_max_wl = max_wavelength
+            if obs_min_wl is None and obs_max_wl is None and filter_wavelengths:
+                filter_name = obs.get("filter")
+                if filter_name and filter_name in filter_wavelengths:
+                    obs_min_wl, obs_max_wl = filter_wavelengths[filter_name]
+                elif filter_name and self.logger:
+                    self.logger.warning(
+                        f"upload_optical_observations: filter '{filter_name}' not found in "
+                        f"telescope spectralConfig — omitting wavelength for satellite {obs.get('norad_id')}"
+                    )
+            if obs_min_wl is not None:
+                entry["minWavelength"] = obs_min_wl
+            if obs_max_wl is not None:
+                entry["maxWavelength"] = obs_max_wl
+
             payload.append(entry)
+
+            if self.logger:
+                self.logger.debug(
+                    f"upload_optical_observations: built entry for satellite {obs['norad_id']} "
+                    f"at epoch={epoch_str}, teme_ra={topo.right_ascension:.4f}, "
+                    f"teme_dec={topo.declination:.4f}"
+                )
+
+        if skipped and self.logger:
+            self.logger.warning(
+                f"upload_optical_observations: skipped {skipped}/{len(observations)} observation(s) "
+                f"due to conversion errors"
+            )
 
         if not payload:
             if self.logger:
-                self.logger.warning("upload_optical_observations: no observations to upload")
+                self.logger.warning("upload_optical_observations: no observations to upload after conversion")
             return False
+
+        if self.logger:
+            self.logger.info(
+                f"upload_optical_observations: POSTing {len(payload)} observation(s) to /observations/optical "
+                f"for task {task_id}"
+            )
 
         result = self._request("POST", "/observations/optical", json=payload)
         if result is None:
             if self.logger:
-                self.logger.error("upload_optical_observations: POST /observations/optical failed")
+                self.logger.error(
+                    f"upload_optical_observations: POST /observations/optical failed for task {task_id} "
+                    f"({len(payload)} observations)"
+                )
             return False
 
         if self.logger:

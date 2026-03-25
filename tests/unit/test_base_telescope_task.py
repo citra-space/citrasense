@@ -38,6 +38,7 @@ def _make_hardware_adapter(**overrides):
 def _make_daemon():
     daemon = MagicMock()
     daemon.settings.processors_enabled = True
+    daemon.settings.skip_upload = False
     daemon.telescope_record = {"id": "tel-1"}
     daemon.ground_station = {"id": "gs-1"}
     daemon.location_service.get_current_location.return_value = {
@@ -68,60 +69,79 @@ def _daemon_kwargs(daemon):
 
 
 class TestFetchSatellite:
-    def test_returns_satellite_with_elset(self):
+    def test_uses_best_elset_endpoint(self):
+        from citrascope.tasks.scope.base_telescope_task import AbstractBaseTelescopeTask
+
+        api = MagicMock()
+        api.get_satellite.return_value = {"name": "ISS", "elsets": []}
+        api.get_best_elset.return_value = {
+            "tle": ["best1", "best2"],
+            "epoch": "2025-06-01T00:00:00Z",
+            "type": "MEAN_BROUWER_XP",
+        }
+
+        class ConcreteTask(AbstractBaseTelescopeTask):
+            def execute(self):
+                pass
+
+        daemon = _make_daemon()
+        ct = ConcreteTask(api, daemon.hardware_adapter, MagicMock(), _make_task_dict(), **_daemon_kwargs(daemon))
+        result = ct.fetch_satellite()
+        assert result is not None
+        assert result["most_recent_elset"]["tle"] == ["best1", "best2"]
+        assert result["most_recent_elset"]["type"] == "MEAN_BROUWER_XP"
+        api.get_best_elset.assert_called_once_with("sat-iss")
+
+    def test_falls_back_to_client_side_selection(self):
         from citrascope.tasks.scope.base_telescope_task import AbstractBaseTelescopeTask
 
         api = MagicMock()
         api.get_satellite.return_value = {
             "name": "ISS",
             "elsets": [
-                {
-                    "tle": ["line1", "line2"],
-                    "creationEpoch": "2025-01-01T00:00:00Z",
-                }
+                {"tle": ["old1", "old2"], "epoch": "2024-01-01T00:00:00Z"},
+                {"tle": ["new1", "new2"], "epoch": "2025-06-01T00:00:00Z"},
             ],
         }
-        task_obj = _make_task_dict()
-        daemon = _make_daemon()
-        logger = MagicMock()
+        api.get_best_elset.return_value = None
 
         class ConcreteTask(AbstractBaseTelescopeTask):
             def execute(self):
                 pass
 
-        ct = ConcreteTask(api, daemon.hardware_adapter, logger, task_obj, **_daemon_kwargs(daemon))
+        daemon = _make_daemon()
+        ct = ConcreteTask(api, daemon.hardware_adapter, MagicMock(), _make_task_dict(), **_daemon_kwargs(daemon))
         result = ct.fetch_satellite()
         assert result is not None
-        assert "most_recent_elset" in result
+        assert result["most_recent_elset"]["tle"] == ["new1", "new2"]
 
     def test_returns_none_when_no_data(self):
         from citrascope.tasks.scope.base_telescope_task import AbstractBaseTelescopeTask
 
         api = MagicMock()
         api.get_satellite.return_value = None
-        task_obj = _make_task_dict()
-        daemon = _make_daemon()
 
         class ConcreteTask(AbstractBaseTelescopeTask):
             def execute(self):
                 pass
 
-        ct = ConcreteTask(api, daemon.hardware_adapter, MagicMock(), task_obj, **_daemon_kwargs(daemon))
+        daemon = _make_daemon()
+        ct = ConcreteTask(api, daemon.hardware_adapter, MagicMock(), _make_task_dict(), **_daemon_kwargs(daemon))
         assert ct.fetch_satellite() is None
 
-    def test_returns_none_when_no_elsets(self):
+    def test_returns_none_when_no_elsets_anywhere(self):
         from citrascope.tasks.scope.base_telescope_task import AbstractBaseTelescopeTask
 
         api = MagicMock()
         api.get_satellite.return_value = {"name": "ISS", "elsets": []}
-        task_obj = _make_task_dict()
-        daemon = _make_daemon()
+        api.get_best_elset.return_value = None
 
         class ConcreteTask(AbstractBaseTelescopeTask):
             def execute(self):
                 pass
 
-        ct = ConcreteTask(api, daemon.hardware_adapter, MagicMock(), task_obj, **_daemon_kwargs(daemon))
+        daemon = _make_daemon()
+        ct = ConcreteTask(api, daemon.hardware_adapter, MagicMock(), _make_task_dict(), **_daemon_kwargs(daemon))
         assert ct.fetch_satellite() is None
 
 
@@ -147,8 +167,8 @@ class TestGetMostRecentElset:
         ct = ConcreteTask(MagicMock(), MagicMock(), MagicMock(), _make_task_dict(), **_daemon_kwargs(_make_daemon()))
         sat_data = {
             "elsets": [
-                {"tle": ["old1", "old2"], "creationEpoch": "2024-01-01T00:00:00Z"},
-                {"tle": ["new1", "new2"], "creationEpoch": "2025-06-01T00:00:00Z"},
+                {"tle": ["old1", "old2"], "epoch": "2024-01-01T00:00:00Z"},
+                {"tle": ["new1", "new2"], "epoch": "2025-06-01T00:00:00Z"},
             ]
         }
         result = ct._get_most_recent_elset(sat_data)
@@ -164,7 +184,7 @@ class TestGetMostRecentElset:
         ct = ConcreteTask(MagicMock(), MagicMock(), MagicMock(), _make_task_dict(), **_daemon_kwargs(_make_daemon()))
         assert ct._get_most_recent_elset({"elsets": []}) is None
 
-    def test_missing_creation_epoch_uses_fallback(self):
+    def test_missing_epoch_uses_fallback(self):
         from citrascope.tasks.scope.base_telescope_task import AbstractBaseTelescopeTask
 
         class ConcreteTask(AbstractBaseTelescopeTask):
@@ -175,7 +195,7 @@ class TestGetMostRecentElset:
         sat_data = {
             "elsets": [
                 {"tle": ["a", "b"]},
-                {"tle": ["c", "d"], "creationEpoch": "2025-01-01T00:00:00Z"},
+                {"tle": ["c", "d"], "epoch": "2025-01-01T00:00:00Z"},
             ]
         }
         result = ct._get_most_recent_elset(sat_data)
@@ -274,6 +294,17 @@ class TestOnProcessingComplete:
         result.skip_reason = "Test skip"
         ct._on_processing_complete("/img.fits", "task-1", result)
         ct.api_client.mark_task_complete.assert_called_once_with("task-1")
+
+    def test_settings_skip_upload_does_not_mark_complete(self):
+        ct = self._make_concrete()
+        ct.settings.skip_upload = True
+        ct._pending_images = 1
+        result = MagicMock()
+        result.should_upload = True
+        result.extracted_data = {}
+        ct._on_processing_complete("/img.fits", "task-1", result)
+        ct.api_client.mark_task_complete.assert_not_called()
+        ct.task_manager.remove_task_from_all_stages.assert_called_once_with("task-1")
 
     def test_feeds_plate_solve_to_adapter(self):
         ct = self._make_concrete()
