@@ -72,6 +72,34 @@ class ElsetCache:
         self._last_refresh_epoch: float = 0.0
         self._source: str = ""
 
+    @classmethod
+    def from_snapshot(cls, elsets: list[dict]) -> ElsetCache:
+        """Create an in-memory-only cache pre-populated with the given elset list.
+
+        Used by the reprocessing tool to reconstruct the elset state that was
+        captured in ``elset_cache_snapshot.json`` at original processing time.
+        The returned cache has no file backing and will not write to disk.
+        """
+        import tempfile
+
+        cache = cls.__new__(cls)
+        cache._cache_path = None  # type: ignore[assignment]
+        cache._list = []
+        cache._lock = threading.Lock()
+        cache._last_refresh_epoch = 0.0
+        cache._source = "snapshot"
+
+        if elsets:
+            with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
+                json.dump(elsets, f)
+                tmp_path = Path(f.name)
+            try:
+                cache.load_from_file(expected_source="", path=tmp_path)
+            finally:
+                tmp_path.unlink(missing_ok=True)
+
+        return cache
+
     def _clear(self) -> None:
         """Reset in-memory state under the lock."""
         with self._lock:

@@ -16,6 +16,7 @@ from citrascope.processors.builtin.photometry_processor import PhotometryProcess
 from citrascope.processors.builtin.plate_solver_processor import PlateSolverProcessor
 from citrascope.processors.builtin.satellite_matcher_processor import SatelliteMatcherProcessor
 from citrascope.processors.processor_result import AggregatedResult, ProcessingContext, ProcessorResult
+from citrascope.processors.report_generator import generate_html_report
 
 
 class ProcessorRegistry:
@@ -152,6 +153,7 @@ class ProcessorRegistry:
         )
 
         dump_processing_summary(context.working_dir, aggregated)
+        generate_html_report(context.working_dir)
 
         return aggregated
 
