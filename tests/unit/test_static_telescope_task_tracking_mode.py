@@ -1,6 +1,6 @@
 """Tests for StaticTelescopeTask.tracking_mode and sequence_provides_tracking."""
 
-from unittest.mock import MagicMock, PropertyMock
+from unittest.mock import MagicMock
 
 from citrascope.hardware.abstract_astro_hardware_adapter import ObservationStrategy
 from citrascope.tasks.scope.static_telescope_task import StaticTelescopeTask
@@ -28,7 +28,7 @@ def _make_static_task(
 ) -> StaticTelescopeTask:
     adapter = MagicMock()
     adapter.get_observation_strategy.return_value = observation_strategy
-    type(adapter).sequence_provides_tracking = PropertyMock(return_value=sequence_provides_tracking)
+    adapter.sequence_provides_tracking = sequence_provides_tracking
     adapter.filter_map = {}
 
     task_obj = _make_task_dict()
@@ -90,6 +90,4 @@ class TestNinaSequenceProvidesTracking:
     def test_nina_adapter_reports_sequence_provides_tracking(self):
         from citrascope.hardware.nina.nina_adapter import NinaAdvancedHttpAdapter
 
-        adapter = MagicMock(spec=NinaAdvancedHttpAdapter)
-        type(adapter).sequence_provides_tracking = NinaAdvancedHttpAdapter.sequence_provides_tracking
-        assert adapter.sequence_provides_tracking is True
+        assert NinaAdvancedHttpAdapter.sequence_provides_tracking.fget(None) is True
