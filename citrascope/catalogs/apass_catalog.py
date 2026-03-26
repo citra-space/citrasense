@@ -252,7 +252,7 @@ class ApassCatalog:
         mask = angular_dist <= math.radians(radius)
         result = df[mask].reset_index(drop=True)
 
-        result = result.rename(columns=_COLUMN_REMAP)
+        result = result.rename(columns=_COLUMN_REMAP)  # type: ignore[arg-type]
         _logger.info(
             f"ApassCatalog: cone search at RA={ra:.3f}, Dec={dec:.3f}, radius={radius:.3f} deg -> {len(result)} stars"
         )
