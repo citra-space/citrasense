@@ -1,7 +1,7 @@
 """Tests for photometry processor with local APASS catalog."""
 
 import sqlite3
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import astropy.units as u
 import numpy as np
@@ -65,10 +65,23 @@ def catalog_with_stars(tmp_path):
     ]
     rows = [
         (
-            ra, dec,
+            ra,
+            dec,
             _healpix_for(ra, dec),
-            bmag, vmag, None, gmag, rmag, imag, None,
-            0.02, 0.01, None, 0.02, 0.01, 0.01, None,
+            bmag,
+            vmag,
+            None,
+            gmag,
+            rmag,
+            imag,
+            None,
+            0.02,
+            0.01,
+            None,
+            0.02,
+            0.01,
+            0.01,
+            None,
         )
         for ra, dec, bmag, vmag, _, gmag, rmag, imag, _ in star_positions
     ]
@@ -140,27 +153,30 @@ def test_photometry_uses_local_catalog(catalog_with_stars, fits_image_with_wcs, 
     assert "zero_point" in result.extracted_data
 
 
-def test_photometry_skips_when_catalog_unavailable(fits_image_with_wcs, tmp_path):
-    """Photometry gracefully skips when no catalog is available."""
+def test_photometry_falls_back_to_http_when_catalog_unavailable(fits_image_with_wcs, tmp_path):
+    """Photometry falls back to AAVSO HTTP when no local catalog is available."""
     context = _make_context(tmp_path, fits_image_with_wcs, catalog=None)
 
     processor = PhotometryProcessor()
-    result = processor.process(context)
+    with patch("requests.post") as mock_post:
+        mock_post.side_effect = ConnectionError("mocked: no network in test")
+        result = processor.process(context)
 
     assert result.should_upload is True
     assert result.confidence == 0.0
-    assert "not available" in result.reason.lower() or "skipped" in result.reason.lower()
+    assert "failed" in result.reason.lower()
 
 
-def test_photometry_skips_when_catalog_file_missing(fits_image_with_wcs, tmp_path):
-    """Photometry gracefully skips when ApassCatalog points to a nonexistent file."""
+def test_photometry_falls_back_to_http_when_catalog_file_missing(fits_image_with_wcs, tmp_path):
+    """Photometry falls back to AAVSO HTTP when ApassCatalog points to a nonexistent file."""
     missing_catalog = ApassCatalog(db_path=tmp_path / "nonexistent.db")
     context = _make_context(tmp_path, fits_image_with_wcs, catalog=missing_catalog)
 
     processor = PhotometryProcessor()
-    result = processor.process(context)
+    with patch("requests.post") as mock_post:
+        mock_post.side_effect = ConnectionError("mocked: no network in test")
+        result = processor.process(context)
 
     assert result.should_upload is True
     assert result.confidence == 0.0
-
-
+    assert "failed" in result.reason.lower()

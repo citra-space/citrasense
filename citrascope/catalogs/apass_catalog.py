@@ -46,14 +46,15 @@ def _default_db_path() -> Path:
 class ApassCatalog:
     """Local APASS DR10 star catalog for offline photometric calibration.
 
-    The catalog is a SQLite database (~1.5 GB) downloaded once from a signed
-    CloudFront URL obtained via the Citra API.  After the initial download the
-    catalog works entirely offline.
+    The catalog is a SQLite database (~16 GB on disk, ~6.4 GB compressed
+    download) fetched once from a signed CloudFront URL obtained via the
+    Citra API.  After the initial download the catalog works entirely offline.
     """
 
-    def __init__(self, db_path: Path | str | None = None):
+    def __init__(self, db_path: Path | str | None = None, logger: logging.Logger | None = None):
         self._db_path = Path(db_path) if db_path is not None else _default_db_path()
         self._download_thread: threading.Thread | None = None
+        self.logger = logger or _logger
 
     @property
     def db_path(self) -> Path:
@@ -69,57 +70,50 @@ class ApassCatalog:
         except OSError:
             return False
 
-    def ensure_available(
-        self, api_client: AbstractCitraApiClient | None = None, logger: logging.Logger | None = None
-    ) -> bool:
+    def ensure_available(self, api_client: AbstractCitraApiClient | None = None) -> bool:
         """Download the catalog if it is not already present.
 
         Args:
             api_client: Authenticated Citra API client (must implement get_catalog_download_url).
                         If None, download is skipped.
-            logger: Logger instance for progress messages. Falls back to module logger.
 
         Returns:
             True if the catalog is available after this call, False otherwise.
         """
-        log = logger or _logger
-
         if self.is_available():
             return True
 
         if api_client is None:
-            log.info("ApassCatalog: no API client — skipping download")
+            self.logger.info("ApassCatalog: no API client — skipping download")
             return False
 
-        log.info("ApassCatalog: catalog not found locally, requesting download URL...")
+        self.logger.info("ApassCatalog: catalog not found locally, requesting download URL...")
 
         try:
             meta = api_client.get_catalog_download_url("apass_dr10.db.gz")
         except Exception as e:
-            log.warning(f"ApassCatalog: failed to get download URL: {e}")
+            self.logger.warning(f"ApassCatalog: failed to get download URL: {e}")
             return False
 
         if meta is None:
-            log.warning("ApassCatalog: API returned no download URL — photometry will be unavailable")
+            self.logger.warning("ApassCatalog: API returned no download URL — photometry will be unavailable")
             return False
 
         url = meta.get("url") if isinstance(meta, dict) else meta
         expected_sha256 = meta.get("sha256") if isinstance(meta, dict) else None
 
         if not url:
-            log.warning("ApassCatalog: empty download URL")
+            self.logger.warning("ApassCatalog: empty download URL")
             return False
 
-        return self._download(url, expected_sha256=expected_sha256, logger=log)
+        return self._download(url, expected_sha256=expected_sha256)
 
     @property
     def is_downloading(self) -> bool:
         """Return True if a background download is currently in progress."""
         return self._download_thread is not None and self._download_thread.is_alive()
 
-    def start_background_download(
-        self, api_client: AbstractCitraApiClient | None = None, logger: logging.Logger | None = None
-    ) -> None:
+    def start_background_download(self, api_client: AbstractCitraApiClient | None = None) -> None:
         """Kick off ensure_available() in a daemon thread.
 
         If the catalog is already present or a download is already running,
@@ -127,23 +121,24 @@ class ApassCatalog:
         each invocation, so it will start using the catalog automatically
         once the download finishes.
         """
-        if self.is_available() or self.is_downloading:
+        if self.is_available():
+            self.logger.info("ApassCatalog: local catalog already available at %s", self._db_path)
+            return
+        if self.is_downloading:
             return
 
-        log = logger or _logger
-
         def _run() -> None:
-            ok = self.ensure_available(api_client, logger=log)
+            ok = self.ensure_available(api_client)
             if ok:
-                log.info("ApassCatalog: background download complete — photometry now available")
+                self.logger.info("ApassCatalog: background download complete — photometry now available")
             else:
-                log.warning("ApassCatalog: background download failed — photometry will be unavailable")
+                self.logger.warning("ApassCatalog: background download failed — photometry will be unavailable")
 
         self._download_thread = threading.Thread(target=_run, name="apass-catalog-download", daemon=True)
         self._download_thread.start()
-        log.info("ApassCatalog: download started in background thread")
+        self.logger.info("ApassCatalog: download started in background thread")
 
-    def _download(self, url: str, expected_sha256: str | None = None, logger: logging.Logger | None = None) -> bool:
+    def _download(self, url: str, expected_sha256: str | None = None) -> bool:
         """Download and decompress the catalog from a URL.
 
         Supports both .gz compressed and uncompressed files. Downloads to a temp
@@ -152,7 +147,6 @@ class ApassCatalog:
         """
         import requests
 
-        log = logger or _logger
         self._db_path.parent.mkdir(parents=True, exist_ok=True)
 
         tmp_fd = tempfile.NamedTemporaryFile(dir=self._db_path.parent, suffix=".tmp", delete=False)
@@ -161,7 +155,7 @@ class ApassCatalog:
         decompressed_path: Path | None = None
 
         try:
-            log.info(f"ApassCatalog: downloading from {url[:120]} ...")
+            self.logger.info(f"ApassCatalog: downloading from {url[:120]} ...")
 
             with requests.get(url, stream=True, timeout=600, allow_redirects=True) as response:
                 response.raise_for_status()
@@ -174,16 +168,16 @@ class ApassCatalog:
                         downloaded += len(chunk)
                         if total > 0 and downloaded % (50 * 1024 * 1024) < len(chunk):
                             pct = downloaded * 100 // total
-                            log.info(f"ApassCatalog: downloaded {pct}% ({downloaded // (1024 * 1024)} MB)")
+                            self.logger.info(f"ApassCatalog: downloaded {pct}% ({downloaded // (1024 * 1024)} MB)")
 
-            log.info(f"ApassCatalog: download complete ({downloaded // (1024 * 1024)} MB)")
+            self.logger.info(f"ApassCatalog: download complete ({downloaded // (1024 * 1024)} MB)")
 
             # Check if the downloaded file is gzip-compressed (magic bytes \x1f\x8b)
             with open(tmp_path, "rb") as f:
                 is_gzip = f.read(2) == b"\x1f\x8b"
 
             if is_gzip:
-                log.info("ApassCatalog: decompressing...")
+                self.logger.info("ApassCatalog: decompressing...")
                 decompressed_path = tmp_path.with_suffix(".db")
                 with gzip.open(tmp_path, "rb") as f_in, open(decompressed_path, "wb") as f_out:
                     shutil.copyfileobj(f_in, f_out)
@@ -192,25 +186,25 @@ class ApassCatalog:
                 decompressed_path = None  # now tracked by tmp_path
 
             if expected_sha256:
-                log.info("ApassCatalog: verifying checksum...")
+                self.logger.info("ApassCatalog: verifying checksum...")
                 sha = hashlib.sha256()
                 with open(tmp_path, "rb") as f:
                     for block in iter(lambda: f.read(8192), b""):
                         sha.update(block)
                 actual = sha.hexdigest()
                 if actual != expected_sha256:
-                    log.error(f"ApassCatalog: checksum mismatch (expected={expected_sha256}, got={actual})")
+                    self.logger.error(f"ApassCatalog: checksum mismatch (expected={expected_sha256}, got={actual})")
                     tmp_path.unlink(missing_ok=True)
                     return False
 
             # Note: the DB ships with indexes (idx_stars_dec_ra, idx_stars_healpix)
             # pre-built by build_apass_catalog.py — no post-download indexing needed.
             tmp_path.rename(self._db_path)
-            log.info(f"ApassCatalog: ready at {self._db_path}")
+            self.logger.info(f"ApassCatalog: ready at {self._db_path}")
             return True
 
         except BaseException as e:
-            log.warning(f"ApassCatalog: download failed: {e}")
+            self.logger.warning(f"ApassCatalog: download failed: {e}")
             tmp_path.unlink(missing_ok=True)
             if decompressed_path:
                 decompressed_path.unlink(missing_ok=True)
@@ -283,7 +277,7 @@ class ApassCatalog:
         result = df[mask].reset_index(drop=True)
 
         result = result.rename(columns=_COLUMN_REMAP)  # type: ignore[arg-type]
-        _logger.info(
+        self.logger.info(
             f"ApassCatalog: cone search at RA={ra:.3f}, Dec={dec:.3f}, radius={radius:.3f} deg -> {len(result)} stars"
         )
 

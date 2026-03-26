@@ -75,7 +75,7 @@ class CitraScopeDaemon:
         self.elset_cache = ElsetCache()
 
         # APASS catalog for local photometry (file-backed; downloaded on first authenticated startup)
-        self.apass_catalog = ApassCatalog()
+        self.apass_catalog = ApassCatalog(logger=CITRASCOPE_LOGGER)
 
         # Note: Work queues and stage tracking now managed by TaskManager
 
@@ -207,10 +207,8 @@ class CitraScopeDaemon:
             self.elset_cache.load_from_file(expected_source=self.api_client.cache_source_key)
             self._refresh_elset_cache_with_retry()
 
-            # Start APASS catalog download in background (non-blocking).
-            # Photometry processor checks is_available() per-image and gracefully
-            # skips until the download finishes.
-            self.apass_catalog.start_background_download(self.api_client, logger=CITRASCOPE_LOGGER)
+            if self.settings.use_local_apass_catalog:
+                self.apass_catalog.start_background_download(self.api_client)
 
             # Initialize hardware adapter
             self.hardware_adapter = self._create_hardware_adapter()

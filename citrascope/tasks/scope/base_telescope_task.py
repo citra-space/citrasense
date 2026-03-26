@@ -194,7 +194,7 @@ class AbstractBaseTelescopeTask(ABC):
                         "settings": self.settings,
                         "location_service": self.location_service,
                         "elset_cache": self.elset_cache,
-                        "apass_catalog": self.apass_catalog,
+                        "apass_catalog": self.apass_catalog if self.settings.use_local_apass_catalog else None,
                         "processor_registry": self.processor_registry,
                         "satellite_data": satellite_data,
                         "pointing_report": pointing_report,

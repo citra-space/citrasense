@@ -1,30 +1,38 @@
 """Photometric calibration processor using APASS catalog."""
 
+from __future__ import annotations
+
 import time
+from io import StringIO
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import numpy as np
 import pandas as pd
+import requests
 from astropy.io import fits
 from astropy.wcs import WCS
 from scipy.spatial import KDTree
 
-from citrascope.catalogs.apass_catalog import ApassCatalog
 from citrascope.processors.abstract_processor import AbstractImageProcessor
 from citrascope.processors.artifact_writer import dump_csv, dump_processor_result
 from citrascope.processors.builtin.processor_dependencies import read_source_catalog
 from citrascope.processors.processor_result import ProcessingContext, ProcessorResult
+
+if TYPE_CHECKING:
+    from citrascope.catalogs.apass_catalog import ApassCatalog
 
 
 class PhotometryProcessor(AbstractImageProcessor):
     """
     Photometric calibration processor using APASS catalog.
 
-    Queries a local APASS SQLite database (via context.apass_catalog), cross-matches
-    detected sources with catalog stars, and calculates magnitude zero point.
+    Cross-matches detected sources with APASS catalog stars and calculates
+    magnitude zero point.  Uses a local SQLite catalog when available
+    (context.apass_catalog), otherwise falls back to the AAVSO HTTP API.
     Requires source extraction to have run first.
 
-    Typical processing time: <1 second with local catalog.
+    Typical processing time: <0.1s with local catalog, 2-5s via HTTP.
     """
 
     name = "photometry"
@@ -64,15 +72,18 @@ class PhotometryProcessor(AbstractImageProcessor):
         return matched
 
     def _calibrate_photometry(
-        self, sources: pd.DataFrame, image_path: Path, filter_name: str, apass_catalog: ApassCatalog
+        self, sources: pd.DataFrame, image_path: Path, filter_name: str, apass_catalog: ApassCatalog | None = None
     ) -> tuple[float, int, pd.DataFrame, pd.DataFrame]:
-        """Query local APASS catalog and calculate magnitude zero point.
+        """Query APASS catalog and calculate magnitude zero point.
+
+        Uses the local SQLite catalog when provided and available, otherwise
+        falls back to the AAVSO HTTP API.
 
         Args:
             sources: DataFrame with detected sources (columns: ra, dec, mag)
             image_path: Path to FITS image (for WCS info)
             filter_name: Filter name (Clear, g, r, i)
-            apass_catalog: ApassCatalog instance
+            apass_catalog: ApassCatalog instance (None to use HTTP fallback)
 
         Returns:
             Tuple of (zero_point, num_matched_stars, apass_catalog_df, crossmatch_df)
@@ -92,8 +103,10 @@ class PhotometryProcessor(AbstractImageProcessor):
             ra_center = float(center.ra.deg)  # type: ignore[union-attr]
             dec_center = float(center.dec.deg)  # type: ignore[union-attr]
 
-        # Query local APASS catalog
-        apass_stars = apass_catalog.cone_search(ra_center, dec_center, radius=2.0)
+        if apass_catalog is not None and apass_catalog.is_available():
+            apass_stars = apass_catalog.cone_search(ra_center, dec_center, radius=2.0)
+        else:
+            apass_stars = self._query_apass_via_aavso_http(ra_center, dec_center, radius=2.0)
 
         if apass_stars.empty:
             raise RuntimeError("No APASS stars found in field")
@@ -132,29 +145,6 @@ class PhotometryProcessor(AbstractImageProcessor):
             ProcessorResult with photometry outcome
         """
         start_time = time.time()
-
-        # Check if catalog is available
-        if context.apass_catalog is None or not context.apass_catalog.is_available():
-            return ProcessorResult(
-                should_upload=True,
-                extracted_data={},
-                confidence=0.0,
-                reason="APASS catalog not available — photometry skipped",
-                processing_time_seconds=time.time() - start_time,
-                processor_name=self.name,
-            )
-
-        # Check if sources were extracted
-        catalog_path = context.working_dir / "output.cat"
-        if not catalog_path.exists():
-            return ProcessorResult(
-                should_upload=True,
-                extracted_data={},
-                confidence=0.0,
-                reason="Source catalog not found (source extraction must run first)",
-                processing_time_seconds=time.time() - start_time,
-                processor_name=self.name,
-            )
 
         try:
             # Prefer in-memory sources from plate solver; fall back to output.cat on disk
@@ -214,3 +204,40 @@ class PhotometryProcessor(AbstractImageProcessor):
             )
             dump_processor_result(context.working_dir, "photometry_result.json", result)
             return result
+
+    def _query_apass_via_aavso_http(self, ra: float, dec: float, radius: float = 2.0) -> pd.DataFrame:
+        """Query APASS catalog via AAVSO HTTP API (slow fallback).
+
+        Args:
+            ra: Right ascension in degrees
+            dec: Declination in degrees
+            radius: Search radius in degrees (default: 2.0)
+
+        Returns:
+            DataFrame with APASS stars
+
+        Raises:
+            RuntimeError: If query fails
+        """
+        url = "https://www.aavso.org/cgi-bin/apass_dr10_download.pl"
+
+        form_data = {
+            "ra": str(ra),
+            "dec": str(dec),
+            "radius": str(radius),
+            "outtype": "1",
+        }
+
+        try:
+            response = requests.post(url, data=form_data, timeout=30)
+            response.raise_for_status()
+        except Exception as e:
+            raise RuntimeError(f"APASS query failed: {e}") from e
+
+        try:
+            apass_df = pd.read_csv(StringIO(response.text))
+            if apass_df.empty:
+                raise RuntimeError("APASS query returned no results")
+            return apass_df
+        except Exception as e:
+            raise RuntimeError(f"Failed to parse APASS response: {e}") from e

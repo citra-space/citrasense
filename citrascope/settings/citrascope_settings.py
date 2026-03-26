@@ -54,6 +54,7 @@ class CitraScopeSettings(BaseModel):
     processors_enabled: bool = True
     enabled_processors: dict[str, bool] = Field(default_factory=dict)
     skip_upload: bool = False
+    use_local_apass_catalog: bool = False
 
     # Task retry
     max_task_retries: int = 3
