@@ -153,6 +153,49 @@ def _ensure_fits_has_observer_location(image_path: Path, context: ProcessingCont
         return out_path
 
 
+def _normalize_pixelemon_wcs(header: fits.Header, img_height: int) -> None:
+    """Absorb Pixelemon's y-flip into the WCS header so it matches SEP/numpy coordinates.
+
+    Pixelemon's plate_solve fits its WCS with y_wcs = height-1-y_sep before
+    calling fit_wcs_from_points (see pixelemon#10).  This produces a WCS whose
+    pixel y-axis is in a different coordinate system from SEP, numpy, and
+    Astropy's 0-based indexing — all of which share y=0 at the first stored row.
+
+    This function absorbs the y-flip into the WCS parameters so the resulting
+    header maps raw SEP pixel coordinates directly to sky coordinates, consistent
+    with the coordinate system used by the rest of the pipeline.
+
+    The transform is: y_new = H + 1 - y_old  (FITS 1-based)
+
+    which negates the y-column of the CD matrix, shifts CRPIX2, and flips the
+    sign of SIP polynomial coefficients by their y-power parity.
+    """
+    # Linear WCS: negate the y-column of the CD matrix and shift CRPIX2.
+    # FITS header values are floats at runtime; casts satisfy pyright.
+    header["CRPIX2"] = img_height + 1 - float(header["CRPIX2"])  # type: ignore[arg-type]
+    header["CD1_2"] = -float(header["CD1_2"])  # type: ignore[arg-type]
+    header["CD2_2"] = -float(header["CD2_2"])  # type: ignore[arg-type]
+
+    # SIP distortion: v_new = -v_old, so each coefficient picks up (-1)^q
+    # from its y-power q.  The B (y-distortion) and BP (inverse y) polynomials
+    # get an additional negation because the distortion direction flips.
+    for prefix, extra_negate in (("A", False), ("B", True), ("AP", False), ("BP", True)):
+        order_key = f"{prefix}_ORDER"
+        if order_key not in header:
+            continue
+        order = int(header[order_key])  # type: ignore[arg-type]
+        for p in range(order + 1):
+            for q in range(order + 1 - p):
+                key = f"{prefix}_{p}_{q}"
+                if key not in header:
+                    continue
+                sign = (-1) ** q
+                if extra_negate:
+                    sign = -sign
+                if sign == -1:
+                    header[key] = -float(header[key])  # type: ignore[arg-type]
+
+
 class PlateSolverProcessor(AbstractImageProcessor):
     """
     Plate solving processor using Pixelemon (Tetra3).
@@ -228,9 +271,12 @@ class PlateSolverProcessor(AbstractImageProcessor):
         """Run Pixelemon (Tetra3) plate solve and write WCS to a _wcs.fits file.
 
         Pixelemon internally fits a full 5th-degree SIP WCS from matched star centroids
-        (equivalent to astrometry.net quality). We write that fitted WCS directly to the
-        _wcs.fits file via image._wcs.to_header(relax=True), which includes the CD rotation
-        matrix and SIP distortion coefficients.
+        (equivalent to astrometry.net quality).  However, Pixelemon fits the WCS with
+        y-flipped pixel coordinates (y_wcs = height-1-y_sep; see pixelemon#10), so the
+        raw WCS is non-standard.  We normalize it via _normalize_pixelemon_wcs before
+        writing to disk, producing a standard FITS WCS that maps raw SEP pixel coords
+        to sky coordinates.  All downstream consumers can use the WCS without any
+        Pixelemon-specific workarounds.
 
         Returns:
             (wcs_fits_path, telescope_image) — the WCS FITS and the Pixelemon image
@@ -279,6 +325,7 @@ class PlateSolverProcessor(AbstractImageProcessor):
             if image._wcs is None:
                 raise RuntimeError("Pixelemon _wcs not available after successful plate solve")
             new_header.update(image._wcs.to_header(relax=True))
+            _normalize_pixelemon_wcs(new_header, naxis2)
             new_file = image_path.with_stem(image_path.stem + "_wcs").with_suffix(".fits")
             fits.writeto(new_file, primary.data, new_header, overwrite=True)
 
@@ -303,11 +350,7 @@ class PlateSolverProcessor(AbstractImageProcessor):
 
         x = objects["x"][mask]
         y = objects["y"][mask]
-        # Pixelemon's WCS is fitted with y_wcs = height-1-y_sep (see plate_solve
-        # in _telescope_image.py). We must apply the same transform so SEP pixel
-        # positions produce correct sky coordinates.  Tracked in pixelemon#10.
-        y_wcs = image.height - 1 - y
-        ra, dec = wcs.all_pix2world(x, y_wcs, 0)
+        ra, dec = wcs.all_pix2world(x, y, 0)
 
         return pd.DataFrame(
             {

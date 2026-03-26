@@ -269,11 +269,9 @@ class AnnotatedImageProcessor(AbstractImageProcessor):
         try:
             result = wcs.world_to_pixel_values(ra_deg, dec_deg)
             px = round(float(result[0]))
-            # Pixelemon's WCS returns y in its own flipped convention
-            # (y_wcs = height-1-y_sep). After np.flipud in _stretch_to_rgb,
-            # display row = height-1-y_sep = y_wcs, so no extra flip needed.
-            # Tracked in pixelemon#10.
-            py = round(float(result[1]))
+            # WCS pixel y is 0 at bottom (FITS convention); display image is
+            # np.flipud'd so row 0 is at top.  Invert for display coordinates.
+            py = img_height - 1 - round(float(result[1]))
             return px, py
         except Exception:
             return None, None

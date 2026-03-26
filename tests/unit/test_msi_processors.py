@@ -198,6 +198,100 @@ class TestPlateSolverProcessor:
         assert "failed" in result.reason.lower()
 
 
+class TestNormalizePixelemonWcs:
+    """Verify _normalize_pixelemon_wcs produces a standard FITS WCS from Pixelemon's y-flipped one."""
+
+    def test_linear_wcs_round_trips_with_flipped_y(self):
+        """After normalization, WCS(x, y_sep) should equal the original WCS(x, H-1-y_sep)."""
+        from astropy.wcs import WCS
+
+        from citrascope.processors.builtin.plate_solver_processor import _normalize_pixelemon_wcs
+
+        img_height = 200
+        header = fits.Header()
+        header["NAXIS"] = 2
+        header["NAXIS1"] = 300
+        header["NAXIS2"] = img_height
+        header["CTYPE1"] = "RA---TAN"
+        header["CTYPE2"] = "DEC--TAN"
+        header["CRPIX1"] = 150.0
+        header["CRPIX2"] = 100.0
+        header["CRVAL1"] = 180.0
+        header["CRVAL2"] = 45.0
+        header["CD1_1"] = -0.0005
+        header["CD1_2"] = 0.0001
+        header["CD2_1"] = -0.0001
+        header["CD2_2"] = -0.0005
+
+        original_wcs = WCS(header)
+
+        _normalize_pixelemon_wcs(header, img_height)
+        normalized_wcs = WCS(header)
+
+        # For several test pixels, verify: normalized(x, y) == original(x, H-1-y)
+        import numpy as np
+
+        test_x = np.array([10.0, 150.0, 290.0, 50.0])
+        test_y = np.array([5.0, 100.0, 195.0, 80.0])
+        y_flipped = img_height - 1 - test_y
+
+        ra_orig, dec_orig = original_wcs.all_pix2world(test_x, y_flipped, 0)
+        ra_norm, dec_norm = normalized_wcs.all_pix2world(test_x, test_y, 0)
+
+        np.testing.assert_allclose(ra_norm, ra_orig, atol=1e-10)
+        np.testing.assert_allclose(dec_norm, dec_orig, atol=1e-10)
+
+    def test_crpix2_is_flipped(self):
+        from citrascope.processors.builtin.plate_solver_processor import _normalize_pixelemon_wcs
+
+        header = fits.Header()
+        header["CRPIX2"] = 80.0
+        header["CD1_2"] = 0.1
+        header["CD2_2"] = -0.5
+        img_height = 200
+
+        _normalize_pixelemon_wcs(header, img_height)
+
+        assert header["CRPIX2"] == 200 + 1 - 80.0  # 121
+        assert header["CD1_2"] == -0.1
+        assert header["CD2_2"] == 0.5
+
+    def test_sip_coefficients_are_flipped(self):
+        from citrascope.processors.builtin.plate_solver_processor import _normalize_pixelemon_wcs
+
+        header = fits.Header()
+        header["CRPIX2"] = 50.0
+        header["CD1_2"] = 0.0
+        header["CD2_2"] = -1.0
+        header["A_ORDER"] = 2
+        header["A_0_0"] = 1.0
+        header["A_0_1"] = 2.0  # q=1 (odd) → negated
+        header["A_0_2"] = 3.0  # q=2 (even) → unchanged
+        header["A_1_0"] = 4.0  # q=0 (even) → unchanged
+        header["A_1_1"] = 5.0  # q=1 (odd) → negated
+        header["B_ORDER"] = 2
+        header["B_0_0"] = 1.0  # q=0: extra_negate → negated
+        header["B_0_1"] = 2.0  # q=1: (-1)^1 * (-1) = +1 → unchanged
+        header["B_0_2"] = 3.0  # q=2: (-1)^2 * (-1) = -1 → negated
+        header["B_1_0"] = 4.0  # q=0: negated
+        header["B_1_1"] = 5.0  # q=1: unchanged
+
+        _normalize_pixelemon_wcs(header, 100)
+
+        # A: negate odd q
+        assert header["A_0_0"] == 1.0
+        assert header["A_0_1"] == -2.0
+        assert header["A_0_2"] == 3.0
+        assert header["A_1_0"] == 4.0
+        assert header["A_1_1"] == -5.0
+        # B: (-1)^(q+1) → negate even q, keep odd q
+        assert header["B_0_0"] == -1.0
+        assert header["B_0_1"] == 2.0
+        assert header["B_0_2"] == -3.0
+        assert header["B_1_0"] == -4.0
+        assert header["B_1_1"] == 5.0
+
+
 class TestPhotometryProcessor:
     """Tests for PhotometryProcessor."""
 
@@ -650,10 +744,11 @@ class TestPixelemonYFlipRegression:
     """Guard against Y-coordinate inversion in the Pixelemon WCS path.
 
     Pixelemon's plate_solve builds its WCS with y_wcs = height-1-y_sep
-    (pixelemon#10).  _extract_sources compensates by applying the same
-    transform before all_pix2world.  If either side changes, source RA/Dec
-    will be reflected around the image center — detectable as large positional
-    scatter versus the SExtractor/astrometry.net reference catalog.
+    (pixelemon#10).  _normalize_pixelemon_wcs absorbs this flip into the WCS
+    header so downstream code uses raw SEP coordinates.  If the normalization
+    breaks or Pixelemon changes its convention, source RA/Dec will be reflected
+    around the image center — detectable as large positional scatter versus the
+    SExtractor/astrometry.net reference catalog.
     """
 
     DEMO_FITS = Path(__file__).parent / "test_assets" / "2025-11-11_18-38-11_r_-0.05_1.00s_0131.fits"

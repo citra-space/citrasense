@@ -134,9 +134,7 @@ class PhotometryProcessor(AbstractImageProcessor):
             header = primary.header
             nx = int(header["NAXIS1"])  # type: ignore[arg-type]
             ny = int(header["NAXIS2"])  # type: ignore[arg-type]
-            # Pixelemon's WCS uses y_wcs = height-1-y_sep (pixelemon#10).
-            # Image center in SEP coords is (nx/2, ny/2); transform to WCS y.
-            center = wcs.pixel_to_world(nx / 2, ny - 1 - ny / 2)
+            center = wcs.pixel_to_world(nx / 2, ny / 2)
             ra_center = float(center.ra.deg)  # type: ignore[union-attr]
             dec_center = float(center.dec.deg)  # type: ignore[union-attr]
 

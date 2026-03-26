@@ -268,32 +268,33 @@ class TestDrawAnnotations:
 
 
 class TestRadecToPixelFlip:
-    """Verify _radec_to_pixel maps WCS pixel y directly to display y.
+    """Verify _radec_to_pixel inverts Y for display-flipped images.
 
-    Pixelemon's WCS uses y_wcs = height-1-y_sep internally, and the display
-    image is np.flipud'd, so display_row = height-1-y_sep = y_wcs.
-    No extra flip is needed — y_wcs maps directly to the display row.
+    The WCS is normalized at the Pixelemon boundary (_normalize_pixelemon_wcs)
+    so it follows standard FITS convention (y=0 at bottom).  The display image
+    is np.flipud'd (row 0 at top), so _radec_to_pixel applies height-1-y to
+    convert from FITS pixel coords to display coords.
     See pixelemon#10 / citrascope#197.
     """
 
-    def test_y_passthrough_from_wcs(self):
+    def test_y_is_flipped_relative_to_image_height(self):
         wcs = MagicMock()
         wcs.world_to_pixel_values.return_value = (50.0, 30.0)
         px, py = AnnotatedImageProcessor._radec_to_pixel(wcs, 180.0, 45.0, img_height=200)
         assert px == 50
-        assert py == 30
+        assert py == 200 - 1 - 30  # 169
 
-    def test_low_y_stays_near_top(self):
+    def test_bottom_row_maps_to_top_of_display(self):
         wcs = MagicMock()
         wcs.world_to_pixel_values.return_value = (10.0, 0.0)
         _px, py = AnnotatedImageProcessor._radec_to_pixel(wcs, 180.0, 45.0, img_height=100)
-        assert py == 0
+        assert py == 99
 
-    def test_high_y_stays_near_bottom(self):
+    def test_top_row_maps_to_bottom_of_display(self):
         wcs = MagicMock()
         wcs.world_to_pixel_values.return_value = (10.0, 99.0)
         _px, py = AnnotatedImageProcessor._radec_to_pixel(wcs, 180.0, 45.0, img_height=100)
-        assert py == 99
+        assert py == 0
 
     def test_wcs_error_returns_none(self):
         wcs = MagicMock()
