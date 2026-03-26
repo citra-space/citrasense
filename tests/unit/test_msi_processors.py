@@ -485,11 +485,10 @@ class TestFullPipelineDemoFits:
         assert result.should_upload is True
         assert result.extracted_data["plate_solver.plate_solved"] is True
         observations = result.extracted_data.get("satellite_matcher.satellite_observations", [])
-        # Multi-TLE path: pipeline ran end-to-end and the satellite matcher executed.
-        # We do not assert a minimum count here because Pixelemon's plate-solve WCS has
-        # ~2-4 arcmin RMS accuracy across the full field, which may not meet the satellite
-        # matcher's 1-arcmin KDTree threshold.  Algorithm correctness (6/6 detections) is
-        # validated by TestSatelliteMatcherProcessor using the reference astrometry.net WCS.
+        # The Pixelemon WCS uses a non-standard y convention (pixelemon#10);
+        # _extract_sources compensates for this.  With the fix in place the
+        # Pixelemon path should produce matches comparable to the reference
+        # astrometry.net WCS validated in TestSatelliteMatcherProcessor.
         assert isinstance(observations, list)
         for obs in observations:
             assert obs.get("norad_id") in elset_ids
@@ -644,6 +643,94 @@ _SPIRIT_TELESCOPE_RECORD = {
     "verticalPixelCount": 3008,
     "imageCircleDiameter": 28.0,
 }
+
+
+@pytest.mark.slow
+class TestPixelemonYFlipRegression:
+    """Guard against Y-coordinate inversion in the Pixelemon WCS path.
+
+    Pixelemon's plate_solve builds its WCS with y_wcs = height-1-y_sep
+    (pixelemon#10).  _extract_sources compensates by applying the same
+    transform before all_pix2world.  If either side changes, source RA/Dec
+    will be reflected around the image center — detectable as large positional
+    scatter versus the SExtractor/astrometry.net reference catalog.
+    """
+
+    DEMO_FITS = Path(__file__).parent / "test_assets" / "2025-11-11_18-38-11_r_-0.05_1.00s_0131.fits"
+    REF_CAT = Path(__file__).parent / "test_assets" / "2025-11-11_18-38-11_r_-0.05_1.00s_0131.cat"
+
+    def test_pixelemon_source_radec_agrees_with_reference(self, tmp_path, run_from_repo_root):
+        """Plate-solve with Pixelemon, extract sources, then cross-match against
+        the SExtractor reference catalog.  A Y-flip regression would push RMS
+        from sub-arcsecond to tens of arcminutes for off-center sources."""
+        from scipy.spatial import KDTree
+
+        if not self.DEMO_FITS.exists():
+            pytest.skip("Demo FITS not found")
+        if not self.REF_CAT.exists():
+            pytest.skip("Reference catalog not found")
+        if not check_pixelemon():
+            pytest.skip("Pixelemon not available")
+
+        working_dir = tmp_path / "working"
+        working_dir.mkdir()
+
+        class FakeLoc:
+            def get_current_location(self):
+                return {"latitude": 31.9070277777778, "longitude": -109.021111111111, "altitude": 1250.0}
+
+        context = ProcessingContext(
+            image_path=self.DEMO_FITS,
+            working_image_path=self.DEMO_FITS,
+            working_dir=working_dir,
+            image_data=None,
+            task=Mock(satelliteName="TEST", satelliteId="0", assigned_filter_name="Clear"),
+            telescope_record=_PLANEWAVE_TELESCOPE_RECORD,
+            ground_station_record=None,
+            settings=Mock(),
+            location_service=FakeLoc(),
+            logger=Mock(),
+        )
+
+        processor = PlateSolverProcessor()
+        result = processor.process(context)
+        assert result.extracted_data.get("plate_solved"), f"Plate solve failed: {result.reason}"
+
+        sep_df = context.detected_sources
+        assert sep_df is not None, "PlateSolverProcessor did not populate detected_sources"
+
+        ref_df = pd.read_csv(
+            self.REF_CAT,
+            sep=r"\s+",
+            comment="#",
+            header=None,
+            usecols=[4, 5, 8, 9, 10],
+            names=["mag", "magerr", "ra", "dec", "elongation"],
+        )
+
+        # Cross-match: for each SExtractor source, find nearest Pixelemon source
+        sep_coords = sep_df[["ra", "dec"]].values
+        ref_coords = ref_df[["ra", "dec"]].values
+        sep_tree = KDTree(sep_coords)
+        dists, _ = sep_tree.query(ref_coords)
+        match_mask = dists < (10.0 / 3600.0)  # 10 arcsec tolerance
+
+        matched_dists_arcsec = dists[match_mask] * 3600.0
+        rms_arcsec = float((matched_dists_arcsec**2).mean() ** 0.5)
+
+        # With correct Y handling, RMS should be well under 10 arcsec.
+        # A Y-flip regression would push it to thousands of arcsec for
+        # sources away from the image center.
+        assert rms_arcsec < 10.0, (
+            f"Positional RMS between Pixelemon and reference catalog is {rms_arcsec:.1f} arcsec "
+            f"(threshold 10 arcsec) — possible Y-flip regression (pixelemon#10 / citrascope#197)"
+        )
+
+        # Sanity: at least 50% of reference sources should have a Pixelemon match
+        match_fraction = match_mask.sum() / len(ref_coords) if len(ref_coords) > 0 else 0
+        assert match_fraction >= 0.5, (
+            f"Only {match_fraction:.0%} of reference sources matched — " f"expected >= 50% (possible Y-flip regression)"
+        )
 
 
 @pytest.mark.slow

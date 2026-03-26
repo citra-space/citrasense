@@ -269,7 +269,11 @@ class AnnotatedImageProcessor(AbstractImageProcessor):
         try:
             result = wcs.world_to_pixel_values(ra_deg, dec_deg)
             px = round(float(result[0]))
-            py = img_height - 1 - round(float(result[1]))
+            # Pixelemon's WCS returns y in its own flipped convention
+            # (y_wcs = height-1-y_sep). After np.flipud in _stretch_to_rgb,
+            # display row = height-1-y_sep = y_wcs, so no extra flip needed.
+            # Tracked in pixelemon#10.
+            py = round(float(result[1]))
             return px, py
         except Exception:
             return None, None
@@ -331,8 +335,12 @@ class AnnotatedImageProcessor(AbstractImageProcessor):
             x = cx - text_w // 2
             y = cy + _STAR_RADIUS + _LABEL_GAP
             draw.text(
-                (x, y), text, fill=color, font=font,
-                stroke_width=3, stroke_fill=_OUTLINE_COLOR,
+                (x, y),
+                text,
+                fill=color,
+                font=font,
+                stroke_width=3,
+                stroke_fill=_OUTLINE_COLOR,
             )
         except Exception:
             pass

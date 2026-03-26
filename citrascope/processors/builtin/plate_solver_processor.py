@@ -303,7 +303,11 @@ class PlateSolverProcessor(AbstractImageProcessor):
 
         x = objects["x"][mask]
         y = objects["y"][mask]
-        ra, dec = wcs.all_pix2world(x, y, 0)
+        # Pixelemon's WCS is fitted with y_wcs = height-1-y_sep (see plate_solve
+        # in _telescope_image.py). We must apply the same transform so SEP pixel
+        # positions produce correct sky coordinates.  Tracked in pixelemon#10.
+        y_wcs = image.height - 1 - y
+        ra, dec = wcs.all_pix2world(x, y_wcs, 0)
 
         return pd.DataFrame(
             {
