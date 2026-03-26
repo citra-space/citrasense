@@ -806,9 +806,19 @@ class TestPixelemonYFlipRegression:
         # Cross-match: for each SExtractor source, find nearest Pixelemon source
         sep_coords = sep_df[["ra", "dec"]].values
         ref_coords = ref_df[["ra", "dec"]].values
+        assert len(sep_coords) > 0, "Pixelemon returned zero detections — cannot cross-match"
+        assert len(ref_coords) > 0, "Reference catalog is empty — cannot cross-match"
+
         sep_tree = KDTree(sep_coords)
         dists, _ = sep_tree.query(ref_coords)
         match_mask = dists < (10.0 / 3600.0)  # 10 arcsec tolerance
+
+        num_matches = int(match_mask.sum())
+        if num_matches == 0:
+            pytest.fail(
+                "No cross-matches within 10 arcsec between Pixelemon and reference catalog — "
+                "possible Y-flip regression or failed plate solve"
+            )
 
         matched_dists_arcsec = dists[match_mask] * 3600.0
         rms_arcsec = float((matched_dists_arcsec**2).mean() ** 0.5)
