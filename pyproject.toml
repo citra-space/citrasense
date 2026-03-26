@@ -49,6 +49,7 @@ dependencies = [
   "pixelemon>=0.7.0",
   "keplemon>=3.6.3",
   "plotly", # required by pixelemon
+  "astropy-healpix>=1.0.0",
   "astroquery>=0.4.6",
 ]
 
