@@ -269,6 +269,8 @@ class AnnotatedImageProcessor(AbstractImageProcessor):
         try:
             result = wcs.world_to_pixel_values(ra_deg, dec_deg)
             px = round(float(result[0]))
+            # WCS pixel y is 0 at bottom (FITS convention); display image is
+            # np.flipud'd so row 0 is at top.  Invert for display coordinates.
             py = img_height - 1 - round(float(result[1]))
             return px, py
         except Exception:
@@ -331,8 +333,12 @@ class AnnotatedImageProcessor(AbstractImageProcessor):
             x = cx - text_w // 2
             y = cy + _STAR_RADIUS + _LABEL_GAP
             draw.text(
-                (x, y), text, fill=color, font=font,
-                stroke_width=3, stroke_fill=_OUTLINE_COLOR,
+                (x, y),
+                text,
+                fill=color,
+                font=font,
+                stroke_width=3,
+                stroke_fill=_OUTLINE_COLOR,
             )
         except Exception:
             pass

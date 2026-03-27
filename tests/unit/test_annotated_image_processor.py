@@ -268,7 +268,14 @@ class TestDrawAnnotations:
 
 
 class TestRadecToPixelFlip:
-    """Verify _radec_to_pixel inverts Y for display-flipped images."""
+    """Verify _radec_to_pixel inverts Y for display-flipped images.
+
+    The WCS is normalized at the Pixelemon boundary (_normalize_pixelemon_wcs)
+    so it follows standard FITS convention (y=0 at bottom).  The display image
+    is np.flipud'd (row 0 at top), so _radec_to_pixel applies height-1-y to
+    convert from FITS pixel coords to display coords.
+    See pixelemon#10 / citrascope#197.
+    """
 
     def test_y_is_flipped_relative_to_image_height(self):
         wcs = MagicMock()
