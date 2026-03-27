@@ -88,6 +88,37 @@ class TestStretchToRgb:
         assert arr.min() == 0
 
 
+class TestStretchFunctions:
+    """Test _linear_stretch and _power_stretch independently."""
+
+    def test_linear_stretch_maps_lo_to_0_and_hi_to_255(self):
+        arr = np.array([100.0, 200.0, 300.0])
+        result = AnnotatedImageProcessor._linear_stretch(arr, lo=100.0, hi=300.0)
+        assert result[0] == 0
+        assert result[1] == 127  # midpoint
+        assert result[2] == 255
+
+    def test_linear_stretch_clips_outside_range(self):
+        arr = np.array([0.0, 500.0])
+        result = AnnotatedImageProcessor._linear_stretch(arr, lo=100.0, hi=300.0)
+        assert result[0] == 0
+        assert result[1] == 255
+
+    def test_power_stretch_darkens_midtones(self):
+        arr = np.array([200.0])
+        lo, hi = 100.0, 300.0
+        result = AnnotatedImageProcessor._power_stretch(arr, lo, hi)
+        # 0.5^3 * 255 ≈ 31 — well below the linear midpoint of 127
+        assert result[0] == 31
+
+    def test_power_stretch_preserves_extremes(self):
+        arr = np.array([100.0, 300.0, 50.0])
+        result = AnnotatedImageProcessor._power_stretch(arr, lo=100.0, hi=300.0)
+        assert result[0] == 0
+        assert result[1] == 255
+        assert result[2] == 0  # below lo, clipped
+
+
 class TestParseAnnotations:
     def test_separates_matched_and_unmatched(self):
         matched = [{"norad_id": "25544", "name": "ISS", "ra": 180.0, "dec": 45.0}]

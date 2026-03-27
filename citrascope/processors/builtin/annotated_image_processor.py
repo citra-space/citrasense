@@ -20,19 +20,18 @@ if TYPE_CHECKING:
 
 _STRETCH_LO_PERCENTILE = 2.0
 _STRETCH_HI_PERCENTILE = 98.0
+_POWER_EXPONENT = 3.0
 
 _MATCH_COLOR = (237, 79, 0)  # #ED4F00 — confirmed satellite matches
 _PREDICTION_COLOR = (238, 162, 1)  # #EEA201 — TLE-predicted positions
 _DETECTION_COLOR = (154, 186, 56)  # #9ABA38 — satellite detections (elongated sources)
 _STAR_COLOR = (64, 151, 138)  # #40978A — star detections (point-like sources)
-_OUTLINE_COLOR = (18, 18, 18)  # #121212 — dark outline behind colored circles
 _TEXT_BG_COLOR = (0, 0, 0)  # Black overlay strip
 _TEXT_COLOR = (255, 255, 255)  # White text
 
 _FONT_SIZE = 46
 _HEADER_FONT_SIZE = 93
 _STROKE_WIDTH = 6
-_OUTLINE_WIDTH = 12
 _IMAGE_FORMAT = "PNG"
 
 _STAR_RADIUS = 75
@@ -133,6 +132,21 @@ class AnnotatedImageProcessor(AbstractImageProcessor):
         )
 
     @staticmethod
+    def _linear_stretch(arr: np.ndarray, lo: float, hi: float) -> np.ndarray:
+        """Linear stretch: maps [lo, hi] linearly to [0, 255]."""
+        return np.clip((arr - lo) / (hi - lo) * 255.0, 0, 255).astype(np.uint8)
+
+    @staticmethod
+    def _power_stretch(arr: np.ndarray, lo: float, hi: float) -> np.ndarray:
+        """Power stretch: normalizes to [0, 1] then applies x^exponent.
+
+        Darkens the background while keeping bright stars visible, similar
+        to DS9's "power" scale setting.
+        """
+        normalized = np.clip((arr - lo) / (hi - lo), 0.0, 1.0)
+        return (np.power(normalized, _POWER_EXPONENT) * 255.0).astype(np.uint8)
+
+    @staticmethod
     def _stretch_to_rgb(data: np.ndarray) -> Image.Image:
         """Auto-stretch a raw pixel array to an 8-bit RGB PIL Image."""
         arr = np.asarray(data, dtype=np.float64)
@@ -147,7 +161,8 @@ class AnnotatedImageProcessor(AbstractImageProcessor):
         if hi <= lo:
             hi = lo + 1.0
 
-        stretched = np.clip((arr - lo) / (hi - lo) * 255.0, 0, 255).astype(np.uint8)
+        # stretched = AnnotatedImageProcessor._linear_stretch(arr, lo, hi)
+        stretched = AnnotatedImageProcessor._power_stretch(arr, lo, hi)
         stretched = np.flipud(stretched)
 
         if stretched.ndim == 2:
@@ -278,12 +293,8 @@ class AnnotatedImageProcessor(AbstractImageProcessor):
 
     @staticmethod
     def _draw_circle(draw: ImageDraw.ImageDraw, cx: int, cy: int, color: tuple, radius: int):
-        extend = (_OUTLINE_WIDTH - _STROKE_WIDTH) // 2
-        outline_r = radius + extend
-        outline_bbox = (cx - outline_r, cy - outline_r, cx + outline_r, cy + outline_r)
-        color_bbox = (cx - radius, cy - radius, cx + radius, cy + radius)
-        draw.ellipse(outline_bbox, outline=_OUTLINE_COLOR, width=_OUTLINE_WIDTH)
-        draw.ellipse(color_bbox, outline=color, width=_STROKE_WIDTH)
+        bbox = (cx - radius, cy - radius, cx + radius, cy + radius)
+        draw.ellipse(bbox, outline=color, width=_STROKE_WIDTH)
 
     @staticmethod
     def _draw_dashed_circle(
@@ -294,20 +305,13 @@ class AnnotatedImageProcessor(AbstractImageProcessor):
         radius: int,
         dash_count: int = 16,
     ):
-        """Draw a dashed circle as alternating arcs with a dark outline."""
-        extend = (_OUTLINE_WIDTH - _STROKE_WIDTH) // 2
-        outline_r = radius + extend
-        outline_bbox = (cx - outline_r, cy - outline_r, cx + outline_r, cy + outline_r)
-        color_bbox = (cx - radius, cy - radius, cx + radius, cy + radius)
+        """Draw a dashed circle as alternating arcs."""
+        bbox = (cx - radius, cy - radius, cx + radius, cy + radius)
         arc_span = 360.0 / dash_count
         for i in range(0, dash_count, 2):
             start_angle = i * arc_span
             end_angle = start_angle + arc_span
-            draw.arc(outline_bbox, start=start_angle, end=end_angle, fill=_OUTLINE_COLOR, width=_OUTLINE_WIDTH)
-        for i in range(0, dash_count, 2):
-            start_angle = i * arc_span
-            end_angle = start_angle + arc_span
-            draw.arc(color_bbox, start=start_angle, end=end_angle, fill=color, width=_STROKE_WIDTH)
+            draw.arc(bbox, start=start_angle, end=end_angle, fill=color, width=_STROKE_WIDTH)
 
     @staticmethod
     def _safe_text(draw: ImageDraw.ImageDraw, xy: tuple, text: str, color: tuple, font) -> None:
@@ -337,8 +341,6 @@ class AnnotatedImageProcessor(AbstractImageProcessor):
                 text,
                 fill=color,
                 font=font,
-                stroke_width=3,
-                stroke_fill=_OUTLINE_COLOR,
             )
         except Exception:
             pass
@@ -355,14 +357,15 @@ class AnnotatedImageProcessor(AbstractImageProcessor):
         """Draw a single-line info strip with inline color legend at the top.
 
         The header font starts at _HEADER_FONT_SIZE and scales down so the full
-        text (info + legend) fits within the image width.
+        text (info + legend) fits within the image width.  Legend entries use
+        drawn circles (font-independent) instead of Unicode bullet characters.
         """
         margin = 20
         legend_items = [
-            (_STAR_COLOR, "\u25cf Plate Solver Stars"),
-            (_DETECTION_COLOR, "\u25cf Plate Solver Detections"),
-            (_PREDICTION_COLOR, "\u25cf TLE Predicted"),
-            (_MATCH_COLOR, "\u25cf Satellite Matched"),
+            (_STAR_COLOR, "Plate Solver Stars"),
+            (_DETECTION_COLOR, "Plate Solver Detections"),
+            (_PREDICTION_COLOR, "TLE Predicted"),
+            (_MATCH_COLOR, "Satellite Matched"),
         ]
 
         parts: list[str] = []
@@ -373,7 +376,7 @@ class AnnotatedImageProcessor(AbstractImageProcessor):
         parts.append(f"{match_count} match{'es' if match_count != 1 else ''}")
         info_text = "  |  ".join(parts) + "  |  "
 
-        legend_text = "  ".join(label for _, label in legend_items)
+        legend_text = "  ".join(f"O {label}" for _, label in legend_items)
         full_text = info_text + legend_text
 
         header_font, font_size = AnnotatedImageProcessor._fit_header_font(draw, full_text, img_width, margin)
@@ -396,7 +399,17 @@ class AnnotatedImageProcessor(AbstractImageProcessor):
         except Exception:
             x = margin + len(info_text) * (font_size * 3 // 5)
 
+        circle_d = max(6, int(text_height * 0.55))
+        circle_r = circle_d // 2
+        circle_gap = max(4, circle_d // 3)
+        circle_stroke = max(2, circle_d // 5)
+
         for color, label in legend_items:
+            cy = text_y + text_height // 2
+            circle_bbox = (x, cy - circle_r, x + circle_d, cy + circle_r)
+            draw.ellipse(circle_bbox, outline=color, width=circle_stroke)
+            x += circle_d + circle_gap
+
             item = f"{label}  "
             AnnotatedImageProcessor._safe_text(draw, (x, text_y), item, color, header_font)
             try:
@@ -476,7 +489,7 @@ class AnnotatedImageProcessor(AbstractImageProcessor):
         """
         out_path = images_dir / "latest_preview.png"
         tmp_path = images_dir / "latest_preview.tmp.png"
-        img.save(str(tmp_path), _IMAGE_FORMAT)
+        img.save(str(tmp_path), _IMAGE_FORMAT, optimize=True)
         tmp_path.replace(out_path)
         return out_path
 
@@ -484,7 +497,7 @@ class AnnotatedImageProcessor(AbstractImageProcessor):
     def _save_per_task(img: Image.Image, images_dir: Path, stem: str) -> None:
         """Save a per-task annotated PNG alongside the original FITS in the images directory."""
         try:
-            img.save(str(images_dir / f"{stem}_annotated.png"), _IMAGE_FORMAT)
+            img.save(str(images_dir / f"{stem}_annotated.png"), _IMAGE_FORMAT, optimize=True)
         except Exception:
             pass
 
@@ -493,7 +506,7 @@ class AnnotatedImageProcessor(AbstractImageProcessor):
         """Save annotated PNG in the processing working directory."""
         try:
             out_path = working_dir / "annotated.png"
-            img.save(str(out_path), _IMAGE_FORMAT)
+            img.save(str(out_path), _IMAGE_FORMAT, optimize=True)
             return out_path
         except Exception:
             return None
