@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import io
 import json
 import time
 from pathlib import Path
@@ -91,9 +92,10 @@ class AnnotatedImageProcessor(AbstractImageProcessor):
             task_name = context.task.satelliteName if context.task else None
             self._draw_overlay(draw, img.width, task_name, epoch_str, match_count, font)
 
-            preview_path = self._save_preview(img, context.image_path.parent)
-            self._save_per_task(img, context.image_path.parent, context.image_path.stem)
-            working_path = self._save_to_working_dir(img, context.working_dir)
+            png_bytes = self._encode_png(img)
+            preview_path = self._save_preview(png_bytes, context.image_path.parent)
+            self._save_per_task(png_bytes, context.image_path.parent, context.image_path.stem)
+            working_path = self._save_to_working_dir(png_bytes, context.working_dir)
 
             elapsed = time.time() - start_time
             return ProcessorResult(
@@ -481,7 +483,14 @@ class AnnotatedImageProcessor(AbstractImageProcessor):
         return ImageFont.load_default()
 
     @staticmethod
-    def _save_preview(img: Image.Image, images_dir: Path) -> Path:
+    def _encode_png(img: Image.Image) -> bytes:
+        """Encode the image to PNG bytes once — all save methods write these bytes."""
+        buf = io.BytesIO()
+        img.save(buf, _IMAGE_FORMAT, optimize=True)
+        return buf.getvalue()
+
+    @staticmethod
+    def _save_preview(png_bytes: bytes, images_dir: Path) -> Path:
         """Save annotated PNG as a single rotating preview file (overwritten each time).
 
         Uses atomic write (temp file + rename) to prevent serving a partially
@@ -489,24 +498,24 @@ class AnnotatedImageProcessor(AbstractImageProcessor):
         """
         out_path = images_dir / "latest_preview.png"
         tmp_path = images_dir / "latest_preview.tmp.png"
-        img.save(str(tmp_path), _IMAGE_FORMAT, optimize=True)
+        tmp_path.write_bytes(png_bytes)
         tmp_path.replace(out_path)
         return out_path
 
     @staticmethod
-    def _save_per_task(img: Image.Image, images_dir: Path, stem: str) -> None:
+    def _save_per_task(png_bytes: bytes, images_dir: Path, stem: str) -> None:
         """Save a per-task annotated PNG alongside the original FITS in the images directory."""
         try:
-            img.save(str(images_dir / f"{stem}_annotated.png"), _IMAGE_FORMAT, optimize=True)
+            (images_dir / f"{stem}_annotated.png").write_bytes(png_bytes)
         except Exception:
             pass
 
     @staticmethod
-    def _save_to_working_dir(img: Image.Image, working_dir: Path) -> Path | None:
+    def _save_to_working_dir(png_bytes: bytes, working_dir: Path) -> Path | None:
         """Save annotated PNG in the processing working directory."""
         try:
             out_path = working_dir / "annotated.png"
-            img.save(str(out_path), _IMAGE_FORMAT, optimize=True)
+            out_path.write_bytes(png_bytes)
             return out_path
         except Exception:
             return None
