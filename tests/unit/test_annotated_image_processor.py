@@ -233,10 +233,10 @@ class TestAnnotatedImageSaving:
         permanent = Path(result.extracted_data["image_path"])
         working = Path(result.extracted_data["working_dir_path"])
         assert permanent.exists()
-        assert permanent.suffix == ".png"
-        assert permanent.name == "latest_preview.png"
+        assert permanent.suffix == ".jpg"
+        assert permanent.name == "latest_preview.jpg"
         assert working.exists()
-        assert working.name == "annotated.png"
+        assert working.name == "annotated.jpg"
 
     def test_output_is_valid_png(self, tmp_path):
         proc = AnnotatedImageProcessor()
@@ -247,7 +247,7 @@ class TestAnnotatedImageSaving:
             result = proc.process(ctx)
 
         img = Image.open(result.extracted_data["image_path"])
-        assert img.format == "PNG"
+        assert img.format == "JPEG"
         assert img.mode == "RGB"
 
     def test_large_image_is_scaled_to_annotated_width(self, tmp_path):

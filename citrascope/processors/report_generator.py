@@ -99,7 +99,7 @@ def _section_header(task: dict | None, fits_header: dict | None) -> str:
 
 
 def _section_image(working_dir: Path) -> str:
-    for name in ("annotated.png", "latest_preview.png"):
+    for name in ("annotated.jpg", "annotated.png", "latest_preview.jpg", "latest_preview.png"):
         uri = _embed_image(working_dir / name)
         if uri:
             return f"""

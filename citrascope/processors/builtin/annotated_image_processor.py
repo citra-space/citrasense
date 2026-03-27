@@ -35,9 +35,10 @@ _ANNOTATED_WIDTH = 2500
 _FONT_SIZE = 22
 _HEADER_FONT_SIZE = 42
 _STROKE_WIDTH = 3
-_IMAGE_FORMAT = "PNG"
+_IMAGE_FORMAT = "JPEG"
+_IMAGE_QUALITY = 80
 
-_STAR_RADIUS = 34
+_STAR_RADIUS = 36
 _DETECTION_RADIUS = 30
 _PREDICTION_RADIUS = 27
 _MATCH_RADIUS = 24
@@ -104,7 +105,7 @@ class AnnotatedImageProcessor(AbstractImageProcessor):
             task_name = context.task.satelliteName if context.task else None
             self._draw_overlay(draw, img.width, task_name, epoch_str, match_count, font)
 
-            png_bytes = self._encode_png(img)
+            png_bytes = self._encode_image(img)
             preview_path = self._save_preview(png_bytes, context.image_path.parent)
             working_path = self._save_to_working_dir(png_bytes, context.working_dir)
 
@@ -427,15 +428,22 @@ class AnnotatedImageProcessor(AbstractImageProcessor):
         except Exception:
             x = margin + len(info_text) * (font_size * 3 // 5)
 
-        circle_d = max(6, int(text_height * 0.55))
+        circle_d = max(6, int(text_height * 0.55)) + 7
         circle_r = circle_d // 2
         circle_gap = max(4, circle_d // 3)
         circle_stroke = max(2, circle_d // 5)
 
         for color, label in legend_items:
-            cy = text_y + text_height // 2
+            cy = text_y + text_height // 2 + 2
             circle_bbox = (x, cy - circle_r, x + circle_d, cy + circle_r)
-            draw.ellipse(circle_bbox, outline=color, width=circle_stroke)
+            if color == _PREDICTION_COLOR:
+                arc_span = 360.0 / 8
+                for i in range(0, 8, 2):
+                    draw.arc(
+                        circle_bbox, start=i * arc_span, end=i * arc_span + arc_span, fill=color, width=circle_stroke
+                    )
+            else:
+                draw.ellipse(circle_bbox, outline=color, width=circle_stroke)
             x += circle_d + circle_gap
 
             item = f"{label}  "
@@ -509,10 +517,10 @@ class AnnotatedImageProcessor(AbstractImageProcessor):
         return ImageFont.load_default()
 
     @staticmethod
-    def _encode_png(img: Image.Image) -> bytes:
-        """Encode the image to PNG bytes once — all save methods write these bytes."""
+    def _encode_image(img: Image.Image) -> bytes:
+        """Encode the image once — all save methods write these bytes."""
         buf = io.BytesIO()
-        img.save(buf, _IMAGE_FORMAT, optimize=True)
+        img.save(buf, _IMAGE_FORMAT, quality=_IMAGE_QUALITY, optimize=True)
         return buf.getvalue()
 
     @staticmethod
@@ -522,8 +530,8 @@ class AnnotatedImageProcessor(AbstractImageProcessor):
         Uses atomic write (temp file + rename) to prevent serving a partially
         written image when the web endpoint reads during an overwrite.
         """
-        out_path = images_dir / "latest_preview.png"
-        tmp_path = images_dir / "latest_preview.tmp.png"
+        out_path = images_dir / "latest_preview.jpg"
+        tmp_path = images_dir / "latest_preview.tmp.jpg"
         tmp_path.write_bytes(png_bytes)
         tmp_path.replace(out_path)
         return out_path
@@ -532,7 +540,7 @@ class AnnotatedImageProcessor(AbstractImageProcessor):
     def _save_to_working_dir(png_bytes: bytes, working_dir: Path) -> Path | None:
         """Save annotated PNG in the processing working directory."""
         try:
-            out_path = working_dir / "annotated.png"
+            out_path = working_dir / "annotated.jpg"
             out_path.write_bytes(png_bytes)
             return out_path
         except Exception:
