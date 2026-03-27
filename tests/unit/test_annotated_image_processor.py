@@ -275,7 +275,8 @@ class TestAnnotatedImageSaving:
         """Images smaller than _ANNOTATED_WIDTH are kept at original size."""
         proc = AnnotatedImageProcessor()
         debug = _make_debug_json()
-        ctx = _make_context(tmp_path, image_data=np.random.randint(0, 65535, (100, 100), dtype=np.uint16), debug_json=debug)
+        data = np.random.randint(0, 65535, (100, 100), dtype=np.uint16)
+        ctx = _make_context(tmp_path, image_data=data, debug_json=debug)
 
         with patch.object(AnnotatedImageProcessor, "_load_wcs", return_value=None):
             result = proc.process(ctx)

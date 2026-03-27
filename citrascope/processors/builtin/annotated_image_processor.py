@@ -151,7 +151,7 @@ class AnnotatedImageProcessor(AbstractImageProcessor):
         return np.clip((arr - lo) / (hi - lo) * 255.0, 0, 255).astype(np.uint8)
 
     @staticmethod
-    def _power_stretch(arr: np.ndarray, lo: float, hi: float) -> np.ndarray:
+    def _power_stretch(arr: np.ndarray, lo: float | np.floating, hi: float | np.floating) -> np.ndarray:
         """Power stretch: normalizes to [0, 1] then applies x^exponent.
 
         Darkens the background while keeping bright stars visible, similar
