@@ -30,16 +30,18 @@ _STAR_COLOR = (64, 151, 138)  # #40978A — star detections (point-like sources)
 _TEXT_BG_COLOR = (0, 0, 0)  # Black overlay strip
 _TEXT_COLOR = (255, 255, 255)  # White text
 
-_FONT_SIZE = 46
-_HEADER_FONT_SIZE = 93
-_STROKE_WIDTH = 6
+_ANNOTATED_WIDTH = 2500
+
+_FONT_SIZE = 22
+_HEADER_FONT_SIZE = 42
+_STROKE_WIDTH = 3
 _IMAGE_FORMAT = "PNG"
 
-_STAR_RADIUS = 75
-_DETECTION_RADIUS = 69
-_PREDICTION_RADIUS = 63
-_MATCH_RADIUS = 57
-_LABEL_GAP = 6
+_STAR_RADIUS = 34
+_DETECTION_RADIUS = 30
+_PREDICTION_RADIUS = 27
+_MATCH_RADIUS = 24
+_LABEL_GAP = 3
 
 _MAX_STAR_MARKERS = 50
 _MAX_DETECTION_MARKERS = 200
@@ -74,6 +76,14 @@ class AnnotatedImageProcessor(AbstractImageProcessor):
 
         try:
             img = self._stretch_to_rgb(context.image_data)
+            original_height = img.height
+            pixel_scale = 1.0
+            if img.width > _ANNOTATED_WIDTH:
+                pixel_scale = _ANNOTATED_WIDTH / img.width
+                new_h = max(1, int(img.height * pixel_scale))
+                _lanczos = getattr(Image, "Resampling", Image).LANCZOS  # type: ignore[attr-defined]
+                img = img.resize((_ANNOTATED_WIDTH, new_h), _lanczos)
+
             wcs = self._load_wcs(context.working_image_path)
             debug = self._load_debug_json(context.working_dir)
 
@@ -84,17 +94,18 @@ class AnnotatedImageProcessor(AbstractImageProcessor):
 
             if wcs is not None:
                 if context.detected_sources is not None:
-                    self._draw_stars(draw, wcs, context.detected_sources, img.height)
-                    self._draw_detections(draw, wcs, context.detected_sources, img.height, context.tracking_mode)
-                self._draw_predictions(draw, wcs, unmatched_preds, font, img.height)
-                self._draw_matches(draw, wcs, matched_sats, font, img.height)
+                    self._draw_stars(draw, wcs, context.detected_sources, original_height, pixel_scale)
+                    self._draw_detections(
+                        draw, wcs, context.detected_sources, original_height, context.tracking_mode, pixel_scale
+                    )
+                self._draw_predictions(draw, wcs, unmatched_preds, font, original_height, pixel_scale)
+                self._draw_matches(draw, wcs, matched_sats, font, original_height, pixel_scale)
 
             task_name = context.task.satelliteName if context.task else None
             self._draw_overlay(draw, img.width, task_name, epoch_str, match_count, font)
 
             png_bytes = self._encode_png(img)
             preview_path = self._save_preview(png_bytes, context.image_path.parent)
-            self._save_per_task(png_bytes, context.image_path.parent, context.image_path.stem)
             working_path = self._save_to_working_dir(png_bytes, context.working_dir)
 
             elapsed = time.time() - start_time
@@ -210,20 +221,28 @@ class AnnotatedImageProcessor(AbstractImageProcessor):
         epoch_str = debug.get("epoch")
         return observations, unmatched, epoch_str, match_count
 
-    def _draw_matches(self, draw: ImageDraw.ImageDraw, wcs: WCS, matches: list[dict], font, img_height: int) -> None:
+    def _draw_matches(
+        self, draw: ImageDraw.ImageDraw, wcs: WCS, matches: list[dict], font, img_height: int, pixel_scale: float = 1.0
+    ) -> None:
         for sat in matches:
             ra, dec = sat.get("ra"), sat.get("dec")
             name = sat.get("name", "?")
             if ra is None or dec is None:
                 continue
-            px, py = self._radec_to_pixel(wcs, ra, dec, img_height)
+            px, py = self._radec_to_pixel(wcs, ra, dec, img_height, pixel_scale)
             if px is None or py is None:
                 continue
             self._draw_circle(draw, px, py, _MATCH_COLOR, _MATCH_RADIUS)
             self._draw_label_below(draw, px, py, name, _MATCH_COLOR, font)
 
     def _draw_predictions(
-        self, draw: ImageDraw.ImageDraw, wcs: WCS, predictions: list[dict], font, img_height: int
+        self,
+        draw: ImageDraw.ImageDraw,
+        wcs: WCS,
+        predictions: list[dict],
+        font,
+        img_height: int,
+        pixel_scale: float = 1.0,
     ) -> None:
         for pred in predictions:
             ra = pred.get("predicted_ra_deg")
@@ -231,13 +250,15 @@ class AnnotatedImageProcessor(AbstractImageProcessor):
             name = pred.get("name", "?")
             if ra is None or dec is None:
                 continue
-            px, py = self._radec_to_pixel(wcs, ra, dec, img_height)
+            px, py = self._radec_to_pixel(wcs, ra, dec, img_height, pixel_scale)
             if px is None or py is None:
                 continue
             self._draw_dashed_circle(draw, px, py, _PREDICTION_COLOR, _PREDICTION_RADIUS)
             self._draw_label_below(draw, px, py, name, _PREDICTION_COLOR, font)
 
-    def _draw_stars(self, draw: ImageDraw.ImageDraw, wcs: WCS, sources: pd.DataFrame, img_height: int) -> None:
+    def _draw_stars(
+        self, draw: ImageDraw.ImageDraw, wcs: WCS, sources: pd.DataFrame, img_height: int, pixel_scale: float = 1.0
+    ) -> None:
         """Draw teal circles on the brightest point-like detected sources."""
         if sources.empty:
             return
@@ -246,7 +267,7 @@ class AnnotatedImageProcessor(AbstractImageProcessor):
         brightest = point_like.sort_values(by="mag").head(_MAX_STAR_MARKERS)  # type: ignore[call-overload]
 
         for _, row in brightest.iterrows():
-            px, py = self._radec_to_pixel(wcs, row["ra"], row["dec"], img_height)
+            px, py = self._radec_to_pixel(wcs, row["ra"], row["dec"], img_height, pixel_scale)
             if px is None or py is None:
                 continue
             self._draw_circle(draw, px, py, _STAR_COLOR, _STAR_RADIUS)
@@ -258,6 +279,7 @@ class AnnotatedImageProcessor(AbstractImageProcessor):
         sources: pd.DataFrame,
         img_height: int,
         tracking_mode: str | None,
+        pixel_scale: float = 1.0,
     ) -> None:
         """Draw yellow-green circles on elongated sources likely to be satellite streaks.
 
@@ -276,19 +298,23 @@ class AnnotatedImageProcessor(AbstractImageProcessor):
         capped = candidates.head(_MAX_DETECTION_MARKERS)
 
         for _, row in capped.iterrows():
-            px, py = self._radec_to_pixel(wcs, row["ra"], row["dec"], img_height)
+            px, py = self._radec_to_pixel(wcs, row["ra"], row["dec"], img_height, pixel_scale)
             if px is None or py is None:
                 continue
             self._draw_circle(draw, px, py, _DETECTION_COLOR, _DETECTION_RADIUS)
 
     @staticmethod
-    def _radec_to_pixel(wcs: WCS, ra_deg: float, dec_deg: float, img_height: int) -> tuple[int | None, int | None]:
+    def _radec_to_pixel(
+        wcs: WCS, ra_deg: float, dec_deg: float, img_height: int, pixel_scale: float = 1.0
+    ) -> tuple[int | None, int | None]:
         try:
             result = wcs.world_to_pixel_values(ra_deg, dec_deg)
-            px = round(float(result[0]))
             # WCS pixel y is 0 at bottom (FITS convention); display image is
             # np.flipud'd so row 0 is at top.  Invert for display coordinates.
-            py = img_height - 1 - round(float(result[1]))
+            # img_height must be the ORIGINAL (pre-resize) height for the flip,
+            # then pixel_scale maps to the downscaled canvas.
+            px = round(float(result[0]) * pixel_scale)
+            py = round((img_height - 1 - float(result[1])) * pixel_scale)
             return px, py
         except Exception:
             return None, None
@@ -501,14 +527,6 @@ class AnnotatedImageProcessor(AbstractImageProcessor):
         tmp_path.write_bytes(png_bytes)
         tmp_path.replace(out_path)
         return out_path
-
-    @staticmethod
-    def _save_per_task(png_bytes: bytes, images_dir: Path, stem: str) -> None:
-        """Save a per-task annotated PNG alongside the original FITS in the images directory."""
-        try:
-            (images_dir / f"{stem}_annotated.png").write_bytes(png_bytes)
-        except Exception:
-            pass
 
     @staticmethod
     def _save_to_working_dir(png_bytes: bytes, working_dir: Path) -> Path | None:

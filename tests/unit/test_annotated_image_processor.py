@@ -221,7 +221,7 @@ class TestFailOpen:
 
 
 class TestAnnotatedImageSaving:
-    def test_saves_preview_per_task_and_working_copies(self, tmp_path):
+    def test_saves_preview_and_working_copies(self, tmp_path):
         proc = AnnotatedImageProcessor()
         debug = _make_debug_json()
         ctx = _make_context(tmp_path, debug_json=debug)
@@ -238,10 +238,6 @@ class TestAnnotatedImageSaving:
         assert working.exists()
         assert working.name == "annotated.png"
 
-        per_task = ctx.image_path.parent / f"{ctx.image_path.stem}_annotated.png"
-        assert per_task.exists()
-        assert per_task.suffix == ".png"
-
     def test_output_is_valid_png(self, tmp_path):
         proc = AnnotatedImageProcessor()
         debug = _make_debug_json()
@@ -253,6 +249,40 @@ class TestAnnotatedImageSaving:
         img = Image.open(result.extracted_data["image_path"])
         assert img.format == "PNG"
         assert img.mode == "RGB"
+
+    def test_large_image_is_scaled_to_annotated_width(self, tmp_path):
+        """Images wider than _ANNOTATED_WIDTH are downscaled before annotation."""
+        from citrascope.processors.builtin.annotated_image_processor import _ANNOTATED_WIDTH
+
+        proc = AnnotatedImageProcessor()
+        debug = _make_debug_json()
+        input_w, input_h = 5000, 200
+        ctx = _make_context(
+            tmp_path,
+            image_data=np.random.randint(0, 65535, (input_h, input_w), dtype=np.uint16),
+            debug_json=debug,
+        )
+
+        with patch.object(AnnotatedImageProcessor, "_load_wcs", return_value=None):
+            result = proc.process(ctx)
+
+        assert result.confidence > 0, f"Processor failed: {result.reason}"
+        img = Image.open(result.extracted_data["image_path"])
+        assert img.width == _ANNOTATED_WIDTH
+        assert img.height == int(input_h * (_ANNOTATED_WIDTH / input_w))
+
+    def test_small_image_is_not_upscaled(self, tmp_path):
+        """Images smaller than _ANNOTATED_WIDTH are kept at original size."""
+        proc = AnnotatedImageProcessor()
+        debug = _make_debug_json()
+        ctx = _make_context(tmp_path, image_data=np.random.randint(0, 65535, (100, 100), dtype=np.uint16), debug_json=debug)
+
+        with patch.object(AnnotatedImageProcessor, "_load_wcs", return_value=None):
+            result = proc.process(ctx)
+
+        img = Image.open(result.extracted_data["image_path"])
+        assert img.width == 100
+        assert img.height == 100
 
 
 class TestDrawAnnotations:
@@ -334,6 +364,13 @@ class TestRadecToPixelFlip:
         assert px is None
         assert py is None
 
+    def test_pixel_scale_maps_coords_to_downscaled_canvas(self):
+        wcs = MagicMock()
+        wcs.world_to_pixel_values.return_value = (1000.0, 500.0)
+        px, py = AnnotatedImageProcessor._radec_to_pixel(wcs, 180.0, 45.0, img_height=2000, pixel_scale=0.5)
+        assert px == 500  # 1000 * 0.5
+        assert py == round((2000 - 1 - 500) * 0.5)  # 750
+
 
 class TestDrawStars:
     """Verify star circle markers are drawn from detected_sources."""
@@ -375,7 +412,7 @@ class TestDrawStars:
         wcs = MagicMock()
         call_count = 0
 
-        def counting_radec(wcs, ra, dec, h):
+        def counting_radec(wcs, ra, dec, h, pixel_scale=1.0):
             nonlocal call_count
             call_count += 1
             return 100, 100

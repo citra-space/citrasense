@@ -210,11 +210,5 @@ class UploadQueue(BaseWorkQueue):
                     related.unlink()
                     self.logger.debug(f"Deleted {related}")
 
-            # Delete per-task annotated preview
-            annotated = path.parent / f"{path.stem}_annotated.png"
-            if annotated.exists():
-                annotated.unlink()
-                self.logger.debug(f"Deleted {annotated}")
-
         except Exception as e:
             self.logger.warning(f"Failed to cleanup files for {filepath}: {e}")
