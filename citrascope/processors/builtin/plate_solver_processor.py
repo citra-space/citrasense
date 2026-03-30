@@ -31,13 +31,24 @@ if TYPE_CHECKING:
 _MIN_SOURCE_SNR = 3.0
 
 
-def _detection_settings() -> DetectionSettings:
-    """SEP detection settings derived from MSI's tuned SExtractor config.
+def _detection_settings(settings: Any | None = None) -> DetectionSettings:
+    """SEP detection settings, read from CitraScopeSettings when available.
 
-    These replace Pixelemon's streak_source_defaults (detection_sigma=2,
+    Defaults are derived from MSI's tuned SExtractor config. These replace
+    Pixelemon's streak_source_defaults (detection_sigma=2,
     deblend_mesh_count=1, deblend_contrast=1.0) which effectively disable
     deblending and cause bright stars to be missed.
     """
+    if settings:
+        return DetectionSettings(
+            detection_sigma=settings.detection_sigma,
+            min_pixel_count=settings.detection_min_pixel_count,
+            deblend_mesh_count=settings.detection_deblend_mesh_count,
+            deblend_contrast=settings.detection_deblend_contrast,
+            merge_small_detections=True,
+            full_width_half_maximum=settings.detection_fwhm,
+            kernel_array_size=settings.detection_kernel_size,
+        )
     return DetectionSettings(
         detection_sigma=5.0,
         min_pixel_count=3,
@@ -49,8 +60,16 @@ def _detection_settings() -> DetectionSettings:
     )
 
 
-def _background_settings() -> BackgroundSettings:
-    """SEP background settings derived from MSI's tuned SExtractor config."""
+def _background_settings(settings: Any | None = None) -> BackgroundSettings:
+    """SEP background settings, read from CitraScopeSettings when available.
+
+    Defaults are derived from MSI's tuned SExtractor config.
+    """
+    if settings:
+        return BackgroundSettings(
+            mesh_count=settings.background_mesh_count,
+            filter_size=settings.background_filter_size,
+        )
     return BackgroundSettings(
         mesh_count=64,
         filter_size=3,
@@ -327,8 +346,8 @@ class PlateSolverProcessor(AbstractImageProcessor):
             PlateSolverProcessor._tetra_loaded = True
         telescope = _build_telescope_for_image(image_path, context)
         image = _TelescopeImage.from_fits_file(image_path, telescope)
-        image.detection_settings = _detection_settings()
-        image.background_settings = _background_settings()
+        image.detection_settings = _detection_settings(context.settings if context else None)
+        image.background_settings = _background_settings(context.settings if context else None)
         solve = image.plate_solve  # triggers internal fit_wcs_from_points(sip_degree=5)
 
         if solve is None:

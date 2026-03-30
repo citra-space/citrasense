@@ -25,6 +25,7 @@ from citrascope.hardware.adapter_registry import get_adapter_schema as get_schem
 from citrascope.hardware.adapter_registry import list_adapters
 from citrascope.location.twilight import compute_twilight
 from citrascope.logging import CITRASCOPE_LOGGER
+from citrascope.settings.citrascope_settings import CitraScopeSettings
 
 # Standard astronomical filter names for the editable filter name dropdown.
 # Mirrors the canonical names from the Citra API's filter library so that
@@ -237,6 +238,11 @@ class CitraScopeWebApp:
         self.templates = Jinja2Templates(directory=str(templates_dir))
         self._cache_bust = str(int(time.time()))
         self.templates.env.globals["cache_bust"] = self._cache_bust
+        self.templates.env.globals["detection_defaults"] = {
+            name: field.default
+            for name, field in CitraScopeSettings.model_fields.items()
+            if name.startswith(("detection_", "background_"))
+        }
 
         # Register routes
         self._setup_routes()

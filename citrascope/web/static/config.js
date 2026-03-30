@@ -298,6 +298,14 @@ async function saveConfiguration(event) {
         time_check_interval_minutes: parseInt(store.config.time_check_interval_minutes || 5, 10),
         time_offset_pause_ms: parseFloat(store.config.time_offset_pause_ms || 500),
         gps_update_interval_minutes: parseInt(store.config.gps_update_interval_minutes || 5, 10),
+        detection_sigma: parseFloat(store.config.detection_sigma || 5.0),
+        detection_min_pixel_count: parseInt(store.config.detection_min_pixel_count || 3, 10),
+        detection_deblend_mesh_count: parseInt(store.config.detection_deblend_mesh_count || 32, 10),
+        detection_deblend_contrast: parseFloat(store.config.detection_deblend_contrast ?? 0.005),
+        detection_fwhm: parseInt(store.config.detection_fwhm || 5, 10),
+        detection_kernel_size: parseInt(store.config.detection_kernel_size || 13, 10),
+        background_mesh_count: parseInt(store.config.background_mesh_count || 64, 10),
+        background_filter_size: parseInt(store.config.background_filter_size || 3, 10),
     };
 
     COMPUTED_FIELDS.forEach(f => delete config[f]);

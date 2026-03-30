@@ -618,6 +618,80 @@
                                         </template>
                                     </div>
                                 </div>
+
+                                <!-- Source Detection Parameters -->
+                                <script>const DETECTION_DEFAULTS = {{ detection_defaults | tojson }};</script>
+                                <hr class="border-secondary" />
+                                <div class="col-12">
+                                    <h6 class="text-muted mb-2"><i class="bi bi-stars me-2"></i>Source Detection</h6>
+                                    <small class="text-muted d-block mb-3">
+                                        Source Extraction (SEP) parameters for plate solving and source detection. These can be telescope-specific. Adjust if bright stars are missed or dim noise dominates.
+                                    </small>
+                                    <div class="row g-2">
+                                        <div class="col-6 col-md-3">
+                                            <label class="form-label small text-muted mb-1" for="detection_sigma">Detection sigma</label>
+                                            <input type="number" class="form-control form-control-sm bg-dark text-light border-secondary"
+                                                   id="detection_sigma" step="0.5" min="1" max="20"
+                                                   x-model.number="$store.citrascope.config.detection_sigma">
+                                            <small class="text-muted">Threshold above background</small>
+                                        </div>
+                                        <div class="col-6 col-md-3">
+                                            <label class="form-label small text-muted mb-1" for="detection_min_pixel_count">Min pixels</label>
+                                            <input type="number" class="form-control form-control-sm bg-dark text-light border-secondary"
+                                                   id="detection_min_pixel_count" step="1" min="1" max="50"
+                                                   x-model.number="$store.citrascope.config.detection_min_pixel_count">
+                                            <small class="text-muted">Min connected pixels</small>
+                                        </div>
+                                        <div class="col-6 col-md-3">
+                                            <label class="form-label small text-muted mb-1" for="detection_fwhm">FWHM</label>
+                                            <input type="number" class="form-control form-control-sm bg-dark text-light border-secondary"
+                                                   id="detection_fwhm" step="1" min="1" max="20"
+                                                   x-model.number="$store.citrascope.config.detection_fwhm">
+                                            <small class="text-muted">Convolution kernel FWHM</small>
+                                        </div>
+                                        <div class="col-6 col-md-3">
+                                            <label class="form-label small text-muted mb-1" for="detection_kernel_size">Kernel size</label>
+                                            <input type="number" class="form-control form-control-sm bg-dark text-light border-secondary"
+                                                   id="detection_kernel_size" step="2" min="3" max="65"
+                                                   x-model.number="$store.citrascope.config.detection_kernel_size">
+                                            <small class="text-muted">Convolution array size (odd)</small>
+                                        </div>
+                                        <div class="col-6 col-md-3">
+                                            <label class="form-label small text-muted mb-1" for="detection_deblend_mesh_count">Deblend mesh</label>
+                                            <input type="number" class="form-control form-control-sm bg-dark text-light border-secondary"
+                                                   id="detection_deblend_mesh_count" step="1" min="1" max="64"
+                                                   x-model.number="$store.citrascope.config.detection_deblend_mesh_count">
+                                            <small class="text-muted">Deblending thresholds</small>
+                                        </div>
+                                        <div class="col-6 col-md-3">
+                                            <label class="form-label small text-muted mb-1" for="detection_deblend_contrast">Deblend contrast</label>
+                                            <input type="number" class="form-control form-control-sm bg-dark text-light border-secondary"
+                                                   id="detection_deblend_contrast" step="0.001" min="0" max="1"
+                                                   x-model.number="$store.citrascope.config.detection_deblend_contrast">
+                                            <small class="text-muted">Min contrast for deblending</small>
+                                        </div>
+                                        <div class="col-6 col-md-3">
+                                            <label class="form-label small text-muted mb-1" for="background_mesh_count">Background mesh</label>
+                                            <input type="number" class="form-control form-control-sm bg-dark text-light border-secondary"
+                                                   id="background_mesh_count" step="1" min="10" max="100"
+                                                   x-model.number="$store.citrascope.config.background_mesh_count">
+                                            <small class="text-muted">Background grid divisions</small>
+                                        </div>
+                                        <div class="col-6 col-md-3">
+                                            <label class="form-label small text-muted mb-1" for="background_filter_size">Background filter</label>
+                                            <input type="number" class="form-control form-control-sm bg-dark text-light border-secondary"
+                                                   id="background_filter_size" step="1" min="1" max="10"
+                                                   x-model.number="$store.citrascope.config.background_filter_size">
+                                            <small class="text-muted">Background smoothing size</small>
+                                        </div>
+                                    </div>
+                                    <div class="d-flex justify-content-end mt-3">
+                                        <button type="button" class="btn btn-sm btn-outline-primary"
+                                                @click="Object.assign($store.citrascope.config, DETECTION_DEFAULTS)">
+                                            <i class="bi bi-arrow-counterclockwise me-1"></i>Reset Defaults
+                                        </button>
+                                    </div>
+                                </div>
                             </div>
                         </div>
                     </div>

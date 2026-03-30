@@ -56,6 +56,16 @@ class CitraScopeSettings(BaseModel):
     skip_upload: bool = False
     use_local_apass_catalog: bool = False
 
+    # Source detection (SEP/Pixelemon parameters, telescope-specific)
+    detection_sigma: float = 5.0
+    detection_min_pixel_count: int = 3
+    detection_deblend_mesh_count: int = 32
+    detection_deblend_contrast: float = 0.005
+    detection_fwhm: int = 5
+    detection_kernel_size: int = 13
+    background_mesh_count: int = 64
+    background_filter_size: int = 3
+
     # Task retry
     max_task_retries: int = 3
     initial_retry_delay_seconds: int = 30
@@ -221,6 +231,127 @@ class CitraScopeSettings(BaseModel):
         if v < 5 or v > 50:
             clamped = max(5, min(50, v))
             CITRASCOPE_LOGGER.warning("flat_frame_count %d out of range [5, 50]. Clamped to %d.", v, clamped)
+            return clamped
+        return v
+
+    @field_validator("detection_sigma", mode="before")
+    @classmethod
+    def _validate_detection_sigma(cls, v: Any) -> float:
+        try:
+            v = float(v)
+        except (TypeError, ValueError):
+            CITRASCOPE_LOGGER.warning("Invalid detection_sigma (%r). Falling back to 5.0.", v)
+            return 5.0
+        if v < 1.0 or v > 20.0:
+            clamped = max(1.0, min(20.0, v))
+            CITRASCOPE_LOGGER.warning("detection_sigma %.2f out of range [1.0, 20.0]. Clamped to %.2f.", v, clamped)
+            return clamped
+        return v
+
+    @field_validator("detection_min_pixel_count", mode="before")
+    @classmethod
+    def _validate_detection_min_pixel_count(cls, v: Any) -> int:
+        try:
+            v = int(v)
+        except (TypeError, ValueError):
+            CITRASCOPE_LOGGER.warning("Invalid detection_min_pixel_count (%r). Falling back to 3.", v)
+            return 3
+        if v < 1 or v > 50:
+            clamped = max(1, min(50, v))
+            CITRASCOPE_LOGGER.warning("detection_min_pixel_count %d out of range [1, 50]. Clamped to %d.", v, clamped)
+            return clamped
+        return v
+
+    @field_validator("detection_deblend_mesh_count", mode="before")
+    @classmethod
+    def _validate_detection_deblend_mesh_count(cls, v: Any) -> int:
+        try:
+            v = int(v)
+        except (TypeError, ValueError):
+            CITRASCOPE_LOGGER.warning("Invalid detection_deblend_mesh_count (%r). Falling back to 32.", v)
+            return 32
+        if v < 1 or v > 64:
+            clamped = max(1, min(64, v))
+            CITRASCOPE_LOGGER.warning(
+                "detection_deblend_mesh_count %d out of range [1, 64]. Clamped to %d.", v, clamped
+            )
+            return clamped
+        return v
+
+    @field_validator("detection_deblend_contrast", mode="before")
+    @classmethod
+    def _validate_detection_deblend_contrast(cls, v: Any) -> float:
+        try:
+            v = float(v)
+        except (TypeError, ValueError):
+            CITRASCOPE_LOGGER.warning("Invalid detection_deblend_contrast (%r). Falling back to 0.005.", v)
+            return 0.005
+        if v < 0.0 or v > 1.0:
+            clamped = max(0.0, min(1.0, v))
+            CITRASCOPE_LOGGER.warning(
+                "detection_deblend_contrast %.4f out of range [0.0, 1.0]. Clamped to %.4f.", v, clamped
+            )
+            return clamped
+        return v
+
+    @field_validator("detection_fwhm", mode="before")
+    @classmethod
+    def _validate_detection_fwhm(cls, v: Any) -> int:
+        try:
+            v = int(v)
+        except (TypeError, ValueError):
+            CITRASCOPE_LOGGER.warning("Invalid detection_fwhm (%r). Falling back to 5.", v)
+            return 5
+        if v < 1 or v > 20:
+            clamped = max(1, min(20, v))
+            CITRASCOPE_LOGGER.warning("detection_fwhm %d out of range [1, 20]. Clamped to %d.", v, clamped)
+            return clamped
+        return v
+
+    @field_validator("detection_kernel_size", mode="before")
+    @classmethod
+    def _validate_detection_kernel_size(cls, v: Any) -> int:
+        try:
+            v = int(v)
+        except (TypeError, ValueError):
+            CITRASCOPE_LOGGER.warning("Invalid detection_kernel_size (%r). Falling back to 13.", v)
+            return 13
+        if v < 3 or v > 65:
+            clamped = max(3, min(65, v))
+            if clamped % 2 == 0:
+                clamped += 1
+            CITRASCOPE_LOGGER.warning("detection_kernel_size %d out of range [3, 65]. Clamped to %d.", v, clamped)
+            return clamped
+        if v % 2 == 0:
+            v += 1
+            CITRASCOPE_LOGGER.warning("detection_kernel_size must be odd. Rounded up to %d.", v)
+        return v
+
+    @field_validator("background_mesh_count", mode="before")
+    @classmethod
+    def _validate_background_mesh_count(cls, v: Any) -> int:
+        try:
+            v = int(v)
+        except (TypeError, ValueError):
+            CITRASCOPE_LOGGER.warning("Invalid background_mesh_count (%r). Falling back to 64.", v)
+            return 64
+        if v < 10 or v > 100:
+            clamped = max(10, min(100, v))
+            CITRASCOPE_LOGGER.warning("background_mesh_count %d out of range [10, 100]. Clamped to %d.", v, clamped)
+            return clamped
+        return v
+
+    @field_validator("background_filter_size", mode="before")
+    @classmethod
+    def _validate_background_filter_size(cls, v: Any) -> int:
+        try:
+            v = int(v)
+        except (TypeError, ValueError):
+            CITRASCOPE_LOGGER.warning("Invalid background_filter_size (%r). Falling back to 3.", v)
+            return 3
+        if v < 1 or v > 10:
+            clamped = max(1, min(10, v))
+            CITRASCOPE_LOGGER.warning("background_filter_size %d out of range [1, 10]. Clamped to %d.", v, clamped)
             return clamped
         return v
 
