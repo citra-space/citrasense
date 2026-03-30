@@ -23,12 +23,29 @@ class NinaAdvancedHttpAdapter(AbstractAstroHardwareAdapter):
     https://bump.sh/christian-photo/doc/advanced-api/"""
 
     DEFAULT_FOCUS_POSITION = 9000
+
+    # API endpoint paths
     CAM_URL = "/equipment/camera/"
     FILTERWHEEL_URL = "/equipment/filterwheel/"
     FOCUSER_URL = "/equipment/focuser/"
     MOUNT_URL = "/equipment/mount/"
     SAFETYMON_URL = "/equipment/safetymonitor/"
     SEQUENCE_URL = "/sequence/"
+
+    # HTTP request timeouts (seconds) — tiered by expected response latency
+    HEALTH_CHECK_TIMEOUT = 2
+    CONNECT_TIMEOUT = 5
+    INFO_QUERY_TIMEOUT = 10
+    COMMAND_TIMEOUT = 30
+
+    # Hardware operation timeouts (seconds) — waiting for physical movement to complete
+    HARDWARE_MOVE_TIMEOUT = 60
+    AUTOFOCUS_TIMEOUT = 300
+    SEQUENCE_TIMEOUT_MINUTES = 60
+
+    # Polling intervals (seconds)
+    SLEW_POLL_INTERVAL = 2
+    FOCUSER_POLL_INTERVAL = 5
 
     def __init__(self, logger: logging.Logger, images_dir: Path, **kwargs):
         super().__init__(images_dir=images_dir, **kwargs)
@@ -135,19 +152,23 @@ class NinaAdvancedHttpAdapter(AbstractAstroHardwareAdapter):
             self.logger.info(f"Slewing to autofocus target (RA={target_ra:.4f}, Dec={target_dec:.4f}) ...")
             try:
                 response = requests.get(
-                    f"{self.nina_api_path}{self.MOUNT_URL}slew?ra={target_ra}&dec={target_dec}", timeout=30
+                    f"{self.nina_api_path}{self.MOUNT_URL}slew?ra={target_ra}&dec={target_dec}",
+                    timeout=self.COMMAND_TIMEOUT,
                 )
                 response.raise_for_status()
                 mount_status = response.json()
+                if not mount_status.get("Success"):
+                    raise RuntimeError(f"Mount slew rejected by NINA: {mount_status.get('Error')}")
                 self.logger.info(f"Mount {mount_status['Response']}")
             except requests.Timeout as e:
                 raise RuntimeError("Mount slew request timed out") from e
             except requests.RequestException as e:
                 raise RuntimeError(f"Mount slew failed: {e}") from e
 
+            time.sleep(self.SLEW_POLL_INTERVAL)
             while self.telescope_is_moving():
                 self.logger.info("Waiting for mount to finish slewing...")
-                time.sleep(5)
+                time.sleep(self.SLEW_POLL_INTERVAL)
         else:
             self.logger.info("Autofocus at current position (no slew)")
 
@@ -173,30 +194,46 @@ class NinaAdvancedHttpAdapter(AbstractAstroHardwareAdapter):
     ) -> int:
         assert self._event_listener is not None
 
-        HARDWARE_TIMEOUT_SECONDS = 60
-
-        self._event_listener.filter_changed.clear()
-        requests.get(self.nina_api_path + self.FILTERWHEEL_URL + "change-filter?filterId=" + str(filter_id))
-        if not self._event_listener.filter_changed.wait(timeout=HARDWARE_TIMEOUT_SECONDS):
-            raise RuntimeError(f"Filterwheel failed to change to filter {filter_id} within {HARDWARE_TIMEOUT_SECONDS}s")
-        self.logger.info(f"Filter changed to ID {filter_id}")
+        current_filter = self._get_current_filter_id()
+        if current_filter == filter_id:
+            self.logger.info(f"Already on filter {filter_id} ({filter_name}), skipping change")
+        else:
+            self._event_listener.filter_changed.clear()
+            resp = requests.get(
+                self.nina_api_path + self.FILTERWHEEL_URL + "change-filter?filterId=" + str(filter_id),
+                timeout=self.COMMAND_TIMEOUT,
+            ).json()
+            if not resp.get("Success"):
+                raise RuntimeError(f"Filter change to {filter_id} rejected by NINA: {resp.get('Error')}")
+            if not self._event_listener.filter_changed.wait(timeout=self.HARDWARE_MOVE_TIMEOUT):
+                raise RuntimeError(
+                    f"Filterwheel failed to change to filter {filter_id} within {self.HARDWARE_MOVE_TIMEOUT}s"
+                )
+            self.logger.info(f"Filter changed to ID {filter_id}")
 
         self.logger.info("Moving focus to autofocus starting position ...")
         starting_focus_position = self.DEFAULT_FOCUS_POSITION
-        requests.get(self.nina_api_path + self.FOCUSER_URL + "move?position=" + str(starting_focus_position))
-        deadline = time.time() + HARDWARE_TIMEOUT_SECONDS
+        move_resp = requests.get(
+            self.nina_api_path + self.FOCUSER_URL + "move?position=" + str(starting_focus_position),
+            timeout=self.COMMAND_TIMEOUT,
+        ).json()
+        if not move_resp.get("Success"):
+            raise RuntimeError(f"Focuser move rejected by NINA: {move_resp.get('Error')}")
+        deadline = time.time() + self.HARDWARE_MOVE_TIMEOUT
         while True:
-            focuser_status = requests.get(self.nina_api_path + self.FOCUSER_URL + "info").json()
+            focuser_status = requests.get(
+                self.nina_api_path + self.FOCUSER_URL + "info", timeout=self.INFO_QUERY_TIMEOUT
+            ).json()
+            if not focuser_status.get("Success"):
+                raise RuntimeError(f"Focuser info query failed: {focuser_status.get('Error')}")
             if int(focuser_status["Response"]["Position"]) == starting_focus_position:
                 break
             if time.time() > deadline:
                 raise RuntimeError(
-                    f"Focuser failed to reach position {starting_focus_position} within {HARDWARE_TIMEOUT_SECONDS}s"
+                    f"Focuser failed to reach position {starting_focus_position} within {self.HARDWARE_MOVE_TIMEOUT}s"
                 )
             self.logger.info("Waiting for focuser to reach starting position ...")
-            time.sleep(5)
-
-        AUTOFOCUS_TIMEOUT_SECONDS = 300
+            time.sleep(self.FOCUSER_POLL_INTERVAL)
 
         self.logger.info("Starting autofocus ...")
 
@@ -205,27 +242,31 @@ class NinaAdvancedHttpAdapter(AbstractAstroHardwareAdapter):
         prev_af_callback = self._event_listener.on_af_point
         self._event_listener.on_af_point = on_af_point
 
-        focuser_status = requests.get(self.nina_api_path + self.FOCUSER_URL + "auto-focus").json()
-        self.logger.info(f"Focuser {focuser_status['Response']}")
+        af_resp = requests.get(
+            self.nina_api_path + self.FOCUSER_URL + "auto-focus", timeout=self.COMMAND_TIMEOUT
+        ).json()
+        if not af_resp.get("Success"):
+            raise RuntimeError(f"Autofocus trigger rejected by NINA: {af_resp.get('Error')}")
+        self.logger.info(f"Focuser {af_resp['Response']}")
 
         try:
-            deadline = time.time() + AUTOFOCUS_TIMEOUT_SECONDS
+            deadline = time.time() + self.AUTOFOCUS_TIMEOUT
             while not self._event_listener.autofocus_finished.is_set():
                 if self._event_listener.autofocus_error.is_set():
                     self.logger.warning(f"Autofocus error reported via WebSocket for filter {filter_name}")
                     break
                 remaining = deadline - time.time()
                 if remaining <= 0:
-                    self.logger.warning(
-                        f"Autofocus timed out after {AUTOFOCUS_TIMEOUT_SECONDS}s for filter {filter_name}"
-                    )
+                    self.logger.warning(f"Autofocus timed out after {self.AUTOFOCUS_TIMEOUT}s for filter {filter_name}")
                     break
                 self._event_listener.autofocus_finished.wait(timeout=min(remaining, 1.0))
         finally:
             self._event_listener.on_af_point = prev_af_callback
 
         if self._event_listener.autofocus_finished.is_set():
-            last_af = requests.get(self.nina_api_path + self.FOCUSER_URL + "last-af").json()
+            last_af = requests.get(
+                self.nina_api_path + self.FOCUSER_URL + "last-af", timeout=self.INFO_QUERY_TIMEOUT
+            ).json()
             if last_af.get("Success"):
                 resp = last_af["Response"]
                 position = resp["CalculatedFocusPoint"]["Position"]
@@ -254,7 +295,9 @@ class NinaAdvancedHttpAdapter(AbstractAstroHardwareAdapter):
     def _do_point_telescope(self, ra: float, dec: float):
         self.logger.info(f"Slewing to RA: {ra}, Dec: {dec}")
         try:
-            response = requests.get(f"{self.nina_api_path}{self.MOUNT_URL}slew?ra={ra}&dec={dec}", timeout=30)
+            response = requests.get(
+                f"{self.nina_api_path}{self.MOUNT_URL}slew?ra={ra}&dec={dec}", timeout=self.COMMAND_TIMEOUT
+            )
             response.raise_for_status()
             slew_response = response.json()
 
@@ -275,42 +318,52 @@ class NinaAdvancedHttpAdapter(AbstractAstroHardwareAdapter):
         try:
             # start connection to all equipments
             self.logger.info("Connecting camera ...")
-            cam_status = requests.get(self.nina_api_path + self.CAM_URL + "connect", timeout=5).json()
+            cam_status = requests.get(
+                self.nina_api_path + self.CAM_URL + "connect", timeout=self.CONNECT_TIMEOUT
+            ).json()
             if not cam_status["Success"]:
                 self.logger.error(f"Failed to connect camera: {cam_status.get('Error')}")
                 return False
             self.logger.info("Camera Connected!")
 
             self.logger.info("Starting camera cooling ...")
-            cool_status = requests.get(self.nina_api_path + self.CAM_URL + "cool", timeout=5).json()
+            cool_status = requests.get(self.nina_api_path + self.CAM_URL + "cool", timeout=self.CONNECT_TIMEOUT).json()
             if not cool_status["Success"]:
                 self.logger.warning(f"Failed to start camera cooling: {cool_status.get('Error')}")
             else:
                 self.logger.info("Cooler started!")
 
             self.logger.info("Connecting filterwheel ...")
-            filterwheel_status = requests.get(self.nina_api_path + self.FILTERWHEEL_URL + "connect", timeout=5).json()
+            filterwheel_status = requests.get(
+                self.nina_api_path + self.FILTERWHEEL_URL + "connect", timeout=self.CONNECT_TIMEOUT
+            ).json()
             if not filterwheel_status["Success"]:
                 self.logger.warning(f"Failed to connect filterwheel: {filterwheel_status.get('Error')}")
             else:
                 self.logger.info("Filterwheel Connected!")
 
             self.logger.info("Connecting focuser ...")
-            focuser_status = requests.get(self.nina_api_path + self.FOCUSER_URL + "connect", timeout=5).json()
+            focuser_status = requests.get(
+                self.nina_api_path + self.FOCUSER_URL + "connect", timeout=self.CONNECT_TIMEOUT
+            ).json()
             if not focuser_status["Success"]:
                 self.logger.warning(f"Failed to connect focuser: {focuser_status.get('Error')}")
             else:
                 self.logger.info("Focuser Connected!")
 
             self.logger.info("Connecting mount ...")
-            mount_status = requests.get(self.nina_api_path + self.MOUNT_URL + "connect", timeout=5).json()
+            mount_status = requests.get(
+                self.nina_api_path + self.MOUNT_URL + "connect", timeout=self.CONNECT_TIMEOUT
+            ).json()
             if not mount_status["Success"]:
                 self.logger.error(f"Failed to connect mount: {mount_status.get('Error')}")
                 return False
             self.logger.info("Mount Connected!")
 
             self.logger.info("Unparking mount ...")
-            mount_status = requests.get(self.nina_api_path + self.MOUNT_URL + "unpark", timeout=5).json()
+            mount_status = requests.get(
+                self.nina_api_path + self.MOUNT_URL + "unpark", timeout=self.CONNECT_TIMEOUT
+            ).json()
             if not mount_status["Success"]:
                 self.logger.error(f"Failed to unpark mount: {mount_status.get('Error')}")
                 return False
@@ -329,9 +382,29 @@ class NinaAdvancedHttpAdapter(AbstractAstroHardwareAdapter):
             self.logger.error(f"Failed to connect to NINA Advanced API: {e}")
             return False
 
+    def _get_current_filter_id(self) -> int | None:
+        """Query NINA for the currently selected filter wheel position.
+
+        Returns the filter Id (0-indexed int) or None if the query fails.
+        """
+        try:
+            resp = requests.get(
+                self.nina_api_path + self.FILTERWHEEL_URL + "info", timeout=self.INFO_QUERY_TIMEOUT
+            ).json()
+            if not resp.get("Success"):
+                return None
+            selected = resp.get("Response", {}).get("SelectedFilter")
+            if selected is not None and "Id" in selected:
+                return int(selected["Id"])
+            return None
+        except Exception:
+            return None
+
     def discover_filters(self):
         self.logger.info("Discovering filters ...")
-        filterwheel_info = requests.get(self.nina_api_path + self.FILTERWHEEL_URL + "info", timeout=5).json()
+        filterwheel_info = requests.get(
+            self.nina_api_path + self.FILTERWHEEL_URL + "info", timeout=self.CONNECT_TIMEOUT
+        ).json()
         if not filterwheel_info.get("Success"):
             self.logger.error(f"Failed to get filterwheel info: {filterwheel_info.get('Error')}")
             raise RuntimeError("Failed to get filterwheel info")
@@ -365,6 +438,10 @@ class NinaAdvancedHttpAdapter(AbstractAstroHardwareAdapter):
             finally:
                 self._event_listener = None
 
+    def get_filter_position(self) -> int | None:
+        """Get the current filter wheel position from NINA."""
+        return self._get_current_filter_id()
+
     def supports_autofocus(self) -> bool:
         """Indicates that NINA adapter supports autofocus."""
         return True
@@ -376,7 +453,9 @@ class NinaAdvancedHttpAdapter(AbstractAstroHardwareAdapter):
     def is_telescope_connected(self) -> bool:
         """Check if telescope is connected and responsive."""
         try:
-            mount_info = requests.get(f"{self.nina_api_path}{self.MOUNT_URL}info", timeout=2).json()
+            mount_info = requests.get(
+                f"{self.nina_api_path}{self.MOUNT_URL}info", timeout=self.HEALTH_CHECK_TIMEOUT
+            ).json()
             return mount_info.get("Success", False) and mount_info.get("Response", {}).get("Connected", False)
         except Exception:
             return False
@@ -384,7 +463,7 @@ class NinaAdvancedHttpAdapter(AbstractAstroHardwareAdapter):
     def is_camera_connected(self) -> bool:
         """Check if camera is connected and responsive."""
         try:
-            cam_info = requests.get(f"{self.nina_api_path}{self.CAM_URL}info", timeout=2).json()
+            cam_info = requests.get(f"{self.nina_api_path}{self.CAM_URL}info", timeout=self.HEALTH_CHECK_TIMEOUT).json()
             return cam_info.get("Success", False) and cam_info.get("Response", {}).get("Connected", False)
         except Exception:
             return False
@@ -396,7 +475,7 @@ class NinaAdvancedHttpAdapter(AbstractAstroHardwareAdapter):
         return True
 
     def get_telescope_direction(self) -> tuple[float, float]:
-        mount_info = requests.get(self.nina_api_path + self.MOUNT_URL + "info").json()
+        mount_info = requests.get(self.nina_api_path + self.MOUNT_URL + "info", timeout=self.INFO_QUERY_TIMEOUT).json()
         if mount_info.get("Success"):
             ra_degrees = mount_info["Response"]["Coordinates"]["RADegrees"]
             dec_degrees = mount_info["Response"]["Coordinates"]["Dec"]
@@ -406,7 +485,7 @@ class NinaAdvancedHttpAdapter(AbstractAstroHardwareAdapter):
             raise RuntimeError(f"Failed to get mount info: {mount_info.get('Error')}")
 
     def telescope_is_moving(self) -> bool:
-        mount_info = requests.get(self.nina_api_path + self.MOUNT_URL + "info").json()
+        mount_info = requests.get(self.nina_api_path + self.MOUNT_URL + "info", timeout=self.INFO_QUERY_TIMEOUT).json()
         if mount_info.get("Success"):
             return mount_info["Response"]["Slewing"]
         else:
@@ -416,7 +495,7 @@ class NinaAdvancedHttpAdapter(AbstractAstroHardwareAdapter):
     def get_camera_info(self) -> dict | None:
         """Query NINA camera info endpoint for sensor specs."""
         try:
-            resp = requests.get(f"{self.nina_api_path}{self.CAM_URL}info", timeout=2).json()
+            resp = requests.get(f"{self.nina_api_path}{self.CAM_URL}info", timeout=self.HEALTH_CHECK_TIMEOUT).json()
             if not resp.get("Success"):
                 return None
             r = resp.get("Response", {})
@@ -626,8 +705,6 @@ class NinaAdvancedHttpAdapter(AbstractAstroHardwareAdapter):
 
         self.logger.info("Loaded sequence to NINA, starting sequence...")
 
-        timeout_minutes = 60
-
         self._event_listener.sequence_finished.clear()
         self._event_listener.sequence_failed.clear()
 
@@ -657,7 +734,7 @@ class NinaAdvancedHttpAdapter(AbstractAstroHardwareAdapter):
                 self.logger.error(f"Failed to start sequence: {start_response.get('Error')}")
                 raise RuntimeError("Failed to start NINA sequence")
 
-            deadline = time.time() + timeout_minutes * 60
+            deadline = time.time() + self.SEQUENCE_TIMEOUT_MINUTES * 60
             while not self._event_listener.sequence_finished.is_set():
                 if self._event_listener.sequence_failed.is_set():
                     err = self._event_listener.last_sequence_error or {}
@@ -667,12 +744,14 @@ class NinaAdvancedHttpAdapter(AbstractAstroHardwareAdapter):
                     raise RuntimeError(f"NINA sequence failed: {entity} — {error_msg}")
                 remaining = deadline - time.time()
                 if remaining <= 0:
-                    self.logger.error(f"NINA sequence did not complete within timeout of {timeout_minutes} minutes")
+                    self.logger.error(
+                        f"NINA sequence did not complete within timeout of {self.SEQUENCE_TIMEOUT_MINUTES} minutes"
+                    )
                     raise RuntimeError("NINA sequence timeout")
                 self._event_listener.sequence_finished.wait(timeout=min(remaining, 2.0))
 
             self.logger.info("NINA sequence completed, waiting for images to save...")
-            images_ready.wait(timeout=10)
+            images_ready.wait(timeout=self.INFO_QUERY_TIMEOUT)
         finally:
             self._event_listener.on_image_save = prev_callback
 
