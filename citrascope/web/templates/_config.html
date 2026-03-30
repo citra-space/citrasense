@@ -626,7 +626,17 @@
                                 </div>
 
                                 <!-- Source Detection Parameters -->
-                                <script>const DETECTION_DEFAULTS = {{ detection_defaults | tojson }};</script>
+                                <script>
+                                    const DETECTION_DEFAULTS = {{ detection_defaults | tojson }};
+                                    function isFieldOutOfRange(val, el) {
+                                        if (val === '' || val === null || val === undefined) return false;
+                                        const v = parseFloat(val);
+                                        if (isNaN(v)) return true;
+                                        if (el.min !== '' && v < parseFloat(el.min)) return true;
+                                        if (el.max !== '' && v > parseFloat(el.max)) return true;
+                                        return false;
+                                    }
+                                </script>
                                 <hr class="border-secondary" />
                                 <div class="col-12">
                                     <h6 class="text-muted mb-2"><i class="bi bi-stars me-2"></i>Source Detection</h6>
@@ -638,49 +648,65 @@
                                             <label class="form-label small text-muted mb-1" for="detection_sigma">Detection sigma</label>
                                             <input type="number" class="form-control form-control-sm bg-dark text-light border-secondary"
                                                    id="detection_sigma" step="0.5" min="1" max="20"
-                                                   x-model.number="$store.citrascope.config.detection_sigma">
+                                                   x-model.number="$store.citrascope.config.detection_sigma"
+                                                   :class="{ 'is-invalid': isFieldOutOfRange($store.citrascope.config.detection_sigma, $el) }">
+                                            <div class="invalid-feedback">Must be between 1 and 20</div>
                                         </div>
                                         <div class="col-6 col-md-3">
                                             <label class="form-label small text-muted mb-1" for="detection_min_pixel_count">Min pixels</label>
                                             <input type="number" class="form-control form-control-sm bg-dark text-light border-secondary"
                                                    id="detection_min_pixel_count" step="1" min="1" max="50"
-                                                   x-model.number="$store.citrascope.config.detection_min_pixel_count">
+                                                   x-model.number="$store.citrascope.config.detection_min_pixel_count"
+                                                   :class="{ 'is-invalid': isFieldOutOfRange($store.citrascope.config.detection_min_pixel_count, $el) }">
+                                            <div class="invalid-feedback">Must be between 1 and 50</div>
                                         </div>
                                         <div class="col-6 col-md-3">
                                             <label class="form-label small text-muted mb-1" for="detection_fwhm">FWHM</label>
                                             <input type="number" class="form-control form-control-sm bg-dark text-light border-secondary"
                                                    id="detection_fwhm" step="1" min="1" max="20"
-                                                   x-model.number="$store.citrascope.config.detection_fwhm">
+                                                   x-model.number="$store.citrascope.config.detection_fwhm"
+                                                   :class="{ 'is-invalid': isFieldOutOfRange($store.citrascope.config.detection_fwhm, $el) }">
+                                            <div class="invalid-feedback">Must be between 1 and 20</div>
                                         </div>
                                         <div class="col-6 col-md-3">
-                                            <label class="form-label small text-muted mb-1" for="detection_kernel_size">Kernel size</label>
+                                            <label class="form-label small text-muted mb-1" for="detection_kernel_size">Kernel size (odd)</label>
                                             <input type="number" class="form-control form-control-sm bg-dark text-light border-secondary"
                                                    id="detection_kernel_size" step="2" min="3" max="65"
-                                                   x-model.number="$store.citrascope.config.detection_kernel_size">
+                                                   x-model.number="$store.citrascope.config.detection_kernel_size"
+                                                   :class="{ 'is-invalid': isFieldOutOfRange($store.citrascope.config.detection_kernel_size, $el) || ($store.citrascope.config.detection_kernel_size % 2 === 0) }">
+                                            <div class="invalid-feedback">Must be odd number between 3 and 65</div>
                                         </div>
                                         <div class="col-6 col-md-3">
                                             <label class="form-label small text-muted mb-1" for="detection_deblend_mesh_count">Deblend mesh</label>
                                             <input type="number" class="form-control form-control-sm bg-dark text-light border-secondary"
                                                    id="detection_deblend_mesh_count" step="1" min="1" max="64"
-                                                   x-model.number="$store.citrascope.config.detection_deblend_mesh_count">
+                                                   x-model.number="$store.citrascope.config.detection_deblend_mesh_count"
+                                                   :class="{ 'is-invalid': isFieldOutOfRange($store.citrascope.config.detection_deblend_mesh_count, $el) }">
+                                            <div class="invalid-feedback">Must be between 1 and 64</div>
                                         </div>
                                         <div class="col-6 col-md-3">
                                             <label class="form-label small text-muted mb-1" for="detection_deblend_contrast">Deblend contrast</label>
                                             <input type="number" class="form-control form-control-sm bg-dark text-light border-secondary"
                                                    id="detection_deblend_contrast" step="0.001" min="0" max="1"
-                                                   x-model.number="$store.citrascope.config.detection_deblend_contrast">
+                                                   x-model.number="$store.citrascope.config.detection_deblend_contrast"
+                                                   :class="{ 'is-invalid': isFieldOutOfRange($store.citrascope.config.detection_deblend_contrast, $el) }">
+                                            <div class="invalid-feedback">Must be between 0 and 1</div>
                                         </div>
                                         <div class="col-6 col-md-3">
                                             <label class="form-label small text-muted mb-1" for="background_mesh_count">Background mesh</label>
                                             <input type="number" class="form-control form-control-sm bg-dark text-light border-secondary"
                                                    id="background_mesh_count" step="1" min="10" max="100"
-                                                   x-model.number="$store.citrascope.config.background_mesh_count">
+                                                   x-model.number="$store.citrascope.config.background_mesh_count"
+                                                   :class="{ 'is-invalid': isFieldOutOfRange($store.citrascope.config.background_mesh_count, $el) }">
+                                            <div class="invalid-feedback">Must be between 10 and 100</div>
                                         </div>
                                         <div class="col-6 col-md-3">
                                             <label class="form-label small text-muted mb-1" for="background_filter_size">Background filter</label>
                                             <input type="number" class="form-control form-control-sm bg-dark text-light border-secondary"
                                                    id="background_filter_size" step="1" min="1" max="10"
-                                                   x-model.number="$store.citrascope.config.background_filter_size">
+                                                   x-model.number="$store.citrascope.config.background_filter_size"
+                                                   :class="{ 'is-invalid': isFieldOutOfRange($store.citrascope.config.background_filter_size, $el) }">
+                                            <div class="invalid-feedback">Must be between 1 and 10</div>
                                         </div>
                                     </div>
                                     <div class="d-flex justify-content-end mt-3">
@@ -950,7 +976,7 @@
             <!-- Save Button -->
             <div class="row">
                 <div class="col">
-                    <button type="submit" class="btn btn-primary" :disabled="$store.citrascope.isSavingConfig">
+                    <button type="submit" class="btn btn-primary" :disabled="$store.citrascope.isSavingConfig || document.querySelectorAll('.is-invalid').length > 0">
                         <span x-text="$store.citrascope.isSavingConfig ? 'Saving...' : 'Save Configuration'"></span>
                         <span x-show="$store.citrascope.isSavingConfig" class="spinner-border spinner-border-sm ms-2" role="status"></span>
                     </button>
