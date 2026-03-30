@@ -632,36 +632,35 @@
                                         </div>
                                     </div>
 
-                                    <!-- Autofocus -->
-                                    <div class="col-auto d-flex align-items-start"
-                                         x-show="$store.citrascope.status?.supports_autofocus">
-                                        <div>
-                                            <div class="d-flex align-items-center gap-2">
-                                                <button type="button" class="btn btn-sm"
-                                                        :class="$store.citrascope.status?.autofocus_running ? 'btn-outline-danger' : ($store.citrascope.status?.autofocus_requested ? 'btn-outline-warning' : 'btn-outline-primary')"
-                                                        @click="window.triggerAutofocus()">
-                                                    <template x-if="$store.citrascope.status?.autofocus_running">
-                                                        <span><i class="bi bi-stop-fill me-1"></i>Cancel AF</span>
-                                                    </template>
-                                                    <template x-if="!$store.citrascope.status?.autofocus_running">
-                                                        <span x-text="$store.citrascope.status?.autofocus_requested ? 'Cancel AF' : 'Autofocus'"></span>
-                                                    </template>
-                                                </button>
-                                                <small class="text-muted" x-show="!$store.citrascope.status?.autofocus_running"
-                                                       x-text="$store.citrascope.formatLastAutofocus($store.citrascope.status)"></small>
-                                            </div>
-                                            <span class="small" x-show="$store.citrascope.status?.autofocus_running"
-                                                  x-text="$store.citrascope.status?.autofocus_progress || 'Autofocusing...'"></span>
-                                            <div x-show="!$store.citrascope.status?.autofocus_running">
-                                                <small class="text-muted" x-show="$store.citrascope.status?.autofocus_target_name"
-                                                       x-text="'Target: ' + $store.citrascope.status?.autofocus_target_name"></small>
-                                            </div>
-                                            <div x-show="!$store.citrascope.status?.autofocus_running && $store.citrascope.status?.next_autofocus_minutes != null">
-                                                <small class="text-muted"
-                                                       x-text="'Next in: ' + ($store.citrascope.status?.next_autofocus_minutes === 0 ? 'now (overdue)' : $store.citrascope.formatMinutes($store.citrascope.status?.next_autofocus_minutes || 0))"></small>
-                                            </div>
-                                        </div>
-                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- ─── Autofocus ─── -->
+                            <div class="pt-2 mt-2 border-top border-secondary"
+                                 x-show="$store.citrascope.status?.supports_autofocus">
+                                <div class="d-flex align-items-center gap-2 flex-wrap">
+                                    <button type="button" class="btn btn-sm"
+                                            :class="$store.citrascope.status?.autofocus_running ? 'btn-outline-danger' : ($store.citrascope.status?.autofocus_requested ? 'btn-outline-warning' : 'btn-outline-primary')"
+                                            @click="window.triggerAutofocus()">
+                                        <template x-if="$store.citrascope.status?.autofocus_running">
+                                            <span><i class="bi bi-stop-fill me-1"></i>Cancel AF</span>
+                                        </template>
+                                        <template x-if="!$store.citrascope.status?.autofocus_running">
+                                            <span x-text="$store.citrascope.status?.autofocus_requested ? 'Cancel AF' : 'Autofocus'"></span>
+                                        </template>
+                                    </button>
+                                    <small class="text-muted" x-show="!$store.citrascope.status?.autofocus_running"
+                                           x-text="$store.citrascope.formatLastAutofocus($store.citrascope.status)"></small>
+                                    <span class="small" x-show="$store.citrascope.status?.autofocus_running"
+                                          x-text="$store.citrascope.status?.autofocus_progress || 'Autofocusing...'"></span>
+                                </div>
+                                <div x-show="!$store.citrascope.status?.autofocus_running">
+                                    <small class="text-muted" x-show="$store.citrascope.status?.autofocus_target_name"
+                                           x-text="'Target: ' + $store.citrascope.status?.autofocus_target_name"></small>
+                                </div>
+                                <div x-show="!$store.citrascope.status?.autofocus_running && $store.citrascope.status?.next_autofocus_minutes != null">
+                                    <small class="text-muted"
+                                           x-text="'Next in: ' + ($store.citrascope.status?.next_autofocus_minutes === 0 ? 'now (overdue)' : $store.citrascope.formatMinutes($store.citrascope.status?.next_autofocus_minutes || 0))"></small>
                                 </div>
                             </div>
 
