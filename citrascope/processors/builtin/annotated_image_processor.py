@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import io
 import json
 import time
 from pathlib import Path
@@ -20,26 +21,28 @@ if TYPE_CHECKING:
 
 _STRETCH_LO_PERCENTILE = 2.0
 _STRETCH_HI_PERCENTILE = 98.0
+_POWER_EXPONENT = 3.0
 
 _MATCH_COLOR = (237, 79, 0)  # #ED4F00 — confirmed satellite matches
 _PREDICTION_COLOR = (238, 162, 1)  # #EEA201 — TLE-predicted positions
 _DETECTION_COLOR = (154, 186, 56)  # #9ABA38 — satellite detections (elongated sources)
 _STAR_COLOR = (64, 151, 138)  # #40978A — star detections (point-like sources)
-_OUTLINE_COLOR = (18, 18, 18)  # #121212 — dark outline behind colored circles
 _TEXT_BG_COLOR = (0, 0, 0)  # Black overlay strip
 _TEXT_COLOR = (255, 255, 255)  # White text
 
-_FONT_SIZE = 46
-_HEADER_FONT_SIZE = 93
-_STROKE_WIDTH = 6
-_OUTLINE_WIDTH = 12
-_IMAGE_FORMAT = "PNG"
+_ANNOTATED_WIDTH = 2500
 
-_STAR_RADIUS = 75
-_DETECTION_RADIUS = 69
-_PREDICTION_RADIUS = 63
-_MATCH_RADIUS = 57
-_LABEL_GAP = 6
+_FONT_SIZE = 22
+_HEADER_FONT_SIZE = 42
+_STROKE_WIDTH = 3
+_IMAGE_FORMAT = "JPEG"
+_IMAGE_QUALITY = 80
+
+_STAR_RADIUS = 36
+_DETECTION_RADIUS = 30
+_PREDICTION_RADIUS = 27
+_MATCH_RADIUS = 24
+_LABEL_GAP = 3
 
 _MAX_STAR_MARKERS = 50
 _MAX_DETECTION_MARKERS = 200
@@ -74,6 +77,14 @@ class AnnotatedImageProcessor(AbstractImageProcessor):
 
         try:
             img = self._stretch_to_rgb(context.image_data)
+            original_height = img.height
+            pixel_scale = 1.0
+            if img.width > _ANNOTATED_WIDTH:
+                pixel_scale = _ANNOTATED_WIDTH / img.width
+                new_h = max(1, int(img.height * pixel_scale))
+                _lanczos = getattr(Image, "Resampling", Image).LANCZOS  # type: ignore[attr-defined]
+                img = img.resize((_ANNOTATED_WIDTH, new_h), _lanczos)
+
             wcs = self._load_wcs(context.working_image_path)
             debug = self._load_debug_json(context.working_dir)
 
@@ -84,17 +95,19 @@ class AnnotatedImageProcessor(AbstractImageProcessor):
 
             if wcs is not None:
                 if context.detected_sources is not None:
-                    self._draw_stars(draw, wcs, context.detected_sources, img.height)
-                    self._draw_detections(draw, wcs, context.detected_sources, img.height, context.tracking_mode)
-                self._draw_predictions(draw, wcs, unmatched_preds, font, img.height)
-                self._draw_matches(draw, wcs, matched_sats, font, img.height)
+                    self._draw_stars(draw, wcs, context.detected_sources, original_height, pixel_scale)
+                    self._draw_detections(
+                        draw, wcs, context.detected_sources, original_height, context.tracking_mode, pixel_scale
+                    )
+                self._draw_predictions(draw, wcs, unmatched_preds, font, original_height, pixel_scale)
+                self._draw_matches(draw, wcs, matched_sats, font, original_height, pixel_scale)
 
             task_name = context.task.satelliteName if context.task else None
             self._draw_overlay(draw, img.width, task_name, epoch_str, match_count, font)
 
-            preview_path = self._save_preview(img, context.image_path.parent)
-            self._save_per_task(img, context.image_path.parent, context.image_path.stem)
-            working_path = self._save_to_working_dir(img, context.working_dir)
+            image_bytes = self._encode_image(img)
+            preview_path = self._save_preview(image_bytes, context.image_path.parent)
+            working_path = self._save_to_working_dir(image_bytes, context.working_dir)
 
             elapsed = time.time() - start_time
             return ProcessorResult(
@@ -133,6 +146,21 @@ class AnnotatedImageProcessor(AbstractImageProcessor):
         )
 
     @staticmethod
+    def _linear_stretch(arr: np.ndarray, lo: float, hi: float) -> np.ndarray:
+        """Linear stretch: maps [lo, hi] linearly to [0, 255]."""
+        return np.clip((arr - lo) / (hi - lo) * 255.0, 0, 255).astype(np.uint8)
+
+    @staticmethod
+    def _power_stretch(arr: np.ndarray, lo: float | np.floating, hi: float | np.floating) -> np.ndarray:
+        """Power stretch: normalizes to [0, 1] then applies x^exponent.
+
+        Darkens the background while keeping bright stars visible, similar
+        to DS9's "power" scale setting.
+        """
+        normalized = np.clip((arr - lo) / (hi - lo), 0.0, 1.0)
+        return (np.power(normalized, _POWER_EXPONENT) * 255.0).astype(np.uint8)
+
+    @staticmethod
     def _stretch_to_rgb(data: np.ndarray) -> Image.Image:
         """Auto-stretch a raw pixel array to an 8-bit RGB PIL Image."""
         arr = np.asarray(data, dtype=np.float64)
@@ -147,7 +175,8 @@ class AnnotatedImageProcessor(AbstractImageProcessor):
         if hi <= lo:
             hi = lo + 1.0
 
-        stretched = np.clip((arr - lo) / (hi - lo) * 255.0, 0, 255).astype(np.uint8)
+        # stretched = AnnotatedImageProcessor._linear_stretch(arr, lo, hi)
+        stretched = AnnotatedImageProcessor._power_stretch(arr, lo, hi)
         stretched = np.flipud(stretched)
 
         if stretched.ndim == 2:
@@ -193,20 +222,28 @@ class AnnotatedImageProcessor(AbstractImageProcessor):
         epoch_str = debug.get("epoch")
         return observations, unmatched, epoch_str, match_count
 
-    def _draw_matches(self, draw: ImageDraw.ImageDraw, wcs: WCS, matches: list[dict], font, img_height: int) -> None:
+    def _draw_matches(
+        self, draw: ImageDraw.ImageDraw, wcs: WCS, matches: list[dict], font, img_height: int, pixel_scale: float = 1.0
+    ) -> None:
         for sat in matches:
             ra, dec = sat.get("ra"), sat.get("dec")
             name = sat.get("name", "?")
             if ra is None or dec is None:
                 continue
-            px, py = self._radec_to_pixel(wcs, ra, dec, img_height)
+            px, py = self._radec_to_pixel(wcs, ra, dec, img_height, pixel_scale)
             if px is None or py is None:
                 continue
             self._draw_circle(draw, px, py, _MATCH_COLOR, _MATCH_RADIUS)
             self._draw_label_below(draw, px, py, name, _MATCH_COLOR, font)
 
     def _draw_predictions(
-        self, draw: ImageDraw.ImageDraw, wcs: WCS, predictions: list[dict], font, img_height: int
+        self,
+        draw: ImageDraw.ImageDraw,
+        wcs: WCS,
+        predictions: list[dict],
+        font,
+        img_height: int,
+        pixel_scale: float = 1.0,
     ) -> None:
         for pred in predictions:
             ra = pred.get("predicted_ra_deg")
@@ -214,13 +251,15 @@ class AnnotatedImageProcessor(AbstractImageProcessor):
             name = pred.get("name", "?")
             if ra is None or dec is None:
                 continue
-            px, py = self._radec_to_pixel(wcs, ra, dec, img_height)
+            px, py = self._radec_to_pixel(wcs, ra, dec, img_height, pixel_scale)
             if px is None or py is None:
                 continue
             self._draw_dashed_circle(draw, px, py, _PREDICTION_COLOR, _PREDICTION_RADIUS)
             self._draw_label_below(draw, px, py, name, _PREDICTION_COLOR, font)
 
-    def _draw_stars(self, draw: ImageDraw.ImageDraw, wcs: WCS, sources: pd.DataFrame, img_height: int) -> None:
+    def _draw_stars(
+        self, draw: ImageDraw.ImageDraw, wcs: WCS, sources: pd.DataFrame, img_height: int, pixel_scale: float = 1.0
+    ) -> None:
         """Draw teal circles on the brightest point-like detected sources."""
         if sources.empty:
             return
@@ -229,7 +268,7 @@ class AnnotatedImageProcessor(AbstractImageProcessor):
         brightest = point_like.sort_values(by="mag").head(_MAX_STAR_MARKERS)  # type: ignore[call-overload]
 
         for _, row in brightest.iterrows():
-            px, py = self._radec_to_pixel(wcs, row["ra"], row["dec"], img_height)
+            px, py = self._radec_to_pixel(wcs, row["ra"], row["dec"], img_height, pixel_scale)
             if px is None or py is None:
                 continue
             self._draw_circle(draw, px, py, _STAR_COLOR, _STAR_RADIUS)
@@ -241,6 +280,7 @@ class AnnotatedImageProcessor(AbstractImageProcessor):
         sources: pd.DataFrame,
         img_height: int,
         tracking_mode: str | None,
+        pixel_scale: float = 1.0,
     ) -> None:
         """Draw yellow-green circles on elongated sources likely to be satellite streaks.
 
@@ -259,31 +299,31 @@ class AnnotatedImageProcessor(AbstractImageProcessor):
         capped = candidates.head(_MAX_DETECTION_MARKERS)
 
         for _, row in capped.iterrows():
-            px, py = self._radec_to_pixel(wcs, row["ra"], row["dec"], img_height)
+            px, py = self._radec_to_pixel(wcs, row["ra"], row["dec"], img_height, pixel_scale)
             if px is None or py is None:
                 continue
             self._draw_circle(draw, px, py, _DETECTION_COLOR, _DETECTION_RADIUS)
 
     @staticmethod
-    def _radec_to_pixel(wcs: WCS, ra_deg: float, dec_deg: float, img_height: int) -> tuple[int | None, int | None]:
+    def _radec_to_pixel(
+        wcs: WCS, ra_deg: float, dec_deg: float, img_height: int, pixel_scale: float = 1.0
+    ) -> tuple[int | None, int | None]:
         try:
             result = wcs.world_to_pixel_values(ra_deg, dec_deg)
-            px = round(float(result[0]))
             # WCS pixel y is 0 at bottom (FITS convention); display image is
             # np.flipud'd so row 0 is at top.  Invert for display coordinates.
-            py = img_height - 1 - round(float(result[1]))
+            # img_height must be the ORIGINAL (pre-resize) height for the flip,
+            # then pixel_scale maps to the downscaled canvas.
+            px = round(float(result[0]) * pixel_scale)
+            py = round((img_height - 1 - float(result[1])) * pixel_scale)
             return px, py
         except Exception:
             return None, None
 
     @staticmethod
     def _draw_circle(draw: ImageDraw.ImageDraw, cx: int, cy: int, color: tuple, radius: int):
-        extend = (_OUTLINE_WIDTH - _STROKE_WIDTH) // 2
-        outline_r = radius + extend
-        outline_bbox = (cx - outline_r, cy - outline_r, cx + outline_r, cy + outline_r)
-        color_bbox = (cx - radius, cy - radius, cx + radius, cy + radius)
-        draw.ellipse(outline_bbox, outline=_OUTLINE_COLOR, width=_OUTLINE_WIDTH)
-        draw.ellipse(color_bbox, outline=color, width=_STROKE_WIDTH)
+        bbox = (cx - radius, cy - radius, cx + radius, cy + radius)
+        draw.ellipse(bbox, outline=color, width=_STROKE_WIDTH)
 
     @staticmethod
     def _draw_dashed_circle(
@@ -294,20 +334,13 @@ class AnnotatedImageProcessor(AbstractImageProcessor):
         radius: int,
         dash_count: int = 16,
     ):
-        """Draw a dashed circle as alternating arcs with a dark outline."""
-        extend = (_OUTLINE_WIDTH - _STROKE_WIDTH) // 2
-        outline_r = radius + extend
-        outline_bbox = (cx - outline_r, cy - outline_r, cx + outline_r, cy + outline_r)
-        color_bbox = (cx - radius, cy - radius, cx + radius, cy + radius)
+        """Draw a dashed circle as alternating arcs."""
+        bbox = (cx - radius, cy - radius, cx + radius, cy + radius)
         arc_span = 360.0 / dash_count
         for i in range(0, dash_count, 2):
             start_angle = i * arc_span
             end_angle = start_angle + arc_span
-            draw.arc(outline_bbox, start=start_angle, end=end_angle, fill=_OUTLINE_COLOR, width=_OUTLINE_WIDTH)
-        for i in range(0, dash_count, 2):
-            start_angle = i * arc_span
-            end_angle = start_angle + arc_span
-            draw.arc(color_bbox, start=start_angle, end=end_angle, fill=color, width=_STROKE_WIDTH)
+            draw.arc(bbox, start=start_angle, end=end_angle, fill=color, width=_STROKE_WIDTH)
 
     @staticmethod
     def _safe_text(draw: ImageDraw.ImageDraw, xy: tuple, text: str, color: tuple, font) -> None:
@@ -337,8 +370,6 @@ class AnnotatedImageProcessor(AbstractImageProcessor):
                 text,
                 fill=color,
                 font=font,
-                stroke_width=3,
-                stroke_fill=_OUTLINE_COLOR,
             )
         except Exception:
             pass
@@ -355,14 +386,15 @@ class AnnotatedImageProcessor(AbstractImageProcessor):
         """Draw a single-line info strip with inline color legend at the top.
 
         The header font starts at _HEADER_FONT_SIZE and scales down so the full
-        text (info + legend) fits within the image width.
+        text (info + legend) fits within the image width.  Legend entries use
+        drawn circles (font-independent) instead of Unicode bullet characters.
         """
         margin = 20
         legend_items = [
-            (_STAR_COLOR, "\u25cf Plate Solver Stars"),
-            (_DETECTION_COLOR, "\u25cf Plate Solver Detections"),
-            (_PREDICTION_COLOR, "\u25cf TLE Predicted"),
-            (_MATCH_COLOR, "\u25cf Satellite Matched"),
+            (_STAR_COLOR, "Plate Solver Stars"),
+            (_DETECTION_COLOR, "Plate Solver Detections"),
+            (_PREDICTION_COLOR, "TLE Predicted"),
+            (_MATCH_COLOR, "Satellite Matched"),
         ]
 
         parts: list[str] = []
@@ -373,7 +405,7 @@ class AnnotatedImageProcessor(AbstractImageProcessor):
         parts.append(f"{match_count} match{'es' if match_count != 1 else ''}")
         info_text = "  |  ".join(parts) + "  |  "
 
-        legend_text = "  ".join(label for _, label in legend_items)
+        legend_text = "  ".join(f"O {label}" for _, label in legend_items)
         full_text = info_text + legend_text
 
         header_font, font_size = AnnotatedImageProcessor._fit_header_font(draw, full_text, img_width, margin)
@@ -396,7 +428,24 @@ class AnnotatedImageProcessor(AbstractImageProcessor):
         except Exception:
             x = margin + len(info_text) * (font_size * 3 // 5)
 
+        circle_d = max(6, int(text_height * 0.55)) + 7
+        circle_r = circle_d // 2
+        circle_gap = max(4, circle_d // 3)
+        circle_stroke = max(2, circle_d // 5)
+
         for color, label in legend_items:
+            cy = text_y + text_height // 2 + 2
+            circle_bbox = (x, cy - circle_r, x + circle_d, cy + circle_r)
+            if color == _PREDICTION_COLOR:
+                arc_span = 360.0 / 8
+                for i in range(0, 8, 2):
+                    draw.arc(
+                        circle_bbox, start=i * arc_span, end=i * arc_span + arc_span, fill=color, width=circle_stroke
+                    )
+            else:
+                draw.ellipse(circle_bbox, outline=color, width=circle_stroke)
+            x += circle_d + circle_gap
+
             item = f"{label}  "
             AnnotatedImageProcessor._safe_text(draw, (x, text_y), item, color, header_font)
             try:
@@ -468,32 +517,31 @@ class AnnotatedImageProcessor(AbstractImageProcessor):
         return ImageFont.load_default()
 
     @staticmethod
-    def _save_preview(img: Image.Image, images_dir: Path) -> Path:
-        """Save annotated PNG as a single rotating preview file (overwritten each time).
+    def _encode_image(img: Image.Image) -> bytes:
+        """Encode the image once — all save methods write these bytes."""
+        buf = io.BytesIO()
+        img.save(buf, _IMAGE_FORMAT, quality=_IMAGE_QUALITY, optimize=True)
+        return buf.getvalue()
+
+    @staticmethod
+    def _save_preview(image_bytes: bytes, images_dir: Path) -> Path:
+        """Save annotated image as a single rotating preview file (overwritten each time).
 
         Uses atomic write (temp file + rename) to prevent serving a partially
         written image when the web endpoint reads during an overwrite.
         """
-        out_path = images_dir / "latest_preview.png"
-        tmp_path = images_dir / "latest_preview.tmp.png"
-        img.save(str(tmp_path), _IMAGE_FORMAT)
+        out_path = images_dir / "latest_preview.jpg"
+        tmp_path = images_dir / "latest_preview.tmp.jpg"
+        tmp_path.write_bytes(image_bytes)
         tmp_path.replace(out_path)
         return out_path
 
     @staticmethod
-    def _save_per_task(img: Image.Image, images_dir: Path, stem: str) -> None:
-        """Save a per-task annotated PNG alongside the original FITS in the images directory."""
+    def _save_to_working_dir(image_bytes: bytes, working_dir: Path) -> Path | None:
+        """Save annotated image in the processing working directory."""
         try:
-            img.save(str(images_dir / f"{stem}_annotated.png"), _IMAGE_FORMAT)
-        except Exception:
-            pass
-
-    @staticmethod
-    def _save_to_working_dir(img: Image.Image, working_dir: Path) -> Path | None:
-        """Save annotated PNG in the processing working directory."""
-        try:
-            out_path = working_dir / "annotated.png"
-            img.save(str(out_path), _IMAGE_FORMAT)
+            out_path = working_dir / "annotated.jpg"
+            out_path.write_bytes(image_bytes)
             return out_path
         except Exception:
             return None

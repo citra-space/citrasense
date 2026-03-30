@@ -266,7 +266,8 @@ class CitraScopeWebApp:
             ann_path = getattr(self.daemon, "latest_annotated_image_path", None)
             if not ann_path or not Path(ann_path).exists():
                 return JSONResponse({"error": "No preview available"}, status_code=404)
-            return FileResponse(ann_path, media_type="image/png")
+            mime = "image/jpeg" if Path(ann_path).suffix.lower() in (".jpg", ".jpeg") else "image/png"
+            return FileResponse(ann_path, media_type=mime)
 
         @self.app.get("/api/config")
         async def get_config():
