@@ -386,7 +386,7 @@ class TestDrawStars:
 
         sources = pd.DataFrame({"ra": [180.0], "dec": [45.0], "mag": [-5.0], "elongation": [1.1]})
         proc = AnnotatedImageProcessor()
-        proc._draw_stars(draw, wcs, sources, img.height)
+        proc._draw_stars(draw, wcs, sources, img.height, tracking_mode=None)
 
         arr = np.array(img)
         assert arr.sum() > 0
@@ -402,7 +402,38 @@ class TestDrawStars:
 
         sources = pd.DataFrame({"ra": [180.0], "dec": [45.0], "mag": [-5.0], "elongation": [3.0]})
         proc = AnnotatedImageProcessor()
-        proc._draw_stars(draw, wcs, sources, img.height)
+        proc._draw_stars(draw, wcs, sources, img.height, tracking_mode=None)
+
+        arr = np.array(img)
+        assert arr.sum() == 0
+
+    def test_rate_mode_selects_elongated_as_stars(self):
+        import pandas as pd
+
+        img = Image.new("RGB", (200, 200), color=(0, 0, 0))
+        draw = ImageDraw.Draw(img)
+        wcs = MagicMock()
+        wcs.world_to_pixel_values.return_value = (100.0, 100.0)
+
+        sources = pd.DataFrame({"ra": [180.0], "dec": [45.0], "mag": [-5.0], "elongation": [3.0]})
+        proc = AnnotatedImageProcessor()
+        proc._draw_stars(draw, wcs, sources, img.height, tracking_mode="rate")
+
+        arr = np.array(img)
+        assert arr.sum() > 0
+        assert arr[:, :, 1].max() == 151  # _STAR_COLOR green channel (#40978A)
+
+    def test_rate_mode_skips_round_sources(self):
+        import pandas as pd
+
+        img = Image.new("RGB", (200, 200), color=(0, 0, 0))
+        draw = ImageDraw.Draw(img)
+        wcs = MagicMock()
+        wcs.world_to_pixel_values.return_value = (100.0, 100.0)
+
+        sources = pd.DataFrame({"ra": [180.0], "dec": [45.0], "mag": [-5.0], "elongation": [1.1]})
+        proc = AnnotatedImageProcessor()
+        proc._draw_stars(draw, wcs, sources, img.height, tracking_mode="rate")
 
         arr = np.array(img)
         assert arr.sum() == 0
@@ -432,7 +463,7 @@ class TestDrawStars:
         proc = AnnotatedImageProcessor()
 
         with patch.object(AnnotatedImageProcessor, "_radec_to_pixel", side_effect=counting_radec):
-            proc._draw_stars(draw, wcs, sources, img.height)
+            proc._draw_stars(draw, wcs, sources, img.height, tracking_mode=None)
 
         assert call_count == 50
 
@@ -445,7 +476,7 @@ class TestDrawStars:
 
         sources = pd.DataFrame({"ra": [], "dec": [], "mag": [], "elongation": []})
         proc = AnnotatedImageProcessor()
-        proc._draw_stars(draw, wcs, sources, img.height)
+        proc._draw_stars(draw, wcs, sources, img.height, tracking_mode=None)
 
         arr = np.array(img)
         assert arr.sum() == 0

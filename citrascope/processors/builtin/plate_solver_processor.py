@@ -16,6 +16,7 @@ from astropy.wcs import WCS
 from astropy.wcs.utils import proj_plane_pixel_scales
 from pixelemon import Telescope
 from pixelemon.optics._base_optical_assembly import BaseOpticalAssembly
+from pixelemon.processing import BackgroundSettings, DetectionSettings
 from pixelemon.sensors._base_sensor import BaseSensor
 
 from citrascope.processors.abstract_processor import AbstractImageProcessor
@@ -27,10 +28,33 @@ from .processor_dependencies import check_pixelemon, normalize_fits_timestamp
 if TYPE_CHECKING:
     from pixelemon import TelescopeImage
 
-# Minimum per-source SNR for the catalog passed to downstream processors.
-# SEP detects at 2-sigma (good for plate solving), but sources below 3-sigma
-# are not statistically reliable for photometry or satellite matching.
 _MIN_SOURCE_SNR = 3.0
+
+
+def _detection_settings() -> DetectionSettings:
+    """SEP detection settings derived from MSI's tuned SExtractor config.
+
+    These replace Pixelemon's streak_source_defaults (detection_sigma=2,
+    deblend_mesh_count=1, deblend_contrast=1.0) which effectively disable
+    deblending and cause bright stars to be missed.
+    """
+    return DetectionSettings(
+        detection_sigma=5.0,
+        min_pixel_count=3,
+        deblend_mesh_count=32,
+        deblend_contrast=0.005,
+        merge_small_detections=True,
+        full_width_half_maximum=5,
+        kernel_array_size=13,
+    )
+
+
+def _background_settings() -> BackgroundSettings:
+    """SEP background settings derived from MSI's tuned SExtractor config."""
+    return BackgroundSettings(
+        mesh_count=64,
+        filter_size=3,
+    )
 
 
 def _build_telescope_for_image(image_path: Path, context: ProcessingContext | None = None):
@@ -303,6 +327,8 @@ class PlateSolverProcessor(AbstractImageProcessor):
             PlateSolverProcessor._tetra_loaded = True
         telescope = _build_telescope_for_image(image_path, context)
         image = _TelescopeImage.from_fits_file(image_path, telescope)
+        image.detection_settings = _detection_settings()
+        image.background_settings = _background_settings()
         solve = image.plate_solve  # triggers internal fit_wcs_from_points(sip_degree=5)
 
         if solve is None:

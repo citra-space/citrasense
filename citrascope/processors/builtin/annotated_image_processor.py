@@ -95,7 +95,9 @@ class AnnotatedImageProcessor(AbstractImageProcessor):
 
             if wcs is not None:
                 if context.detected_sources is not None:
-                    self._draw_stars(draw, wcs, context.detected_sources, original_height, pixel_scale)
+                    self._draw_stars(
+                        draw, wcs, context.detected_sources, original_height, context.tracking_mode, pixel_scale
+                    )
                     self._draw_detections(
                         draw, wcs, context.detected_sources, original_height, context.tracking_mode, pixel_scale
                     )
@@ -258,13 +260,27 @@ class AnnotatedImageProcessor(AbstractImageProcessor):
             self._draw_label_below(draw, px, py, name, _PREDICTION_COLOR, font)
 
     def _draw_stars(
-        self, draw: ImageDraw.ImageDraw, wcs: WCS, sources: pd.DataFrame, img_height: int, pixel_scale: float = 1.0
+        self,
+        draw: ImageDraw.ImageDraw,
+        wcs: WCS,
+        sources: pd.DataFrame,
+        img_height: int,
+        tracking_mode: str | None,
+        pixel_scale: float = 1.0,
     ) -> None:
-        """Draw teal circles on the brightest point-like detected sources."""
+        """Draw teal circles on the brightest point-like detected sources.
+
+        In sidereal tracking, stars are round (elongation < threshold).
+        In rate tracking, the mount follows the satellite so stars streak
+        (elongation >= threshold).
+        """
         if sources.empty:
             return
 
-        point_like = sources[sources["elongation"] < _ELONGATION_THRESHOLD]
+        if tracking_mode == "rate":
+            point_like = sources[sources["elongation"] >= _ELONGATION_THRESHOLD]
+        else:
+            point_like = sources[sources["elongation"] < _ELONGATION_THRESHOLD]
         brightest = point_like.sort_values(by="mag").head(_MAX_STAR_MARKERS)  # type: ignore[call-overload]
 
         for _, row in brightest.iterrows():
