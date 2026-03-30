@@ -251,7 +251,7 @@ class CitraScopeWebApp:
         }
         self.templates.env.globals["detection_ranges"] = DETECTION_FIELD_RANGES
         default_data_base = Path(platformdirs.user_data_dir(APP_NAME, appauthor=APP_AUTHOR))
-        self.templates.env.globals["default_data_dir"] = str(default_data_base / "processing")
+        self.templates.env.globals["default_data_dir"] = str(default_data_base)
         self.templates.env.globals["default_log_dir"] = str(
             Path(platformdirs.user_log_dir(APP_NAME, appauthor=APP_AUTHOR))
         )

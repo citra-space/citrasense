@@ -702,7 +702,7 @@
                                                    max="{{ detection_ranges.detection_deblend_contrast.max }}"
                                                    x-model.number="$store.citrascope.config.detection_deblend_contrast"
                                                    :class="{ 'is-invalid': isFieldOutOfRange($store.citrascope.config.detection_deblend_contrast, $el) }">
-                                            <div class="invalid-feedback">Must be between {{ detection_ranges.detection_deblend_contrast.min }} and {{ detection_ranges.detection_deblend_contrast.max | int }}</div>
+                                            <div class="invalid-feedback">Must be between {{ detection_ranges.detection_deblend_contrast.min | int }} and {{ detection_ranges.detection_deblend_contrast.max | int }}</div>
                                         </div>
                                         <div class="col-6 col-md-3">
                                             <label class="form-label small text-muted mb-1" for="background_mesh_count">Background mesh</label>
