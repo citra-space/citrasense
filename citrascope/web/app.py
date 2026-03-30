@@ -26,7 +26,12 @@ from citrascope.hardware.adapter_registry import get_adapter_schema as get_schem
 from citrascope.hardware.adapter_registry import list_adapters
 from citrascope.location.twilight import compute_twilight
 from citrascope.logging import CITRASCOPE_LOGGER
-from citrascope.settings.citrascope_settings import APP_AUTHOR, APP_NAME, CitraScopeSettings
+from citrascope.settings.citrascope_settings import (
+    APP_AUTHOR,
+    APP_NAME,
+    DETECTION_FIELD_RANGES,
+    CitraScopeSettings,
+)
 
 # Standard astronomical filter names for the editable filter name dropdown.
 # Mirrors the canonical names from the Citra API's filter library so that
@@ -244,6 +249,7 @@ class CitraScopeWebApp:
             for name, field in CitraScopeSettings.model_fields.items()
             if name.startswith(("detection_", "background_"))
         }
+        self.templates.env.globals["detection_ranges"] = DETECTION_FIELD_RANGES
         default_data_base = Path(platformdirs.user_data_dir(APP_NAME, appauthor=APP_AUTHOR))
         self.templates.env.globals["default_data_dir"] = str(default_data_base / "processing")
         self.templates.env.globals["default_log_dir"] = str(

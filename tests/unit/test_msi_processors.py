@@ -96,11 +96,23 @@ def _first_three_elsets_from_file(tle_path: Path) -> list:
     return result
 
 
+def _make_mock_settings(**overrides) -> Mock:
+    """Create a Mock settings with real detection/background defaults from CitraScopeSettings."""
+    from citrascope.settings.citrascope_settings import CitraScopeSettings
+
+    attrs = {
+        name: field.default
+        for name, field in CitraScopeSettings.model_fields.items()
+        if name.startswith(("detection_", "background_"))
+    }
+    attrs.update(overrides)
+    return Mock(**attrs)
+
+
 @pytest.fixture
 def mock_settings():
-    """Mock settings for testing."""
-    settings = Mock()
-    return settings
+    """Mock settings for testing with real detection/background defaults."""
+    return _make_mock_settings()
 
 
 @pytest.fixture
@@ -512,8 +524,7 @@ class TestFullPipelineDemoFits:
             most_recent_elset=most_recent_elset,
         )
 
-        settings = Mock()
-        settings.enabled_processors = {}
+        settings = _make_mock_settings(enabled_processors={})
 
         class FakeLocationService:
             def get_current_location(self):
@@ -587,8 +598,7 @@ class TestFullPipelineDemoFits:
             assigned_filter_name="Clear",
             most_recent_elset={"tle": elsets[0]["tle"]},
         )
-        settings = Mock()
-        settings.enabled_processors = {}
+        settings = _make_mock_settings(enabled_processors={})
 
         class FakeLocationService:
             def get_current_location(self):
@@ -731,8 +741,7 @@ class TestSatelliteMatcherProcessor:
             assigned_filter_name="r",
             most_recent_elset={"tle": elsets[0]["tle"]},
         )
-        settings = Mock()
-        settings.enabled_processors = {}
+        settings = _make_mock_settings(enabled_processors={})
 
         class FakeLocationService:
             def get_current_location(self):
@@ -821,7 +830,7 @@ class TestPixelemonYFlipRegression:
             task=Mock(satelliteName="TEST", satelliteId="0", assigned_filter_name="Clear"),
             telescope_record=_PLANEWAVE_TELESCOPE_RECORD,
             ground_station_record=None,
-            settings=Mock(),
+            settings=_make_mock_settings(),
             location_service=FakeLoc(),
             logger=Mock(),
         )
@@ -952,7 +961,7 @@ class TestSEPvsSExtractorParity:
             task=Mock(satelliteName="TEST", satelliteId="0", assigned_filter_name="Clear"),
             telescope_record=image_cfg["telescope_record"],
             ground_station_record=None,
-            settings=Mock(),
+            settings=_make_mock_settings(),
             location_service=FakeLoc(image_cfg["location"]),
             logger=Mock(),
         )

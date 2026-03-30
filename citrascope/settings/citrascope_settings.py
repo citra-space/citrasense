@@ -22,6 +22,19 @@ from citrascope.constants import DEFAULT_API_PORT, DEFAULT_WEB_PORT, PROD_API_HO
 from citrascope.logging import CITRASCOPE_LOGGER
 from citrascope.settings.settings_file_manager import SettingsFileManager
 
+# Valid ranges for SEP detection/background parameters.
+# Consumed by field validators, exported to the web UI for client-side validation.
+DETECTION_FIELD_RANGES: dict[str, dict[str, float]] = {
+    "detection_sigma": {"min": 1.0, "max": 20.0},
+    "detection_min_pixel_count": {"min": 1, "max": 50},
+    "detection_deblend_mesh_count": {"min": 1, "max": 64},
+    "detection_deblend_contrast": {"min": 0.0, "max": 1.0},
+    "detection_fwhm": {"min": 1, "max": 20},
+    "detection_kernel_size": {"min": 3, "max": 65},
+    "background_mesh_count": {"min": 10, "max": 100},
+    "background_filter_size": {"min": 1, "max": 10},
+}
+
 
 class CitraScopeSettings(BaseModel):
     """Settings for CitraScope loaded from JSON configuration file.
@@ -241,43 +254,50 @@ class CitraScopeSettings(BaseModel):
     @field_validator("detection_sigma", mode="before")
     @classmethod
     def _validate_detection_sigma(cls, v: Any) -> float:
+        r = DETECTION_FIELD_RANGES["detection_sigma"]
         try:
             v = float(v)
         except (TypeError, ValueError):
             CITRASCOPE_LOGGER.warning("Invalid detection_sigma (%r). Falling back to 5.0.", v)
             return 5.0
-        if v < 1.0 or v > 20.0:
-            clamped = max(1.0, min(20.0, v))
-            CITRASCOPE_LOGGER.warning("detection_sigma %.2f out of range [1.0, 20.0]. Clamped to %.2f.", v, clamped)
+        if v < r["min"] or v > r["max"]:
+            clamped = max(r["min"], min(r["max"], v))
+            CITRASCOPE_LOGGER.warning(
+                "detection_sigma %.2f out of range [%s, %s]. Clamped to %.2f.", v, r["min"], r["max"], clamped
+            )
             return clamped
         return v
 
     @field_validator("detection_min_pixel_count", mode="before")
     @classmethod
     def _validate_detection_min_pixel_count(cls, v: Any) -> int:
+        r = DETECTION_FIELD_RANGES["detection_min_pixel_count"]
         try:
             v = int(v)
         except (TypeError, ValueError):
             CITRASCOPE_LOGGER.warning("Invalid detection_min_pixel_count (%r). Falling back to 3.", v)
             return 3
-        if v < 1 or v > 50:
-            clamped = max(1, min(50, v))
-            CITRASCOPE_LOGGER.warning("detection_min_pixel_count %d out of range [1, 50]. Clamped to %d.", v, clamped)
+        if v < r["min"] or v > r["max"]:
+            clamped = int(max(r["min"], min(r["max"], v)))
+            CITRASCOPE_LOGGER.warning(
+                "detection_min_pixel_count %d out of range [%s, %s]. Clamped to %d.", v, r["min"], r["max"], clamped
+            )
             return clamped
         return v
 
     @field_validator("detection_deblend_mesh_count", mode="before")
     @classmethod
     def _validate_detection_deblend_mesh_count(cls, v: Any) -> int:
+        r = DETECTION_FIELD_RANGES["detection_deblend_mesh_count"]
         try:
             v = int(v)
         except (TypeError, ValueError):
             CITRASCOPE_LOGGER.warning("Invalid detection_deblend_mesh_count (%r). Falling back to 32.", v)
             return 32
-        if v < 1 or v > 64:
-            clamped = max(1, min(64, v))
+        if v < r["min"] or v > r["max"]:
+            clamped = int(max(r["min"], min(r["max"], v)))
             CITRASCOPE_LOGGER.warning(
-                "detection_deblend_mesh_count %d out of range [1, 64]. Clamped to %d.", v, clamped
+                "detection_deblend_mesh_count %d out of range [%s, %s]. Clamped to %d.", v, r["min"], r["max"], clamped
             )
             return clamped
         return v
@@ -285,15 +305,20 @@ class CitraScopeSettings(BaseModel):
     @field_validator("detection_deblend_contrast", mode="before")
     @classmethod
     def _validate_detection_deblend_contrast(cls, v: Any) -> float:
+        r = DETECTION_FIELD_RANGES["detection_deblend_contrast"]
         try:
             v = float(v)
         except (TypeError, ValueError):
             CITRASCOPE_LOGGER.warning("Invalid detection_deblend_contrast (%r). Falling back to 0.005.", v)
             return 0.005
-        if v < 0.0 or v > 1.0:
-            clamped = max(0.0, min(1.0, v))
+        if v < r["min"] or v > r["max"]:
+            clamped = max(r["min"], min(r["max"], v))
             CITRASCOPE_LOGGER.warning(
-                "detection_deblend_contrast %.4f out of range [0.0, 1.0]. Clamped to %.4f.", v, clamped
+                "detection_deblend_contrast %.4f out of range [%s, %s]. Clamped to %.4f.",
+                v,
+                r["min"],
+                r["max"],
+                clamped,
             )
             return clamped
         return v
@@ -301,30 +326,36 @@ class CitraScopeSettings(BaseModel):
     @field_validator("detection_fwhm", mode="before")
     @classmethod
     def _validate_detection_fwhm(cls, v: Any) -> int:
+        r = DETECTION_FIELD_RANGES["detection_fwhm"]
         try:
             v = int(v)
         except (TypeError, ValueError):
             CITRASCOPE_LOGGER.warning("Invalid detection_fwhm (%r). Falling back to 5.", v)
             return 5
-        if v < 1 or v > 20:
-            clamped = max(1, min(20, v))
-            CITRASCOPE_LOGGER.warning("detection_fwhm %d out of range [1, 20]. Clamped to %d.", v, clamped)
+        if v < r["min"] or v > r["max"]:
+            clamped = int(max(r["min"], min(r["max"], v)))
+            CITRASCOPE_LOGGER.warning(
+                "detection_fwhm %d out of range [%s, %s]. Clamped to %d.", v, r["min"], r["max"], clamped
+            )
             return clamped
         return v
 
     @field_validator("detection_kernel_size", mode="before")
     @classmethod
     def _validate_detection_kernel_size(cls, v: Any) -> int:
+        r = DETECTION_FIELD_RANGES["detection_kernel_size"]
         try:
             v = int(v)
         except (TypeError, ValueError):
             CITRASCOPE_LOGGER.warning("Invalid detection_kernel_size (%r). Falling back to 13.", v)
             return 13
-        if v < 3 or v > 65:
-            clamped = max(3, min(65, v))
+        if v < r["min"] or v > r["max"]:
+            clamped = int(max(r["min"], min(r["max"], v)))
             if clamped % 2 == 0:
                 clamped += 1
-            CITRASCOPE_LOGGER.warning("detection_kernel_size %d out of range [3, 65]. Clamped to %d.", v, clamped)
+            CITRASCOPE_LOGGER.warning(
+                "detection_kernel_size %d out of range [%s, %s]. Clamped to %d.", v, r["min"], r["max"], clamped
+            )
             return clamped
         if v % 2 == 0:
             v += 1
@@ -334,28 +365,34 @@ class CitraScopeSettings(BaseModel):
     @field_validator("background_mesh_count", mode="before")
     @classmethod
     def _validate_background_mesh_count(cls, v: Any) -> int:
+        r = DETECTION_FIELD_RANGES["background_mesh_count"]
         try:
             v = int(v)
         except (TypeError, ValueError):
             CITRASCOPE_LOGGER.warning("Invalid background_mesh_count (%r). Falling back to 64.", v)
             return 64
-        if v < 10 or v > 100:
-            clamped = max(10, min(100, v))
-            CITRASCOPE_LOGGER.warning("background_mesh_count %d out of range [10, 100]. Clamped to %d.", v, clamped)
+        if v < r["min"] or v > r["max"]:
+            clamped = int(max(r["min"], min(r["max"], v)))
+            CITRASCOPE_LOGGER.warning(
+                "background_mesh_count %d out of range [%s, %s]. Clamped to %d.", v, r["min"], r["max"], clamped
+            )
             return clamped
         return v
 
     @field_validator("background_filter_size", mode="before")
     @classmethod
     def _validate_background_filter_size(cls, v: Any) -> int:
+        r = DETECTION_FIELD_RANGES["background_filter_size"]
         try:
             v = int(v)
         except (TypeError, ValueError):
             CITRASCOPE_LOGGER.warning("Invalid background_filter_size (%r). Falling back to 3.", v)
             return 3
-        if v < 1 or v > 10:
-            clamped = max(1, min(10, v))
-            CITRASCOPE_LOGGER.warning("background_filter_size %d out of range [1, 10]. Clamped to %d.", v, clamped)
+        if v < r["min"] or v > r["max"]:
+            clamped = int(max(r["min"], min(r["max"], v)))
+            CITRASCOPE_LOGGER.warning(
+                "background_filter_size %d out of range [%s, %s]. Clamped to %d.", v, r["min"], r["max"], clamped
+            )
             return clamped
         return v
 

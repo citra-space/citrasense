@@ -647,66 +647,82 @@
                                         <div class="col-6 col-md-3">
                                             <label class="form-label small text-muted mb-1" for="detection_sigma">Detection sigma</label>
                                             <input type="number" class="form-control form-control-sm bg-dark text-light border-secondary"
-                                                   id="detection_sigma" step="0.5" min="1" max="20"
+                                                   id="detection_sigma" step="0.5"
+                                                   min="{{ detection_ranges.detection_sigma.min }}"
+                                                   max="{{ detection_ranges.detection_sigma.max }}"
                                                    x-model.number="$store.citrascope.config.detection_sigma"
                                                    :class="{ 'is-invalid': isFieldOutOfRange($store.citrascope.config.detection_sigma, $el) }">
-                                            <div class="invalid-feedback">Must be between 1 and 20</div>
+                                            <div class="invalid-feedback">Must be between {{ detection_ranges.detection_sigma.min | int }} and {{ detection_ranges.detection_sigma.max | int }}</div>
                                         </div>
                                         <div class="col-6 col-md-3">
                                             <label class="form-label small text-muted mb-1" for="detection_min_pixel_count">Min pixels</label>
                                             <input type="number" class="form-control form-control-sm bg-dark text-light border-secondary"
-                                                   id="detection_min_pixel_count" step="1" min="1" max="50"
+                                                   id="detection_min_pixel_count" step="1"
+                                                   min="{{ detection_ranges.detection_min_pixel_count.min | int }}"
+                                                   max="{{ detection_ranges.detection_min_pixel_count.max | int }}"
                                                    x-model.number="$store.citrascope.config.detection_min_pixel_count"
                                                    :class="{ 'is-invalid': isFieldOutOfRange($store.citrascope.config.detection_min_pixel_count, $el) }">
-                                            <div class="invalid-feedback">Must be between 1 and 50</div>
+                                            <div class="invalid-feedback">Must be between {{ detection_ranges.detection_min_pixel_count.min | int }} and {{ detection_ranges.detection_min_pixel_count.max | int }}</div>
                                         </div>
                                         <div class="col-6 col-md-3">
                                             <label class="form-label small text-muted mb-1" for="detection_fwhm">FWHM</label>
                                             <input type="number" class="form-control form-control-sm bg-dark text-light border-secondary"
-                                                   id="detection_fwhm" step="1" min="1" max="20"
+                                                   id="detection_fwhm" step="1"
+                                                   min="{{ detection_ranges.detection_fwhm.min | int }}"
+                                                   max="{{ detection_ranges.detection_fwhm.max | int }}"
                                                    x-model.number="$store.citrascope.config.detection_fwhm"
                                                    :class="{ 'is-invalid': isFieldOutOfRange($store.citrascope.config.detection_fwhm, $el) }">
-                                            <div class="invalid-feedback">Must be between 1 and 20</div>
+                                            <div class="invalid-feedback">Must be between {{ detection_ranges.detection_fwhm.min | int }} and {{ detection_ranges.detection_fwhm.max | int }}</div>
                                         </div>
                                         <div class="col-6 col-md-3">
                                             <label class="form-label small text-muted mb-1" for="detection_kernel_size">Kernel size (odd)</label>
                                             <input type="number" class="form-control form-control-sm bg-dark text-light border-secondary"
-                                                   id="detection_kernel_size" step="2" min="3" max="65"
+                                                   id="detection_kernel_size" step="2"
+                                                   min="{{ detection_ranges.detection_kernel_size.min | int }}"
+                                                   max="{{ detection_ranges.detection_kernel_size.max | int }}"
                                                    x-model.number="$store.citrascope.config.detection_kernel_size"
                                                    :class="{ 'is-invalid': isFieldOutOfRange($store.citrascope.config.detection_kernel_size, $el) || ($store.citrascope.config.detection_kernel_size % 2 === 0) }">
-                                            <div class="invalid-feedback">Must be odd number between 3 and 65</div>
+                                            <div class="invalid-feedback">Must be an odd number between {{ detection_ranges.detection_kernel_size.min | int }} and {{ detection_ranges.detection_kernel_size.max | int }}</div>
                                         </div>
                                         <div class="col-6 col-md-3">
                                             <label class="form-label small text-muted mb-1" for="detection_deblend_mesh_count">Deblend mesh</label>
                                             <input type="number" class="form-control form-control-sm bg-dark text-light border-secondary"
-                                                   id="detection_deblend_mesh_count" step="1" min="1" max="64"
+                                                   id="detection_deblend_mesh_count" step="1"
+                                                   min="{{ detection_ranges.detection_deblend_mesh_count.min | int }}"
+                                                   max="{{ detection_ranges.detection_deblend_mesh_count.max | int }}"
                                                    x-model.number="$store.citrascope.config.detection_deblend_mesh_count"
                                                    :class="{ 'is-invalid': isFieldOutOfRange($store.citrascope.config.detection_deblend_mesh_count, $el) }">
-                                            <div class="invalid-feedback">Must be between 1 and 64</div>
+                                            <div class="invalid-feedback">Must be between {{ detection_ranges.detection_deblend_mesh_count.min | int }} and {{ detection_ranges.detection_deblend_mesh_count.max | int }}</div>
                                         </div>
                                         <div class="col-6 col-md-3">
                                             <label class="form-label small text-muted mb-1" for="detection_deblend_contrast">Deblend contrast</label>
                                             <input type="number" class="form-control form-control-sm bg-dark text-light border-secondary"
-                                                   id="detection_deblend_contrast" step="0.001" min="0" max="1"
+                                                   id="detection_deblend_contrast" step="0.001"
+                                                   min="{{ detection_ranges.detection_deblend_contrast.min }}"
+                                                   max="{{ detection_ranges.detection_deblend_contrast.max }}"
                                                    x-model.number="$store.citrascope.config.detection_deblend_contrast"
                                                    :class="{ 'is-invalid': isFieldOutOfRange($store.citrascope.config.detection_deblend_contrast, $el) }">
-                                            <div class="invalid-feedback">Must be between 0 and 1</div>
+                                            <div class="invalid-feedback">Must be between {{ detection_ranges.detection_deblend_contrast.min }} and {{ detection_ranges.detection_deblend_contrast.max | int }}</div>
                                         </div>
                                         <div class="col-6 col-md-3">
                                             <label class="form-label small text-muted mb-1" for="background_mesh_count">Background mesh</label>
                                             <input type="number" class="form-control form-control-sm bg-dark text-light border-secondary"
-                                                   id="background_mesh_count" step="1" min="10" max="100"
+                                                   id="background_mesh_count" step="1"
+                                                   min="{{ detection_ranges.background_mesh_count.min | int }}"
+                                                   max="{{ detection_ranges.background_mesh_count.max | int }}"
                                                    x-model.number="$store.citrascope.config.background_mesh_count"
                                                    :class="{ 'is-invalid': isFieldOutOfRange($store.citrascope.config.background_mesh_count, $el) }">
-                                            <div class="invalid-feedback">Must be between 10 and 100</div>
+                                            <div class="invalid-feedback">Must be between {{ detection_ranges.background_mesh_count.min | int }} and {{ detection_ranges.background_mesh_count.max | int }}</div>
                                         </div>
                                         <div class="col-6 col-md-3">
                                             <label class="form-label small text-muted mb-1" for="background_filter_size">Background filter</label>
                                             <input type="number" class="form-control form-control-sm bg-dark text-light border-secondary"
-                                                   id="background_filter_size" step="1" min="1" max="10"
+                                                   id="background_filter_size" step="1"
+                                                   min="{{ detection_ranges.background_filter_size.min | int }}"
+                                                   max="{{ detection_ranges.background_filter_size.max | int }}"
                                                    x-model.number="$store.citrascope.config.background_filter_size"
                                                    :class="{ 'is-invalid': isFieldOutOfRange($store.citrascope.config.background_filter_size, $el) }">
-                                            <div class="invalid-feedback">Must be between 1 and 10</div>
+                                            <div class="invalid-feedback">Must be between {{ detection_ranges.background_filter_size.min | int }} and {{ detection_ranges.background_filter_size.max | int }}</div>
                                         </div>
                                     </div>
                                     <div class="d-flex justify-content-end mt-3">
