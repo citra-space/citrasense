@@ -83,7 +83,7 @@ class TestGetVersionInfo:
     def test_source_install_no_metadata(self, tmp_path):
         """No pip metadata at all -> install_type 'source'."""
         with (
-            patch("citrascope.version.pkg_version", side_effect=PackageNotFoundError),
+            patch("citrascope.version.pkg_version", side_effect=PackageNotFoundError("citrascope")),
             patch("citrascope.version._find_git_root", return_value=tmp_path),
             patch("subprocess.run", side_effect=_fake_run()),
         ):

@@ -18,10 +18,10 @@ class VersionInfo(TypedDict):
 
 
 def _find_git_root() -> Path | None:
-    """Walk up from the package directory to find a .git directory."""
+    """Walk up from the package directory to find a .git directory (or file, for worktrees)."""
     current = Path(__file__).resolve().parent
     for parent in [current, *current.parents]:
-        if (parent / ".git").is_dir():
+        if (parent / ".git").exists():
             return parent
     return None
 
