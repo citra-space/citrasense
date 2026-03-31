@@ -114,6 +114,7 @@ class SystemStatus(BaseModel):
     pipeline_stats: dict[str, Any] | None = None  # Lifetime counters for queues, processors, and tasks
     supports_alignment: bool = False
     supports_autofocus: bool = False
+    supports_hardware_safety_monitor: bool = False
     supports_manual_sync: bool = False
     mount_at_home: bool = False
     mount_homing: bool = False
@@ -1697,6 +1698,7 @@ class CitraScopeWebApp:
                 self.status.supports_direct_mount_control = mount is not None and self.status.telescope_connected
 
                 self.status.supports_autofocus = adapter.supports_autofocus()
+                self.status.supports_hardware_safety_monitor = adapter.supports_hardware_safety_monitor
 
                 try:
                     pos = adapter.get_filter_position()

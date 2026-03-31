@@ -712,7 +712,11 @@
                                 <template x-if="alert.name === 'time_health'">
                                     <span>System clock drift is critical &mdash; observations may be inaccurate.</span>
                                 </template>
-                                <template x-if="!['operator_stop','cable_wrap','disk_space','time_health'].includes(alert.name)">
+                                <template x-if="alert.name === 'hardware_safety'">
+                                    <span>External safety monitor reports conditions are <strong>unsafe</strong>.
+                                        Telescope operations suspended until conditions improve.</span>
+                                </template>
+                                <template x-if="!['operator_stop','cable_wrap','disk_space','time_health','hardware_safety'].includes(alert.name)">
                                     <span>Safety check "<span x-text="alert.name"></span>" triggered.</span>
                                 </template>
                             </span>

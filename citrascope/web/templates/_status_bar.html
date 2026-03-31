@@ -16,7 +16,7 @@
                  get safetyTip() {
                      if (!this.safetyChecks.length) return 'No safety checks active';
                      const labels = { safe: '\u2713', warn: '\u26A0', stop: '\u23F8', emergency: '\u2716' };
-                     const names = { operator_stop: 'Operator Stop', cable_wrap: 'Cable Wrap', disk_space: 'Disk Space', time_health: 'Time Health' };
+                     const names = { operator_stop: 'Operator Stop', cable_wrap: 'Cable Wrap', disk_space: 'Disk Space', time_health: 'Time Health', hardware_safety: 'Hardware Safety' };
                      let lines = this.safetyChecks.map(c =>
                          (labels[c.action] || '?') + ' ' + (names[c.name] || c.name)
                      );

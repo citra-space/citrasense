@@ -109,6 +109,9 @@ class CitraScopeSettings(BaseModel):
     time_check_interval_minutes: int = 5
     time_offset_pause_ms: float = 500.0
 
+    # Hardware safety
+    hardware_safety_check_enabled: bool = False
+
     # GPS
     gps_location_updates_enabled: bool = True
     gps_update_interval_minutes: int = 5

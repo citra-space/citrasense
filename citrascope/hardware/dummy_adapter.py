@@ -838,6 +838,13 @@ class DummyAdapter(AbstractAstroHardwareAdapter):
         """Dummy adapter supports autofocus."""
         return True
 
+    @property
+    def supports_hardware_safety_monitor(self) -> bool:
+        return True
+
+    def query_hardware_safety(self) -> bool | None:
+        return True
+
     def do_autofocus(
         self,
         target_ra: float | None = None,

@@ -515,6 +515,22 @@ class AbstractAstroHardwareAdapter(ABC):
         """
         raise NotImplementedError
 
+    @property
+    def supports_hardware_safety_monitor(self) -> bool:
+        """Whether this adapter can query an external hardware safety device.
+
+        Override in adapters that expose a safety monitor (e.g. NINA).
+        """
+        return False
+
+    def query_hardware_safety(self) -> bool | None:
+        """Query the external safety monitor device.
+
+        Returns True (safe), False (unsafe), or None (unsupported / unknown).
+        Default returns None.  Override in adapters with safety monitor support.
+        """
+        return None
+
     def is_hyperspectral(self) -> bool:
         """Indicates whether this adapter uses a hyperspectral camera.
 

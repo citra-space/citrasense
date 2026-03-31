@@ -484,6 +484,19 @@ class CitraScopeDaemon:
         if self.time_monitor:
             checks.append(TimeHealthCheck(CITRASCOPE_LOGGER, self.time_monitor))
 
+        # Hardware safety check — polls the adapter's external safety monitor device
+        if self.settings and self.settings.hardware_safety_check_enabled:
+            if self.hardware_adapter.supports_hardware_safety_monitor:
+                from citrascope.safety.hardware_safety_check import HardwareSafetyCheck
+
+                checks.append(HardwareSafetyCheck(CITRASCOPE_LOGGER, self.hardware_adapter.query_hardware_safety))
+                CITRASCOPE_LOGGER.info("Hardware safety check enabled")
+            else:
+                CITRASCOPE_LOGGER.info(
+                    "Hardware safety check enabled in settings but adapter %s does not support it — skipping",
+                    type(self.hardware_adapter).__name__,
+                )
+
         def abort_callback() -> None:
             try:
                 m = self.hardware_adapter.mount if self.hardware_adapter else None

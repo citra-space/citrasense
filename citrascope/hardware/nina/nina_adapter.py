@@ -450,6 +450,29 @@ class NinaAdvancedHttpAdapter(AbstractAstroHardwareAdapter):
         """Indicates that NINA adapter supports filter/focus management."""
         return True
 
+    @property
+    def supports_hardware_safety_monitor(self) -> bool:
+        return True
+
+    def query_hardware_safety(self) -> bool | None:
+        """Query NINA's safety monitor device for environmental safety status."""
+        try:
+            resp = requests.get(
+                f"{self.nina_api_path}{self.SAFETYMON_URL}info",
+                timeout=self.HEALTH_CHECK_TIMEOUT,
+            ).json()
+            if not resp.get("Success"):
+                return None
+            response = resp.get("Response", {})
+            if not response.get("Connected"):
+                return None
+            is_safe = response.get("IsSafe")
+            if isinstance(is_safe, bool):
+                return is_safe
+            return None
+        except Exception:
+            return None
+
     def is_telescope_connected(self) -> bool:
         """Check if telescope is connected and responsive."""
         try:
