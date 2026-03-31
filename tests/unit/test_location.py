@@ -1,5 +1,6 @@
 """Unit tests for GPSMonitor and LocationService."""
 
+import subprocess
 import time
 from unittest.mock import MagicMock, patch
 
@@ -194,6 +195,36 @@ def test_gps_monitor_satellite_count_fallback():
         fix = gm._query_gpsd()
 
     assert fix.satellites == 2
+
+
+def test_gps_monitor_query_gpsd_timeout_parses_partial():
+    """TimeoutExpired should still parse whatever output was captured."""
+    gm = GPSMonitor()
+    partial_output = (
+        '{"class":"VERSION","release":"3.25"}\n'
+        '{"class":"DEVICES","devices":[{"path":"/dev/ttyAMA0","driver":"MTK-3301"}]}\n'
+        '{"class":"TPV","mode":1}\n'
+    )
+    timeout_exc = subprocess.TimeoutExpired(cmd=["gpspipe"], timeout=5, output=partial_output)
+
+    with patch("subprocess.run", side_effect=timeout_exc):
+        fix = gm._query_gpsd()
+
+    assert fix is not None
+    assert fix.gpsd_version == "3.25"
+    assert fix.device_path == "/dev/ttyAMA0"
+    assert fix.device_driver == "MTK-3301"
+    assert fix.fix_mode == 1
+    assert fix.latitude is None
+
+
+def test_gps_monitor_query_gpsd_timeout_empty():
+    """TimeoutExpired with no captured output should return None."""
+    gm = GPSMonitor()
+    timeout_exc = subprocess.TimeoutExpired(cmd=["gpspipe"], timeout=5, output=None)
+
+    with patch("subprocess.run", side_effect=timeout_exc):
+        assert gm._query_gpsd() is None
 
 
 # ---------------------------------------------------------------------------

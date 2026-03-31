@@ -241,10 +241,12 @@ class GPSMonitor:
             GPSFix object with location and fix quality, or None if unavailable.
         """
         try:
-            # Use gpspipe to get JSON output from gpsd
-            # Request 10 messages to ensure we get both TPV (position) and SKY (satellites)
+            # VERSION + DEVICES + WATCH arrive immediately; TPV follows at ~1 Hz.
+            # 5 messages is enough for device info + at least one TPV.
+            # SKY (satellite details) arrives every ~5s and may not be included,
+            # but we'll pick it up on subsequent polls.
             result = subprocess.run(
-                ["gpspipe", "-w", "-n", "10"],
+                ["gpspipe", "-w", "-n", "5"],
                 capture_output=True,
                 timeout=5,
                 text=True,
@@ -253,65 +255,78 @@ class GPSMonitor:
             if result.returncode != 0:
                 return None
 
-            # Parse JSON lines to extract data
-            fix = GPSFix(timestamp=time.time())
+            return self._parse_gpsd_output(result.stdout)
 
-            for line in result.stdout.strip().split("\n"):
-                if not line:
-                    continue
-
-                try:
-                    data = json.loads(line)
-                    msg_class = data.get("class")
-
-                    if msg_class == "VERSION":
-                        fix.gpsd_version = data.get("release")
-
-                    elif msg_class == "DEVICES":
-                        devices = data.get("devices", [])
-                        if devices:
-                            dev = devices[0]
-                            fix.device_path = dev.get("path")
-                            fix.device_driver = dev.get("driver")
-
-                    elif msg_class == "TPV":
-                        if "mode" in data:
-                            fix.fix_mode = data["mode"]
-                        if "lat" in data:
-                            fix.latitude = data["lat"]
-                        if "lon" in data:
-                            fix.longitude = data["lon"]
-                        if "alt" in data:
-                            fix.altitude = data["alt"]
-                        if "eph" in data:
-                            fix.eph = data["eph"]
-                        if "sep" in data:
-                            fix.sep = data["sep"]
-
-                    elif msg_class == "SKY":
-                        # Prefer uSat (used satellites) if available
-                        if "uSat" in data:
-                            fix.satellites = data["uSat"]
-                        # Fall back to counting satellites array
-                        elif "satellites" in data:
-                            fix.satellites = len([s for s in data["satellites"] if s.get("used", False)])
-
-                except json.JSONDecodeError:
-                    continue
-
-            # Return fix if we got position data OR gpsd subsystem info
-            if fix.latitude is not None and fix.longitude is not None:
-                return fix
-            elif fix.gpsd_version is not None or fix.device_path is not None:
-                return fix
-            else:
-                return None
-
+        except subprocess.TimeoutExpired as te:
+            # gpspipe didn't finish in time but may have captured useful data
+            output = (
+                te.stdout
+                if isinstance(te.stdout, str)
+                else (te.stdout.decode("utf-8", errors="replace") if te.stdout else "")
+            )
+            if output:
+                return self._parse_gpsd_output(output)
+            return None
         except (FileNotFoundError, OSError):
-            # gpspipe not available or gpsd not running
             return None
         except Exception as e:
             CITRASCOPE_LOGGER.debug(f"Could not query gpsd: {e}")
+            return None
+
+    def _parse_gpsd_output(self, output: str) -> GPSFix | None:
+        """Parse gpspipe JSON output into a GPSFix.
+
+        Returns a GPSFix if we got position data OR gpsd subsystem info
+        (version/device path), None otherwise.
+        """
+        fix = GPSFix(timestamp=time.time())
+
+        for line in output.strip().split("\n"):
+            if not line:
+                continue
+
+            try:
+                data = json.loads(line)
+                msg_class = data.get("class")
+
+                if msg_class == "VERSION":
+                    fix.gpsd_version = data.get("release")
+
+                elif msg_class == "DEVICES":
+                    devices = data.get("devices", [])
+                    if devices:
+                        dev = devices[0]
+                        fix.device_path = dev.get("path")
+                        fix.device_driver = dev.get("driver")
+
+                elif msg_class == "TPV":
+                    if "mode" in data:
+                        fix.fix_mode = data["mode"]
+                    if "lat" in data:
+                        fix.latitude = data["lat"]
+                    if "lon" in data:
+                        fix.longitude = data["lon"]
+                    if "alt" in data:
+                        fix.altitude = data["alt"]
+                    if "eph" in data:
+                        fix.eph = data["eph"]
+                    if "sep" in data:
+                        fix.sep = data["sep"]
+
+                elif msg_class == "SKY":
+                    if "uSat" in data:
+                        fix.satellites = data["uSat"]
+                    elif "satellites" in data:
+                        fix.satellites = len([s for s in data["satellites"] if s.get("used", False)])
+
+            except json.JSONDecodeError:
+                continue
+
+        if fix.latitude is not None and fix.longitude is not None:
+            return fix
+        elif fix.gpsd_version is not None or fix.device_path is not None:
+            return fix
+        else:
             return None
 
     def _log_fix_status(self, fix: GPSFix, fix_mode_changed: bool = False) -> None:
