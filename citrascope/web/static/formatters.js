@@ -139,17 +139,27 @@ export function formatTimeOffset(timeHealth) {
 }
 
 /**
- * Format GPS location information
+ * Format GPS location information with three distinct states:
+ *   1. null/undefined gpsLocation  → "Not detected"  (gpsd unreachable)
+ *   2. gpsLocation exists, no lat  → "Searching…"    (gpsd running, no fix)
+ *   3. gpsLocation with coords     → accuracy/sats   (has fix)
+ *
  * @param {Object} gpsLocation - GPS location object with satellites, fix_mode, sep
- * @returns {string} Formatted GPS location (e.g., "±102ft, 6 sats, 3D fix")
+ * @returns {string} Formatted GPS status string
  */
 export function formatGPSLocation(gpsLocation) {
-    if (!gpsLocation || gpsLocation.latitude == null) {
-        return 'GPS unavailable';
+    if (!gpsLocation) {
+        return 'Not detected';
     }
 
     const sats = gpsLocation.satellites || 0;
     const fixMode = gpsLocation.fix_mode || 0;
+
+    if (gpsLocation.latitude == null) {
+        if (fixMode <= 1) return `Searching\u2026 (${sats} sats)`;
+        return `No fix (${sats} sats)`;
+    }
+
     const fixTypes = ['No fix', 'No fix', '2D fix', '3D fix'];
     const fixType = fixTypes[Math.min(fixMode, 3)];
 
@@ -157,10 +167,10 @@ export function formatGPSLocation(gpsLocation) {
     let accuracy = '';
     if (gpsLocation.sep != null) {
         const accuracyFt = Math.round(gpsLocation.sep * 3.28084); // meters to feet
-        accuracy = `±${accuracyFt}ft, `;
+        accuracy = `\u00b1${accuracyFt}ft, `;
     } else if (gpsLocation.eph != null) {
         const accuracyFt = Math.round(gpsLocation.eph * 3.28084); // meters to feet
-        accuracy = `±${accuracyFt}ft, `;
+        accuracy = `\u00b1${accuracyFt}ft, `;
     }
 
     return `${accuracy}${sats} sats, ${fixType}`;

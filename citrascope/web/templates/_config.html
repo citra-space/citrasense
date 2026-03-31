@@ -852,7 +852,7 @@
                                         <span class="text-muted small">Fix</span>
                                         <span class="font-monospace small" x-text="$store.citrascope.formatGPSLocation($store.citrascope.status?.gps_location)"></span>
                                     </div>
-                                    <div class="mb-2 d-flex justify-content-between" x-show="$store.citrascope.status?.gps_location?.satellites > 0">
+                                    <div class="mb-2 d-flex justify-content-between" x-show="$store.citrascope.status?.gps_location">
                                         <span class="text-muted small">Satellites</span>
                                         <span class="font-monospace small" x-text="($store.citrascope.status?.gps_location?.satellites || 0) + ' used'"></span>
                                     </div>

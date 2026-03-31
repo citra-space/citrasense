@@ -6,6 +6,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from citrascope.location.gps_monitor import GPSFix, GPSMonitor
+from citrascope.location.location_service import LocationService
 
 # ---------------------------------------------------------------------------
 # GPSFix dataclass
@@ -200,18 +201,85 @@ def test_gps_monitor_satellite_count_fallback():
 # ---------------------------------------------------------------------------
 
 
-def test_location_service_gps_unavailable():
+def test_location_service_gps_unavailable_keeps_monitor():
     with patch.object(GPSMonitor, "is_available", return_value=False):
-        from citrascope.location.location_service import LocationService
-
         ls = LocationService()
-    assert ls.gps_monitor is None
+    assert ls.gps_monitor is not None
+    assert ls._gps_started is False
+
+
+def test_location_service_gps_available_at_init():
+    with patch.object(GPSMonitor, "is_available", return_value=True), patch.object(GPSMonitor, "start"):
+        ls = LocationService()
+    assert ls._gps_started is True
+
+
+def test_location_service_lazy_retry_starts_gps():
+    """GPS unavailable at init, then becomes available on a later call."""
+    call_count = 0
+
+    def availability_sequence():
+        nonlocal call_count
+        call_count += 1
+        return call_count >= 2
+
+    with patch.object(GPSMonitor, "is_available", side_effect=availability_sequence):
+        ls = LocationService()
+        assert ls._gps_started is False
+
+        # Force past the retry interval
+        ls._last_gps_retry = 0.0
+
+        with patch.object(GPSMonitor, "start"):
+            result = ls._try_start_gps()
+
+    assert result is True
+    assert ls._gps_started is True
+
+
+def test_location_service_retry_respects_deadline():
+    with patch.object(GPSMonitor, "is_available", return_value=False):
+        ls = LocationService()
+
+    # Push deadline into the past
+    ls._gps_retry_deadline = time.time() - 1
+    ls._last_gps_retry = 0.0
+
+    assert ls._try_start_gps() is False
+    assert ls._gps_started is False
+
+
+def test_location_service_retry_respects_interval():
+    with patch.object(GPSMonitor, "is_available", return_value=False):
+        ls = LocationService()
+
+    # Recent retry should be throttled even though deadline hasn't passed
+    ls._last_gps_retry = time.time()
+    assert ls._try_start_gps() is False
+
+
+def test_location_service_get_gps_fix_triggers_retry():
+    """get_gps_fix() should attempt lazy start when monitor isn't running."""
+    with patch.object(GPSMonitor, "is_available", return_value=False):
+        ls = LocationService()
+
+    assert ls.get_gps_fix(allow_blocking=False) is None
+
+    # Simulate GPS becoming available
+    ls._last_gps_retry = 0.0
+    with patch.object(GPSMonitor, "is_available", return_value=True), patch.object(GPSMonitor, "start"):
+        fix_obj = GPSFix(
+            latitude=40.0, longitude=-74.0, altitude=100.0, fix_mode=3, satellites=8, timestamp=time.time()
+        )
+        with patch.object(GPSMonitor, "get_current_fix", return_value=fix_obj):
+            result = ls.get_gps_fix(allow_blocking=False)
+
+    assert result is fix_obj
+    assert ls._gps_started is True
 
 
 def test_location_service_get_current_location_from_ground_station():
     with patch.object(GPSMonitor, "is_available", return_value=False):
-        from citrascope.location.location_service import LocationService
-
         ls = LocationService()
     ls.set_ground_station({"id": "gs1", "latitude": 40.0, "longitude": -74.0, "altitude": 100.0})
     loc = ls.get_current_location()
@@ -221,16 +289,12 @@ def test_location_service_get_current_location_from_ground_station():
 
 def test_location_service_get_current_location_none():
     with patch.object(GPSMonitor, "is_available", return_value=False):
-        from citrascope.location.location_service import LocationService
-
         ls = LocationService()
     assert ls.get_current_location() is None
 
 
 def test_location_service_on_gps_fix_no_settings():
     with patch.object(GPSMonitor, "is_available", return_value=False):
-        from citrascope.location.location_service import LocationService
-
         ls = LocationService()
     ls.settings = None
     fix = GPSFix(latitude=40.0, longitude=-74.0, altitude=100.0, fix_mode=3, satellites=8)
@@ -245,8 +309,6 @@ def test_location_service_on_gps_fix_updates_server():
     mock_settings.gps_update_interval_minutes = 0
 
     with patch.object(GPSMonitor, "is_available", return_value=False):
-        from citrascope.location.location_service import LocationService
-
         ls = LocationService(api_client=mock_api, settings=mock_settings)
 
     ls.set_ground_station({"id": "gs1", "latitude": 0.0, "longitude": 0.0, "altitude": 0.0})
@@ -263,8 +325,6 @@ def test_location_service_on_gps_fix_rate_limited():
     mock_settings.gps_update_interval_minutes = 999
 
     with patch.object(GPSMonitor, "is_available", return_value=False):
-        from citrascope.location.location_service import LocationService
-
         ls = LocationService(api_client=mock_api, settings=mock_settings)
 
     ls.set_ground_station({"id": "gs1", "latitude": 0.0, "longitude": 0.0, "altitude": 0.0})
@@ -275,10 +335,18 @@ def test_location_service_on_gps_fix_rate_limited():
     mock_api.update_ground_station_location.assert_not_called()
 
 
-def test_location_service_stop():
-    with patch.object(GPSMonitor, "is_available", return_value=False):
-        from citrascope.location.location_service import LocationService
+def test_location_service_stop_started():
+    with patch.object(GPSMonitor, "is_available", return_value=True), patch.object(GPSMonitor, "start"):
+        ls = LocationService()
+    assert ls._gps_started is True
 
+    with patch.object(GPSMonitor, "stop"):
+        ls.stop()
+    assert ls._gps_started is False
+
+
+def test_location_service_stop_not_started():
+    with patch.object(GPSMonitor, "is_available", return_value=False):
         ls = LocationService()
     ls.stop()
-    assert ls.gps_monitor is None
+    assert ls._gps_started is False

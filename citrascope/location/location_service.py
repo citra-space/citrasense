@@ -3,16 +3,17 @@
 Manages ground station location from GPS or API sources with intelligent fallback.
 """
 
+from __future__ import annotations
+
 import threading
 import time
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING
 
-from citrascope.location.gps_monitor import GPSMonitor
+from citrascope.location.gps_monitor import GPSFix, GPSMonitor
 from citrascope.logging import CITRASCOPE_LOGGER
 
 if TYPE_CHECKING:
     from citrascope.api.abstract_api_client import AbstractCitraApiClient
-    from citrascope.location.gps_monitor import GPSFix
     from citrascope.settings.citrascope_settings import CitraScopeSettings
 
 
@@ -26,7 +27,9 @@ class LocationService:
     static configuration.
 
     The service manages GPS monitoring internally, starting it if available and
-    handling all GPS lifecycle operations.
+    handling all GPS lifecycle operations.  If gpsd is not yet responsive at
+    startup (common with systemd socket activation), the service retries
+    periodically until a deadline.
     """
 
     # GPS polling interval - how often to check GPS for fresh coordinates
@@ -35,10 +38,16 @@ class LocationService:
     # Maximum age for GPS fix before falling back to ground station (5 minutes)
     GPS_MAX_AGE_SECONDS = 300
 
+    # How long to retry gpsd availability after a failed initial check
+    GPS_RETRY_TIMEOUT_SECONDS = 300
+
+    # Minimum interval between retry attempts (avoid subprocess spam)
+    GPS_RETRY_INTERVAL_SECONDS = 10
+
     def __init__(
         self,
-        api_client: Optional["AbstractCitraApiClient"] = None,
-        settings: Optional["CitraScopeSettings"] = None,
+        api_client: AbstractCitraApiClient | None = None,
+        settings: CitraScopeSettings | None = None,
     ):
         """
         Initialize location service with GPS monitoring.
@@ -60,18 +69,66 @@ class LocationService:
             fix_callback=self.on_gps_fix_changed,
         )
 
+        self._gps_started = False
+        self._gps_retry_deadline = time.time() + self.GPS_RETRY_TIMEOUT_SECONDS
+        self._last_gps_retry: float = 0.0
+        self._try_start_gps()
+
+    def _try_start_gps(self) -> bool:
+        """Attempt to start GPS monitoring if gpsd is available.
+
+        Safe to call repeatedly — respects a retry interval and a deadline
+        so systems without GPS hardware don't keep spawning subprocesses.
+
+        Returns:
+            True if the GPS monitor is (now) running.
+        """
+        if self._gps_started:
+            return True
+
+        now = time.time()
+        if now > self._gps_retry_deadline:
+            return False
+        if now - self._last_gps_retry < self.GPS_RETRY_INTERVAL_SECONDS:
+            return False
+
+        self._last_gps_retry = now
+
         if self.gps_monitor.is_available():
             self.gps_monitor.start()
+            self._gps_started = True
             CITRASCOPE_LOGGER.info("GPS monitoring started by location service")
-        else:
-            CITRASCOPE_LOGGER.info("GPS not available - location service using API-only mode")
-            self.gps_monitor = None
+            return True
+
+        CITRASCOPE_LOGGER.debug("GPS not yet available — will retry")
+        return False
+
+    def get_gps_fix(self, allow_blocking: bool = True) -> GPSFix | None:
+        """Get GPS fix, lazily starting the monitor if gpsd became available.
+
+        This is the preferred entry point for callers that need GPS data.
+        It handles retry logic internally so callers don't need to check
+        whether the monitor was successfully started at boot.
+
+        Args:
+            allow_blocking: If False, never blocks on a subprocess call.
+                Use False from async contexts.
+
+        Returns:
+            Current GPS fix, or None if GPS is unavailable.
+        """
+        if not self._gps_started:
+            self._try_start_gps()
+
+        if self._gps_started:
+            return self.gps_monitor.get_current_fix(allow_blocking=allow_blocking)
+        return None
 
     def stop(self) -> None:
         """Stop GPS monitoring."""
-        if self.gps_monitor:
+        if self._gps_started:
             self.gps_monitor.stop()
-            self.gps_monitor = None
+            self._gps_started = False
 
     def set_ground_station(self, ground_station: dict) -> None:
         """
@@ -83,7 +140,7 @@ class LocationService:
         with self._lock:
             self._ground_station_ref = ground_station
 
-    def on_gps_fix_changed(self, fix: "GPSFix") -> None:
+    def on_gps_fix_changed(self, fix: GPSFix) -> None:
         """
         Callback invoked when GPS fix is checked by background thread (every 10 seconds).
 
@@ -150,8 +207,8 @@ class LocationService:
             Dictionary with latitude, longitude, altitude, and source, or None if unavailable.
         """
         # Try GPS first if available and GPS location updates are enabled
-        if self.gps_monitor and self.settings and self.settings.gps_location_updates_enabled:
-            fix = self.gps_monitor.get_current_fix()
+        if self.settings and self.settings.gps_location_updates_enabled:
+            fix = self.get_gps_fix()
             if fix and fix.is_strong_fix:
                 # Check if GPS data is fresh (not stale)
                 age_seconds = time.time() - fix.timestamp
