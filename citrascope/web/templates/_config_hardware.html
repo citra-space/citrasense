@@ -1,338 +1,324 @@
-                <!-- Hardware Configuration Card -->
-                <div class="col-12" x-data="{ hardwareCardExpanded: $persist(true).as('hardwareCard') }">
-                    <div class="card bg-dark text-light border-secondary">
-                        <div class="card-header d-flex justify-content-between align-items-center" style="cursor: pointer;" @click="hardwareCardExpanded = !hardwareCardExpanded">
-                            <div class="d-flex align-items-center gap-2">
-                                <i class="bi bi-hdd-network"></i>
-                                <h5 class="mb-0">Hardware Configuration</h5>
-                                <small class="text-muted" x-show="!hardwareCardExpanded" x-text="($store.citrascope.hardwareAdapters.find(a => a.value === $store.citrascope.config.hardware_adapter)?.label || $store.citrascope.config.hardware_adapter || 'Not configured')"></small>
-                            </div>
-                            <div class="d-flex align-items-center gap-2">
-                                <button class="btn btn-sm btn-outline-secondary"
-                                        x-show="$store.citrascope.config.hardware_adapter"
-                                        :disabled="$store.citrascope.isReconnecting || $store.citrascope.isSavingConfig"
-                                        @click.stop="$store.citrascope.reconnectHardware()"
-                                        data-bs-toggle="tooltip" data-bs-theme="dark" data-bs-placement="bottom"
-                                        title="Reinitialize hardware and services (may briefly pause active tasks)">
-                                    <i class="bi" :class="$store.citrascope.isReconnecting ? 'bi-arrow-repeat spin' : 'bi-arrow-repeat'"></i>
-                                    <span x-text="$store.citrascope.isReconnecting ? 'Reconnecting...' : 'Reconnect'"></span>
-                                </button>
-                                <i class="bi" :class="hardwareCardExpanded ? 'bi-chevron-up' : 'bi-chevron-down'"></i>
-                            </div>
-                        </div>
-                        <div class="card-body" x-show="hardwareCardExpanded">
-                            <div class="row g-3 mb-3">
-                                <div class="col-12">
-                                    <label for="hardwareAdapterSelect" class="form-label">Hardware Adapter <span class="text-danger">*</span></label>
-                                    <select id="hardwareAdapterSelect" class="form-select" required x-model="$store.citrascope.config.hardware_adapter"
-                                        @change="$store.citrascope.handleAdapterChange($event.target.value)">
-                                        <option value="">-- Select Hardware Adapter --</option>
-                                        <template x-for="adapter in $store.citrascope.hardwareAdapters" :key="adapter.value">
-                                            <option :value="adapter.value" x-text="adapter.label"></option>
-                                        </template>
-                                    </select>
-                                </div>
-                            </div>
+<!-- Hardware Configuration (included by _config.html) -->
+<div class="row g-3 mb-3">
+    <div class="col">
+        <label for="hardwareAdapterSelect" class="form-label">Hardware Adapter <span class="text-danger">*</span></label>
+        <select id="hardwareAdapterSelect" class="form-select" required x-model="$store.citrascope.config.hardware_adapter"
+            @change="$store.citrascope.handleAdapterChange($event.target.value)">
+            <option value="">-- Select Hardware Adapter --</option>
+            <template x-for="adapter in $store.citrascope.hardwareAdapters" :key="adapter.value">
+                <option :value="adapter.value" x-text="adapter.label"></option>
+            </template>
+        </select>
+    </div>
+    <div class="col-auto d-flex align-items-end"
+         x-show="$store.citrascope.config.hardware_adapter">
+        <button type="button" class="btn btn-sm btn-outline-secondary"
+                :disabled="$store.citrascope.isReconnecting || $store.citrascope.isSavingConfig"
+                @click="$store.citrascope.reconnectHardware()"
+                data-bs-toggle="tooltip" data-bs-theme="dark" data-bs-placement="bottom"
+                title="Reinitialize hardware and services (may briefly pause active tasks)">
+            <i class="bi" :class="$store.citrascope.isReconnecting ? 'bi-arrow-repeat spin' : 'bi-arrow-repeat'"></i>
+            <span x-text="$store.citrascope.isReconnecting ? 'Reconnecting...' : 'Reconnect'"></span>
+        </button>
+    </div>
+</div>
 
-                            <!-- Dynamic Adapter Settings Container -->
-                            <div id="adapter-settings-container">
-                                <template x-if="$store.citrascope.adapterFields.length > 0">
-                                    <div>
-                                        <h5 class="mb-3">Adapter Settings</h5>
-                                        <!-- Group fields by group property -->
-                                        <template x-for="[groupName, fields] in $store.citrascope.groupedAdapterFields" :key="groupName">
-                                            <div class="card bg-dark border-secondary mb-3">
-                                                <div class="card-header">
-                                                    <h6 class="mb-0" x-text="groupName"></h6>
-                                                </div>
-                                                <div class="card-body">
-                                                    <div class="row g-3">
-                                                        <template x-for="field in fields" :key="field.name">
-                                                            <div x-data="adapterField(field)"
-                                                                 class="col-12 col-md-4" x-show="field && field.name && isVisible">
-                                                                <label :for="inputId" class="form-label">
-                                                                    <span x-text="field.friendly_name || field.name"></span>
-                                                                    <span class="text-danger" x-show="field.required">*</span>
-                                                                </label>
+<!-- Dynamic Adapter Settings Container -->
+<div id="adapter-settings-container">
+    <template x-if="$store.citrascope.adapterFields.length > 0">
+        <div>
+            <h5 class="mb-3">Adapter Settings</h5>
+            <!-- Group fields by group property -->
+            <template x-for="[groupName, fields] in $store.citrascope.groupedAdapterFields" :key="groupName">
+                <div class="card bg-dark border-secondary mb-3">
+                    <div class="card-header">
+                        <h6 class="mb-0" x-text="groupName"></h6>
+                    </div>
+                    <div class="card-body">
+                        <div class="row g-3">
+                            <template x-for="field in fields" :key="field.name">
+                                <div x-data="adapterField(field)"
+                                     class="col-12 col-md-4" x-show="field && field.name && isVisible">
+                                    <label :for="inputId" class="form-label">
+                                        <span x-text="field.friendly_name || field.name"></span>
+                                        <span class="text-danger" x-show="field.required">*</span>
+                                    </label>
 
-                                                                <!-- Boolean checkbox -->
-                                                                <template x-if="isBoolean">
-                                                                    <div class="form-check mt-2">
-                                                                        <input class="form-check-input adapter-setting" type="checkbox"
-                                                                               :id="inputId" :data-field="field.name" :data-type="field.type"
-                                                                               x-model="field.value">
-                                                                        <label class="form-check-label" :for="inputId" x-text="field.description"></label>
-                                                                    </div>
-                                                                </template>
+                                    <!-- Boolean checkbox -->
+                                    <template x-if="isBoolean">
+                                        <div class="form-check mt-2">
+                                            <input class="form-check-input adapter-setting" type="checkbox"
+                                                   :id="inputId" :data-field="field.name" :data-type="field.type"
+                                                   x-model="field.value">
+                                            <label class="form-check-label" :for="inputId" x-text="field.description"></label>
+                                        </div>
+                                    </template>
 
-                                                                <!-- Select dropdown -->
-                                                                <template x-if="isSelect">
-                                                                    <select :id="inputId" class="form-select adapter-setting"
-                                                                            :data-field="field.name" :data-type="field.type"
-                                                                            :required="field.required" @change="handleChange">
-                                                                        <option value="" x-text="'-- Select ' + (field.friendly_name || field.name) + ' --'"></option>
-                                                                        <template x-for="(opt, idx) in (field.options || [])" :key="(typeof opt === 'object' ? opt.value : opt) + '_' + idx">
-                                                                            <option :value="typeof opt === 'object' ? opt.value : opt"
-                                                                                    :selected="(typeof opt === 'object' ? opt.value : opt) === field.value"
-                                                                                    x-text="typeof opt === 'object' ? opt.label : opt"></option>
-                                                                        </template>
-                                                                    </select>
-                                                                </template>
-
-                                                                <!-- Number input -->
-                                                                <template x-if="isNumber">
-                                                                    <input type="number" :id="inputId"
-                                                                           class="form-control adapter-setting"
-                                                                           :data-field="field.name" :data-type="field.type"
-                                                                           :placeholder="field.placeholder || ''"
-                                                                           :min="field.min" :max="field.max"
-                                                                           :step="field.step || (field.type === 'float' ? 'any' : '1')"
-                                                                           :required="field.required"
-                                                                           x-model.lazy="field.value" @change="handleChange">
-                                                                </template>
-
-                                                                <!-- Text input -->
-                                                                <template x-if="isText">
-                                                                    <input type="text" :id="inputId"
-                                                                           class="form-control adapter-setting"
-                                                                           :data-field="field.name" :data-type="field.type"
-                                                                           :placeholder="field.placeholder || ''"
-                                                                           :pattern="field.pattern || null"
-                                                                           :required="field.required"
-                                                                           x-model="field.value">
-                                                                </template>
-
-                                                                <small class="text-muted" x-show="!isBoolean && field.description"
-                                                                       x-text="field.description"></small>
-                                                            </div>
-                                                        </template>
-                                                    </div>
-                                                </div>
-                                            </div>
-                                        </template>
-                                    </div>
-                                </template>
-                            </div>
-
-                            <!-- Missing Dependencies Alert (Config Page) -->
-                            <div class="alert alert-warning mt-3" role="alert"
-                                x-show="$store.citrascope.status?.missing_dependencies?.length > 0">
-                                <template x-if="$store.citrascope.status?.missing_dependencies?.length > 0">
-                                    <div>
-                                        <strong><i class="bi bi-exclamation-triangle-fill me-2"></i>Missing Dependencies:</strong>
-                                        <ul class="mb-0 mt-2">
-                                            <template x-for="dep in $store.citrascope.status.missing_dependencies" :key="dep.device_name">
-                                                <li>
-                                                    <strong x-text="dep.device_name"></strong>: Missing <span x-text="dep.missing_packages"></span><br>
-                                                    <code class="small" x-text="dep.install_cmd"></code>
-                                                </li>
+                                    <!-- Select dropdown -->
+                                    <template x-if="isSelect">
+                                        <select :id="inputId" class="form-select adapter-setting"
+                                                :data-field="field.name" :data-type="field.type"
+                                                :required="field.required" @change="handleChange">
+                                            <option value="" x-text="'-- Select ' + (field.friendly_name || field.name) + ' --'"></option>
+                                            <template x-for="(opt, idx) in (field.options || [])" :key="(typeof opt === 'object' ? opt.value : opt) + '_' + idx">
+                                                <option :value="typeof opt === 'object' ? opt.value : opt"
+                                                        :selected="(typeof opt === 'object' ? opt.value : opt) === field.value"
+                                                        x-text="typeof opt === 'object' ? opt.label : opt"></option>
                                             </template>
-                                        </ul>
-                                    </div>
-                                </template>
-                            </div>
+                                        </select>
+                                    </template>
 
-                            <!-- Filter Configuration Card -->
-                            <div x-show="$store.citrascope.filterConfigVisible" class="card bg-dark border-secondary mb-3 mt-3">
-                                <div class="card-header">
-                                    <h6 class="mb-0">Filter Configuration</h6>
-                                </div>
-                                <div class="card-body">
-                                    <p class="text-muted mb-3" x-show="$store.citrascope.filterAdapterChangeMessageVisible">
-                                        Save configuration to edit filter settings for this adapter
-                                    </p>
-                                    <div id="filterTableContainer">
-                                        <table class="table table-dark table-sm">
-                                            <thead>
-                                                <tr>
-                                                    <th>Enabled</th>
-                                                    <th>Name</th>
-                                                    <th>Focus Position</th>
-                                                </tr>
-                                            </thead>
-                                            <tbody>
-                                                <template x-for="[filterId, filter] in Object.entries($store.citrascope.filters || {})" :key="filterId">
-                                                    <tr x-data="filterRow(filter, filterId)">
-                                                        <td>
-                                                            <input type="checkbox" class="form-check-input filter-enabled-checkbox"
-                                                                :data-filter-id="filterId" x-model="$store.citrascope.filters[filterId].enabled">
-                                                        </td>
-                                                        <td x-data="{ customName: '', isCustom: !$store.citrascope.filterNameOptions.some(g => g.names.includes($store.citrascope.filters[filterId].name)) }"
-                                                            x-init="if (isCustom) customName = $store.citrascope.filters[filterId].name">
-                                                            <div x-show="$store.citrascope.filterNamesEditable">
-                                                                <div class="d-flex align-items-center gap-2">
-                                                                    <span class="rounded-circle d-inline-block flex-shrink-0"
-                                                                        :style="{ width: '12px', height: '12px', minWidth: '12px', backgroundColor: $store.citrascope.filterColors[$store.citrascope.filters[filterId].name] || '#777' }"></span>
-                                                                    <select class="form-select form-select-sm"
-                                                                        :data-filter-id="filterId"
-                                                                        :value="isCustom ? '__custom__' : $store.citrascope.filters[filterId].name"
-                                                                        @change="if ($event.target.value === '__custom__') { isCustom = true; customName = $store.citrascope.filters[filterId].name; } else { isCustom = false; $store.citrascope.filters[filterId].name = $event.target.value; }">
-                                                                        <template x-for="group in $store.citrascope.filterNameOptions" :key="group.group">
-                                                                            <optgroup :label="group.group">
-                                                                                <template x-for="fname in group.names" :key="fname">
-                                                                                    <option :value="fname" x-text="fname"></option>
-                                                                                </template>
-                                                                            </optgroup>
-                                                                        </template>
-                                                                        <option value="__custom__">Custom...</option>
-                                                                    </select>
-                                                                </div>
-                                                                <input x-show="isCustom"
-                                                                    type="text" class="form-control form-control-sm mt-1"
-                                                                    placeholder="Custom filter name"
-                                                                    x-model="customName"
-                                                                    @input="$store.citrascope.filters[filterId].name = customName">
-                                                            </div>
-                                                            <span x-show="!$store.citrascope.filterNamesEditable" class="badge" :style="badgeStyle" x-text="filter.name"></span>
-                                                        </td>
-                                                        <td>
-                                                            <input type="number" class="form-control form-control-sm filter-focus-input"
-                                                                :data-filter-id="filterId" x-model.number="$store.citrascope.filters[filterId].focus_position" min="0" step="1">
-                                                        </td>
-                                                    </tr>
-                                                </template>
-                                            </tbody>
-                                        </table>
-                                        <div class="text-muted small" x-show="Object.keys($store.citrascope.filters || {}).length === 0">
-                                            No filters configured. Connect to hardware to discover filters.
-                                        </div>
-                                    </div>
-                                </div>
-                            </div>
+                                    <!-- Number input -->
+                                    <template x-if="isNumber">
+                                        <input type="number" :id="inputId"
+                                               class="form-control adapter-setting"
+                                               :data-field="field.name" :data-type="field.type"
+                                               :placeholder="field.placeholder || ''"
+                                               :min="field.min" :max="field.max"
+                                               :step="field.step || (field.type === 'float' ? 'any' : '1')"
+                                               :required="field.required"
+                                               x-model.lazy="field.value" @change="handleChange">
+                                    </template>
 
-                            <!-- Autofocus Settings -->
-                            <div x-show="$store.citrascope.status?.supports_autofocus"
-                                 class="card bg-dark border-secondary mb-3">
-                                <div class="card-header">
-                                    <h6 class="mb-0"><i class="bi bi-arrows-expand me-1"></i>Autofocus Settings</h6>
-                                </div>
-                                <div class="card-body">
-                                    <div class="row g-3">
-                                        <div class="col-12">
-                                            <div class="mb-3">
-                                                <label for="autofocus_target_preset" class="form-label small">Focus Target</label>
-                                                <select id="autofocus_target_preset" class="form-select form-select-sm"
-                                                    x-model="$store.citrascope.config.autofocus_target_preset">
-                                                    <template x-for="preset in $store.citrascope.autofocusPresets" :key="preset.key">
-                                                        <option :value="preset.key"
-                                                            x-text="preset.mag != null ? preset.name + ' (' + preset.designation + ', mag ' + preset.mag.toFixed(1) + ')' : preset.name + ' (' + preset.designation + ')'"></option>
-                                                    </template>
-                                                    <option value="custom">Custom RA/Dec</option>
-                                                </select>
-                                                <template x-if="$store.citrascope.config.autofocus_target_preset && $store.citrascope.config.autofocus_target_preset !== 'custom'">
-                                                    <div class="form-text small"
-                                                        x-text="(() => { const p = $store.citrascope.autofocusPresets.find(pr => pr.key === $store.citrascope.config.autofocus_target_preset); return p ? p.description : ''; })()">
-                                                    </div>
-                                                </template>
-                                            </div>
-                                            <template x-if="$store.citrascope.config.autofocus_target_preset === 'custom'">
-                                                <div class="mb-3">
-                                                    <div class="row g-2">
-                                                        <div class="col-6">
-                                                            <label for="autofocus_custom_ra" class="form-label small">RA (degrees)</label>
-                                                            <input type="number" id="autofocus_custom_ra" class="form-control form-control-sm"
-                                                                step="any" min="0" max="360" placeholder="0 - 360"
-                                                                x-model.number="$store.citrascope.config.autofocus_target_custom_ra">
-                                                        </div>
-                                                        <div class="col-6">
-                                                            <label for="autofocus_custom_dec" class="form-label small">Dec (degrees)</label>
-                                                            <input type="number" id="autofocus_custom_dec" class="form-control form-control-sm"
-                                                                step="any" min="-90" max="90" placeholder="-90 - 90"
-                                                                x-model.number="$store.citrascope.config.autofocus_target_custom_dec">
-                                                        </div>
-                                                    </div>
-                                                </div>
-                                            </template>
-                                            <div class="mb-3">
-                                                <div class="d-flex align-items-center gap-2">
-                                                    <div class="form-check mb-0">
-                                                        <input class="form-check-input" type="checkbox" id="scheduled_autofocus_enabled" x-model="$store.citrascope.config.scheduled_autofocus_enabled">
-                                                        <label class="form-check-label text-nowrap" for="scheduled_autofocus_enabled">
-                                                            Scheduled
-                                                        </label>
-                                                    </div>
-                                                    <select id="autofocus_interval_minutes" class="form-select form-select-sm"
-                                                        style="width: auto;"
-                                                        x-model.number="$store.citrascope.config.autofocus_interval_minutes"
-                                                        :disabled="!$store.citrascope.config.scheduled_autofocus_enabled">
-                                                        <option value="30">every 30m</option>
-                                                        <option value="60">every 1h</option>
-                                                        <option value="120">every 2h</option>
-                                                        <option value="180">every 3h</option>
-                                                    </select>
-                                                </div>
-                                            </div>
-                                            <div class="small text-muted" x-show="$store.citrascope.status?.next_autofocus_minutes != null">
-                                                Next autofocus in: <span x-text="$store.citrascope.status?.next_autofocus_minutes === 0 ? 'now (overdue)' : $store.citrascope.formatMinutes($store.citrascope.status?.next_autofocus_minutes || 0)">--</span>
-                                            </div>
-                                        </div>
-                                    </div>
-                                </div>
-                            </div>
+                                    <!-- Text input -->
+                                    <template x-if="isText">
+                                        <input type="text" :id="inputId"
+                                               class="form-control adapter-setting"
+                                               :data-field="field.name" :data-type="field.type"
+                                               :placeholder="field.placeholder || ''"
+                                               :pattern="field.pattern || null"
+                                               :required="field.required"
+                                               x-model="field.value">
+                                    </template>
 
-                            <!-- Mount Alignment Card -->
-                            <div x-show="$store.citrascope.status?.supports_alignment || $store.citrascope.status?.supports_manual_sync"
-                                 class="card bg-dark border-secondary mb-3"
-                                 x-data="{ syncRa: $store.citrascope.status?.telescope_ra ?? '', syncDec: $store.citrascope.status?.telescope_dec ?? '' }">
-                                <div class="card-header d-flex justify-content-between align-items-center">
-                                    <h6 class="mb-0">Mount Alignment</h6>
-                                    <small class="text-muted font-monospace"
-                                        x-show="$store.citrascope.status?.telescope_ra != null"
-                                        x-text="'Position: RA ' + ($store.citrascope.status?.telescope_ra?.toFixed(4) ?? '—') + '°  Dec ' + ($store.citrascope.status?.telescope_dec?.toFixed(4) ?? '—') + '°'">
-                                    </small>
+                                    <small class="text-muted" x-show="!isBoolean && field.description"
+                                           x-text="field.description"></small>
                                 </div>
-                                <div class="card-body">
-                                    <div class="row">
-                                        <!-- Alignment Settings Column -->
-                                        <div class="col-12 col-md-6" x-show="$store.citrascope.status?.supports_alignment">
-                                            <h6 class="mb-2">Alignment Settings</h6>
-                                            <div class="mb-3">
-                                                <label for="alignment_exposure_seconds" class="form-label small">Alignment Exposure (seconds)</label>
-                                                <input type="number" id="alignment_exposure_seconds" class="form-control form-control-sm"
-                                                    step="0.5" min="0.5" max="30"
-                                                    x-model.number="$store.citrascope.config.alignment_exposure_seconds">
-                                            </div>
-                                            <div class="form-check">
-                                                <input class="form-check-input" type="checkbox" id="align_on_startup"
-                                                    x-model="$store.citrascope.config.align_on_startup">
-                                                <label class="form-check-label" for="align_on_startup">
-                                                    Align on startup
-                                                </label>
-                                            </div>
-                                        </div>
-
-                                        <!-- Manual Sync Column -->
-                                        <div class="col-12 col-md-6" x-show="$store.citrascope.status?.supports_manual_sync">
-                                            <h6 class="mb-2">Manual Sync</h6>
-                                            <p class="text-muted small mb-2">Tell the mount where it's currently pointing (no camera needed)</p>
-                                            <div x-show="$store.citrascope.status?.mount_at_home"
-                                                 class="alert alert-warning py-1 px-2 small mb-2">
-                                                <i class="bi bi-exclamation-triangle me-1"></i>
-                                                Mount is at home — sync requires a slew first
-                                            </div>
-                                            <div class="row g-2 mb-3">
-                                                <div class="col-6">
-                                                    <label for="sync_ra" class="form-label small">RA (degrees)</label>
-                                                    <input type="number" id="sync_ra" class="form-control form-control-sm"
-                                                        step="any" min="0" max="360" placeholder="0 - 360"
-                                                        x-model.number="syncRa">
-                                                </div>
-                                                <div class="col-6">
-                                                    <label for="sync_dec" class="form-label small">Dec (degrees)</label>
-                                                    <input type="number" id="sync_dec" class="form-control form-control-sm"
-                                                        step="any" min="-90" max="90" placeholder="-90 - 90"
-                                                        x-model.number="syncDec">
-                                                </div>
-                                            </div>
-                                            <button type="button" class="btn btn-sm btn-outline-primary w-100"
-                                                :disabled="$store.citrascope.status?.mount_at_home"
-                                                @click="window.manualSync(syncRa, syncDec)">
-                                                <i class="bi bi-crosshair me-1"></i> Manually Sync Mount
-                                            </button>
-                                        </div>
-                                    </div>
-                                </div>
-                            </div>
+                            </template>
                         </div>
                     </div>
                 </div>
+            </template>
+        </div>
+    </template>
+</div>
+
+<!-- Missing Dependencies Alert -->
+<div class="alert alert-warning mt-3" role="alert"
+    x-show="$store.citrascope.status?.missing_dependencies?.length > 0">
+    <template x-if="$store.citrascope.status?.missing_dependencies?.length > 0">
+        <div>
+            <strong><i class="bi bi-exclamation-triangle-fill me-2"></i>Missing Dependencies:</strong>
+            <ul class="mb-0 mt-2">
+                <template x-for="dep in $store.citrascope.status.missing_dependencies" :key="dep.device_name">
+                    <li>
+                        <strong x-text="dep.device_name"></strong>: Missing <span x-text="dep.missing_packages"></span><br>
+                        <code class="small" x-text="dep.install_cmd"></code>
+                    </li>
+                </template>
+            </ul>
+        </div>
+    </template>
+</div>
+
+<!-- Filter Configuration -->
+<div x-show="$store.citrascope.filterConfigVisible" class="card bg-dark border-secondary mb-3 mt-3">
+    <div class="card-header">
+        <h6 class="mb-0">Filter Configuration</h6>
+    </div>
+    <div class="card-body">
+        <p class="text-muted mb-3" x-show="$store.citrascope.filterAdapterChangeMessageVisible">
+            Save configuration to edit filter settings for this adapter
+        </p>
+        <div id="filterTableContainer">
+            <table class="table table-dark table-sm">
+                <thead>
+                    <tr>
+                        <th>Enabled</th>
+                        <th>Name</th>
+                        <th>Focus Position</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <template x-for="[filterId, filter] in Object.entries($store.citrascope.filters || {})" :key="filterId">
+                        <tr x-data="filterRow(filter, filterId)">
+                            <td>
+                                <input type="checkbox" class="form-check-input filter-enabled-checkbox"
+                                    :data-filter-id="filterId" x-model="$store.citrascope.filters[filterId].enabled">
+                            </td>
+                            <td x-data="{ customName: '', isCustom: !$store.citrascope.filterNameOptions.some(g => g.names.includes($store.citrascope.filters[filterId].name)) }"
+                                x-init="if (isCustom) customName = $store.citrascope.filters[filterId].name">
+                                <div x-show="$store.citrascope.filterNamesEditable">
+                                    <div class="d-flex align-items-center gap-2">
+                                        <span class="rounded-circle d-inline-block flex-shrink-0"
+                                            :style="{ width: '12px', height: '12px', minWidth: '12px', backgroundColor: $store.citrascope.filterColors[$store.citrascope.filters[filterId].name] || '#777' }"></span>
+                                        <select class="form-select form-select-sm"
+                                            :data-filter-id="filterId"
+                                            :value="isCustom ? '__custom__' : $store.citrascope.filters[filterId].name"
+                                            @change="if ($event.target.value === '__custom__') { isCustom = true; customName = $store.citrascope.filters[filterId].name; } else { isCustom = false; $store.citrascope.filters[filterId].name = $event.target.value; }">
+                                            <template x-for="group in $store.citrascope.filterNameOptions" :key="group.group">
+                                                <optgroup :label="group.group">
+                                                    <template x-for="fname in group.names" :key="fname">
+                                                        <option :value="fname" x-text="fname"></option>
+                                                    </template>
+                                                </optgroup>
+                                            </template>
+                                            <option value="__custom__">Custom...</option>
+                                        </select>
+                                    </div>
+                                    <input x-show="isCustom"
+                                        type="text" class="form-control form-control-sm mt-1"
+                                        placeholder="Custom filter name"
+                                        x-model="customName"
+                                        @input="$store.citrascope.filters[filterId].name = customName">
+                                </div>
+                                <span x-show="!$store.citrascope.filterNamesEditable" class="badge" :style="badgeStyle" x-text="filter.name"></span>
+                            </td>
+                            <td>
+                                <input type="number" class="form-control form-control-sm filter-focus-input"
+                                    :data-filter-id="filterId" x-model.number="$store.citrascope.filters[filterId].focus_position" min="0" step="1">
+                            </td>
+                        </tr>
+                    </template>
+                </tbody>
+            </table>
+            <div class="text-muted small" x-show="Object.keys($store.citrascope.filters || {}).length === 0">
+                No filters configured. Connect to hardware to discover filters.
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Autofocus Settings -->
+<div x-show="$store.citrascope.status?.supports_autofocus"
+     class="card bg-dark border-secondary mb-3">
+    <div class="card-header">
+        <h6 class="mb-0"><i class="bi bi-arrows-expand me-1"></i>Autofocus Settings</h6>
+    </div>
+    <div class="card-body">
+        <div class="row g-3">
+            <div class="col-12">
+                <div class="mb-3">
+                    <label for="autofocus_target_preset" class="form-label small">Focus Target</label>
+                    <select id="autofocus_target_preset" class="form-select form-select-sm"
+                        x-model="$store.citrascope.config.autofocus_target_preset">
+                        <template x-for="preset in $store.citrascope.autofocusPresets" :key="preset.key">
+                            <option :value="preset.key"
+                                x-text="preset.mag != null ? preset.name + ' (' + preset.designation + ', mag ' + preset.mag.toFixed(1) + ')' : preset.name + ' (' + preset.designation + ')'"></option>
+                        </template>
+                        <option value="custom">Custom RA/Dec</option>
+                    </select>
+                    <template x-if="$store.citrascope.config.autofocus_target_preset && $store.citrascope.config.autofocus_target_preset !== 'custom'">
+                        <div class="form-text small"
+                            x-text="(() => { const p = $store.citrascope.autofocusPresets.find(pr => pr.key === $store.citrascope.config.autofocus_target_preset); return p ? p.description : ''; })()">
+                        </div>
+                    </template>
+                </div>
+                <template x-if="$store.citrascope.config.autofocus_target_preset === 'custom'">
+                    <div class="mb-3">
+                        <div class="row g-2">
+                            <div class="col-6">
+                                <label for="autofocus_custom_ra" class="form-label small">RA (degrees)</label>
+                                <input type="number" id="autofocus_custom_ra" class="form-control form-control-sm"
+                                    step="any" min="0" max="360" placeholder="0 - 360"
+                                    x-model.number="$store.citrascope.config.autofocus_target_custom_ra">
+                            </div>
+                            <div class="col-6">
+                                <label for="autofocus_custom_dec" class="form-label small">Dec (degrees)</label>
+                                <input type="number" id="autofocus_custom_dec" class="form-control form-control-sm"
+                                    step="any" min="-90" max="90" placeholder="-90 - 90"
+                                    x-model.number="$store.citrascope.config.autofocus_target_custom_dec">
+                            </div>
+                        </div>
+                    </div>
+                </template>
+                <div class="mb-3">
+                    <div class="d-flex align-items-center gap-2">
+                        <div class="form-check mb-0">
+                            <input class="form-check-input" type="checkbox" id="scheduled_autofocus_enabled" x-model="$store.citrascope.config.scheduled_autofocus_enabled">
+                            <label class="form-check-label text-nowrap" for="scheduled_autofocus_enabled">
+                                Scheduled
+                            </label>
+                        </div>
+                        <select id="autofocus_interval_minutes" class="form-select form-select-sm"
+                            style="width: auto;"
+                            x-model.number="$store.citrascope.config.autofocus_interval_minutes"
+                            :disabled="!$store.citrascope.config.scheduled_autofocus_enabled">
+                            <option value="30">every 30m</option>
+                            <option value="60">every 1h</option>
+                            <option value="120">every 2h</option>
+                            <option value="180">every 3h</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="small text-muted" x-show="$store.citrascope.status?.next_autofocus_minutes != null">
+                    Next autofocus in: <span x-text="$store.citrascope.status?.next_autofocus_minutes === 0 ? 'now (overdue)' : $store.citrascope.formatMinutes($store.citrascope.status?.next_autofocus_minutes || 0)">--</span>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Mount Alignment -->
+<div x-show="$store.citrascope.status?.supports_alignment || $store.citrascope.status?.supports_manual_sync"
+     class="card bg-dark border-secondary mb-3"
+     x-data="{ syncRa: $store.citrascope.status?.telescope_ra ?? '', syncDec: $store.citrascope.status?.telescope_dec ?? '' }">
+    <div class="card-header d-flex justify-content-between align-items-center">
+        <h6 class="mb-0">Mount Alignment</h6>
+        <small class="text-muted font-monospace"
+            x-show="$store.citrascope.status?.telescope_ra != null"
+            x-text="'Position: RA ' + ($store.citrascope.status?.telescope_ra?.toFixed(4) ?? '—') + '°  Dec ' + ($store.citrascope.status?.telescope_dec?.toFixed(4) ?? '—') + '°'">
+        </small>
+    </div>
+    <div class="card-body">
+        <div class="row">
+            <!-- Alignment Settings Column -->
+            <div class="col-12 col-md-6" x-show="$store.citrascope.status?.supports_alignment">
+                <h6 class="mb-2">Alignment Settings</h6>
+                <div class="mb-3">
+                    <label for="alignment_exposure_seconds" class="form-label small">Alignment Exposure (seconds)</label>
+                    <input type="number" id="alignment_exposure_seconds" class="form-control form-control-sm"
+                        step="0.5" min="0.5" max="30"
+                        x-model.number="$store.citrascope.config.alignment_exposure_seconds">
+                </div>
+                <div class="form-check">
+                    <input class="form-check-input" type="checkbox" id="align_on_startup"
+                        x-model="$store.citrascope.config.align_on_startup">
+                    <label class="form-check-label" for="align_on_startup">
+                        Align on startup
+                    </label>
+                </div>
+            </div>
+
+            <!-- Manual Sync Column -->
+            <div class="col-12 col-md-6" x-show="$store.citrascope.status?.supports_manual_sync">
+                <h6 class="mb-2">Manual Sync</h6>
+                <p class="text-muted small mb-2">Tell the mount where it's currently pointing (no camera needed)</p>
+                <div x-show="$store.citrascope.status?.mount_at_home"
+                     class="alert alert-warning py-1 px-2 small mb-2">
+                    <i class="bi bi-exclamation-triangle me-1"></i>
+                    Mount is at home — sync requires a slew first
+                </div>
+                <div class="row g-2 mb-3">
+                    <div class="col-6">
+                        <label for="sync_ra" class="form-label small">RA (degrees)</label>
+                        <input type="number" id="sync_ra" class="form-control form-control-sm"
+                            step="any" min="0" max="360" placeholder="0 - 360"
+                            x-model.number="syncRa">
+                    </div>
+                    <div class="col-6">
+                        <label for="sync_dec" class="form-label small">Dec (degrees)</label>
+                        <input type="number" id="sync_dec" class="form-control form-control-sm"
+                            step="any" min="-90" max="90" placeholder="-90 - 90"
+                            x-model.number="syncDec">
+                    </div>
+                </div>
+                <button type="button" class="btn btn-sm btn-outline-primary w-100"
+                    :disabled="$store.citrascope.status?.mount_at_home"
+                    @click="window.manualSync(syncRa, syncDec)">
+                    <i class="bi bi-crosshair me-1"></i> Manually Sync Mount
+                </button>
+            </div>
+        </div>
+    </div>
+</div>

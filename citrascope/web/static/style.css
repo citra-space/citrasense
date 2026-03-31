@@ -218,6 +218,62 @@ body {
     box-shadow: 0 0 0 0.25rem rgba(220, 53, 69, 0.25);
 }
 
+/* Config side navigation */
+.config-sidenav {
+    gap: 2px;
+}
+
+.config-sidenav .nav-link {
+    color: #a0aec0;
+    border-radius: 6px;
+    padding: 0.5rem 0.75rem;
+    font-size: 0.875rem;
+    white-space: nowrap;
+    transition: color 0.15s, background-color 0.15s;
+}
+
+.config-sidenav .nav-link:hover {
+    color: #e2e8f0;
+    background-color: rgba(255, 255, 255, 0.05);
+}
+
+.config-sidenav .nav-link.active {
+    color: #fff;
+    background-color: rgba(13, 110, 253, 0.2);
+}
+
+/* Mobile: horizontal scrollable nav bar */
+@media (max-width: 767.98px) {
+    .config-sidenav {
+        overflow-x: auto;
+        flex-wrap: nowrap;
+        padding-bottom: 0.5rem;
+        border-bottom: 1px solid var(--bs-border-color);
+        margin-bottom: 1rem;
+    }
+}
+
+/* Desktop: sticky side nav */
+@media (min-width: 768px) {
+    .config-sidenav {
+        position: sticky;
+        top: 1rem;
+    }
+}
+
+/* Config save bar — sticks above the fixed log terminal.
+   bottom = collapsed log bar height (0.8rem padding + 1.25rem chevron + 3px borders)
+   minus 1px so the bar tucks behind the log terminal (z-3) with no gutter. */
+.config-save-bar {
+    position: sticky;
+    bottom: calc(2.05rem + 2px);
+    background-color: var(--bs-body-bg);
+    padding: 1rem 0;
+    margin-top: 1.5rem;
+    border-top: 1px solid var(--bs-border-color);
+    z-index: 2;
+}
+
 /* Spinning icon for async operations (e.g. reconnect button) */
 .spin {
     animation: spin 1s linear infinite;

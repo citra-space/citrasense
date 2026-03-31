@@ -1,8 +1,7 @@
     <!-- ═══════════════ Global Status Bar ═══════════════ -->
-    <div class="container"
-         x-effect="$store.citrascope.status && $nextTick(() => { document.querySelectorAll('#globalStatusBar [data-bs-toggle=tooltip]').forEach(el => { try { bootstrap.Tooltip.getOrCreateInstance(el); } catch (_) {} }); })">
         <div id="globalStatusBar"
-             class="d-flex align-items-center flex-wrap gap-3 bg-dark rounded border border-secondary px-3 py-2 mb-3"
+             class="d-flex align-items-center flex-wrap gap-2 pb-3 mb-3 border-bottom border-secondary"
+             x-effect="$store.citrascope.status && $nextTick(() => { document.querySelectorAll('#globalStatusBar [data-bs-toggle=tooltip]').forEach(el => { try { bootstrap.Tooltip.getOrCreateInstance(el); } catch (_) {} }); })"
              x-data="{
                  get safetyChecks() { return $store.citrascope.status?.safety_status?.checks || []; },
                  get safetyWorst() {
@@ -169,8 +168,7 @@
                         @click="emergencyStop()"
                         data-bs-toggle="tooltip" data-bs-theme="dark" data-bs-placement="bottom"
                         title="Stop mount, pause tasks, cancel imaging">
-                    <i class="bi bi-stop-circle-fill"></i> Stop
+                    <i class="bi bi-stop-circle-fill"></i> Abort
                 </button>
             </div>
         </div>
-    </div>

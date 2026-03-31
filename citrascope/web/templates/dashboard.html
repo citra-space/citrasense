@@ -21,7 +21,7 @@
     <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.14.3/dist/cdn.min.js"></script>
 
     <div class="container">
-        <header class="d-flex flex-wrap justify-content-center py-3 mb-4 border-bottom align-items-center">
+        <header class="d-flex flex-wrap justify-content-center pt-3 pb-2 align-items-center">
             <span class="d-flex align-items-center mb-3 mb-md-0 me-md-auto link-body-emphasis text-decoration-none">
                 <span class="fs-4 d-flex align-items-baseline gap-2">
                     <img src="/static/img/citra.png" alt="CitraScope Logo" class="logo-img" />
@@ -52,9 +52,9 @@
             </ul>
         </header>
 
-    </div>
+        {% include '_status_bar.html' %}
 
-    {% include '_status_bar.html' %}
+    </div>
 
     {% include '_monitoring.html' %}
 
