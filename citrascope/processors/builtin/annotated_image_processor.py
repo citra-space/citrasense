@@ -38,10 +38,11 @@ _STROKE_WIDTH = 3
 _IMAGE_FORMAT = "JPEG"
 _IMAGE_QUALITY = 80
 
-_STAR_RADIUS = 36
+_STAR_RADIUS = 18
 _DETECTION_RADIUS = 30
 _PREDICTION_RADIUS = 27
 _MATCH_RADIUS = 24
+_LABEL_OFFSET_RADIUS = 30
 _LABEL_GAP = 3
 
 _MAX_STAR_MARKERS = 50
@@ -50,13 +51,16 @@ _ELONGATION_THRESHOLD = 1.5
 
 
 class AnnotatedImageProcessor(AbstractImageProcessor):
-    """Renders a stretched PNG with four concentric annotation layers overlaid.
+    """Renders a stretched PNG with four annotation layers overlaid.
 
-    Reads satellite_matcher_debug.json and detected_sources to draw (outer to inner):
-    - Teal circles: Plate Solver Stars (point-like sources, elongation < 1.5)
-    - Yellow-green circles: Plate Solver Detections (elongated sources / satellite streaks)
+    Reads satellite_matcher_debug.json and detected_sources to draw:
+    - Teal diamonds: Plate Solver Stars (point-like sources, elongation < 1.5)
+    - Yellow-green dotted circles: Plate Solver Detections (elongated sources / satellite streaks)
     - Yellow dashed circles + labels: TLE Predicted positions
-    - Orange circles + labels: Satellite Matched (confirmed matches)
+    - Orange solid circles + labels: Satellite Matched (confirmed matches)
+
+    Shape and line-style differentiation (diamond vs dotted vs dashed vs solid)
+    ensures markers are distinguishable independent of color perception.
 
     Includes a header strip with satellite name, timestamp, match count,
     and an inline color legend.
@@ -268,7 +272,7 @@ class AnnotatedImageProcessor(AbstractImageProcessor):
         tracking_mode: str | None,
         pixel_scale: float = 1.0,
     ) -> None:
-        """Draw teal circles on the brightest point-like detected sources.
+        """Draw teal diamonds on the brightest point-like detected sources.
 
         In sidereal tracking, stars are round (elongation < threshold).
         In rate tracking, the mount follows the satellite so stars streak
@@ -287,7 +291,7 @@ class AnnotatedImageProcessor(AbstractImageProcessor):
             px, py = self._radec_to_pixel(wcs, row["ra"], row["dec"], img_height, pixel_scale)
             if px is None or py is None:
                 continue
-            self._draw_circle(draw, px, py, _STAR_COLOR, _STAR_RADIUS)
+            self._draw_diamond(draw, px, py, _STAR_COLOR, _STAR_RADIUS)
 
     def _draw_detections(
         self,
@@ -298,7 +302,7 @@ class AnnotatedImageProcessor(AbstractImageProcessor):
         tracking_mode: str | None,
         pixel_scale: float = 1.0,
     ) -> None:
-        """Draw yellow-green circles on elongated sources likely to be satellite streaks.
+        """Draw yellow-green dotted circles on elongated sources likely to be satellite streaks.
 
         In sidereal tracking, satellites appear as elongated streaks (elongation >= threshold).
         In rate tracking, the mount follows the satellite so it appears round while stars
@@ -318,7 +322,7 @@ class AnnotatedImageProcessor(AbstractImageProcessor):
             px, py = self._radec_to_pixel(wcs, row["ra"], row["dec"], img_height, pixel_scale)
             if px is None or py is None:
                 continue
-            self._draw_circle(draw, px, py, _DETECTION_COLOR, _DETECTION_RADIUS)
+            self._draw_dotted_circle(draw, px, py, _DETECTION_COLOR, _DETECTION_RADIUS)
 
     @staticmethod
     def _radec_to_pixel(
@@ -359,6 +363,35 @@ class AnnotatedImageProcessor(AbstractImageProcessor):
             draw.arc(bbox, start=start_angle, end=end_angle, fill=color, width=_STROKE_WIDTH)
 
     @staticmethod
+    def _draw_dotted_circle(
+        draw: ImageDraw.ImageDraw,
+        cx: int,
+        cy: int,
+        color: tuple,
+        radius: int,
+        dash_count: int = 32,
+    ):
+        """Draw a dotted circle as many short alternating arcs."""
+        bbox = (cx - radius, cy - radius, cx + radius, cy + radius)
+        arc_span = 360.0 / dash_count
+        for i in range(0, dash_count, 2):
+            start_angle = i * arc_span
+            end_angle = start_angle + arc_span
+            draw.arc(bbox, start=start_angle, end=end_angle, fill=color, width=_STROKE_WIDTH)
+
+    @staticmethod
+    def _draw_diamond(
+        draw: ImageDraw.ImageDraw,
+        cx: int,
+        cy: int,
+        color: tuple,
+        radius: int,
+    ):
+        """Draw a straight-sided diamond (rotated square) with vertices at *radius*."""
+        points = [(cx, cy - radius), (cx + radius, cy), (cx, cy + radius), (cx - radius, cy)]
+        draw.line([*points, points[0]], fill=color, width=_STROKE_WIDTH)
+
+    @staticmethod
     def _safe_text(draw: ImageDraw.ImageDraw, xy: tuple, text: str, color: tuple, font) -> None:
         """Draw text, silently skipping if the font backend is unavailable."""
         try:
@@ -380,7 +413,7 @@ class AnnotatedImageProcessor(AbstractImageProcessor):
             bbox = draw.textbbox((0, 0), text, font=font)
             text_w = bbox[2] - bbox[0]
             x = cx - text_w // 2
-            y = cy + _STAR_RADIUS + _LABEL_GAP
+            y = cy + _LABEL_OFFSET_RADIUS + _LABEL_GAP
             draw.text(
                 (x, y),
                 text,
@@ -451,8 +484,19 @@ class AnnotatedImageProcessor(AbstractImageProcessor):
 
         for color, label in legend_items:
             cy = text_y + text_height // 2 + 2
+            swatch_cx = x + circle_r
             circle_bbox = (x, cy - circle_r, x + circle_d, cy + circle_r)
-            if color == _PREDICTION_COLOR:
+            if color == _STAR_COLOR:
+                r = circle_r
+                pts = [(swatch_cx, cy - r), (swatch_cx + r, cy), (swatch_cx, cy + r), (swatch_cx - r, cy)]
+                draw.line([*pts, pts[0]], fill=color, width=circle_stroke)
+            elif color == _DETECTION_COLOR:
+                arc_span = 360.0 / 16
+                for i in range(0, 16, 2):
+                    draw.arc(
+                        circle_bbox, start=i * arc_span, end=i * arc_span + arc_span, fill=color, width=circle_stroke
+                    )
+            elif color == _PREDICTION_COLOR:
                 arc_span = 360.0 / 8
                 for i in range(0, 8, 2):
                     draw.arc(
