@@ -41,8 +41,8 @@ class CitraScopeDaemon:
 
         # Setup file logging if enabled
         if self.settings.file_logging_enabled:
-            self.settings.config_manager.ensure_log_directory()
-            log_path = self.settings.config_manager.get_current_log_path()
+            self.settings.directories.ensure_log_directory()
+            log_path = self.settings.directories.current_log_path()
             setup_file_logging(log_path, backup_count=self.settings.log_retention_days)
             CITRASCOPE_LOGGER.info(f"Logging to file: {log_path}")
 
@@ -106,9 +106,8 @@ class CitraScopeDaemon:
         """Factory method to create the appropriate hardware adapter based on settings."""
         try:
             adapter_class = get_adapter_class(self.settings.hardware_adapter)
-            # Ensure images directory exists and pass it to the adapter
-            self.settings.ensure_images_directory()
-            images_dir = self.settings.get_images_dir()
+            self.settings.directories.ensure_data_directories()
+            images_dir = self.settings.directories.images_dir
             return adapter_class(logger=CITRASCOPE_LOGGER, images_dir=images_dir, **self.settings.adapter_settings)
         except ImportError as e:
             CITRASCOPE_LOGGER.error(
@@ -144,8 +143,8 @@ class CitraScopeDaemon:
 
                 # Re-setup file logging if enabled
                 if self.settings.file_logging_enabled:
-                    self.settings.config_manager.ensure_log_directory()
-                    log_path = self.settings.config_manager.get_current_log_path()
+                    self.settings.directories.ensure_log_directory()
+                    log_path = self.settings.directories.current_log_path()
                     setup_file_logging(log_path, backup_count=self.settings.log_retention_days)
 
             # Preserve task metadata across reload

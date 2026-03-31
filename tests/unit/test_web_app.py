@@ -46,12 +46,13 @@ def mock_settings():
     s.enabled_processors = {}
     s.config_manager = MagicMock()
     s.config_manager.get_config_path.return_value = "/tmp/config.json"
-    s.config_manager.get_current_log_path.return_value = "/tmp/citrascope.log"
-    s.get_images_dir.return_value = MagicMock(
+    s.directories = MagicMock()
+    s.directories.images_dir = MagicMock(
         __str__=lambda self: "/tmp/images",
         exists=lambda: False,
-        parent=MagicMock(__truediv__=lambda self, x: MagicMock(__str__=lambda self: f"/tmp/{x}")),
     )
+    s.directories.processing_dir = MagicMock(__str__=lambda self: "/tmp/processing")
+    s.directories.current_log_path.return_value = "/tmp/citrascope.log"
     s.is_configured.return_value = True
     s.keep_processing_output = False
     s.alignment_exposure_seconds = 2.0
@@ -454,7 +455,7 @@ def test_get_filters(client):
 def test_get_filters_no_adapter():
     d = MagicMock()
     d.settings = MagicMock()
-    d.settings.get_images_dir.return_value = MagicMock(exists=lambda: False)
+    d.settings.directories.images_dir = MagicMock(exists=lambda: False)
     d.hardware_adapter = None
     with patch("citrascope.web.app.StaticFiles"):
         app = CitraScopeWebApp(daemon=d)
@@ -531,7 +532,7 @@ def _batch_client(filter_map=None):
     """Create a test client with filter map configured."""
     d = MagicMock()
     d.settings = MagicMock()
-    d.settings.get_images_dir.return_value = MagicMock(exists=lambda: False)
+    d.settings.directories.images_dir = MagicMock(exists=lambda: False)
     d.hardware_adapter = MagicMock()
     d.hardware_adapter.filter_map = filter_map or {
         0: {"name": "Lum", "focus_position": 9000, "enabled": True},

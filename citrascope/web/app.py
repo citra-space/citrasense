@@ -8,7 +8,6 @@ from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 from typing import Any
 
-import platformdirs
 from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
@@ -27,11 +26,10 @@ from citrascope.hardware.adapter_registry import list_adapters
 from citrascope.location.twilight import compute_twilight
 from citrascope.logging import CITRASCOPE_LOGGER
 from citrascope.settings.citrascope_settings import (
-    APP_AUTHOR,
-    APP_NAME,
     DETECTION_FIELD_RANGES,
     CitraScopeSettings,
 )
+from citrascope.settings.directory_manager import DirectoryManager
 
 # Standard astronomical filter names for the editable filter name dropdown.
 # Mirrors the canonical names from the Citra API's filter library so that
@@ -234,7 +232,7 @@ class CitraScopeWebApp:
 
         # Mount images directory for camera captures (read-only access)
         if daemon and hasattr(daemon, "settings"):
-            images_dir = daemon.settings.get_images_dir()
+            images_dir = daemon.settings.directories.images_dir
             if images_dir.exists():
                 self.app.mount("/images", StaticFiles(directory=str(images_dir)), name="images")
 
@@ -250,11 +248,8 @@ class CitraScopeWebApp:
             if name.startswith(("detection_", "background_"))
         }
         self.templates.env.globals["detection_ranges"] = DETECTION_FIELD_RANGES
-        default_data_base = Path(platformdirs.user_data_dir(APP_NAME, appauthor=APP_AUTHOR))
-        self.templates.env.globals["default_data_dir"] = str(default_data_base)
-        self.templates.env.globals["default_log_dir"] = str(
-            Path(platformdirs.user_log_dir(APP_NAME, appauthor=APP_AUTHOR))
-        )
+        self.templates.env.globals["default_data_dir"] = str(DirectoryManager.default_data_dir())
+        self.templates.env.globals["default_log_dir"] = str(DirectoryManager.default_log_dir())
 
         # Register routes
         self._setup_routes()
@@ -301,14 +296,12 @@ class CitraScopeWebApp:
             config_path = str(settings.config_manager.get_config_path())
 
             # Get current log file path
-            log_file_path = (
-                str(settings.config_manager.get_current_log_path()) if settings.file_logging_enabled else None
-            )
+            log_file_path = str(settings.directories.current_log_path()) if settings.file_logging_enabled else None
 
             # Get images directory path
-            images_dir_path = str(settings.get_images_dir())
+            images_dir_path = str(settings.directories.images_dir)
 
-            processing_dir_path = str(settings.get_processing_dir())
+            processing_dir_path = str(settings.directories.processing_dir)
 
             return {
                 **settings.to_dict(),

@@ -18,7 +18,6 @@ def sfm(tmp_path):
     mgr = SettingsFileManager()
     mgr.config_dir = tmp_path
     mgr.config_file = tmp_path / "config.json"
-    mgr.log_dir = tmp_path / "logs"
     return mgr
 
 
@@ -74,17 +73,43 @@ def test_validate_config_non_dict(sfm):
     assert "dictionary" in err
 
 
-def test_ensure_log_directory(sfm):
-    sfm.ensure_log_directory()
-    assert sfm.log_dir.exists()
+def test_directory_manager_defaults():
+    from citrascope.settings.directory_manager import DirectoryManager
+
+    dm = DirectoryManager()
+    assert dm.data_dir == DirectoryManager.default_data_dir()
+    assert dm.log_dir == DirectoryManager.default_log_dir()
+    assert dm.images_dir == dm.data_dir / "images"
+    assert dm.processing_dir == dm.data_dir / "processing"
 
 
-def test_get_log_dir(sfm):
-    assert sfm.get_log_dir() == sfm.log_dir
+def test_directory_manager_custom_dirs(tmp_path):
+    from citrascope.settings.directory_manager import DirectoryManager
+
+    data = tmp_path / "data"
+    logs = tmp_path / "logs"
+    dm = DirectoryManager(custom_data_dir=str(data), custom_log_dir=str(logs))
+    assert dm.data_dir == data
+    assert dm.log_dir == logs
+    assert dm.images_dir == data / "images"
+    assert dm.processing_dir == data / "processing"
 
 
-def test_get_current_log_path(sfm):
-    p = sfm.get_current_log_path()
+def test_directory_manager_ensure_dirs(tmp_path):
+    from citrascope.settings.directory_manager import DirectoryManager
+
+    dm = DirectoryManager(custom_data_dir=str(tmp_path / "data"), custom_log_dir=str(tmp_path / "logs"))
+    dm.ensure_data_directories()
+    dm.ensure_log_directory()
+    assert dm.images_dir.exists()
+    assert dm.log_dir.exists()
+
+
+def test_directory_manager_current_log_path():
+    from citrascope.settings.directory_manager import DirectoryManager
+
+    dm = DirectoryManager()
+    p = dm.current_log_path()
     assert "citrascope-" in p.name
     assert p.suffix == ".log"
 

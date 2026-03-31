@@ -10,8 +10,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-import platformdirs
-from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, field_validator
+from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, ValidationInfo, field_validator
 
 # Application constants for platformdirs
 # Defined before imports to avoid circular dependency
@@ -20,6 +19,7 @@ APP_AUTHOR = "citra-space"
 
 from citrascope.constants import DEFAULT_API_PORT, DEFAULT_WEB_PORT, PROD_API_HOST
 from citrascope.logging import CITRASCOPE_LOGGER
+from citrascope.settings.directory_manager import DirectoryManager
 from citrascope.settings.settings_file_manager import SettingsFileManager
 
 # Valid ranges for SEP detection/background parameters.
@@ -141,7 +141,7 @@ class CitraScopeSettings(BaseModel):
 
     # ── Private infrastructure ────────────────────────────────────────
     _config_manager: SettingsFileManager = PrivateAttr()
-    _images_dir: Path = PrivateAttr()
+    _dir_manager: DirectoryManager = PrivateAttr()
     _all_adapter_settings: dict[str, dict[str, Any]] = PrivateAttr(default_factory=dict)
 
     # ── Validators (warn-and-fallback, never raise) ───────────────────
@@ -251,149 +251,58 @@ class CitraScopeSettings(BaseModel):
             return clamped
         return v
 
-    @field_validator("detection_sigma", mode="before")
+    @field_validator("detection_sigma", "detection_deblend_contrast", mode="before")
     @classmethod
-    def _validate_detection_sigma(cls, v: Any) -> float:
-        r = DETECTION_FIELD_RANGES["detection_sigma"]
+    def _validate_detection_float_field(cls, v: Any, info: ValidationInfo) -> float:
+        assert info.field_name is not None
+        r = DETECTION_FIELD_RANGES[info.field_name]
+        default: float = cls.model_fields[info.field_name].default
         try:
             v = float(v)
         except (TypeError, ValueError):
-            CITRASCOPE_LOGGER.warning("Invalid detection_sigma (%r). Falling back to 5.0.", v)
-            return 5.0
+            CITRASCOPE_LOGGER.warning("Invalid %s (%r). Falling back to %s.", info.field_name, v, default)
+            return default
         if v < r["min"] or v > r["max"]:
             clamped = max(r["min"], min(r["max"], v))
             CITRASCOPE_LOGGER.warning(
-                "detection_sigma %.2f out of range [%s, %s]. Clamped to %.2f.", v, r["min"], r["max"], clamped
+                "%s %s out of range [%s, %s]. Clamped to %s.", info.field_name, v, r["min"], r["max"], clamped
             )
             return clamped
         return v
 
-    @field_validator("detection_min_pixel_count", mode="before")
+    @field_validator(
+        "detection_min_pixel_count",
+        "detection_deblend_mesh_count",
+        "detection_fwhm",
+        "detection_kernel_size",
+        "background_mesh_count",
+        "background_filter_size",
+        mode="before",
+    )
     @classmethod
-    def _validate_detection_min_pixel_count(cls, v: Any) -> int:
-        r = DETECTION_FIELD_RANGES["detection_min_pixel_count"]
+    def _validate_detection_int_field(cls, v: Any, info: ValidationInfo) -> int:
+        assert info.field_name is not None
+        r = DETECTION_FIELD_RANGES[info.field_name]
+        default: int = cls.model_fields[info.field_name].default
         try:
             v = int(v)
         except (TypeError, ValueError):
-            CITRASCOPE_LOGGER.warning("Invalid detection_min_pixel_count (%r). Falling back to 3.", v)
-            return 3
+            CITRASCOPE_LOGGER.warning("Invalid %s (%r). Falling back to %s.", info.field_name, v, default)
+            return default
         if v < r["min"] or v > r["max"]:
             clamped = int(max(r["min"], min(r["max"], v)))
             CITRASCOPE_LOGGER.warning(
-                "detection_min_pixel_count %d out of range [%s, %s]. Clamped to %d.", v, r["min"], r["max"], clamped
+                "%s %d out of range [%s, %s]. Clamped to %d.", info.field_name, v, r["min"], r["max"], clamped
             )
             return clamped
         return v
 
-    @field_validator("detection_deblend_mesh_count", mode="before")
+    @field_validator("detection_kernel_size", mode="after")
     @classmethod
-    def _validate_detection_deblend_mesh_count(cls, v: Any) -> int:
-        r = DETECTION_FIELD_RANGES["detection_deblend_mesh_count"]
-        try:
-            v = int(v)
-        except (TypeError, ValueError):
-            CITRASCOPE_LOGGER.warning("Invalid detection_deblend_mesh_count (%r). Falling back to 32.", v)
-            return 32
-        if v < r["min"] or v > r["max"]:
-            clamped = int(max(r["min"], min(r["max"], v)))
-            CITRASCOPE_LOGGER.warning(
-                "detection_deblend_mesh_count %d out of range [%s, %s]. Clamped to %d.", v, r["min"], r["max"], clamped
-            )
-            return clamped
-        return v
-
-    @field_validator("detection_deblend_contrast", mode="before")
-    @classmethod
-    def _validate_detection_deblend_contrast(cls, v: Any) -> float:
-        r = DETECTION_FIELD_RANGES["detection_deblend_contrast"]
-        try:
-            v = float(v)
-        except (TypeError, ValueError):
-            CITRASCOPE_LOGGER.warning("Invalid detection_deblend_contrast (%r). Falling back to 0.005.", v)
-            return 0.005
-        if v < r["min"] or v > r["max"]:
-            clamped = max(r["min"], min(r["max"], v))
-            CITRASCOPE_LOGGER.warning(
-                "detection_deblend_contrast %.4f out of range [%s, %s]. Clamped to %.4f.",
-                v,
-                r["min"],
-                r["max"],
-                clamped,
-            )
-            return clamped
-        return v
-
-    @field_validator("detection_fwhm", mode="before")
-    @classmethod
-    def _validate_detection_fwhm(cls, v: Any) -> int:
-        r = DETECTION_FIELD_RANGES["detection_fwhm"]
-        try:
-            v = int(v)
-        except (TypeError, ValueError):
-            CITRASCOPE_LOGGER.warning("Invalid detection_fwhm (%r). Falling back to 5.", v)
-            return 5
-        if v < r["min"] or v > r["max"]:
-            clamped = int(max(r["min"], min(r["max"], v)))
-            CITRASCOPE_LOGGER.warning(
-                "detection_fwhm %d out of range [%s, %s]. Clamped to %d.", v, r["min"], r["max"], clamped
-            )
-            return clamped
-        return v
-
-    @field_validator("detection_kernel_size", mode="before")
-    @classmethod
-    def _validate_detection_kernel_size(cls, v: Any) -> int:
-        r = DETECTION_FIELD_RANGES["detection_kernel_size"]
-        try:
-            v = int(v)
-        except (TypeError, ValueError):
-            CITRASCOPE_LOGGER.warning("Invalid detection_kernel_size (%r). Falling back to 13.", v)
-            return 13
-        if v < r["min"] or v > r["max"]:
-            clamped = int(max(r["min"], min(r["max"], v)))
-            if clamped % 2 == 0:
-                clamped += 1
-            CITRASCOPE_LOGGER.warning(
-                "detection_kernel_size %d out of range [%s, %s]. Clamped to %d.", v, r["min"], r["max"], clamped
-            )
-            return clamped
+    def _validate_kernel_size_odd(cls, v: int) -> int:
         if v % 2 == 0:
             v += 1
             CITRASCOPE_LOGGER.warning("detection_kernel_size must be odd. Rounded up to %d.", v)
-        return v
-
-    @field_validator("background_mesh_count", mode="before")
-    @classmethod
-    def _validate_background_mesh_count(cls, v: Any) -> int:
-        r = DETECTION_FIELD_RANGES["background_mesh_count"]
-        try:
-            v = int(v)
-        except (TypeError, ValueError):
-            CITRASCOPE_LOGGER.warning("Invalid background_mesh_count (%r). Falling back to 64.", v)
-            return 64
-        if v < r["min"] or v > r["max"]:
-            clamped = int(max(r["min"], min(r["max"], v)))
-            CITRASCOPE_LOGGER.warning(
-                "background_mesh_count %d out of range [%s, %s]. Clamped to %d.", v, r["min"], r["max"], clamped
-            )
-            return clamped
-        return v
-
-    @field_validator("background_filter_size", mode="before")
-    @classmethod
-    def _validate_background_filter_size(cls, v: Any) -> int:
-        r = DETECTION_FIELD_RANGES["background_filter_size"]
-        try:
-            v = int(v)
-        except (TypeError, ValueError):
-            CITRASCOPE_LOGGER.warning("Invalid background_filter_size (%r). Falling back to 3.", v)
-            return 3
-        if v < r["min"] or v > r["max"]:
-            clamped = int(max(r["min"], min(r["max"], v)))
-            CITRASCOPE_LOGGER.warning(
-                "background_filter_size %d out of range [%s, %s]. Clamped to %d.", v, r["min"], r["max"], clamped
-            )
-            return clamped
         return v
 
     @field_validator("custom_data_dir", "custom_log_dir", mode="before")
@@ -425,16 +334,7 @@ class CitraScopeSettings(BaseModel):
 
         instance = cls.model_validate(config)
         instance._config_manager = mgr
-
-        data_base = (
-            Path(instance.custom_data_dir)
-            if instance.custom_data_dir
-            else Path(platformdirs.user_data_dir(APP_NAME, appauthor=APP_AUTHOR))
-        )
-        instance._images_dir = data_base / "images"
-
-        if instance.custom_log_dir:
-            mgr.set_log_dir(Path(instance.custom_log_dir))
+        instance._dir_manager = DirectoryManager(instance.custom_data_dir, instance.custom_log_dir)
 
         instance._all_adapter_settings = all_adapter_settings
         instance.adapter_settings = all_adapter_settings.get(instance.hardware_adapter, {})
@@ -447,18 +347,10 @@ class CitraScopeSettings(BaseModel):
         """Access the underlying file manager (for path queries, etc.)."""
         return self._config_manager
 
-    def get_images_dir(self) -> Path:
-        """Get the path to the images directory."""
-        return self._images_dir
-
-    def get_processing_dir(self) -> Path:
-        """Get the path to the processing output directory (sibling to images)."""
-        return self._images_dir.parent / "processing"
-
-    def ensure_images_directory(self) -> None:
-        """Create images directory if it doesn't exist."""
-        if not self._images_dir.exists():
-            self._images_dir.mkdir(parents=True)
+    @property
+    def directories(self) -> DirectoryManager:
+        """Centralized directory paths (data, images, processing, logs)."""
+        return self._dir_manager
 
     def is_configured(self) -> bool:
         """Check if minimum required configuration is present."""

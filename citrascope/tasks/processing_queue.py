@@ -44,7 +44,7 @@ class ProcessingQueue(BaseWorkQueue):
     def _get_working_dir(self, task_id: str, settings) -> Path:
         """Return the task-specific working directory path."""
         if settings:
-            return settings.get_processing_dir() / task_id
+            return settings.directories.processing_dir / task_id
         return Path(tempfile.gettempdir()) / "citrascope" / "processing" / task_id
 
     def _cleanup_working_dir(self, task_id: str, settings):

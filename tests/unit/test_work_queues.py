@@ -281,7 +281,7 @@ def test_processing_queue_get_working_dir_with_settings():
         logger=MagicMock(),
     )
     mock_settings = MagicMock()
-    mock_settings.get_processing_dir.return_value = Path("/data/processing")
+    mock_settings.directories.processing_dir = Path("/data/processing")
     wd = pq._get_working_dir("task-123", mock_settings)
     assert wd == Path("/data/processing/task-123")
 
@@ -304,7 +304,7 @@ def test_processing_queue_cleanup(tmp_path):
     work_dir = processing_dir / "task-1"
     work_dir.mkdir(parents=True)
     (work_dir / "file.txt").write_text("data")
-    mock_settings.get_processing_dir.return_value = processing_dir
+    mock_settings.directories.processing_dir = processing_dir
     pq._cleanup_working_dir("task-1", mock_settings)
     assert not work_dir.exists()
 
@@ -341,7 +341,7 @@ def test_processing_queue_execute_success(tmp_path):
     mock_settings = MagicMock()
     images_dir = tmp_path / "images"
     images_dir.mkdir()
-    mock_settings.get_images_dir.return_value = images_dir
+    mock_settings.directories.images_dir = images_dir
 
     item = {
         "task_id": "t1",
@@ -370,7 +370,7 @@ def test_processing_queue_execute_exception(tmp_path):
     mock_settings = MagicMock()
     images_dir = tmp_path / "images"
     images_dir.mkdir()
-    mock_settings.get_images_dir.return_value = images_dir
+    mock_settings.directories.images_dir = images_dir
 
     item = {
         "task_id": "t1",
