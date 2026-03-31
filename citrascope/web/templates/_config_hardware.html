@@ -334,7 +334,8 @@
                                 </div>
                             </div>
                             <!-- Hardware Safety Monitor -->
-                            <div class="card bg-dark border-secondary mb-3">
+                            <div x-show="$store.citrascope.status?.supports_hardware_safety_monitor"
+                                 class="card bg-dark border-secondary mb-3">
                                 <div class="card-header">
                                     <h6 class="mb-0"><i class="bi bi-shield-check me-1"></i>Hardware Safety Monitor</h6>
                                 </div>
