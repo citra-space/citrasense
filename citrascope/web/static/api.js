@@ -87,6 +87,13 @@ export async function getTasks() {
 }
 
 /**
+ * Reconnect hardware adapter using current settings
+ */
+export async function reconnectHardware() {
+    return await fetchJSON('/api/hardware/reconnect', { method: 'POST' });
+}
+
+/**
  * Get recent logs
  */
 export async function getLogs(limit = 100) {

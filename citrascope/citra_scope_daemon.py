@@ -3,6 +3,7 @@ from __future__ import annotations
 import atexit
 import os
 import signal
+import threading
 import time
 from importlib.metadata import PackageNotFoundError
 from importlib.metadata import version as pkg_version
@@ -204,7 +205,14 @@ class CitraScopeDaemon:
 
             # Warm-start elset cache from disk (source-aware: discards if API source changed)
             self.elset_cache.load_from_file(expected_source=self.api_client.cache_source_key)
-            self._refresh_elset_cache_with_retry()
+            elset_thread = getattr(self, "_elset_refresh_thread", None)
+            if elset_thread is None or not elset_thread.is_alive():
+                self._elset_refresh_thread = threading.Thread(
+                    target=self._refresh_elset_cache_with_retry,
+                    name="elset-refresh",
+                    daemon=True,
+                )
+                self._elset_refresh_thread.start()
 
             if self.settings.use_local_apass_catalog:
                 self.apass_catalog.start_background_download(self.api_client)
@@ -261,6 +269,18 @@ class CitraScopeDaemon:
     def reload_configuration(self) -> tuple[bool, str | None]:
         """Reload configuration from file and reinitialize all components."""
         return self._initialize_components(reload_settings=True)
+
+    def retry_connection(self) -> tuple[bool, str | None]:
+        """Retry hardware connection using current in-memory settings."""
+        CITRASCOPE_LOGGER.info("\u2500" * 60)
+        CITRASCOPE_LOGGER.info("Hardware reconnect requested")
+        CITRASCOPE_LOGGER.info("\u2500" * 60)
+        success, error = self._initialize_components(reload_settings=False)
+        if success:
+            CITRASCOPE_LOGGER.info("Hardware reconnect completed successfully")
+        else:
+            CITRASCOPE_LOGGER.warning(f"Hardware reconnect failed: {error}")
+        return success, error
 
     def _initialize_telescope(
         self,

@@ -1003,7 +1003,7 @@
             <!-- Save Button -->
             <div class="row">
                 <div class="col">
-                    <button type="submit" class="btn btn-primary" :disabled="$store.citrascope.isSavingConfig || hasDetectionErrors($store.citrascope.config)">
+                    <button type="submit" class="btn btn-primary" :disabled="$store.citrascope.isSavingConfig || $store.citrascope.isReconnecting || hasDetectionErrors($store.citrascope.config)">
                         <span x-text="$store.citrascope.isSavingConfig ? 'Saving...' : 'Save Configuration'"></span>
                         <span x-show="$store.citrascope.isSavingConfig" class="spinner-border spinner-border-sm ms-2" role="status"></span>
                     </button>

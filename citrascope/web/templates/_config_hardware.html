@@ -7,7 +7,18 @@
                                 <h5 class="mb-0">Hardware Configuration</h5>
                                 <small class="text-muted" x-show="!hardwareCardExpanded" x-text="($store.citrascope.hardwareAdapters.find(a => a.value === $store.citrascope.config.hardware_adapter)?.label || $store.citrascope.config.hardware_adapter || 'Not configured')"></small>
                             </div>
-                            <i class="bi" :class="hardwareCardExpanded ? 'bi-chevron-up' : 'bi-chevron-down'"></i>
+                            <div class="d-flex align-items-center gap-2">
+                                <button class="btn btn-sm btn-outline-secondary"
+                                        x-show="$store.citrascope.config.hardware_adapter"
+                                        :disabled="$store.citrascope.isReconnecting || $store.citrascope.isSavingConfig"
+                                        @click.stop="$store.citrascope.reconnectHardware()"
+                                        data-bs-toggle="tooltip" data-bs-theme="dark" data-bs-placement="bottom"
+                                        title="Reinitialize hardware and services (may briefly pause active tasks)">
+                                    <i class="bi" :class="$store.citrascope.isReconnecting ? 'bi-arrow-repeat spin' : 'bi-arrow-repeat'"></i>
+                                    <span x-text="$store.citrascope.isReconnecting ? 'Reconnecting...' : 'Reconnect'"></span>
+                                </button>
+                                <i class="bi" :class="hardwareCardExpanded ? 'bi-chevron-up' : 'bi-chevron-down'"></i>
+                            </div>
                         </div>
                         <div class="card-body" x-show="hardwareCardExpanded">
                             <div class="row g-3 mb-3">

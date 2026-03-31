@@ -379,6 +379,27 @@ class CitraScopeWebApp:
                 CITRASCOPE_LOGGER.error(f"Error getting schema for {adapter_name}: {e}", exc_info=True)
                 return JSONResponse({"error": str(e)}, status_code=500)
 
+        @self.app.post("/api/hardware/reconnect")
+        async def reconnect_hardware():
+            """Retry hardware connection using current in-memory settings."""
+            if not self.daemon:
+                return JSONResponse({"error": "Daemon not available"}, status_code=503)
+            if not self.daemon.settings.is_configured():
+                return JSONResponse(
+                    {"error": "Configuration incomplete — configure hardware adapter first"},
+                    status_code=400,
+                )
+
+            success, error = await asyncio.to_thread(self.daemon.retry_connection)
+
+            if success:
+                return {"status": "success", "message": "Hardware reconnected successfully"}
+            else:
+                return JSONResponse(
+                    {"status": "error", "message": f"Reconnect failed: {error}", "error": error},
+                    status_code=500,
+                )
+
         @self.app.post("/api/config")
         async def update_config(config: dict[str, Any]):
             """Update configuration and trigger hot-reload."""

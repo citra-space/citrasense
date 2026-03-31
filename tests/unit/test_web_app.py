@@ -274,6 +274,40 @@ def test_post_config_reload_fails(client, mock_daemon):
 
 
 # ---------------------------------------------------------------------------
+# Hardware reconnect
+# ---------------------------------------------------------------------------
+
+
+def test_reconnect_hardware_success(client, mock_daemon):
+    mock_daemon.retry_connection.return_value = (True, None)
+    resp = client.post("/api/hardware/reconnect")
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "success"
+    mock_daemon.retry_connection.assert_called_once()
+
+
+def test_reconnect_hardware_failure(client, mock_daemon):
+    mock_daemon.retry_connection.return_value = (False, "NINA not reachable")
+    resp = client.post("/api/hardware/reconnect")
+    assert resp.status_code == 500
+    assert "NINA not reachable" in resp.json()["error"]
+
+
+def test_reconnect_hardware_no_daemon():
+    with patch("citrascope.web.app.StaticFiles"):
+        app = CitraScopeWebApp(daemon=None)
+    c = TestClient(app.app)
+    assert c.post("/api/hardware/reconnect").status_code == 503
+
+
+def test_reconnect_hardware_not_configured(client, mock_daemon):
+    mock_daemon.settings.is_configured.return_value = False
+    resp = client.post("/api/hardware/reconnect")
+    assert resp.status_code == 400
+    assert "incomplete" in resp.json()["error"].lower()
+
+
+# ---------------------------------------------------------------------------
 # Status
 # ---------------------------------------------------------------------------
 

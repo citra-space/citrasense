@@ -48,6 +48,7 @@ import { FILTER_COLORS } from './filters.js';
 
             // Loading states for async operations
             isSavingConfig: false,
+            isReconnecting: false,
             isCapturing: false,
             isSaving: false,
             isAutofocusing: false,
@@ -147,6 +148,27 @@ import { FILTER_COLORS } from './filters.js';
                     console.error('Error toggling automated scheduling:', error);
                     alert('Error toggling automated scheduling');
                     this.status.automated_scheduling = !enabled;
+                }
+            },
+
+            async reconnectHardware() {
+                if (this.isReconnecting) return;
+                this.isReconnecting = true;
+                try {
+                    const { reconnectHardware } = await import('./api.js');
+                    const result = await reconnectHardware();
+                    const { createToast } = await import('./config.js');
+                    if (result.ok) {
+                        createToast('Hardware reconnected successfully', 'success', true);
+                    } else {
+                        createToast(result.data?.error || 'Reconnect failed', 'danger', false);
+                    }
+                } catch (error) {
+                    console.error('Reconnect error:', error);
+                    const { createToast } = await import('./config.js');
+                    createToast('Reconnect failed: ' + error.message, 'danger', false);
+                } finally {
+                    this.isReconnecting = false;
                 }
             },
 
