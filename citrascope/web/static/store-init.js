@@ -64,6 +64,7 @@ function compareVersions(v1, v2) {
 
             // Loading states for async operations
             isSavingConfig: false,
+            isScanning: false,
             isReconnecting: false,
             isCapturing: false,
             isSaving: false,

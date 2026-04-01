@@ -195,6 +195,45 @@ def test_get_adapter_schema_unknown(client):
     assert resp.status_code == 404
 
 
+def test_scan_hardware_returns_schema(client):
+    """POST /api/hardware/scan clears probe caches and returns fresh schema."""
+    from citrascope.hardware.devices.abstract_hardware_device import AbstractHardwareDevice
+
+    AbstractHardwareDevice._hardware_probe_cache["stale:key"] = (["old"], 0)
+
+    resp = client.post(
+        "/api/hardware/scan",
+        json={"adapter_name": "nina", "current_settings": {}},
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert "schema" in data
+    assert isinstance(data["schema"], list)
+    assert "stale:key" not in AbstractHardwareDevice._hardware_probe_cache
+
+
+def test_scan_hardware_missing_adapter_name(client):
+    resp = client.post("/api/hardware/scan", json={})
+    assert resp.status_code == 400
+
+
+def test_scan_hardware_unknown_adapter(client):
+    resp = client.post(
+        "/api/hardware/scan",
+        json={"adapter_name": "does_not_exist", "current_settings": {}},
+    )
+    assert resp.status_code == 404
+
+
+def test_scan_hardware_invalid_current_settings(client):
+    resp = client.post(
+        "/api/hardware/scan",
+        json={"adapter_name": "nina", "current_settings": "not_a_dict"},
+    )
+    assert resp.status_code == 400
+    assert "current_settings" in resp.json()["error"]
+
+
 # ---------------------------------------------------------------------------
 # Config
 # ---------------------------------------------------------------------------

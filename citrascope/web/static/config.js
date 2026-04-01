@@ -43,6 +43,7 @@ export async function initConfig() {
     const store = Alpine.store('citrascope');
     store.handleAdapterChange = handleAdapterChange;
     store.reloadAdapterSchema = reloadAdapterSchema;
+    store.scanHardware = scanHardware;
 
     // Populate hardware adapter dropdown
     await loadAdapterOptions();
@@ -203,11 +204,22 @@ function getDefaultForType(type) {
 }
 
 /**
+ * Build reactive Alpine field objects from a raw schema + current values.
+ */
+function buildAdapterFields(schema, currentSettings = {}) {
+    return schema
+        .filter(field => !field.readonly)
+        .map(field => Alpine.reactive({
+            ...field,
+            value: currentSettings[field.name] ?? field.default ?? getDefaultForType(field.type),
+        }));
+}
+
+/**
  * Load adapter schema and merge with current values
  */
 async function loadAdapterSchema(adapterName, currentSettings = {}) {
     try {
-        // Pass current adapter settings for dynamic schema generation
         const settingsParam = Object.keys(currentSettings).length > 0
             ? `?current_settings=${encodeURIComponent(JSON.stringify(currentSettings))}`
             : '';
@@ -219,23 +231,11 @@ async function loadAdapterSchema(adapterName, currentSettings = {}) {
 
         console.log(`Schema API response:`, data);
 
-        const schema = data.schema || [];
-
-        // Merge schema with values into enriched field objects
-        // Use Alpine.reactive to ensure nested properties are reactive
-        const enrichedFields = schema
-            .filter(field => !field.readonly) // Skip readonly fields
-            .map(field => Alpine.reactive({
-                ...field,  // All schema properties (name, type, options, etc.)
-                value: currentSettings[field.name] ?? field.default ?? getDefaultForType(field.type)
-            }));
-
+        const enrichedFields = buildAdapterFields(data.schema || [], currentSettings);
         console.log('Loaded adapter fields:', enrichedFields.map(f => `${f.name}=${f.value} (${f.type})`));
 
-        // Update Alpine store with unified field objects
         if (typeof Alpine !== 'undefined' && Alpine.store) {
-            const store = Alpine.store('citrascope');
-            store.adapterFields = enrichedFields;
+            Alpine.store('citrascope').adapterFields = enrichedFields;
         }
     } catch (error) {
         console.error('Failed to load adapter schema:', error);
@@ -1012,4 +1012,41 @@ async function reloadAdapterSchema() {
     });
 
     await loadAdapterSchema(adapter, currentSettings);
+}
+
+/**
+ * Clear hardware probe caches and re-enumerate devices.
+ * Called from the "Scan Hardware" button.
+ */
+async function scanHardware() {
+    const store = Alpine.store('citrascope');
+    const adapter = store.config.hardware_adapter;
+    if (!adapter) return;
+
+    store.isScanning = true;
+    try {
+        const currentSettings = {};
+        (store.adapterFields || []).forEach(field => {
+            currentSettings[field.name] = field.value;
+        });
+
+        const response = await fetch('/api/hardware/scan', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ adapter_name: adapter, current_settings: currentSettings }),
+        });
+        const data = await response.json();
+
+        if (!response.ok) {
+            showConfigError(data.error || 'Hardware scan failed');
+            return;
+        }
+
+        store.adapterFields = buildAdapterFields(data.schema || [], currentSettings);
+    } catch (error) {
+        console.error('Hardware scan failed:', error);
+        showConfigError('Hardware scan failed — check connection');
+    } finally {
+        store.isScanning = false;
+    }
 }

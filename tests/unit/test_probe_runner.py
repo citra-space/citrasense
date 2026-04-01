@@ -384,3 +384,67 @@ class TestUsbCameraProbeIntegration:
 
         UsbCamera.clear_camera_cache()
         assert key not in AbstractHardwareDevice._hardware_probe_cache
+
+
+class TestFallbackCaching:
+    """Verify that fallback results are cached (#180)."""
+
+    def setup_method(self):
+        AbstractHardwareDevice._hardware_probe_cache.clear()
+
+    def teardown_method(self):
+        AbstractHardwareDevice._hardware_probe_cache.clear()
+
+    def test_fallback_result_is_cached(self):
+        """When the probe returns the fallback sentinel, it should still be cached."""
+        from citrascope.hardware.devices.focuser.zwo_eaf import ZwoEafFocuser
+
+        fallback = [{"value": -1, "label": "Auto"}]
+
+        with patch(
+            "citrascope.hardware.probe_runner.run_hardware_probe",
+            return_value=fallback,
+        ) as mock_probe:
+            result1 = ZwoEafFocuser._cached_hardware_probe(
+                _succeeds,
+                fallback=fallback,
+                timeout=5.0,
+            )
+            assert result1 is fallback
+            assert mock_probe.call_count == 1
+
+            result2 = ZwoEafFocuser._cached_hardware_probe(
+                _succeeds,
+                fallback=fallback,
+                timeout=5.0,
+            )
+            assert result2 is fallback
+            assert mock_probe.call_count == 1  # cache hit, no second probe
+
+    def test_default_ttl_is_infinite(self):
+        """The default cache_ttl should be infinite so probes only re-run on explicit clear."""
+        from citrascope.hardware.devices.focuser.zwo_eaf import ZwoEafFocuser
+
+        with patch(
+            "citrascope.hardware.probe_runner.run_hardware_probe",
+            return_value=["devices"],
+        ) as mock_probe:
+            ZwoEafFocuser._cached_hardware_probe(
+                _succeeds,
+                fallback=[],
+                timeout=5.0,
+            )
+            assert mock_probe.call_count == 1
+
+        with (
+            patch("citrascope.hardware.devices.abstract_hardware_device.time") as mock_time,
+            patch("citrascope.hardware.probe_runner.run_hardware_probe") as mock_probe2,
+        ):
+            mock_time.time.return_value = time.time() + 86400 * 365  # one year later
+            result = ZwoEafFocuser._cached_hardware_probe(
+                _succeeds,
+                fallback=[],
+                timeout=5.0,
+            )
+            assert result == ["devices"]
+            assert mock_probe2.call_count == 0  # cache hit, no subprocess spawned

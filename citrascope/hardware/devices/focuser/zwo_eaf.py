@@ -72,7 +72,6 @@ class ZwoEafFocuser(AbstractFocuser):
         return cls._cached_hardware_probe(
             _probe_eaf_focusers,
             fallback=_FOCUSER_FALLBACK,
-            cache_ttl=30.0,
             timeout=10.0,
         )
 

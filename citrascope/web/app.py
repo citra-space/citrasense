@@ -22,6 +22,7 @@ from citrascope.constants import (
 )
 from citrascope.hardware.adapter_registry import get_adapter_schema as get_schema
 from citrascope.hardware.adapter_registry import list_adapters
+from citrascope.hardware.devices.abstract_hardware_device import AbstractHardwareDevice
 from citrascope.location.twilight import compute_twilight
 from citrascope.logging import CITRASCOPE_LOGGER
 from citrascope.settings.citrascope_settings import (
@@ -397,6 +398,53 @@ class CitraScopeWebApp:
                     {"status": "error", "message": f"Reconnect failed: {error}", "error": error},
                     status_code=500,
                 )
+
+        @self.app.post("/api/hardware/scan")
+        async def scan_hardware(body: dict[str, Any]):
+            """Clear hardware probe caches and return a fresh adapter schema.
+
+            The "Scan Hardware" button in the UI calls this so operators
+            can explicitly re-enumerate USB devices, serial ports, etc.
+            """
+            adapter_name = body.get("adapter_name", "")
+            if not adapter_name:
+                return JSONResponse({"error": "adapter_name is required"}, status_code=400)
+
+            current_settings = body.get("current_settings", {})
+            if not isinstance(current_settings, dict):
+                return JSONResponse({"error": "current_settings must be a JSON object"}, status_code=400)
+
+            def _scan() -> list:
+                AbstractHardwareDevice._hardware_probe_cache.clear()
+                try:
+                    from citrascope.hardware.devices.mount.zwo_am_mount import ZwoAmMount
+
+                    ZwoAmMount._port_cache = None
+                    ZwoAmMount._port_cache_timestamp = 0
+                except ImportError:
+                    pass
+                try:
+                    from citrascope.hardware.devices.camera.moravian_camera import MoravianCamera
+
+                    MoravianCamera._read_mode_cache = None
+                except ImportError:
+                    pass
+                return get_schema(adapter_name, **current_settings)
+
+            try:
+                schema = await asyncio.wait_for(asyncio.to_thread(_scan), timeout=30.0)
+                return {"schema": schema}
+            except asyncio.TimeoutError:
+                CITRASCOPE_LOGGER.warning("Hardware scan for %s timed out", adapter_name)
+                return JSONResponse(
+                    {"error": "Hardware scan timed out — a device may be unresponsive"},
+                    status_code=504,
+                )
+            except ValueError as e:
+                return JSONResponse({"error": str(e)}, status_code=404)
+            except Exception as e:
+                CITRASCOPE_LOGGER.error(f"Error scanning hardware for {adapter_name}: {e}", exc_info=True)
+                return JSONResponse({"error": str(e)}, status_code=500)
 
         @self.app.post("/api/config")
         async def update_config(config: dict[str, Any]):

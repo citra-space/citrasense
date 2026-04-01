@@ -482,8 +482,27 @@ class DirectHardwareAdapter(AbstractAstroHardwareAdapter):
 
         if success:
             self.logger.info("All required devices connected successfully")
+            self._warm_schema_cache()
 
         return success
+
+    def _warm_schema_cache(self) -> None:
+        """Pre-run device hardware probes in a background thread.
+
+        Populates the probe cache so the first web UI schema request
+        is an instant cache hit instead of blocking on subprocess probes.
+        """
+
+        def _probe():
+            for device in (self._camera, self._mount, self.filter_wheel, self._focuser):
+                if device is not None:
+                    try:
+                        device.get_settings_schema()
+                    except Exception:
+                        pass
+            self.logger.debug("Hardware probe cache warmed")
+
+        threading.Thread(target=_probe, daemon=True, name="probe-cache-warmup").start()
 
     def _populate_filter_map_from_hardware(self) -> None:
         """Sync filter_map with hardware filter wheel, preserving user config.

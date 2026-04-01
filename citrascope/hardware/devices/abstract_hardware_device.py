@@ -71,7 +71,7 @@ class AbstractHardwareDevice(ABC):
         *,
         fallback: _T,
         cache_key: str = "default",
-        cache_ttl: float = 30.0,
+        cache_ttl: float = float("inf"),
         timeout: float = 10.0,
     ) -> _T:
         """Run a hardware probe in a subprocess with result caching.
@@ -95,7 +95,9 @@ class AbstractHardwareDevice(ABC):
             class (e.g. ``"cameras"`` vs ``"read_modes"``).  Defaults to
             ``"default"``.
         cache_ttl:
-            Seconds to cache a successful probe result.
+            Seconds to cache a probe result (success or fallback).
+            Defaults to infinity — use ``_clear_probe_cache`` or the
+            ``POST /api/hardware/scan`` endpoint to force a refresh.
         timeout:
             Maximum seconds before the probe subprocess is killed.
         """
@@ -116,8 +118,7 @@ class AbstractHardwareDevice(ABC):
             description=f"{cls.__qualname__} {cache_key} probe",
         )
 
-        if result is not fallback:
-            cls._hardware_probe_cache[full_key] = (result, time.time())
+        cls._hardware_probe_cache[full_key] = (result, time.time())
         return result
 
     @classmethod
