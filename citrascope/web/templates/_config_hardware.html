@@ -13,6 +13,7 @@
     <div class="col-auto d-flex align-items-end gap-2"
          x-show="$store.citrascope.config.hardware_adapter">
         <button type="button" class="btn btn-sm btn-outline-secondary"
+                x-show="$store.citrascope.config.hardware_adapter === 'direct'"
                 :disabled="$store.citrascope.isScanning || $store.citrascope.isSavingConfig"
                 @click="$store.citrascope.scanHardware()"
                 data-bs-toggle="tooltip" data-bs-theme="dark" data-bs-placement="bottom"
