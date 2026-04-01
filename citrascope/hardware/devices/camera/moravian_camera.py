@@ -95,7 +95,6 @@ class MoravianCamera(AbstractCamera):
         options, read_modes = cls._cached_hardware_probe(
             _probe_moravian_cameras,
             fallback=(_CAMERA_FALLBACK, _READ_MODE_FALLBACK),
-            cache_ttl=30.0,
             timeout=10.0,
         )
 

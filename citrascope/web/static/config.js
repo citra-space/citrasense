@@ -43,6 +43,7 @@ export async function initConfig() {
     const store = Alpine.store('citrascope');
     store.handleAdapterChange = handleAdapterChange;
     store.reloadAdapterSchema = reloadAdapterSchema;
+    store.scanHardware = scanHardware;
 
     // Populate hardware adapter dropdown
     await loadAdapterOptions();
@@ -1012,4 +1013,48 @@ async function reloadAdapterSchema() {
     });
 
     await loadAdapterSchema(adapter, currentSettings);
+}
+
+/**
+ * Clear hardware probe caches and re-enumerate devices.
+ * Called from the "Scan Hardware" button.
+ */
+async function scanHardware() {
+    const store = Alpine.store('citrascope');
+    const adapter = store.config.hardware_adapter;
+    if (!adapter) return;
+
+    store.isScanning = true;
+    try {
+        const currentSettings = {};
+        (store.adapterFields || []).forEach(field => {
+            currentSettings[field.name] = field.value;
+        });
+
+        const response = await fetch('/api/hardware/scan', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ adapter_name: adapter, current_settings: currentSettings }),
+        });
+        const data = await response.json();
+
+        if (!response.ok) {
+            showConfigError(data.error || 'Hardware scan failed');
+            return;
+        }
+
+        const schema = data.schema || [];
+        const enrichedFields = schema
+            .filter(field => !field.readonly)
+            .map(field => Alpine.reactive({
+                ...field,
+                value: currentSettings[field.name] ?? field.default ?? getDefaultForType(field.type),
+            }));
+        store.adapterFields = enrichedFields;
+    } catch (error) {
+        console.error('Hardware scan failed:', error);
+        showConfigError('Hardware scan failed — check connection');
+    } finally {
+        store.isScanning = false;
+    }
 }

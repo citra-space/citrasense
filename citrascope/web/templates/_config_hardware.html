@@ -10,8 +10,16 @@
             </template>
         </select>
     </div>
-    <div class="col-auto d-flex align-items-end"
+    <div class="col-auto d-flex align-items-end gap-2"
          x-show="$store.citrascope.config.hardware_adapter">
+        <button type="button" class="btn btn-sm btn-outline-secondary"
+                :disabled="$store.citrascope.isScanning || $store.citrascope.isSavingConfig"
+                @click="$store.citrascope.scanHardware()"
+                data-bs-toggle="tooltip" data-bs-theme="dark" data-bs-placement="bottom"
+                title="Re-enumerate USB devices, serial ports, and cameras">
+            <i class="bi" :class="$store.citrascope.isScanning ? 'bi-arrow-repeat spin' : 'bi-search'"></i>
+            <span x-text="$store.citrascope.isScanning ? 'Scanning...' : 'Scan Hardware'"></span>
+        </button>
         <button type="button" class="btn btn-sm btn-outline-secondary"
                 :disabled="$store.citrascope.isReconnecting || $store.citrascope.isSavingConfig"
                 @click="$store.citrascope.reconnectHardware()"
