@@ -6,7 +6,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from citrascope.location.gps_monitor import GPSFix, GPSMonitor
+from citrascope.location.gps_fix import GPSFix
+from citrascope.location.gps_monitor import GPSMonitor
 from citrascope.location.location_service import LocationService
 
 # ---------------------------------------------------------------------------
@@ -280,23 +281,23 @@ def test_location_service_retry_loop_gives_up():
     assert ls._gps_started is False
 
 
-def test_location_service_get_gps_fix_never_blocks_on_retry():
-    """get_gps_fix() must not call _try_start_gps() — retry is background only."""
+def test_location_service_get_gpsd_fix_never_blocks_on_retry():
+    """get_gpsd_fix() must not call _try_start_gps() — retry is background only."""
     with patch.object(GPSMonitor, "is_available", return_value=False):
         ls = LocationService()
 
-    assert ls.get_gps_fix(allow_blocking=False) is None
-    assert ls.get_gps_fix(allow_blocking=True) is None
+    assert ls.get_gpsd_fix(allow_blocking=False) is None
+    assert ls.get_gpsd_fix(allow_blocking=True) is None
     assert ls._gps_started is False
 
 
-def test_location_service_get_gps_fix_returns_data_when_started():
+def test_location_service_get_gpsd_fix_returns_data_when_started():
     with patch.object(GPSMonitor, "is_available", return_value=True), patch.object(GPSMonitor, "start"):
         ls = LocationService()
 
     fix_obj = GPSFix(latitude=40.0, longitude=-74.0, altitude=100.0, fix_mode=3, satellites=8, timestamp=time.time())
     with patch.object(GPSMonitor, "get_current_fix", return_value=fix_obj):
-        result = ls.get_gps_fix(allow_blocking=False)
+        result = ls.get_gpsd_fix(allow_blocking=False)
 
     assert result is fix_obj
 
@@ -373,3 +374,167 @@ def test_location_service_stop_not_started():
         ls = LocationService()
     ls.stop()
     assert ls._gps_started is False
+
+
+# ---------------------------------------------------------------------------
+# Hardware adapter GPS provider and get_best_gps_fix
+# ---------------------------------------------------------------------------
+
+
+def test_location_service_hardware_adapter_gps_provider():
+    with patch.object(GPSMonitor, "is_available", return_value=False):
+        ls = LocationService()
+
+    adapter_fix = GPSFix(
+        latitude=38.82,
+        longitude=-104.87,
+        altitude=1660.0,
+        fix_mode=3,
+        satellites=5,
+        timestamp=time.time(),
+        device_path="camera",
+        device_driver="moravian",
+    )
+    ls.set_hardware_adapter_gps_provider(lambda: adapter_fix)
+
+    result = ls._query_hardware_adapter_gps()
+    assert result is adapter_fix
+    assert result.device_driver == "moravian"
+
+
+def test_location_service_hardware_adapter_gps_provider_no_coords():
+    with patch.object(GPSMonitor, "is_available", return_value=False):
+        ls = LocationService()
+
+    no_fix = GPSFix(fix_mode=0, satellites=0, timestamp=time.time())
+    ls.set_hardware_adapter_gps_provider(lambda: no_fix)
+
+    assert ls._query_hardware_adapter_gps() is None
+
+
+def test_location_service_hardware_adapter_gps_provider_none():
+    with patch.object(GPSMonitor, "is_available", return_value=False):
+        ls = LocationService()
+
+    ls.set_hardware_adapter_gps_provider(lambda: None)
+    assert ls._query_hardware_adapter_gps() is None
+
+
+def test_location_service_get_best_gps_fix_prefers_gpsd():
+    with patch.object(GPSMonitor, "is_available", return_value=True), patch.object(GPSMonitor, "start"):
+        ls = LocationService()
+
+    gpsd_fix = GPSFix(
+        latitude=40.0,
+        longitude=-74.0,
+        altitude=100.0,
+        fix_mode=3,
+        satellites=8,
+        timestamp=time.time(),
+        device_path="/dev/ttyACM0",
+        device_driver="u-blox",
+    )
+    adapter_fix = GPSFix(
+        latitude=38.82,
+        longitude=-104.87,
+        altitude=1660.0,
+        fix_mode=3,
+        satellites=5,
+        timestamp=time.time(),
+        device_path="camera",
+        device_driver="moravian",
+    )
+    ls.set_hardware_adapter_gps_provider(lambda: adapter_fix)
+
+    with patch.object(GPSMonitor, "get_current_fix", return_value=gpsd_fix):
+        result = ls.get_best_gps_fix(allow_blocking=False)
+
+    assert result is gpsd_fix
+
+
+def test_location_service_get_best_gps_fix_falls_back_to_hardware_adapter():
+    with patch.object(GPSMonitor, "is_available", return_value=True), patch.object(GPSMonitor, "start"):
+        ls = LocationService()
+
+    adapter_fix = GPSFix(
+        latitude=38.82,
+        longitude=-104.87,
+        altitude=1660.0,
+        fix_mode=3,
+        satellites=5,
+        timestamp=time.time(),
+        device_path="camera",
+        device_driver="moravian",
+    )
+    ls.set_hardware_adapter_gps_provider(lambda: adapter_fix)
+
+    # gpsd returns metadata only (no position)
+    gpsd_meta = GPSFix(gpsd_version="3.25", device_path="/dev/ttyACM0")
+    with patch.object(GPSMonitor, "get_current_fix", return_value=gpsd_meta):
+        result = ls.get_best_gps_fix(allow_blocking=False)
+
+    assert result is adapter_fix
+    assert result.device_driver == "moravian"
+
+
+def test_location_service_get_best_gps_fix_none():
+    with patch.object(GPSMonitor, "is_available", return_value=False):
+        ls = LocationService()
+
+    result = ls.get_best_gps_fix(allow_blocking=False)
+    assert result is None
+
+
+def test_location_service_get_current_location_from_hardware_adapter_gps():
+    with patch.object(GPSMonitor, "is_available", return_value=False):
+        ls = LocationService()
+
+    adapter_fix = GPSFix(
+        latitude=38.82,
+        longitude=-104.87,
+        altitude=1660.0,
+        fix_mode=3,
+        satellites=5,
+        timestamp=time.time(),
+        device_path="camera",
+        device_driver="moravian",
+    )
+    ls.set_hardware_adapter_gps_provider(lambda: adapter_fix)
+
+    loc = ls.get_current_location()
+    assert loc is not None
+    assert loc["source"] == "hardware_adapter_gps"
+    assert loc["latitude"] == pytest.approx(38.82)
+    assert loc["longitude"] == pytest.approx(-104.87)
+    assert loc["altitude"] == pytest.approx(1660.0)
+
+
+def test_location_service_on_gps_fix_falls_back_to_hardware_adapter():
+    mock_api = MagicMock()
+    mock_api.update_ground_station_location.return_value = True
+    mock_settings = MagicMock()
+    mock_settings.gps_location_updates_enabled = True
+    mock_settings.gps_update_interval_minutes = 0
+
+    with patch.object(GPSMonitor, "is_available", return_value=False):
+        ls = LocationService(api_client=mock_api, settings=mock_settings)
+
+    ls.set_ground_station({"id": "gs1", "latitude": 0.0, "longitude": 0.0, "altitude": 0.0})
+
+    adapter_fix = GPSFix(
+        latitude=38.82,
+        longitude=-104.87,
+        altitude=1660.0,
+        fix_mode=3,
+        satellites=5,
+        timestamp=time.time(),
+        device_path="camera",
+        device_driver="moravian",
+    )
+    ls.set_hardware_adapter_gps_provider(lambda: adapter_fix)
+
+    # Weak gpsd fix (no coordinates) triggers hardware adapter fallback
+    weak_fix = GPSFix(fix_mode=0, satellites=0)
+    ls.on_gps_fix_changed(weak_fix)
+
+    mock_api.update_ground_station_location.assert_called_once_with("gs1", 38.82, -104.87, 1660.0)

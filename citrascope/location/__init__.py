@@ -1,6 +1,7 @@
 """Location monitoring and services for CitraScope."""
 
-from citrascope.location.gps_monitor import GPSFix, GPSMonitor
+from citrascope.location.gps_fix import GPSFix
+from citrascope.location.gps_monitor import GPSMonitor
 from citrascope.location.location_service import LocationService
 from citrascope.location.twilight import FlatWindow, TwilightInfo, compute_twilight
 

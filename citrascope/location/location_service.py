@@ -10,7 +10,8 @@ import time
 from collections.abc import Callable
 from typing import TYPE_CHECKING
 
-from citrascope.location.gps_monitor import GPSFix, GPSMonitor
+from citrascope.location.gps_fix import GPSFix
+from citrascope.location.gps_monitor import GPSMonitor
 from citrascope.logging import CITRASCOPE_LOGGER
 
 if TYPE_CHECKING:
@@ -62,7 +63,7 @@ class LocationService:
         self._ground_station_ref: dict | None = None
         self._lock = threading.Lock()  # Protect _ground_station_ref access
         self._last_server_update = 0.0  # Track last server update for rate limiting
-        self._hardware_gps_provider: Callable[[], dict | None] | None = None
+        self._hardware_adapter_gps_provider: Callable[[], GPSFix | None] | None = None
 
         # Initialize GPS monitor with frequent polling (for UI freshness)
         # Server updates are rate-limited in the callback to gps_update_interval_minutes
@@ -113,19 +114,26 @@ class LocationService:
         if not self._gps_started:
             CITRASCOPE_LOGGER.info("GPS not available after retries — location service using API-only mode")
 
-    def get_gps_fix(self, allow_blocking: bool = True) -> GPSFix | None:
-        """Get GPS fix data, never blocking on gpsd availability probes.
+    def get_gpsd_fix(self, allow_blocking: bool = True) -> GPSFix | None:
+        """Get GPS fix from the gpsd daemon, never blocking on availability probes.
 
         Args:
             allow_blocking: If False, never blocks on a subprocess call.
                 Use False from async contexts.
 
         Returns:
-            Current GPS fix, or None if GPS is unavailable.
+            Current gpsd fix, or None if gpsd is unavailable.
         """
         if self._gps_started:
             return self.gps_monitor.get_current_fix(allow_blocking=allow_blocking)
         return None
+
+    def get_best_gps_fix(self, allow_blocking: bool = True) -> GPSFix | None:
+        """Return the best available GPS fix: gpsd first, then hardware adapter."""
+        fix = self.get_gpsd_fix(allow_blocking=allow_blocking)
+        if fix and fix.latitude is not None and fix.longitude is not None:
+            return fix
+        return self._query_hardware_adapter_gps()
 
     def stop(self) -> None:
         """Stop GPS monitoring."""
@@ -143,24 +151,24 @@ class LocationService:
         with self._lock:
             self._ground_station_ref = ground_station
 
-    def set_hardware_gps_provider(self, provider: Callable[[], dict | None]) -> None:
-        """Set a hardware GPS provider as a fallback location source.
+    def set_hardware_adapter_gps_provider(self, provider: Callable[[], GPSFix | None]) -> None:
+        """Register the hardware adapter's GPS as a fallback location source.
 
-        The provider is a callable returning a dict with latitude, longitude,
-        altitude_msl, satellites, and fix keys — or None.  Used when gpsd
-        has no fix (e.g. dead receiver) but a camera has built-in GPS.
+        The provider is a callable returning a GPSFix or None.  Used when gpsd
+        has no fix (e.g. dead receiver) but a device like the Moravian camera
+        has a built-in GPS receiver.
         """
-        self._hardware_gps_provider = provider
-        CITRASCOPE_LOGGER.info("Hardware GPS provider registered as fallback location source")
+        self._hardware_adapter_gps_provider = provider
+        CITRASCOPE_LOGGER.info("Hardware adapter GPS provider registered as fallback location source")
 
-    def _query_hardware_gps(self) -> dict | None:
-        """Try the hardware GPS provider, returning location dict or None."""
-        if self._hardware_gps_provider is None:
+    def _query_hardware_adapter_gps(self) -> GPSFix | None:
+        """Try the hardware adapter's GPS, returning GPSFix or None."""
+        if self._hardware_adapter_gps_provider is None:
             return None
         try:
-            data = self._hardware_gps_provider()
-            if data and data.get("fix"):
-                return data
+            fix = self._hardware_adapter_gps_provider()
+            if fix and fix.latitude is not None and fix.longitude is not None:
+                return fix
         except Exception:
             pass
         return None
@@ -186,10 +194,10 @@ class LocationService:
         if fix.is_strong_fix and fix.latitude is not None and fix.longitude is not None and fix.altitude is not None:
             lat, lon, alt = fix.latitude, fix.longitude, fix.altitude
         else:
-            hw = self._query_hardware_gps()
-            if hw:
-                lat, lon, alt = hw["latitude"], hw["longitude"], hw.get("altitude_msl")
-                source = "camera_gps"
+            adapter_fix = self._query_hardware_adapter_gps()
+            if adapter_fix:
+                lat, lon, alt = adapter_fix.latitude, adapter_fix.longitude, adapter_fix.altitude
+                source = "hardware_adapter_gps"
 
         if lat is None or lon is None:
             return
@@ -226,12 +234,12 @@ class LocationService:
         """Return best available location.
 
         Priority:
-        1. gpsd GPS (strong fix, fresh) — live location for mobile stations
-        2. Hardware GPS (camera GPS with fix) — fallback when gpsd is down
+        1. gpsd (strong fix, fresh) — live location for mobile stations
+        2. Hardware adapter GPS (camera GPS with fix) — fallback when gpsd is down
         3. Ground station (from API) — static fallback for fixed stations
         """
         if self.settings and self.settings.gps_location_updates_enabled:
-            fix = self.get_gps_fix()
+            fix = self.get_gpsd_fix()
             if fix and fix.is_strong_fix:
                 age_seconds = time.time() - fix.timestamp
                 if age_seconds < self.GPS_MAX_AGE_SECONDS:
@@ -244,13 +252,13 @@ class LocationService:
                 else:
                     CITRASCOPE_LOGGER.warning(f"GPS fix is stale ({age_seconds:.0f}s old), falling back")
 
-        hw = self._query_hardware_gps()
-        if hw:
+        adapter_fix = self._query_hardware_adapter_gps()
+        if adapter_fix:
             return {
-                "latitude": hw["latitude"],
-                "longitude": hw["longitude"],
-                "altitude": hw.get("altitude_msl"),
-                "source": "camera_gps",
+                "latitude": adapter_fix.latitude,
+                "longitude": adapter_fix.longitude,
+                "altitude": adapter_fix.altitude,
+                "source": "hardware_adapter_gps",
             }
 
         with self._lock:

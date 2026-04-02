@@ -27,6 +27,7 @@ from citrascope.hardware.devices.focuser import AbstractFocuser
 from citrascope.hardware.devices.mount import AbstractMount
 from citrascope.hardware.devices.mount.mount_state_cache import MountStateCache
 from citrascope.hardware.filter_sync import is_trash_filter_name
+from citrascope.location.gps_fix import GPSFix
 
 
 class DirectHardwareAdapter(AbstractAstroHardwareAdapter):
@@ -379,7 +380,7 @@ class DirectHardwareAdapter(AbstractAstroHardwareAdapter):
     def camera(self) -> AbstractCamera | None:
         return self._camera
 
-    def get_gps_location(self) -> dict | None:
+    def get_gps_location(self) -> GPSFix | None:
         if self._camera is not None:
             return self._camera.get_gps_location()
         return None

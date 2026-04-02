@@ -350,7 +350,7 @@ class CitraScopeDaemon:
             )
 
             if self.location_service:
-                self.location_service.set_hardware_gps_provider(self.hardware_adapter.get_gps_location)
+                self.location_service.set_hardware_adapter_gps_provider(self.hardware_adapter.get_gps_location)
 
             # Save filter configuration if adapter supports it
             self.save_filter_config()

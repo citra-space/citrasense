@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 
 from citrascope.hardware.devices.abstract_hardware_device import AbstractHardwareDevice
+from citrascope.location.gps_fix import GPSFix
 
 if TYPE_CHECKING:
     from citrascope.hardware.devices.filter_wheel import AbstractFilterWheel
@@ -206,12 +207,10 @@ class AbstractCamera(AbstractHardwareDevice):
         bit_depth = getattr(self, "_camera_info", {}).get("bit_depth", 16)
         return (2**bit_depth) - 1
 
-    def get_gps_location(self) -> dict | None:
+    def get_gps_location(self) -> GPSFix | None:
         """Return GPS fix from an integrated receiver, or None if unavailable.
 
         Override in cameras with built-in GPS modules (e.g. Moravian Cx).
-        Returns dict with latitude, longitude, altitude_msl, satellites, fix
-        when a fix is available, None otherwise.
         """
         return None
 

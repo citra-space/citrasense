@@ -1835,10 +1835,10 @@ class CitraScopeWebApp:
                 # Time monitoring not initialized yet
                 self.status.time_health = None
 
-            # Get GPS location status from location service
+            # Get GPS location status from location service (gpsd or camera GPS)
             # Use allow_blocking=False to prevent blocking the async event loop
             if hasattr(self.daemon, "location_service") and self.daemon.location_service:
-                gps_fix = self.daemon.location_service.get_gps_fix(allow_blocking=False)
+                gps_fix = self.daemon.location_service.get_best_gps_fix(allow_blocking=False)
                 if gps_fix:
                     self.status.gps_location = {
                         "latitude": gps_fix.latitude,
@@ -1849,7 +1849,6 @@ class CitraScopeWebApp:
                         "is_strong": gps_fix.is_strong_fix,
                         "eph": gps_fix.eph,
                         "sep": gps_fix.sep,
-                        "source": "gps",
                         "gpsd_version": gps_fix.gpsd_version,
                         "device_path": gps_fix.device_path,
                         "device_driver": gps_fix.device_driver,

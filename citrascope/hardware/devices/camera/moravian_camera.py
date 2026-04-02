@@ -19,6 +19,7 @@ import numpy as np
 from citrascope.hardware.abstract_astro_hardware_adapter import SettingSchemaEntry
 from citrascope.hardware.devices.camera import AbstractCamera
 from citrascope.hardware.devices.filter_wheel import AbstractFilterWheel
+from citrascope.location.gps_fix import GPSFix
 
 if TYPE_CHECKING:
     from citrascope.hardware.devices.camera.abstract_camera import CalibrationProfile
@@ -364,16 +365,17 @@ class MoravianCamera(AbstractCamera):
             try:
                 self._has_gps = cam.get_boolean_parameter(GBP_GPS)
                 if self._has_gps:
-                    gps_data = cam.get_gps_data()
-                    if gps_data:
+                    gps_fix = self.get_gps_location()
+                    if gps_fix:
                         self.logger.info(
-                            f"Camera GPS: {gps_data['satellites']} satellites, "
-                            f"fix={'yes' if gps_data['fix'] else 'no'}, "
-                            f"lat={gps_data['latitude']:.6f}, lon={gps_data['longitude']:.6f}, "
-                            f"alt={gps_data['altitude_msl']:.1f}m"
+                            "Camera GPS: %d satellites, fix=yes, lat=%.6f, lon=%.6f, alt=%.1fm",
+                            gps_fix.satellites,
+                            gps_fix.latitude or 0.0,
+                            gps_fix.longitude or 0.0,
+                            gps_fix.altitude or 0.0,
                         )
                     else:
-                        self.logger.info("Camera GPS module detected but no data available yet")
+                        self.logger.info("Camera GPS module detected but no fix available yet")
             except Exception as e:
                 self.logger.debug(f"GPS detection skipped: {e}")
                 self._has_gps = False
@@ -478,13 +480,22 @@ class MoravianCamera(AbstractCamera):
         )
         return data
 
-    def get_gps_location(self) -> dict | None:
+    def get_gps_location(self) -> GPSFix | None:
         if not self._has_gps or self._gxccd is None:
             return None
         try:
             data = self._gxccd.get_gps_data()
             if data and data.get("fix"):
-                return data
+                return GPSFix(
+                    latitude=data["latitude"],
+                    longitude=data["longitude"],
+                    altitude=data.get("altitude_msl"),
+                    fix_mode=3,
+                    satellites=data.get("satellites", 0),
+                    timestamp=time.time(),
+                    device_path="camera",
+                    device_driver="moravian",
+                )
             return None
         except Exception:
             return None
