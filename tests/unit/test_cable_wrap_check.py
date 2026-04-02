@@ -2,12 +2,13 @@
 
 import json
 from pathlib import Path
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, PropertyMock
 
 import pytest
 
 from citrascope.hardware.devices.mount.mount_state_cache import MountSnapshot
 from citrascope.safety.cable_wrap_check import (
+    _MAX_AZ_DELTA_PER_TICK_DEG,
     HARD_LIMIT_DEG,
     SOFT_LIMIT_DEG,
     CableWrapCheck,
@@ -49,27 +50,30 @@ class TestShortestArc:
 # ------------------------------------------------------------------
 
 
-class _CachedStateSequence:
-    """Returns sequential az_deg values from mount.cached_state attribute access."""
+def _snapshot_property(frames: list[tuple[float | None, bool]]) -> PropertyMock:
+    """Build a PropertyMock that yields a fresh MountSnapshot per access.
 
-    def __init__(self, azimuths: list[float | None]):
-        self._iter = iter(azimuths)
-        self.is_at_home = False
-
-    @property
-    def az_deg(self) -> float | None:
-        return next(self._iter, None)
+    Both ``az_deg`` and ``is_at_home`` are baked into the returned snapshot,
+    so field access order on the consumer side doesn't matter.
+    """
+    snapshots = [MountSnapshot(az_deg=az, is_at_home=home) for az, home in frames]
+    it = iter(snapshots)
+    return PropertyMock(side_effect=lambda: next(it, MountSnapshot()))
 
 
 def _make_mount(mode: str = "altaz", azimuths: list[float | None] | None = None):
-    mount = MagicMock()
+    class _Mount(MagicMock):
+        pass
+
+    mount = _Mount()
     mount.get_mount_mode.return_value = mode
     if azimuths is not None:
+        frames = [(az, False) for az in azimuths]
+        type(mount).cached_state = _snapshot_property(frames)
         mount.get_azimuth.side_effect = list(azimuths[1:]) if len(azimuths) > 1 else []
-        mount.cached_state = _CachedStateSequence(azimuths)
     else:
         mount.get_azimuth.return_value = None
-        mount.cached_state = MountSnapshot()
+        type(mount).cached_state = PropertyMock(return_value=MountSnapshot())
     mount.start_move.return_value = True
     mount.stop_move.return_value = True
     mount.stop_tracking.return_value = True
@@ -150,7 +154,7 @@ class TestCableWrapCheckLimits:
 
 class TestCableWrapCheckReset:
     def test_reset_clears_state(self):
-        mount = _make_mount(azimuths=[0.0, 100.0])
+        mount = _make_mount(azimuths=[0.0, 20.0])
         check = CableWrapCheck(MagicMock(), mount)
         check._observe_once()
         check._observe_once()
@@ -163,7 +167,7 @@ class TestCableWrapCheckReset:
 class TestCableWrapCheckPersistence:
     def test_save_and_load(self, tmp_path: Path):
         state_file = tmp_path / "wrap.json"
-        mount = _make_mount(azimuths=[0.0, 100.0])
+        mount = _make_mount(azimuths=[0.0, 20.0])
 
         check = CableWrapCheck(MagicMock(), mount, state_file=state_file)
         check._observe_once()
@@ -172,11 +176,11 @@ class TestCableWrapCheckPersistence:
         assert state_file.exists()
 
         data = json.loads(state_file.read_text())
-        assert data["cumulative_deg"] == pytest.approx(100.0)
+        assert data["cumulative_deg"] == pytest.approx(20.0)
 
-        mount2 = _make_mount(azimuths=[100.0])
+        mount2 = _make_mount(azimuths=[20.0])
         check2 = CableWrapCheck(MagicMock(), mount2, state_file=state_file)
-        assert check2._cumulative_deg == pytest.approx(100.0)
+        assert check2._cumulative_deg == pytest.approx(20.0)
 
     def test_missing_state_file_warns(self, tmp_path: Path):
         state_file = tmp_path / "nonexistent.json"
@@ -581,3 +585,121 @@ class TestCableWrapObserverLifecycle:
         check.start()
         assert check._observe_thread is thread
         check.stop()
+
+
+# ------------------------------------------------------------------
+# Phantom azimuth jump rejection (issue #168)
+# ------------------------------------------------------------------
+
+
+def _make_mount_with_frames(frames: list[tuple[float | None, bool]]):
+    """Create a mock mount that yields (az, is_at_home) per observation tick."""
+
+    class _Mount(MagicMock):
+        pass
+
+    mount = _Mount()
+    mount.get_mount_mode.return_value = "altaz"
+    type(mount).cached_state = _snapshot_property(frames)
+    return mount
+
+
+class TestPhantomAzimuthJumpRejection:
+    def test_phantom_azimuth_jump_rejected(self):
+        """A 180° jump (zenith crossing) and flip-back should not accumulate."""
+        mount = _make_mount(azimuths=[45.0, 225.0, 45.0])
+        check = CableWrapCheck(MagicMock(), mount)
+        check._observe_once()  # baseline at 45
+        check._observe_once()  # 45 → 225: delta=180, rejected
+        check._observe_once()  # 225 → 45 from frozen _last_az=45: delta=0, accepted
+        assert check._cumulative_deg == pytest.approx(0.0)
+
+    def test_phantom_jump_freezes_last_az(self):
+        """After a rejected jump, _last_az stays at the pre-jump value."""
+        mount = _make_mount(azimuths=[45.0, 225.0])
+        check = CableWrapCheck(MagicMock(), mount)
+        check._observe_once()  # baseline at 45
+        assert check._last_az == pytest.approx(45.0)
+        check._observe_once()  # 45 → 225: rejected
+        assert check._last_az == pytest.approx(45.0)  # frozen, NOT 225
+
+    def test_sustained_phantom_state_all_rejected(self):
+        """Multiple ticks in the flipped state are all rejected."""
+        mount = _make_mount(azimuths=[45.0, 225.0, 223.0, 220.0, 45.0])
+        check = CableWrapCheck(MagicMock(), mount)
+        check._observe_once()  # baseline at 45
+        check._observe_once()  # 180° jump — rejected
+        check._observe_once()  # 178° from frozen 45 — rejected
+        check._observe_once()  # 175° from frozen 45 — rejected
+        check._observe_once()  # 0° from frozen 45 — accepted
+        assert check._cumulative_deg == pytest.approx(0.0)
+        assert check._last_az == pytest.approx(45.0)
+
+    def test_normal_slew_delta_accumulated(self):
+        """Real motion under the threshold accumulates normally."""
+        mount = _make_mount(azimuths=[10.0, 13.0, 16.0, 19.0])
+        check = CableWrapCheck(MagicMock(), mount)
+        check._observe_once()
+        check._observe_once()
+        check._observe_once()
+        check._observe_once()
+        assert check._cumulative_deg == pytest.approx(9.0)
+        assert check._last_az == pytest.approx(19.0)
+
+    def test_delta_just_under_threshold_accepted(self):
+        """A delta just under the threshold is real motion and accepted."""
+        delta = _MAX_AZ_DELTA_PER_TICK_DEG - 1
+        mount = _make_mount(azimuths=[0.0, delta])
+        check = CableWrapCheck(MagicMock(), mount)
+        check._observe_once()
+        check._observe_once()
+        assert check._cumulative_deg == pytest.approx(delta)
+
+    def test_delta_just_over_threshold_rejected(self):
+        """A delta just over the threshold is rejected."""
+        delta = _MAX_AZ_DELTA_PER_TICK_DEG + 1
+        mount = _make_mount(azimuths=[0.0, delta])
+        check = CableWrapCheck(MagicMock(), mount)
+        check._observe_once()
+        check._observe_once()
+        assert check._cumulative_deg == pytest.approx(0.0)
+        assert check._last_az == pytest.approx(0.0)  # frozen
+
+    def test_homing_over_zenith_no_panic(self):
+        """Full homing scenario: mount crosses zenith (az flips), returns,
+        then reports at_home. Cumulative stays at zero, no unwind triggered."""
+        frames = [
+            (45.0, False),  # tick 0: starting position
+            (45.0, False),  # tick 1: ascending
+            (225.0, False),  # tick 2: zenith crossing — az flips
+            (223.0, False),  # tick 3: still flipped
+            (45.0, False),  # tick 4: descending — az returns
+            (0.0, True),  # tick 5: homing complete
+        ]
+        mount = _make_mount_with_frames(frames)
+        check = CableWrapCheck(MagicMock(), mount)
+
+        for _ in range(len(frames)):
+            check._observe_once()
+
+        assert check._cumulative_deg == pytest.approx(0.0)
+        assert check.check() == SafetyAction.SAFE
+
+    def test_homing_over_zenith_with_preexisting_wrap(self):
+        """Homing with pre-existing cumulative wrap should not add phantom degrees."""
+        frames = [
+            (45.0, False),  # tick 0
+            (225.0, False),  # tick 1: zenith flip
+            (45.0, False),  # tick 2: flip back
+            (0.0, True),  # tick 3: home
+        ]
+        mount = _make_mount_with_frames(frames)
+        check = CableWrapCheck(MagicMock(), mount)
+        check._observe_once()  # baseline
+        check._cumulative_deg = 100.0  # pre-existing real wrap
+
+        check._observe_once()  # zenith flip — rejected
+        check._observe_once()  # flip back — accepted (delta=0 from frozen 45)
+        check._observe_once()  # home — re-baseline
+
+        assert check._cumulative_deg == pytest.approx(100.0)
