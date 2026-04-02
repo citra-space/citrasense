@@ -39,6 +39,10 @@ _MAX_CONSECUTIVE_UNWIND_FAILURES = 3
 _FIRMWARE_LIMIT_TRAVEL_DEG = 10.0
 _MAX_SEGMENT_RESTARTS = 5
 _SEGMENT_PAUSE_S = 1.0
+# Reject azimuth deltas larger than this per tick — physically impossible
+# motion that indicates a coordinate singularity (e.g. zenith crossing) or
+# firmware glitch.  30° / 0.5s = 60 deg/sec, ~13x the AM5's max slew rate.
+_MAX_AZ_DELTA_PER_TICK_DEG = 30.0
 
 
 def _shortest_arc(from_deg: float, to_deg: float) -> float:
@@ -169,10 +173,21 @@ class CableWrapCheck(SafetyCheck):
                     az,
                     self._cumulative_deg,
                 )
+                self._last_az = az
             elif self._last_az is not None:
                 delta = _shortest_arc(self._last_az, az)
-                self._cumulative_deg += delta
-            self._last_az = az
+                if abs(delta) > _MAX_AZ_DELTA_PER_TICK_DEG:
+                    self._logger.warning(
+                        "Cable wrap: rejected impossible az delta %.1f° in one tick "
+                        "(max %.1f°) — coordinate singularity or glitch",
+                        delta,
+                        _MAX_AZ_DELTA_PER_TICK_DEG,
+                    )
+                else:
+                    self._cumulative_deg += delta
+                    self._last_az = az
+            else:
+                self._last_az = az
 
             abs_cumulative = abs(self._cumulative_deg)
             now = time.monotonic()
@@ -483,9 +498,17 @@ class CableWrapCheck(SafetyCheck):
                 with self._lock:
                     if self._last_az is not None:
                         delta = _shortest_arc(self._last_az, az)
-                        self._cumulative_deg += delta
-                        segment_travel += abs(delta)
-                    self._last_az = az
+                        if abs(delta) > _MAX_AZ_DELTA_PER_TICK_DEG:
+                            self._logger.warning(
+                                "Unwind: rejected impossible az delta %.1f° — " "coordinate singularity or glitch",
+                                delta,
+                            )
+                        else:
+                            self._cumulative_deg += delta
+                            segment_travel += abs(delta)
+                            self._last_az = az
+                    else:
+                        self._last_az = az
 
                 self._logger.info(
                     "Unwind poll #%d: az=%.1f° cumulative=%.1f° segment_travel=%.1f° | ra/dec=%s",
