@@ -379,6 +379,11 @@ class DirectHardwareAdapter(AbstractAstroHardwareAdapter):
     def camera(self) -> AbstractCamera | None:
         return self._camera
 
+    def get_gps_location(self) -> dict | None:
+        if self._camera is not None:
+            return self._camera.get_gps_location()
+        return None
+
     def supports_filter_management(self) -> bool:
         return self.filter_wheel is not None
 

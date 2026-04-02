@@ -140,6 +140,15 @@ class AbstractAstroHardwareAdapter(ABC):
                 return None
         return None
 
+    def get_gps_location(self) -> dict | None:
+        """Return GPS location from hardware if available.
+
+        Direct adapters delegate to camera.get_gps_location().
+        Returns dict with latitude, longitude, altitude_msl, satellites, fix
+        when a fix is available, None otherwise.
+        """
+        return None
+
     def point_telescope(self, ra: float, dec: float):
         """Point the telescope to the specified RA/Dec coordinates."""
         if self._safety_monitor and not self._safety_monitor.is_action_safe("slew", ra=ra, dec=dec):

@@ -478,6 +478,17 @@ class MoravianCamera(AbstractCamera):
         )
         return data
 
+    def get_gps_location(self) -> dict | None:
+        if not self._has_gps or self._gxccd is None:
+            return None
+        try:
+            data = self._gxccd.get_gps_data()
+            if data and data.get("fix"):
+                return data
+            return None
+        except Exception:
+            return None
+
     def _resolve_exposure_timestamp(self) -> tuple[datetime, str]:
         """Determine the best available exposure-start timestamp.
 

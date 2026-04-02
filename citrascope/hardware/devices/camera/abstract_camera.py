@@ -206,6 +206,15 @@ class AbstractCamera(AbstractHardwareDevice):
         bit_depth = getattr(self, "_camera_info", {}).get("bit_depth", 16)
         return (2**bit_depth) - 1
 
+    def get_gps_location(self) -> dict | None:
+        """Return GPS fix from an integrated receiver, or None if unavailable.
+
+        Override in cameras with built-in GPS modules (e.g. Moravian Cx).
+        Returns dict with latitude, longitude, altitude_msl, satellites, fix
+        when a fix is available, None otherwise.
+        """
+        return None
+
     def get_preferred_file_extension(self) -> str:
         """Get the preferred file extension for saved images.
 

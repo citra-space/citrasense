@@ -349,6 +349,9 @@ class CitraScopeDaemon:
                 f"Hardware connected. Slew rate: {self.hardware_adapter.scope_slew_rate_degrees_per_second} deg/sec"
             )
 
+            if self.location_service:
+                self.location_service.set_hardware_gps_provider(self.hardware_adapter.get_gps_location)
+
             # Save filter configuration if adapter supports it
             self.save_filter_config()
             # Sync discovered filters to backend on startup

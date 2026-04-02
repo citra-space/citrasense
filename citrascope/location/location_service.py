@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import threading
 import time
+from collections.abc import Callable
 from typing import TYPE_CHECKING
 
 from citrascope.location.gps_monitor import GPSFix, GPSMonitor
@@ -61,6 +62,7 @@ class LocationService:
         self._ground_station_ref: dict | None = None
         self._lock = threading.Lock()  # Protect _ground_station_ref access
         self._last_server_update = 0.0  # Track last server update for rate limiting
+        self._hardware_gps_provider: Callable[[], dict | None] | None = None
 
         # Initialize GPS monitor with frequent polling (for UI freshness)
         # Server updates are rate-limited in the callback to gps_update_interval_minutes
@@ -141,6 +143,28 @@ class LocationService:
         with self._lock:
             self._ground_station_ref = ground_station
 
+    def set_hardware_gps_provider(self, provider: Callable[[], dict | None]) -> None:
+        """Set a hardware GPS provider as a fallback location source.
+
+        The provider is a callable returning a dict with latitude, longitude,
+        altitude_msl, satellites, and fix keys — or None.  Used when gpsd
+        has no fix (e.g. dead receiver) but a camera has built-in GPS.
+        """
+        self._hardware_gps_provider = provider
+        CITRASCOPE_LOGGER.info("Hardware GPS provider registered as fallback location source")
+
+    def _query_hardware_gps(self) -> dict | None:
+        """Try the hardware GPS provider, returning location dict or None."""
+        if self._hardware_gps_provider is None:
+            return None
+        try:
+            data = self._hardware_gps_provider()
+            if data and data.get("fix"):
+                return data
+        except Exception:
+            pass
+        return None
+
     def on_gps_fix_changed(self, fix: GPSFix) -> None:
         """
         Callback invoked when GPS fix is checked by background thread (every 10 seconds).
@@ -151,67 +175,64 @@ class LocationService:
         Args:
             fix: Current GPS fix information
         """
-        # Check if GPS location updates are enabled
         if not self.settings or not self.settings.gps_location_updates_enabled:
             return
 
-        # Validate fix quality and coordinate data
-        if not fix.is_strong_fix:
+        lat: float | None = None
+        lon: float | None = None
+        alt: float | None = None
+        source = "gps"
+
+        if fix.is_strong_fix and fix.latitude is not None and fix.longitude is not None and fix.altitude is not None:
+            lat, lon, alt = fix.latitude, fix.longitude, fix.altitude
+        else:
+            hw = self._query_hardware_gps()
+            if hw:
+                lat, lon, alt = hw["latitude"], hw["longitude"], hw.get("altitude_msl")
+                source = "camera_gps"
+
+        if lat is None or lon is None:
             return
 
-        # Additional validation: is_strong_fix now guarantees these are not None,
-        # but be explicit for type checker and future-proofing
-        if fix.latitude is None or fix.longitude is None or fix.altitude is None:
-            CITRASCOPE_LOGGER.warning("GPS fix missing coordinate data despite strong fix status")
-            return
-
-        # Rate limit server updates (GPS polled every 10s, but only update server every N minutes)
         current_time = time.time()
         update_interval_seconds = self.settings.gps_update_interval_minutes * 60
         if current_time - self._last_server_update < update_interval_seconds:
-            # Too soon - skip this update
             return
 
-        # Thread-safe access to ground station reference
         with self._lock:
             if self.api_client and self._ground_station_ref:
                 ground_station_id = self._ground_station_ref["id"]
                 result = self.api_client.update_ground_station_location(
                     ground_station_id,
-                    fix.latitude,
-                    fix.longitude,
-                    fix.altitude,
+                    lat,
+                    lon,
+                    alt,
                 )
                 if result:
-                    # Keep local cache in sync with server (atomic update within lock)
-                    self._ground_station_ref["latitude"] = fix.latitude
-                    self._ground_station_ref["longitude"] = fix.longitude
-                    self._ground_station_ref["altitude"] = fix.altitude
-
-                    # Update timestamp after successful server update
+                    self._ground_station_ref["latitude"] = lat
+                    self._ground_station_ref["longitude"] = lon
+                    self._ground_station_ref["altitude"] = alt
                     self._last_server_update = current_time
 
                     CITRASCOPE_LOGGER.info(
-                        f"Updated ground station location from GPS: "
-                        f"lat={fix.latitude:.6f}, lon={fix.longitude:.6f}, alt={fix.altitude:.1f}m"
+                        "Updated ground station location from %s: lat=%.6f, lon=%.6f, alt=%.1fm",
+                        source,
+                        lat,
+                        lon,
+                        alt or 0.0,
                     )
 
     def get_current_location(self) -> dict | None:
-        """
-        Location service - returns best available location.
+        """Return best available location.
 
         Priority:
-        1. GPS (if enabled, strong fix, and fresh data) - live location for mobile stations
-        2. Ground station (from API) - configured fallback for fixed stations
-
-        Returns:
-            Dictionary with latitude, longitude, altitude, and source, or None if unavailable.
+        1. gpsd GPS (strong fix, fresh) — live location for mobile stations
+        2. Hardware GPS (camera GPS with fix) — fallback when gpsd is down
+        3. Ground station (from API) — static fallback for fixed stations
         """
-        # Try GPS first if available and GPS location updates are enabled
         if self.settings and self.settings.gps_location_updates_enabled:
             fix = self.get_gps_fix()
             if fix and fix.is_strong_fix:
-                # Check if GPS data is fresh (not stale)
                 age_seconds = time.time() - fix.timestamp
                 if age_seconds < self.GPS_MAX_AGE_SECONDS:
                     return {
@@ -221,11 +242,17 @@ class LocationService:
                         "source": "gps",
                     }
                 else:
-                    CITRASCOPE_LOGGER.warning(
-                        f"GPS fix is stale ({age_seconds:.0f}s old), falling back to ground station location"
-                    )
+                    CITRASCOPE_LOGGER.warning(f"GPS fix is stale ({age_seconds:.0f}s old), falling back")
 
-        # Fall back to ground station location (thread-safe read)
+        hw = self._query_hardware_gps()
+        if hw:
+            return {
+                "latitude": hw["latitude"],
+                "longitude": hw["longitude"],
+                "altitude": hw.get("altitude_msl"),
+                "source": "camera_gps",
+            }
+
         with self._lock:
             if self._ground_station_ref:
                 return {
