@@ -64,6 +64,8 @@ class LocationService:
         self._lock = threading.Lock()  # Protect _ground_station_ref access
         self._last_server_update = 0.0  # Track last server update for rate limiting
         self._hardware_adapter_gps_provider: Callable[[], GPSFix | None] | None = None
+        self._hardware_adapter_gps_cache: GPSFix | None = None
+        self._hardware_adapter_gps_cache_time: float = 0.0
 
         # Initialize GPS monitor with frequent polling (for UI freshness)
         # Server updates are rate-limited in the callback to gps_update_interval_minutes
@@ -162,16 +164,31 @@ class LocationService:
         CITRASCOPE_LOGGER.info("Hardware adapter GPS provider registered as fallback location source")
 
     def _query_hardware_adapter_gps(self) -> GPSFix | None:
-        """Try the hardware adapter's GPS, returning GPSFix or None."""
+        """Try the hardware adapter's GPS, returning cached GPSFix or None.
+
+        May return a GPSFix without coordinates (e.g. device detected but still
+        acquiring satellites).  Callers needing position data must check
+        ``latitude``/``longitude`` before use.
+
+        Results are cached for 30s (matching GPSMonitor's cache TTL) so the
+        1-second web status broadcast doesn't hammer the camera's USB bus.
+        """
         if self._hardware_adapter_gps_provider is None:
-            return None
+            return self._hardware_adapter_gps_cache
+
+        now = time.time()
+        if now - self._hardware_adapter_gps_cache_time < GPSMonitor.CACHE_TTL_SECONDS:
+            return self._hardware_adapter_gps_cache
+
         try:
             fix = self._hardware_adapter_gps_provider()
-            if fix and fix.latitude is not None and fix.longitude is not None:
-                return fix
+            self._hardware_adapter_gps_cache = fix
+            self._hardware_adapter_gps_cache_time = now
+            return fix
         except Exception:
-            pass
-        return None
+            self._hardware_adapter_gps_cache = None
+            self._hardware_adapter_gps_cache_time = now
+            return None
 
     def on_gps_fix_changed(self, fix: GPSFix) -> None:
         """
@@ -253,7 +270,7 @@ class LocationService:
                     CITRASCOPE_LOGGER.warning(f"GPS fix is stale ({age_seconds:.0f}s old), falling back")
 
         adapter_fix = self._query_hardware_adapter_gps()
-        if adapter_fix:
+        if adapter_fix and adapter_fix.latitude is not None and adapter_fix.longitude is not None:
             return {
                 "latitude": adapter_fix.latitude,
                 "longitude": adapter_fix.longitude,

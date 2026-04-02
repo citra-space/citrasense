@@ -403,13 +403,18 @@ def test_location_service_hardware_adapter_gps_provider():
 
 
 def test_location_service_hardware_adapter_gps_provider_no_coords():
+    """Partial fix (device detected, no coordinates) is returned for UI status."""
     with patch.object(GPSMonitor, "is_available", return_value=False):
         ls = LocationService()
 
-    no_fix = GPSFix(fix_mode=0, satellites=0, timestamp=time.time())
+    no_fix = GPSFix(fix_mode=0, satellites=3, timestamp=time.time(), device_path="camera", device_driver="moravian")
     ls.set_hardware_adapter_gps_provider(lambda: no_fix)
 
-    assert ls._query_hardware_adapter_gps() is None
+    result = ls._query_hardware_adapter_gps()
+    assert result is no_fix
+    assert result.latitude is None
+    assert result.device_driver == "moravian"
+    assert result.satellites == 3
 
 
 def test_location_service_hardware_adapter_gps_provider_none():
@@ -509,6 +514,20 @@ def test_location_service_get_current_location_from_hardware_adapter_gps():
     assert loc["altitude"] == pytest.approx(1660.0)
 
 
+def test_location_service_get_current_location_skips_partial_adapter_fix():
+    """Partial adapter fix (no coords) shouldn't be used for location resolution."""
+    with patch.object(GPSMonitor, "is_available", return_value=False):
+        ls = LocationService()
+
+    partial = GPSFix(fix_mode=0, satellites=3, device_path="camera", device_driver="moravian")
+    ls.set_hardware_adapter_gps_provider(lambda: partial)
+    ls.set_ground_station({"latitude": 38.82, "longitude": -104.87, "altitude": 1899.0})
+
+    loc = ls.get_current_location()
+    assert loc is not None
+    assert loc["source"] == "ground_station"
+
+
 def test_location_service_on_gps_fix_falls_back_to_hardware_adapter():
     mock_api = MagicMock()
     mock_api.update_ground_station_location.return_value = True
@@ -538,3 +557,43 @@ def test_location_service_on_gps_fix_falls_back_to_hardware_adapter():
     ls.on_gps_fix_changed(weak_fix)
 
     mock_api.update_ground_station_location.assert_called_once_with("gs1", 38.82, -104.87, 1660.0)
+
+
+def test_location_service_hardware_adapter_gps_cached():
+    """Repeated calls within 30s return cached fix without re-querying the provider."""
+    with patch.object(GPSMonitor, "is_available", return_value=False):
+        ls = LocationService()
+
+    call_count = 0
+
+    def counting_provider() -> GPSFix:
+        nonlocal call_count
+        call_count += 1
+        return GPSFix(
+            latitude=38.82,
+            longitude=-104.87,
+            altitude=1660.0,
+            fix_mode=3,
+            satellites=5,
+            timestamp=time.time(),
+            device_path="camera",
+            device_driver="moravian",
+        )
+
+    ls.set_hardware_adapter_gps_provider(counting_provider)
+
+    # First call queries the provider
+    fix1 = ls._query_hardware_adapter_gps()
+    assert fix1 is not None
+    assert call_count == 1
+
+    # Second call within TTL returns cache — provider not called again
+    fix2 = ls._query_hardware_adapter_gps()
+    assert fix2 is fix1
+    assert call_count == 1
+
+    # Expire the cache and verify provider is called again
+    ls._hardware_adapter_gps_cache_time = time.time() - 60
+    fix3 = ls._query_hardware_adapter_gps()
+    assert fix3 is not None
+    assert call_count == 2

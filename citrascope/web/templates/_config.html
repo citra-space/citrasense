@@ -830,22 +830,14 @@
                                 <div class="pt-3 border-top border-secondary" x-show="$store.citrascope.config.gps_location_updates_enabled !== false">
                                     <h6 class="text-muted mb-3">GPS Hardware</h6>
                                     <div class="mb-2 d-flex justify-content-between">
-                                        <span class="text-muted small">gpsd</span>
+                                        <span class="text-muted small">Source</span>
                                         <span class="font-monospace small" x-text="(() => {
                                             const gps = $store.citrascope.status?.gps_location;
-                                            if (gps?.gpsd_version) return 'Running (v' + gps.gpsd_version + ')';
-                                            if (gps) return 'Running';
-                                            return 'Not available';
-                                        })()"></span>
-                                    </div>
-                                    <div class="mb-2 d-flex justify-content-between">
-                                        <span class="text-muted small">Device</span>
-                                        <span class="font-monospace small" x-text="(() => {
-                                            const gps = $store.citrascope.status?.gps_location;
-                                            if (!gps) return '-';
-                                            if (gps.device_path && gps.device_driver) return gps.device_path + ' (' + gps.device_driver + ')';
-                                            if (gps.device_path) return gps.device_path;
-                                            return 'No device connected';
+                                            if (!gps) return 'No GPS available';
+                                            if (gps.gpsd_version) return 'gpsd v' + gps.gpsd_version + (gps.device_path ? ' · ' + gps.device_path : '');
+                                            if (gps.device_driver && gps.device_path) return gps.device_driver + ' (' + gps.device_path + ')';
+                                            if (gps.device_driver) return gps.device_driver;
+                                            return 'Unknown';
                                         })()"></span>
                                     </div>
                                     <div class="mb-2 d-flex justify-content-between">

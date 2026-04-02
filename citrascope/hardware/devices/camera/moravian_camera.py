@@ -485,18 +485,19 @@ class MoravianCamera(AbstractCamera):
             return None
         try:
             data = self._gxccd.get_gps_data()
-            if data and data.get("fix"):
-                return GPSFix(
-                    latitude=data["latitude"],
-                    longitude=data["longitude"],
-                    altitude=data.get("altitude_msl"),
-                    fix_mode=3,
-                    satellites=data.get("satellites", 0),
-                    timestamp=time.time(),
-                    device_path="camera",
-                    device_driver="moravian",
-                )
-            return None
+            if not data:
+                return None
+            has_fix = bool(data.get("fix"))
+            return GPSFix(
+                latitude=data["latitude"] if has_fix else None,
+                longitude=data["longitude"] if has_fix else None,
+                altitude=data.get("altitude_msl") if has_fix else None,
+                fix_mode=3 if has_fix else 0,
+                satellites=data.get("satellites", 0),
+                timestamp=time.time(),
+                device_path="camera",
+                device_driver="moravian",
+            )
         except Exception:
             return None
 
