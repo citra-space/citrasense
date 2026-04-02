@@ -43,6 +43,9 @@ _SEGMENT_PAUSE_S = 1.0
 # motion that indicates a coordinate singularity (e.g. zenith crossing) or
 # firmware glitch.  30° / 0.5s = 60 deg/sec, ~13x the AM5's max slew rate.
 _MAX_AZ_DELTA_PER_TICK_DEG = 30.0
+# Log the first rejection, hush ticks 2–N, then resume per-tick warnings
+# if the rejection persists (something is genuinely wrong, not just homing).
+_REJECTION_HUSH_LIMIT = 10
 
 
 def _shortest_arc(from_deg: float, to_deg: float) -> float:
@@ -92,6 +95,7 @@ class CableWrapCheck(SafetyCheck):
         self._consecutive_unwind_failures: int = 0
         self._intervention_required: bool = False
         self._hard_limit_logged: bool = False
+        self._consecutive_rejections: int = 0
 
         self._observe_thread: threading.Thread | None = None
         self._observe_stop = threading.Event()
@@ -167,6 +171,12 @@ class CableWrapCheck(SafetyCheck):
             self._was_at_home = at_home
 
             if homing_just_completed:
+                if self._consecutive_rejections:
+                    self._logger.info(
+                        "Cable wrap: azimuth tracking resumed after %d rejected ticks",
+                        self._consecutive_rejections,
+                    )
+                self._consecutive_rejections = 0
                 self._logger.info(
                     "Cable wrap: homing complete — re-baselined az %.1f° → %.1f° (cumulative %.1f°)",
                     self._last_az or 0.0,
@@ -177,13 +187,20 @@ class CableWrapCheck(SafetyCheck):
             elif self._last_az is not None:
                 delta = _shortest_arc(self._last_az, az)
                 if abs(delta) > _MAX_AZ_DELTA_PER_TICK_DEG:
-                    self._logger.warning(
-                        "Cable wrap: rejected impossible az delta %.1f° in one tick "
-                        "(max %.1f°) — coordinate singularity or glitch",
-                        delta,
-                        _MAX_AZ_DELTA_PER_TICK_DEG,
-                    )
+                    self._consecutive_rejections += 1
+                    if self._consecutive_rejections == 1 or self._consecutive_rejections > _REJECTION_HUSH_LIMIT:
+                        self._logger.warning(
+                            "Cable wrap: azimuth tracking suspended — " "impossible delta %.1f° (max %.1f°)",
+                            delta,
+                            _MAX_AZ_DELTA_PER_TICK_DEG,
+                        )
                 else:
+                    if self._consecutive_rejections:
+                        self._logger.info(
+                            "Cable wrap: azimuth tracking resumed after %d rejected ticks",
+                            self._consecutive_rejections,
+                        )
+                    self._consecutive_rejections = 0
                     self._cumulative_deg += delta
                     self._last_az = az
             else:
@@ -308,6 +325,7 @@ class CableWrapCheck(SafetyCheck):
             self._cumulative_deg = 0.0
             self._last_az = None
             self._consecutive_unwind_failures = 0
+            self._consecutive_rejections = 0
             self._intervention_required = False
             self._hard_limit_logged = False
             self._save_state()
@@ -499,11 +517,23 @@ class CableWrapCheck(SafetyCheck):
                     if self._last_az is not None:
                         delta = _shortest_arc(self._last_az, az)
                         if abs(delta) > _MAX_AZ_DELTA_PER_TICK_DEG:
-                            self._logger.warning(
-                                "Unwind: rejected impossible az delta %.1f° — " "coordinate singularity or glitch",
-                                delta,
-                            )
+                            self._consecutive_rejections += 1
+                            if (
+                                self._consecutive_rejections == 1
+                                or self._consecutive_rejections > _REJECTION_HUSH_LIMIT
+                            ):
+                                self._logger.warning(
+                                    "Unwind: azimuth tracking suspended — " "impossible delta %.1f° (max %.1f°)",
+                                    delta,
+                                    _MAX_AZ_DELTA_PER_TICK_DEG,
+                                )
                         else:
+                            if self._consecutive_rejections:
+                                self._logger.info(
+                                    "Unwind: azimuth tracking resumed after %d rejected ticks",
+                                    self._consecutive_rejections,
+                                )
+                            self._consecutive_rejections = 0
                             self._cumulative_deg += delta
                             segment_travel += abs(delta)
                             self._last_az = az
