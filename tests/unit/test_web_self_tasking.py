@@ -131,13 +131,63 @@ def test_toggle_self_tasking_enable(client, mock_daemon):
     assert mock_daemon.settings.self_tasking_enabled is True
 
 
-def test_toggle_self_tasking_disable(client, mock_daemon):
+def test_toggle_self_tasking_enable_cascades_scheduling(client, mock_daemon):
+    """Enabling self-tasking should auto-enable scheduling on the server."""
+    mock_daemon.task_manager.automated_scheduling = False
+    mock_daemon.api_client.update_telescope_automated_scheduling.return_value = True
+
+    resp = client.patch("/api/self-tasking", json={"enabled": True})
+    assert resp.status_code == 200
+
+    mock_daemon.api_client.update_telescope_automated_scheduling.assert_called_once_with("tel-1", True)
+    assert mock_daemon.task_manager.automated_scheduling is True
+
+
+def test_toggle_self_tasking_enable_cascades_processing(client, mock_daemon):
+    """Enabling self-tasking should auto-resume processing if paused."""
+    mock_daemon.task_manager.is_processing_active.return_value = False
+
+    resp = client.patch("/api/self-tasking", json={"enabled": True})
+    assert resp.status_code == 200
+
+    mock_daemon.task_manager.resume.assert_called_once()
+    assert mock_daemon.settings.task_processing_paused is False
+
+
+def test_toggle_self_tasking_enable_skips_cascade_when_already_active(client, mock_daemon):
+    """No cascade calls when scheduling and processing are already active."""
+    mock_daemon.task_manager.automated_scheduling = True
+    mock_daemon.task_manager.is_processing_active.return_value = True
+
+    resp = client.patch("/api/self-tasking", json={"enabled": True})
+    assert resp.status_code == 200
+
+    mock_daemon.task_manager.resume.assert_not_called()
+    mock_daemon.api_client.update_telescope_automated_scheduling.assert_not_called()
+
+
+def test_toggle_self_tasking_enable_scheduling_failure_non_blocking(client, mock_daemon):
+    """If the scheduling API call fails, self-tasking still enables."""
+    mock_daemon.task_manager.automated_scheduling = False
+    mock_daemon.api_client.update_telescope_automated_scheduling.side_effect = Exception("network error")
+
+    resp = client.patch("/api/self-tasking", json={"enabled": True})
+    assert resp.status_code == 200
+    assert mock_daemon.settings.self_tasking_enabled is True
+
+
+def test_toggle_self_tasking_disable_no_cascade(client, mock_daemon):
+    """Disabling self-tasking should NOT touch scheduling or processing."""
     mock_daemon.settings.self_tasking_enabled = True
+    mock_daemon.task_manager.automated_scheduling = True
+    mock_daemon.task_manager.is_processing_active.return_value = True
+
     resp = client.patch("/api/self-tasking", json={"enabled": False})
     assert resp.status_code == 200
-    data = resp.json()
-    assert data["enabled"] is False
     assert mock_daemon.settings.self_tasking_enabled is False
+
+    mock_daemon.task_manager.resume.assert_not_called()
+    mock_daemon.api_client.update_telescope_automated_scheduling.assert_not_called()
 
 
 def test_toggle_self_tasking_missing_field(client):

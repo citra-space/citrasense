@@ -186,6 +186,20 @@
                                    @change="$store.citrascope.toggleSelfTasking($event.target.checked)">
                         </div>
                     </div>
+                    <span class="badge rounded-pill bg-warning text-dark"
+                          style="display:inline-flex; align-items:center;"
+                          x-show="$store.citrascope.status?.self_tasking_enabled
+                              && (!$store.citrascope.status?.automated_scheduling
+                                  || $store.citrascope.status?.processing_active === false)"
+                          data-bs-toggle="tooltip" data-bs-theme="dark"
+                          :data-bs-title="(() => {
+                              const s = $store.citrascope.status;
+                              if (!s) return '';
+                              const issues = [];
+                              if (!s.automated_scheduling) issues.push('Scheduling is off \u2014 server won\u2019t assign tasks');
+                              if (s.processing_active === false) issues.push('Processing is off \u2014 tasks won\u2019t execute');
+                              return issues.join('\n');
+                          })()"><i class="bi bi-exclamation-triangle-fill"></i></span>
                 </div>
                 <button class="btn btn-sm btn-danger"
                         x-show="$store.citrascope.wsConnected"

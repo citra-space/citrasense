@@ -685,7 +685,11 @@ class CitraScopeWebApp:
 
         @self.app.patch("/api/self-tasking")
         async def toggle_self_tasking(request: dict[str, bool]):
-            """Toggle self-tasking on/off."""
+            """Toggle self-tasking on/off.
+
+            When enabling, also enables Scheduling (server-side) and
+            Processing (local) so the autonomous pipeline is fully active.
+            """
             if not self.daemon:
                 return JSONResponse({"error": "Daemon not available"}, status_code=503)
 
@@ -695,6 +699,28 @@ class CitraScopeWebApp:
 
             self.daemon.settings.self_tasking_enabled = enabled
             self.daemon.settings.save()
+
+            if enabled and self.daemon.task_manager:
+                # Ensure processing is active
+                if not self.daemon.task_manager.is_processing_active():
+                    self.daemon.task_manager.resume()
+                    self.daemon.settings.task_processing_paused = False
+                    self.daemon.settings.save()
+                    CITRASCOPE_LOGGER.info("Self-tasking: auto-enabled processing")
+
+                # Ensure scheduling is active on the server
+                if not self.daemon.task_manager.automated_scheduling:
+                    try:
+                        telescope_id = self.daemon.telescope_record["id"]
+                        success = self.daemon.api_client.update_telescope_automated_scheduling(telescope_id, True)
+                        if success:
+                            self.daemon.task_manager.automated_scheduling = True
+                            CITRASCOPE_LOGGER.info("Self-tasking: auto-enabled scheduling")
+                        else:
+                            CITRASCOPE_LOGGER.warning("Self-tasking: failed to enable scheduling on server")
+                    except Exception as e:
+                        CITRASCOPE_LOGGER.warning(f"Self-tasking: could not enable scheduling: {e}")
+
             CITRASCOPE_LOGGER.info(f"Self-tasking set to {'enabled' if enabled else 'disabled'}")
             await self.broadcast_status()
             return {"status": "success", "enabled": enabled}

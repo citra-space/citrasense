@@ -934,10 +934,10 @@
                             <i class="bi bi-robot"></i>Self-Tasking
                         </h5>
 
-                        <!-- Observing Session -->
-                        <h6 class="text-muted mb-3"><i class="bi bi-moon-stars me-2"></i>Observing Session</h6>
                         <div class="row g-3 mb-4">
+                            <!-- Observing Session -->
                             <div class="col-md-6">
+                                <h6 class="text-muted mb-3"><i class="bi bi-moon-stars me-2"></i>Observing Session</h6>
                                 <label class="form-label" for="selfTaskingSunThreshold">Darkness Threshold</label>
                                 <select id="selfTaskingSunThreshold" class="form-select"
                                         x-model.number="$store.citrascope.config.self_tasking_sun_altitude_threshold">
@@ -947,12 +947,10 @@
                                 </select>
                                 <small class="text-muted d-block mt-1">When the sun drops below this altitude, the observing session begins.</small>
                             </div>
-                        </div>
 
-                        <!-- Session Startup / Shutdown -->
-                        <h6 class="text-muted mb-3"><i class="bi bi-power me-2"></i>Session Startup / Shutdown</h6>
-                        <div class="row g-3 mb-4">
+                            <!-- Session Startup / Shutdown -->
                             <div class="col-md-6">
+                                <h6 class="text-muted mb-3"><i class="bi bi-power me-2"></i>Session Startup / Shutdown</h6>
                                 <div class="form-check mb-2">
                                     <input class="form-check-input" type="checkbox" id="selfTaskingDoAutofocus"
                                            x-model="$store.citrascope.config.self_tasking_do_autofocus">
