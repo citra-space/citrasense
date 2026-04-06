@@ -412,6 +412,7 @@ class CitraScopeDaemon:
                 get_location=_get_location_tuple,
                 request_autofocus=self.task_manager.autofocus_manager.request,
                 is_autofocus_running=self.task_manager.autofocus_manager.is_running,
+                is_imaging_idle=self.task_manager.imaging_queue.is_idle,
                 are_queues_idle=self.task_manager.are_queues_idle,
                 park_mount=self.hardware_adapter.park_mount,
                 unpark_mount=self.hardware_adapter.unpark_mount,

@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import logging
+import time
 from unittest.mock import MagicMock, patch
 
 from citrascope.location.twilight import ObservingWindow
-from citrascope.tasks.observing_session import ObservingSessionManager, SessionState
+from citrascope.tasks.observing_session import _SHUTDOWN_TIMEOUT_SECONDS, ObservingSessionManager, SessionState
 
 
 def _make_settings(**overrides):
@@ -26,6 +27,7 @@ def _make_manager(
     settings=None,
     location=(38.0, -105.0),
     autofocus_running=False,
+    imaging_idle=True,
     queues_idle=True,
 ):
     settings = settings or _make_settings()
@@ -33,6 +35,7 @@ def _make_manager(
 
     request_autofocus = MagicMock()
     is_autofocus_running = MagicMock(return_value=autofocus_running)
+    is_imaging_idle = MagicMock(return_value=imaging_idle)
     are_queues_idle = MagicMock(return_value=queues_idle)
     park_mount = MagicMock(return_value=True)
     unpark_mount = MagicMock(return_value=True)
@@ -43,11 +46,12 @@ def _make_manager(
         get_location=lambda: location,
         request_autofocus=request_autofocus,
         is_autofocus_running=is_autofocus_running,
+        is_imaging_idle=is_imaging_idle,
         are_queues_idle=are_queues_idle,
         park_mount=park_mount,
         unpark_mount=unpark_mount,
     )
-    return mgr, request_autofocus, is_autofocus_running, are_queues_idle, park_mount, unpark_mount
+    return mgr, request_autofocus, is_autofocus_running, is_imaging_idle, are_queues_idle, park_mount, unpark_mount
 
 
 _DARK_WINDOW = ObservingWindow(
@@ -79,7 +83,7 @@ def test_daytime_to_night_startup_when_dark():
 
 
 def test_night_startup_unpark_then_autofocus():
-    mgr, request_af, is_af_running, _, _park, unpark = _make_manager()
+    mgr, request_af, is_af_running, _, _, _park, unpark = _make_manager()
 
     # Force into NIGHT_STARTUP
     mgr._state = SessionState.NIGHT_STARTUP
@@ -144,9 +148,10 @@ def test_observing_to_night_shutdown():
     assert mgr.state == SessionState.NIGHT_SHUTDOWN
 
 
-def test_night_shutdown_waits_for_queues():
-    mgr, _, _, _are_queues_idle, park, _ = _make_manager(queues_idle=False)
+def test_night_shutdown_waits_for_imaging():
+    mgr, _, _, _is_imaging_idle, _, park, _ = _make_manager(imaging_idle=False)
     mgr._state = SessionState.NIGHT_SHUTDOWN
+    mgr._shutdown_entered_at = time.monotonic()
 
     with patch.object(mgr, "_refresh_observing_window"):
         mgr._observing_window = _LIGHT_WINDOW
@@ -156,9 +161,10 @@ def test_night_shutdown_waits_for_queues():
     park.assert_not_called()
 
 
-def test_night_shutdown_parks_and_returns_to_daytime():
-    mgr, _, _, _are_queues_idle, park, _ = _make_manager(queues_idle=True)
+def test_night_shutdown_parks_when_imaging_idle():
+    mgr, _, _, _is_imaging_idle, _, park, _ = _make_manager(imaging_idle=True)
     mgr._state = SessionState.NIGHT_SHUTDOWN
+    mgr._shutdown_entered_at = time.monotonic()
 
     with patch.object(mgr, "_refresh_observing_window"):
         mgr._observing_window = _LIGHT_WINDOW
@@ -166,6 +172,45 @@ def test_night_shutdown_parks_and_returns_to_daytime():
 
     assert mgr.state == SessionState.DAYTIME
     park.assert_called_once()
+
+
+def test_night_shutdown_does_not_wait_for_processing_or_upload():
+    """Shutdown should park even if processing/upload queues still have work."""
+    mgr, _, _, _is_imaging_idle, _are_queues_idle, park, _ = _make_manager(imaging_idle=True, queues_idle=False)
+    mgr._state = SessionState.NIGHT_SHUTDOWN
+    mgr._shutdown_entered_at = time.monotonic()
+
+    with patch.object(mgr, "_refresh_observing_window"):
+        mgr._observing_window = _LIGHT_WINDOW
+        mgr.update()
+
+    assert mgr.state == SessionState.DAYTIME
+    park.assert_called_once()
+
+
+def test_night_shutdown_force_parks_on_timeout():
+    """After timeout, park even if imaging is still busy."""
+    mgr, _, _, _is_imaging_idle, _, park, _ = _make_manager(imaging_idle=False)
+    mgr._state = SessionState.NIGHT_SHUTDOWN
+    mgr._shutdown_entered_at = time.monotonic() - _SHUTDOWN_TIMEOUT_SECONDS - 1
+
+    with patch.object(mgr, "_refresh_observing_window"):
+        mgr._observing_window = _LIGHT_WINDOW
+        mgr.update()
+
+    assert mgr.state == SessionState.DAYTIME
+    park.assert_called_once()
+
+
+def test_is_winding_down():
+    mgr, *_ = _make_manager()
+    assert mgr.is_winding_down() is False
+
+    mgr._state = SessionState.NIGHT_SHUTDOWN
+    assert mgr.is_winding_down() is True
+
+    mgr._state = SessionState.OBSERVING
+    assert mgr.is_winding_down() is False
 
 
 def test_status_dict():
@@ -202,14 +247,14 @@ def test_status_dict_activity_during_startup():
 
 
 def test_status_dict_activity_during_shutdown():
-    mgr, _, _, are_queues_idle, _, _ = _make_manager(queues_idle=False)
+    mgr, _, _, is_imaging_idle, _, _, _ = _make_manager(imaging_idle=False)
     mgr._state = SessionState.NIGHT_SHUTDOWN
     mgr._observing_window = _LIGHT_WINDOW
 
     sd = mgr.status_dict()
-    assert sd["session_activity"] == "Draining queues"
+    assert sd["session_activity"] == "Waiting for imaging to finish"
 
-    are_queues_idle.return_value = True
+    is_imaging_idle.return_value = True
     sd = mgr.status_dict()
     assert sd["session_activity"] == "Parking mount"
 

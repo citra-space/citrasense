@@ -388,10 +388,15 @@ class TaskManager:
                 is_paused = not self._processing_active
 
             if not is_paused:
+                # Don't start new imaging during session shutdown — let current work drain
+                winding_down = (
+                    self._observing_session_manager is not None and self._observing_session_manager.is_winding_down()
+                )
+
                 try:
                     now = int(time.time())
                     completed = 0
-                    while True:
+                    while not winding_down:
                         with self._processing_lock:
                             if not self._processing_active:
                                 break

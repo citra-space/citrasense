@@ -12,11 +12,14 @@ as needed — no additional threads.
 from __future__ import annotations
 
 import logging
+import time
 from collections.abc import Callable
 from enum import Enum
 from typing import TYPE_CHECKING, Any
 
 from citrascope.location.twilight import ObservingWindow, compute_observing_window
+
+_SHUTDOWN_TIMEOUT_SECONDS = 300  # 5 minutes — force-park if imaging hasn't drained
 
 if TYPE_CHECKING:
     from citrascope.settings.citrascope_settings import CitraScopeSettings
@@ -37,7 +40,11 @@ class ObservingSessionManager:
         DAYTIME → NIGHT_STARTUP    when observing_session_enabled and sun below threshold
         NIGHT_STARTUP → OBSERVING  when all enabled startup actions complete
         OBSERVING → NIGHT_SHUTDOWN when sun rises above threshold
-        NIGHT_SHUTDOWN → DAYTIME   when queues drained and mount parked (if enabled)
+        NIGHT_SHUTDOWN → DAYTIME   when imaging idle + park done, OR timeout (force-park)
+
+    During NIGHT_SHUTDOWN the manager only waits for the **imaging queue** to
+    drain (processing and upload don't use the mount).  A hard timeout
+    (``_SHUTDOWN_TIMEOUT_SECONDS``) force-parks if imaging is stuck.
 
     The manager does not own any threads — it is driven by external calls to
     ``update()`` on the poll loop's cadence.
@@ -50,6 +57,7 @@ class ObservingSessionManager:
         get_location: Callable[[], tuple[float, float] | None],
         request_autofocus: Callable[[], Any],
         is_autofocus_running: Callable[[], bool],
+        is_imaging_idle: Callable[[], bool],
         are_queues_idle: Callable[[], bool],
         park_mount: Callable[[], bool] | None,
         unpark_mount: Callable[[], bool] | None,
@@ -59,6 +67,7 @@ class ObservingSessionManager:
         self._get_location = get_location
         self._request_autofocus = request_autofocus
         self._is_autofocus_running = is_autofocus_running
+        self._is_imaging_idle = is_imaging_idle
         self._are_queues_idle = are_queues_idle
         self._park_mount = park_mount
         self._unpark_mount = unpark_mount
@@ -70,6 +79,7 @@ class ObservingSessionManager:
         self._unpark_done = False
         self._autofocus_requested = False
         self._park_done = False
+        self._shutdown_entered_at: float | None = None
 
     @property
     def state(self) -> SessionState:
@@ -108,6 +118,7 @@ class ObservingSessionManager:
                 self._logger.info("Sun rising above threshold — transitioning to NIGHT_SHUTDOWN")
                 self._state = SessionState.NIGHT_SHUTDOWN
                 self._park_done = False
+                self._shutdown_entered_at = time.monotonic()
 
         elif self._state == SessionState.NIGHT_SHUTDOWN:
             self._run_shutdown_actions()
@@ -158,9 +169,22 @@ class ObservingSessionManager:
         self._state = SessionState.OBSERVING
 
     def _run_shutdown_actions(self) -> None:
-        """Drain queues then park (if enabled)."""
-        if not self._are_queues_idle():
-            return  # Wait for work to finish
+        """Wait for imaging to finish, then park.  Force-park on timeout.
+
+        Only the imaging queue needs to drain before parking — processing
+        and upload don't use the mount and can continue after park.  A hard
+        timeout force-parks even if imaging is stuck, protecting hardware
+        from sunrise exposure.
+        """
+        timed_out = False
+        if self._shutdown_entered_at is not None:
+            elapsed = time.monotonic() - self._shutdown_entered_at
+            if elapsed >= _SHUTDOWN_TIMEOUT_SECONDS:
+                timed_out = True
+                self._logger.warning("NIGHT_SHUTDOWN: timeout after %.0fs — force-parking to protect hardware", elapsed)
+
+        if not timed_out and not self._is_imaging_idle():
+            return  # Wait for current exposure to finish
 
         if self._settings.observing_session_do_park and not self._park_done:
             if self._park_mount is not None:
@@ -179,6 +203,11 @@ class ObservingSessionManager:
         self._unpark_done = False
         self._autofocus_requested = False
         self._park_done = False
+        self._shutdown_entered_at = None
+
+    def is_winding_down(self) -> bool:
+        """Return True when the session is shutting down and no new imaging should start."""
+        return self._state == SessionState.NIGHT_SHUTDOWN
 
     def _get_session_activity(self) -> str | None:
         """Return a human-readable label for the current startup/shutdown sub-step."""
@@ -192,8 +221,8 @@ class ObservingSessionManager:
                     return "Autofocusing"
             return "Finishing startup"
         if self._state == SessionState.NIGHT_SHUTDOWN:
-            if not self._are_queues_idle():
-                return "Draining queues"
+            if not self._is_imaging_idle():
+                return "Waiting for imaging to finish"
             if self._settings.observing_session_do_park and not self._park_done:
                 return "Parking mount"
             return "Finishing shutdown"
