@@ -212,7 +212,7 @@ class CitraScopeSettings(BaseModel):
         except (ValueError, TypeError):
             CITRASCOPE_LOGGER.warning("Invalid autofocus_interval_minutes (%s). Setting to default 60 minutes.", v)
             return 60
-        if v < 1 or v > 1439:
+        if v < 1 or v > 1440:
             CITRASCOPE_LOGGER.warning("Invalid autofocus_interval_minutes (%s). Setting to default 60 minutes.", v)
             return 60
         return v

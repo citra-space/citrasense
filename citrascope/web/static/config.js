@@ -301,7 +301,7 @@ async function saveConfiguration(event) {
         host, port, use_ssl,
         // Type coercions for form-bound numeric inputs (Alpine x-model can produce strings)
         autofocus_interval_minutes: parseInt(store.config.autofocus_interval_minutes || 60, 10),
-        autofocus_after_sunset_offset_minutes: parseInt(store.config.autofocus_after_sunset_offset_minutes || 60, 10),
+        autofocus_after_sunset_offset_minutes: parseInt(store.config.autofocus_after_sunset_offset_minutes ?? 60, 10),
         time_check_interval_minutes: parseInt(store.config.time_check_interval_minutes || 5, 10),
         time_offset_pause_ms: parseFloat(store.config.time_offset_pause_ms || 500),
         gps_update_interval_minutes: parseInt(store.config.gps_update_interval_minutes || 5, 10),
