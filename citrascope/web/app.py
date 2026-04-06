@@ -141,6 +141,7 @@ class SystemStatus(BaseModel):
     calibration_status: dict[str, Any] | None = None
     config_health: dict[str, Any] | None = None
     status_collection_ms: float | None = None
+    status_collection_breakdown: dict[str, float] | None = None
     # Self-tasking / observing session
     self_tasking_enabled: bool = False
     observing_session_state: str = "daytime"
@@ -1717,6 +1718,15 @@ class CitraScopeWebApp:
         import time as _time
 
         _t0 = _time.perf_counter()
+        _prev = _t0
+        _breakdown: dict[str, float] = {}
+
+        def _mark(name: str) -> None:
+            nonlocal _prev
+            now = _time.perf_counter()
+            _breakdown[name] = round((now - _prev) * 1000, 2)
+            _prev = now
+
         try:
             self.status.hardware_adapter = self.daemon.settings.hardware_adapter
 
@@ -1749,6 +1759,7 @@ class CitraScopeWebApp:
                     self.status.telescope_connected = False
                     self.status.mount_tracking = False
                     self.status.mount_slewing = False
+                _mark("hw.telescope")
 
                 # Check camera connection status
                 try:
@@ -1761,6 +1772,7 @@ class CitraScopeWebApp:
                 except Exception:
                     self.status.camera_connected = False
                     self.status.camera_temperature = None
+                _mark("hw.camera")
 
                 # Check adapter capabilities
                 try:
@@ -1772,6 +1784,7 @@ class CitraScopeWebApp:
 
                 self.status.supports_autofocus = adapter.supports_autofocus()
                 self.status.supports_hardware_safety_monitor = adapter.supports_hardware_safety_monitor
+                _mark("hw.capabilities")
 
                 try:
                     pos = adapter.get_filter_position()
@@ -1783,6 +1796,7 @@ class CitraScopeWebApp:
                 except Exception:
                     self.status.current_filter_position = None
                     self.status.current_filter_name = None
+                _mark("hw.filter")
 
                 # Check focuser status
                 focuser = adapter.focuser
@@ -1810,6 +1824,7 @@ class CitraScopeWebApp:
                     self.status.focuser_max_position = None
                     self.status.focuser_temperature = None
                     self.status.focuser_moving = False
+                _mark("hw.focuser")
 
                 self.status.supports_alignment = self.status.camera_connected and mount is not None
 
@@ -1819,6 +1834,7 @@ class CitraScopeWebApp:
                     h_limit, o_limit = mount.cached_limits
                     self.status.mount_horizon_limit = h_limit
                     self.status.mount_overhead_limit = o_limit
+                _mark("hw.mount_state")
 
             if hasattr(self.daemon, "task_manager") and self.daemon.task_manager:
                 task_manager = self.daemon.task_manager
@@ -1833,6 +1849,8 @@ class CitraScopeWebApp:
                 self.status.alignment_running = task_manager.alignment_manager.is_running()
                 self.status.alignment_progress = task_manager.alignment_manager.progress
                 self.status.tasks_pending = task_manager.pending_task_count
+
+            _mark("task_manager")
 
             # Get autofocus timing information
             if self.daemon.settings:
@@ -1861,6 +1879,8 @@ class CitraScopeWebApp:
                         self.status.next_autofocus_minutes = 0
                 else:
                     self.status.next_autofocus_minutes = None
+
+            _mark("autofocus")
 
             # Get time sync status from time monitor
             if hasattr(self.daemon, "time_monitor") and self.daemon.time_monitor:
@@ -1929,6 +1949,8 @@ class CitraScopeWebApp:
                 self.status.location_longitude = None
                 self.status.location_altitude = None
 
+            _mark("time_gps_location")
+
             # Update task processing state
             if hasattr(self.daemon, "task_manager") and self.daemon.task_manager:
                 self.status.processing_active = self.daemon.task_manager.is_processing_active()
@@ -1949,6 +1971,8 @@ class CitraScopeWebApp:
                     self.status.last_batch_created = st.get("last_batch_created")
 
             self.status.self_tasking_enabled = self.daemon.settings.self_tasking_enabled
+
+            _mark("session")
 
             # Check for missing dependencies from adapter
             self.status.missing_dependencies = []
@@ -1987,6 +2011,8 @@ class CitraScopeWebApp:
                     self.status.pipeline_stats = {}
                 self.status.pipeline_stats["processors"] = self.daemon.processor_registry.get_processor_stats()
 
+            _mark("pipeline")
+
             # Safety monitor status
             if hasattr(self.daemon, "safety_monitor") and self.daemon.safety_monitor:
                 try:
@@ -2001,6 +2027,8 @@ class CitraScopeWebApp:
                 self.status.elset_health = self.daemon.elset_cache.get_health()
             else:
                 self.status.elset_health = None
+
+            _mark("safety_elset")
 
             # Latest annotated task image for the Optics pane
             ann_path = getattr(self.daemon, "latest_annotated_image_path", None)
@@ -2031,8 +2059,11 @@ class CitraScopeWebApp:
             else:
                 self.status.config_health = None
 
+            _mark("optics_calibration")
+
             self.status.last_update = datetime.now().isoformat()
             self.status.status_collection_ms = round((_time.perf_counter() - _t0) * 1000, 2)
+            self.status.status_collection_breakdown = _breakdown
 
         except Exception as e:
             CITRASCOPE_LOGGER.error(f"Error updating status: {e}")

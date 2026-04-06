@@ -34,10 +34,19 @@
 
             <span class="badge rounded-pill"
                   data-bs-toggle="tooltip" data-bs-theme="dark"
+                  style="white-space:pre-line;"
                   :data-bs-title="$store.citrascope.wsConnected
-                      ? 'Connected \u2014 receiving live updates'
-                        + ($store.citrascope.status?.status_collection_ms != null
-                           ? ' \u00b7 status in ' + $store.citrascope.status.status_collection_ms.toFixed(1) + ' ms' : '')
+                      ? (() => {
+                            let tip = 'Connected \u2014 receiving live updates';
+                            const ms = $store.citrascope.status?.status_collection_ms;
+                            if (ms != null) tip += ' \u00b7 status in ' + ms.toFixed(1) + ' ms';
+                            const bd = $store.citrascope.status?.status_collection_breakdown;
+                            if (bd) {
+                                const sorted = Object.entries(bd).sort((a,b) => b[1] - a[1]);
+                                tip += '\n' + sorted.map(([k,v]) => '  ' + k + ': ' + v.toFixed(1) + ' ms').join('\n');
+                            }
+                            return tip;
+                        })()
                       : ($store.citrascope.wsReconnecting ? 'Reconnecting\u2026' : 'Daemon disconnected')"
                   :class="$store.citrascope.wsConnected ? 'bg-success' : ($store.citrascope.wsReconnecting ? 'bg-warning text-dark' : 'bg-danger')"
                   x-text="$store.citrascope.wsReconnecting ? 'Reconnecting' : 'Daemon'"></span>
