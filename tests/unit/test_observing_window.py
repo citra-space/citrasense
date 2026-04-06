@@ -64,17 +64,11 @@ def test_observing_window_daytime():
 
     with (
         patch("citrascope.location.twilight._get_skyfield_objects", return_value=(mock_ts, mock_eph)),
-        patch("citrascope.location.twilight.compute_observing_window.__module__", create=True),
-        patch.dict("sys.modules", {"skyfield.almanac": mock_almanac, "skyfield.api": mock_wgs84}),
+        patch("skyfield.almanac.find_discrete", mock_almanac.find_discrete),
+        patch("skyfield.almanac.risings_and_settings", mock_almanac.risings_and_settings),
+        patch("skyfield.api.wgs84", mock_wgs84),
     ):
-        # Patch the local imports inside compute_observing_window
-
-        with (
-            patch("skyfield.almanac.find_discrete", mock_almanac.find_discrete),
-            patch("skyfield.almanac.risings_and_settings", mock_almanac.risings_and_settings),
-            patch("skyfield.api.wgs84", mock_wgs84),
-        ):
-            result = compute_observing_window(38.0, -105.0)
+        result = compute_observing_window(38.0, -105.0)
 
     assert isinstance(result, ObservingWindow)
     assert result.is_dark is False
