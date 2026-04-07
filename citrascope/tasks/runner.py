@@ -1,7 +1,10 @@
+from __future__ import annotations
+
 import heapq
 import threading
 import time
 from datetime import datetime, timezone
+from typing import TYPE_CHECKING
 
 from dateutil import parser as dtparser
 
@@ -13,6 +16,10 @@ from citrascope.tasks.homing_manager import HomingManager
 from citrascope.tasks.scope.static_telescope_task import StaticTelescopeTask
 from citrascope.tasks.scope.tracking_telescope_task import TrackingTelescopeTask
 from citrascope.tasks.task import Task
+
+if TYPE_CHECKING:
+    from citrascope.tasks.observing_session import ObservingSessionManager
+    from citrascope.tasks.self_tasking_manager import SelfTaskingManager
 
 # Task polling interval in seconds
 TASK_POLL_INTERVAL_SECONDS = 15
@@ -117,6 +124,31 @@ class TaskManager:
         self._automated_scheduling = (
             self.telescope_record.get("automatedScheduling", False) if self.telescope_record else False
         )
+
+        # Session managers (set via set_session_managers after construction)
+        self._observing_session_manager: ObservingSessionManager | None = None
+        self._self_tasking_manager: SelfTaskingManager | None = None
+
+    def set_session_managers(
+        self,
+        observing_session_manager: ObservingSessionManager,
+        self_tasking_manager: SelfTaskingManager,
+    ) -> None:
+        """Wire session managers after construction (resolves circular dependency with AutofocusManager)."""
+        self._observing_session_manager = observing_session_manager
+        self._self_tasking_manager = self_tasking_manager
+
+    @property
+    def observing_session_manager(self) -> ObservingSessionManager | None:
+        return self._observing_session_manager
+
+    @property
+    def self_tasking_manager(self) -> SelfTaskingManager | None:
+        return self._self_tasking_manager
+
+    def are_queues_idle(self) -> bool:
+        """Check if all work queues are idle (no in-flight work)."""
+        return self.imaging_queue.is_idle() and self.processing_queue.is_idle() and self.upload_queue.is_idle()
 
     @property
     def automated_scheduling(self) -> bool:
@@ -231,6 +263,12 @@ class TaskManager:
 
         while not self._stop_event.is_set():
             try:
+                # Drive session state machine and self-tasking before polling tasks
+                if self._observing_session_manager:
+                    self._observing_session_manager.update()
+                if self._self_tasking_manager:
+                    self._self_tasking_manager.check_and_request()
+
                 if self.elset_cache:
                     interval_hours = self.settings.elset_refresh_interval_hours
                     self.elset_cache.refresh_if_stale(self.api_client, self.logger, interval_hours=interval_hours)
@@ -350,10 +388,15 @@ class TaskManager:
                 is_paused = not self._processing_active
 
             if not is_paused:
+                # Don't start new imaging during session shutdown — let current work drain
+                winding_down = (
+                    self._observing_session_manager is not None and self._observing_session_manager.is_winding_down()
+                )
+
                 try:
                     now = int(time.time())
                     completed = 0
-                    while True:
+                    while not winding_down:
                         with self._processing_lock:
                             if not self._processing_active:
                                 break

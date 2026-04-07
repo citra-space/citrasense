@@ -127,3 +127,18 @@ class MockCitraApiClient(AbstractCitraApiClient):
     def get_catalog_download_url(self, catalog_name):
         """Mock: no catalog download in test mode."""
         return None
+
+    def create_batch_collection_requests(
+        self,
+        window_start,
+        window_stop,
+        ground_station_id,
+        discover_visible=True,
+        satellite_group_ids=None,
+        request_type="Track",
+        priority=5,
+        exclude_types=None,
+        include_orbit_regimes=None,
+    ):
+        """Mock: return stub response."""
+        return {"status": "ok", "created": 0}

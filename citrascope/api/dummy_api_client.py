@@ -618,6 +618,27 @@ class DummyApiClient(AbstractCitraApiClient):
             self.logger.debug(f"DummyApiClient: get_catalog_download_url({catalog_name}) -> None")
         return None
 
+    def create_batch_collection_requests(
+        self,
+        window_start: str,
+        window_stop: str,
+        ground_station_id: str,
+        discover_visible: bool = True,
+        satellite_group_ids: list[str] | None = None,
+        request_type: str = "Track",
+        priority: int = 5,
+        exclude_types: list[str] | None = None,
+        include_orbit_regimes: list[str] | None = None,
+    ) -> dict | None:
+        """Stub: log the batch request. Existing auto-task generation handles work in dummy mode."""
+        if self.logger:
+            self.logger.info(
+                f"DummyApiClient: create_batch_collection_requests("
+                f"window={window_start} -> {window_stop}, gs={ground_station_id}, "
+                f"discover={discover_visible}, groups={satellite_group_ids})"
+            )
+        return {"status": "ok", "created": 0}
+
     # Additional methods used by the system
 
     def upload_image(self, task_id, telescope_id, filepath):

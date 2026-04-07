@@ -148,6 +148,44 @@ function compareVersions(v1, v2) {
                 }
             },
 
+            async toggleObservingSession(enabled) {
+                try {
+                    const response = await fetch('/api/observing-session', {
+                        method: 'PATCH',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ enabled: enabled })
+                    });
+                    const result = await response.json();
+                    if (!response.ok) {
+                        alert(result.error || 'Failed to toggle observing session');
+                        this.status.observing_session_enabled = !enabled;
+                    }
+                } catch (error) {
+                    console.error('Error toggling observing session:', error);
+                    alert('Error toggling observing session');
+                    this.status.observing_session_enabled = !enabled;
+                }
+            },
+
+            async toggleSelfTasking(enabled) {
+                try {
+                    const response = await fetch('/api/self-tasking', {
+                        method: 'PATCH',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ enabled: enabled })
+                    });
+                    const result = await response.json();
+                    if (!response.ok) {
+                        alert(result.error || 'Failed to toggle self-tasking');
+                        this.status.self_tasking_enabled = !enabled;
+                    }
+                } catch (error) {
+                    console.error('Error toggling self-tasking:', error);
+                    alert('Error toggling self-tasking');
+                    this.status.self_tasking_enabled = !enabled;
+                }
+            },
+
             async toggleAutomatedScheduling(enabled) {
                 try {
                     const response = await fetch('/api/telescope/automated-scheduling', {

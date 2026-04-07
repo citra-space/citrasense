@@ -103,6 +103,140 @@
                 </template>
             </div>
 
+            <!-- ═══════════════ Robotic Session ═══════════════ -->
+            <div class="card bg-dark text-light border-secondary mb-3"
+                 x-show="$store.citrascope.status?.observing_session_enabled"
+                 x-data="{
+                     get ss() { return $store.citrascope.status || {}; },
+                     get state() { return this.ss.observing_session_state || 'daytime'; },
+                     get badgeClass() {
+                         const m = { daytime: 'bg-secondary', night_startup: 'bg-info text-dark', observing: 'bg-success', night_shutdown: 'bg-warning text-dark' };
+                         return m[this.state] || 'bg-secondary';
+                     },
+                     get stateLabel() {
+                         const m = { daytime: 'Daytime', night_startup: 'Starting Up', observing: 'Observing', night_shutdown: 'Shutting Down' };
+                         return m[this.state] || this.state;
+                     },
+                     get thresholdLabel() {
+                         const m = { '-6': 'Civil', '-12': 'Nautical', '-18': 'Astronomical' };
+                         const t = this.ss.observing_session_threshold;
+                         return t != null ? (m[String(t)] || t + '\u00b0') : '\u2014';
+                     },
+                     formatDuration(ms) {
+                         if (ms <= 0) return '';
+                         const h = Math.floor(ms / 3600000);
+                         const m = Math.floor((ms % 3600000) / 60000);
+                         return h > 0 ? h + 'h ' + m + 'm' : m + 'm';
+                     },
+                     get darkDuration() {
+                         const s = this.ss.dark_window_start, e = this.ss.dark_window_end;
+                         if (!s || !e) return null;
+                         return this.formatDuration(new Date(e) - new Date(s));
+                     },
+                     get countdown() {
+                         if (this.state === 'daytime' && this.ss.dark_window_start) {
+                             const ms = new Date(this.ss.dark_window_start) - Date.now();
+                             return ms > 0 ? 'Starts in ' + this.formatDuration(ms) : null;
+                         }
+                         if (this.state === 'observing' && this.ss.dark_window_end) {
+                             const ms = new Date(this.ss.dark_window_end) - Date.now();
+                             return ms > 0 ? 'Ends in ' + this.formatDuration(ms) : null;
+                         }
+                         return null;
+                     },
+                     formatTime(iso) {
+                         return iso ? new Date(iso).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'}) : '\u2014';
+                     },
+                     get nextRequestLabel() {
+                         const secs = this.ss.next_request_seconds;
+                         if (secs == null) return null;
+                         const m = Math.ceil(secs / 60);
+                         return m > 0 ? '~' + m + 'm' : 'now';
+                     },
+                     get targetingLabel() {
+                         const cfg = $store.citrascope.config || {};
+                         const regimes = cfg.self_tasking_include_orbit_regimes || [];
+                         const excluded = cfg.self_tasking_exclude_object_types || [];
+                         const allTypes = ['Payload', 'Rocket Body', 'Debris', 'Unknown'];
+                         const included = allTypes.filter(t => !excluded.includes(t));
+                         const parts = [];
+                         if (regimes.length) parts.push(regimes.join(', '));
+                         else parts.push('All orbits');
+                         if (excluded.length && included.length) parts.push(included.join(', '));
+                         else if (!excluded.length) parts.push('all object types');
+                         return parts.join(' \u00b7 ');
+                     }
+                 }">
+                <div class="card-header d-flex align-items-center gap-2">
+                    <i class="bi bi-moon-stars me-1"></i>Robotic Session
+                    <span class="badge" :class="badgeClass" x-text="stateLabel"></span>
+                    <span class="ms-auto text-muted small" x-show="countdown" x-text="countdown"></span>
+                </div>
+                <div class="card-body py-2">
+                    <div class="row g-3">
+                        <!-- Session column -->
+                        <div class="col-12 col-md-6">
+                            <div class="d-flex gap-4 mb-2">
+                                <div>
+                                    <small class="text-muted">Sun</small><br>
+                                    <span x-text="ss.sun_altitude != null ? ss.sun_altitude.toFixed(1) + '\u00b0' : '\u2014'"></span>
+                                </div>
+                                <div>
+                                    <small class="text-muted">Threshold</small><br>
+                                    <span x-text="thresholdLabel"></span>
+                                </div>
+                                <div x-show="ss.dark_window_start || ss.dark_window_end">
+                                    <small class="text-muted">Dark Window</small><br>
+                                    <span x-text="formatTime(ss.dark_window_start)"></span>
+                                    <template x-if="ss.dark_window_end">
+                                        <span> &ndash; <span x-text="formatTime(ss.dark_window_end)"></span></span>
+                                    </template>
+                                    <template x-if="darkDuration">
+                                        <small class="text-muted" x-text="'(' + darkDuration + ')'"></small>
+                                    </template>
+                                </div>
+                            </div>
+                            <!-- Activity line (startup / shutdown only) -->
+                            <div x-show="ss.session_activity">
+                                <small class="text-muted">Activity</small>
+                                <span class="ms-1" x-text="ss.session_activity"></span>
+                                <span class="spinner-border spinner-border-sm ms-1" role="status"
+                                      x-show="state === 'night_startup' || state === 'night_shutdown'"></span>
+                            </div>
+                        </div>
+
+                        <!-- Divider: vertical on md+, hidden on mobile -->
+                        <div class="col-auto d-none d-md-block px-0"
+                             x-show="$store.citrascope.status?.self_tasking_enabled">
+                            <div class="border-start border-secondary h-100"></div>
+                        </div>
+
+                        <!-- Self-tasking column -->
+                        <div class="col"
+                             x-show="$store.citrascope.status?.self_tasking_enabled">
+                            <div class="mb-1">
+                                <small class="text-muted">Self-Tasking</small>
+                                <template x-if="ss.last_batch_request">
+                                    <span class="ms-1">
+                                        last request <span x-text="formatTime(new Date(ss.last_batch_request * 1000).toISOString())"></span>
+                                        <template x-if="ss.last_batch_created != null">
+                                            <small class="text-muted" x-text="'(' + ss.last_batch_created + ' created)'"></small>
+                                        </template>
+                                    </span>
+                                </template>
+                                <template x-if="!ss.last_batch_request">
+                                    <span class="ms-1 text-muted">no requests yet</span>
+                                </template>
+                                <template x-if="nextRequestLabel && state === 'observing'">
+                                    <span class="ms-2 text-muted small" x-text="'\u00b7 next in ' + nextRequestLabel"></span>
+                                </template>
+                            </div>
+                            <small class="text-muted" x-text="targetingLabel"></small>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
             <!-- ═══════════════ Main Cards Row ═══════════════ -->
             <div class="row g-3 mb-3">
 

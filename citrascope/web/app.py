@@ -140,6 +140,20 @@ class SystemStatus(BaseModel):
     latest_task_image_url: str | None = None
     calibration_status: dict[str, Any] | None = None
     config_health: dict[str, Any] | None = None
+    status_collection_ms: float | None = None
+    status_collection_breakdown: dict[str, float] | None = None
+    # Observing session / self-tasking
+    observing_session_enabled: bool = False
+    self_tasking_enabled: bool = False
+    observing_session_state: str = "daytime"
+    session_activity: str | None = None
+    observing_session_threshold: float = -12.0
+    sun_altitude: float | None = None
+    dark_window_start: str | None = None
+    dark_window_end: str | None = None
+    last_batch_request: float | None = None
+    last_batch_created: int | None = None
+    next_request_seconds: float | None = None
 
 
 class HardwareConfig(BaseModel):
@@ -672,6 +686,72 @@ class CitraScopeWebApp:
             except Exception as e:
                 CITRASCOPE_LOGGER.error(f"Error updating automated scheduling: {e}", exc_info=True)
                 return JSONResponse({"error": str(e)}, status_code=500)
+
+        @self.app.patch("/api/observing-session")
+        async def toggle_observing_session(request: dict[str, bool]):
+            """Toggle observing session on/off."""
+            if not self.daemon:
+                return JSONResponse({"error": "Daemon not available"}, status_code=503)
+
+            enabled = request.get("enabled")
+            if enabled is None:
+                return JSONResponse({"error": "Missing 'enabled' field in request body"}, status_code=400)
+
+            self.daemon.settings.observing_session_enabled = enabled
+            self.daemon.settings.save()
+            CITRASCOPE_LOGGER.info(f"Observing session set to {'enabled' if enabled else 'disabled'}")
+            await self.broadcast_status()
+            return {"status": "success", "enabled": enabled}
+
+        @self.app.patch("/api/self-tasking")
+        async def toggle_self_tasking(request: dict[str, bool]):
+            """Toggle self-tasking on/off.
+
+            When enabling, also enables Observing Session, Scheduling
+            (server-side), and Processing (local) so the autonomous
+            pipeline is fully active.
+            """
+            if not self.daemon:
+                return JSONResponse({"error": "Daemon not available"}, status_code=503)
+
+            enabled = request.get("enabled")
+            if enabled is None:
+                return JSONResponse({"error": "Missing 'enabled' field in request body"}, status_code=400)
+
+            self.daemon.settings.self_tasking_enabled = enabled
+            self.daemon.settings.save()
+
+            if enabled:
+                # Ensure observing session is active (prerequisite)
+                if not self.daemon.settings.observing_session_enabled:
+                    self.daemon.settings.observing_session_enabled = True
+                    self.daemon.settings.save()
+                    CITRASCOPE_LOGGER.info("Self-tasking: auto-enabled observing session")
+
+            if enabled and self.daemon.task_manager:
+                # Ensure processing is active
+                if not self.daemon.task_manager.is_processing_active():
+                    self.daemon.task_manager.resume()
+                    self.daemon.settings.task_processing_paused = False
+                    self.daemon.settings.save()
+                    CITRASCOPE_LOGGER.info("Self-tasking: auto-enabled processing")
+
+                # Ensure scheduling is active on the server
+                if not self.daemon.task_manager.automated_scheduling:
+                    try:
+                        telescope_id = self.daemon.telescope_record["id"]
+                        success = self.daemon.api_client.update_telescope_automated_scheduling(telescope_id, True)
+                        if success:
+                            self.daemon.task_manager.automated_scheduling = True
+                            CITRASCOPE_LOGGER.info("Self-tasking: auto-enabled scheduling")
+                        else:
+                            CITRASCOPE_LOGGER.warning("Self-tasking: failed to enable scheduling on server")
+                    except Exception as e:
+                        CITRASCOPE_LOGGER.warning(f"Self-tasking: could not enable scheduling: {e}")
+
+            CITRASCOPE_LOGGER.info(f"Self-tasking set to {'enabled' if enabled else 'disabled'}")
+            await self.broadcast_status()
+            return {"status": "success", "enabled": enabled}
 
         @self.app.get("/api/adapter/filters")
         async def get_filters():
@@ -1689,6 +1769,18 @@ class CitraScopeWebApp:
         if not self.daemon:
             return
 
+        import time as _time
+
+        _t0 = _time.perf_counter()
+        _prev = _t0
+        _breakdown: dict[str, float] = {}
+
+        def _mark(name: str) -> None:
+            nonlocal _prev
+            now = _time.perf_counter()
+            _breakdown[name] = round((now - _prev) * 1000, 2)
+            _prev = now
+
         try:
             self.status.hardware_adapter = self.daemon.settings.hardware_adapter
 
@@ -1721,6 +1813,7 @@ class CitraScopeWebApp:
                     self.status.telescope_connected = False
                     self.status.mount_tracking = False
                     self.status.mount_slewing = False
+                _mark("hw.telescope")
 
                 # Check camera connection status
                 try:
@@ -1733,6 +1826,7 @@ class CitraScopeWebApp:
                 except Exception:
                     self.status.camera_connected = False
                     self.status.camera_temperature = None
+                _mark("hw.camera")
 
                 # Check adapter capabilities
                 try:
@@ -1744,6 +1838,7 @@ class CitraScopeWebApp:
 
                 self.status.supports_autofocus = adapter.supports_autofocus()
                 self.status.supports_hardware_safety_monitor = adapter.supports_hardware_safety_monitor
+                _mark("hw.capabilities")
 
                 try:
                     pos = adapter.get_filter_position()
@@ -1755,6 +1850,7 @@ class CitraScopeWebApp:
                 except Exception:
                     self.status.current_filter_position = None
                     self.status.current_filter_name = None
+                _mark("hw.filter")
 
                 # Check focuser status
                 focuser = adapter.focuser
@@ -1782,6 +1878,7 @@ class CitraScopeWebApp:
                     self.status.focuser_max_position = None
                     self.status.focuser_temperature = None
                     self.status.focuser_moving = False
+                _mark("hw.focuser")
 
                 self.status.supports_alignment = self.status.camera_connected and mount is not None
 
@@ -1791,6 +1888,7 @@ class CitraScopeWebApp:
                     h_limit, o_limit = mount.cached_limits
                     self.status.mount_horizon_limit = h_limit
                     self.status.mount_overhead_limit = o_limit
+                _mark("hw.mount_state")
 
             if hasattr(self.daemon, "task_manager") and self.daemon.task_manager:
                 task_manager = self.daemon.task_manager
@@ -1805,6 +1903,8 @@ class CitraScopeWebApp:
                 self.status.alignment_running = task_manager.alignment_manager.is_running()
                 self.status.alignment_progress = task_manager.alignment_manager.progress
                 self.status.tasks_pending = task_manager.pending_task_count
+
+            _mark("task_manager")
 
             # Get autofocus timing information
             if self.daemon.settings:
@@ -1833,6 +1933,8 @@ class CitraScopeWebApp:
                         self.status.next_autofocus_minutes = 0
                 else:
                     self.status.next_autofocus_minutes = None
+
+            _mark("autofocus")
 
             # Get time sync status from time monitor
             if hasattr(self.daemon, "time_monitor") and self.daemon.time_monitor:
@@ -1901,10 +2003,34 @@ class CitraScopeWebApp:
                 self.status.location_longitude = None
                 self.status.location_altitude = None
 
+            _mark("time_gps_location")
+
             # Update task processing state
             if hasattr(self.daemon, "task_manager") and self.daemon.task_manager:
                 self.status.processing_active = self.daemon.task_manager.is_processing_active()
                 self.status.automated_scheduling = self.daemon.task_manager.automated_scheduling
+
+                # Observing session / self-tasking status
+                osm = self.daemon.task_manager.observing_session_manager
+                stm = self.daemon.task_manager.self_tasking_manager
+                if osm:
+                    sd = osm.status_dict()
+                    self.status.observing_session_state = sd.get("observing_session_state", "daytime")
+                    self.status.session_activity = sd.get("session_activity")
+                    self.status.observing_session_threshold = sd.get("observing_session_threshold", -12.0)
+                    self.status.sun_altitude = sd.get("sun_altitude")
+                    self.status.dark_window_start = sd.get("dark_window_start")
+                    self.status.dark_window_end = sd.get("dark_window_end")
+                if stm:
+                    st = stm.status_dict()
+                    self.status.last_batch_request = st.get("last_batch_request")
+                    self.status.last_batch_created = st.get("last_batch_created")
+                    self.status.next_request_seconds = st.get("next_request_seconds")
+
+            self.status.observing_session_enabled = self.daemon.settings.observing_session_enabled
+            self.status.self_tasking_enabled = self.daemon.settings.self_tasking_enabled
+
+            _mark("session")
 
             # Check for missing dependencies from adapter
             self.status.missing_dependencies = []
@@ -1943,6 +2069,8 @@ class CitraScopeWebApp:
                     self.status.pipeline_stats = {}
                 self.status.pipeline_stats["processors"] = self.daemon.processor_registry.get_processor_stats()
 
+            _mark("pipeline")
+
             # Safety monitor status
             if hasattr(self.daemon, "safety_monitor") and self.daemon.safety_monitor:
                 try:
@@ -1957,6 +2085,8 @@ class CitraScopeWebApp:
                 self.status.elset_health = self.daemon.elset_cache.get_health()
             else:
                 self.status.elset_health = None
+
+            _mark("safety_elset")
 
             # Latest annotated task image for the Optics pane
             ann_path = getattr(self.daemon, "latest_annotated_image_path", None)
@@ -1987,7 +2117,11 @@ class CitraScopeWebApp:
             else:
                 self.status.config_health = None
 
+            _mark("optics_calibration")
+
             self.status.last_update = datetime.now().isoformat()
+            self.status.status_collection_ms = round((_time.perf_counter() - _t0) * 1000, 2)
+            self.status.status_collection_breakdown = _breakdown
 
         except Exception as e:
             CITRASCOPE_LOGGER.error(f"Error updating status: {e}")

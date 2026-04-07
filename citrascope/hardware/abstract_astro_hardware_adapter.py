@@ -337,6 +337,34 @@ class AbstractAstroHardwareAdapter(ABC):
         """
         pass
 
+    def park_mount(self) -> bool:
+        """Park the mount if supported.
+
+        Default delegates to ``self.mount.park()`` for direct adapters.
+        Orchestration adapters (NINA, KStars) should override with their
+        native park commands.
+        """
+        mount = self.mount
+        if mount is not None:
+            return mount.park()
+        return False
+
+    def unpark_mount(self) -> bool:
+        """Unpark the mount if supported.
+
+        Default delegates to ``self.mount.unpark()`` for direct adapters.
+        Orchestration adapters (NINA, KStars) should override with their
+        native unpark commands.
+        """
+        mount = self.mount
+        if mount is not None:
+            return mount.unpark()
+        return False
+
+    def supports_park(self) -> bool:
+        """Whether this adapter can park/unpark the mount."""
+        return self.mount is not None
+
     def home_if_needed(self) -> bool:
         """Home the mount if required, blocking until complete.
 

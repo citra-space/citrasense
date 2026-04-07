@@ -140,6 +140,19 @@ class CitraScopeSettings(BaseModel):
     calibration_frame_count: int = 30
     flat_frame_count: int = 15
 
+    # Observing session (darkness-driven night lifecycle)
+    observing_session_enabled: bool = False
+    observing_session_sun_altitude_threshold: float = -12.0  # Civil=-6, Nautical=-12, Astronomical=-18
+    observing_session_do_autofocus: bool = True
+    observing_session_do_alignment: bool = False  # future
+    observing_session_do_park: bool = True
+
+    # Self-tasking (autonomous work requests)
+    self_tasking_enabled: bool = False
+    self_tasking_satellite_group_ids: list[str] = Field(default_factory=list)
+    self_tasking_include_orbit_regimes: list[str] = Field(default_factory=list)
+    self_tasking_exclude_object_types: list[str] = Field(default_factory=list)
+
     # ── Non-persisted public attrs (excluded from model_dump) ─────────
     web_port: int = Field(default=DEFAULT_WEB_PORT, exclude=True)
     adapter_settings: dict[str, Any] = Field(default_factory=dict, exclude=True)
@@ -333,6 +346,24 @@ class CitraScopeSettings(BaseModel):
         if v % 2 == 0:
             v += 1
             CITRASCOPE_LOGGER.warning("detection_kernel_size must be odd. Rounded up to %d.", v)
+        return v
+
+    @field_validator("observing_session_sun_altitude_threshold", mode="before")
+    @classmethod
+    def _validate_sun_altitude_threshold(cls, v: Any) -> float:
+        valid = (-6.0, -12.0, -18.0)
+        try:
+            v = float(v)
+        except (TypeError, ValueError):
+            CITRASCOPE_LOGGER.warning(
+                "Invalid observing_session_sun_altitude_threshold (%r). Falling back to -12.0.", v
+            )
+            return -12.0
+        if v not in valid:
+            CITRASCOPE_LOGGER.warning(
+                "observing_session_sun_altitude_threshold (%s) not in %s. Falling back to -12.0.", v, valid
+            )
+            return -12.0
         return v
 
     @field_validator("custom_data_dir", "custom_log_dir", mode="before")

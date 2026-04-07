@@ -361,6 +361,34 @@ class CitraApiClient(AbstractCitraApiClient):
         """GET /catalogs/{name}/download — returns signed CloudFront URL + metadata."""
         return self._request("GET", f"/citrascope-data/signed-url?key={catalog_name}")
 
+    def create_batch_collection_requests(
+        self,
+        window_start: str,
+        window_stop: str,
+        ground_station_id: str,
+        discover_visible: bool = True,
+        satellite_group_ids: list[str] | None = None,
+        request_type: str = "Track",
+        priority: int = 5,
+        exclude_types: list[str] | None = None,
+        include_orbit_regimes: list[str] | None = None,
+    ) -> dict | None:
+        body: dict = {
+            "windowStart": window_start,
+            "windowStop": window_stop,
+            "groundStationId": ground_station_id,
+            "discoverVisible": discover_visible,
+            "type": request_type,
+            "priority": priority,
+        }
+        if satellite_group_ids:
+            body["satelliteGroupIds"] = satellite_group_ids
+        if exclude_types:
+            body["excludeTypes"] = exclude_types
+        if include_orbit_regimes:
+            body["includeOrbitRegimes"] = include_orbit_regimes
+        return self._request("POST", "/collection-requests/batch", json=body)
+
     def update_ground_station_location(self, ground_station_id, latitude, longitude, altitude):
         """Update ground station's GPS location (for mobile stations).
 

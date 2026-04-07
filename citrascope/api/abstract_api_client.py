@@ -119,3 +119,26 @@ class AbstractCitraApiClient(ABC):
             or None if the catalog is not available for download.
         """
         pass
+
+    @abstractmethod
+    def create_batch_collection_requests(
+        self,
+        window_start: str,
+        window_stop: str,
+        ground_station_id: str,
+        discover_visible: bool = True,
+        satellite_group_ids: list[str] | None = None,
+        request_type: str = "Track",
+        priority: int = 5,
+        exclude_types: list[str] | None = None,
+        include_orbit_regimes: list[str] | None = None,
+    ) -> dict | None:
+        """POST /collection-requests/batch to request work from the server.
+
+        When *satellite_group_ids* is empty/None and *discover_visible* is True,
+        the server discovers all visible satellites for the given ground station
+        and time window.
+
+        Returns the server response dict on success, or None on failure.
+        """
+        pass

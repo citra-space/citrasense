@@ -34,7 +34,20 @@
 
             <span class="badge rounded-pill"
                   data-bs-toggle="tooltip" data-bs-theme="dark"
-                  :data-bs-title="$store.citrascope.wsConnected ? 'Connected \u2014 receiving live updates' : ($store.citrascope.wsReconnecting ? 'Reconnecting\u2026' : 'Daemon disconnected')"
+                  style="white-space:pre-line;"
+                  :data-bs-title="$store.citrascope.wsConnected
+                      ? (() => {
+                            let tip = 'Connected \u2014 receiving live updates';
+                            const ms = $store.citrascope.status?.status_collection_ms;
+                            if (ms != null) tip += ' \u00b7 status in ' + ms.toFixed(1) + ' ms';
+                            const bd = $store.citrascope.status?.status_collection_breakdown;
+                            if (bd) {
+                                const sorted = Object.entries(bd).sort((a,b) => b[1] - a[1]);
+                                tip += '\n' + sorted.map(([k,v]) => '  ' + k + ': ' + v.toFixed(1) + ' ms').join('\n');
+                            }
+                            return tip;
+                        })()
+                      : ($store.citrascope.wsReconnecting ? 'Reconnecting\u2026' : 'Daemon disconnected')"
                   :class="$store.citrascope.wsConnected ? 'bg-success' : ($store.citrascope.wsReconnecting ? 'bg-warning text-dark' : 'bg-danger')"
                   x-text="$store.citrascope.wsReconnecting ? 'Reconnecting' : 'Daemon'"></span>
 
@@ -140,36 +153,72 @@
                   })()"
                   x-text="'TLEs: ' + ($store.citrascope.status?.elset_health?.elset_count || 0).toLocaleString()"></span>
 
-            <!-- Right side: toggles + E-Stop -->
-            <div class="ms-auto d-flex align-items-center gap-2">
-                <div class="d-flex flex-column flex-md-row align-items-end align-items-md-center gap-1">
-                    <div class="d-flex align-items-center gap-1"
-                         data-bs-toggle="tooltip" data-bs-theme="dark"
-                         title="Automated scheduling — server assigns tasks to this telescope">
-                        <small class="text-muted text-nowrap">Scheduling</small>
-                        <div class="form-check form-switch mb-0">
-                            <input class="form-check-input" type="checkbox"
-                                   :checked="$store.citrascope.status?.automated_scheduling"
-                                   @change="$store.citrascope.toggleAutomatedScheduling($event.target.checked)">
-                        </div>
-                    </div>
-                    <div class="d-flex align-items-center gap-1"
-                         data-bs-toggle="tooltip" data-bs-theme="dark"
-                         title="Task processing — daemon executes queued tasks">
-                        <small class="text-muted text-nowrap">Processing</small>
-                        <div class="form-check form-switch mb-0">
-                            <input class="form-check-input" type="checkbox"
-                                   :checked="$store.citrascope.status?.processing_active !== false"
-                                   @change="$store.citrascope.toggleProcessing($event.target.checked)">
-                        </div>
+            <!-- E-Stop (right side of pills row) -->
+            <button class="btn btn-sm btn-danger ms-auto"
+                    x-show="$store.citrascope.wsConnected"
+                    @click="emergencyStop()"
+                    data-bs-toggle="tooltip" data-bs-theme="dark" data-bs-placement="bottom"
+                    title="Stop mount, pause tasks, cancel imaging">
+                <i class="bi bi-stop-circle-fill"></i> Abort
+            </button>
+
+            <!-- Switches row (full-width, left-aligned) -->
+            <div class="w-100 d-flex align-items-center gap-3 mt-1">
+                <div class="d-flex align-items-center gap-1"
+                     data-bs-toggle="tooltip" data-bs-theme="dark"
+                     title="Automated scheduling — server assigns tasks to this telescope">
+                    <small class="text-muted text-nowrap">Scheduling</small>
+                    <div class="form-check form-switch mb-0">
+                        <input class="form-check-input" type="checkbox"
+                               :checked="$store.citrascope.status?.automated_scheduling"
+                               @change="$store.citrascope.toggleAutomatedScheduling($event.target.checked)">
                     </div>
                 </div>
-                <button class="btn btn-sm btn-danger"
-                        x-show="$store.citrascope.wsConnected"
-                        @click="emergencyStop()"
-                        data-bs-toggle="tooltip" data-bs-theme="dark" data-bs-placement="bottom"
-                        title="Stop mount, pause tasks, cancel imaging">
-                    <i class="bi bi-stop-circle-fill"></i> Abort
-                </button>
+                <div class="d-flex align-items-center gap-1"
+                     data-bs-toggle="tooltip" data-bs-theme="dark"
+                     title="Task processing — daemon executes queued tasks">
+                    <small class="text-muted text-nowrap">Processing</small>
+                    <div class="form-check form-switch mb-0">
+                        <input class="form-check-input" type="checkbox"
+                               :checked="$store.citrascope.status?.processing_active !== false"
+                               @change="$store.citrascope.toggleProcessing($event.target.checked)">
+                    </div>
+                </div>
+                <div class="d-flex align-items-center gap-1"
+                     data-bs-toggle="tooltip" data-bs-theme="dark"
+                     title="Robotic session — park/unpark and autofocus at dusk/dawn">
+                    <small class="text-muted text-nowrap">Robotic</small>
+                    <div class="form-check form-switch mb-0">
+                        <input class="form-check-input" type="checkbox"
+                               :checked="$store.citrascope.status?.observing_session_enabled"
+                               @change="$store.citrascope.toggleObservingSession($event.target.checked)">
+                    </div>
+                </div>
+                <div class="d-flex align-items-center gap-1"
+                     data-bs-toggle="tooltip" data-bs-theme="dark"
+                     title="Self-tasking — automatically request work when dark">
+                    <small class="text-muted text-nowrap">Self-Tasking</small>
+                    <div class="form-check form-switch mb-0">
+                        <input class="form-check-input" type="checkbox"
+                               :checked="$store.citrascope.status?.self_tasking_enabled"
+                               @change="$store.citrascope.toggleSelfTasking($event.target.checked)">
+                    </div>
+                </div>
+                <span class="badge rounded-pill bg-warning text-dark"
+                      style="display:inline-flex; align-items:center;"
+                      x-show="$store.citrascope.status?.self_tasking_enabled
+                          && (!$store.citrascope.status?.observing_session_enabled
+                              || !$store.citrascope.status?.automated_scheduling
+                              || $store.citrascope.status?.processing_active === false)"
+                      data-bs-toggle="tooltip" data-bs-theme="dark"
+                      :data-bs-title="(() => {
+                          const s = $store.citrascope.status;
+                          if (!s) return '';
+                          const issues = [];
+                          if (!s.observing_session_enabled) issues.push('Robotic session is off \u2014 no night lifecycle');
+                          if (!s.automated_scheduling) issues.push('Scheduling is off \u2014 server won\u2019t assign tasks');
+                          if (s.processing_active === false) issues.push('Processing is off \u2014 tasks won\u2019t execute');
+                          return issues.join('\n');
+                      })()"><i class="bi bi-exclamation-triangle-fill"></i></span>
             </div>
         </div>

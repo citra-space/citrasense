@@ -394,6 +394,42 @@ class CitraScopeDaemon:
                 on_annotated_image=lambda path: setattr(self, "latest_annotated_image_path", path),
             )
 
+            # Wire self-tasking session managers
+            from citrascope.tasks.observing_session import ObservingSessionManager
+            from citrascope.tasks.self_tasking_manager import SelfTaskingManager
+
+            def _get_location_tuple() -> tuple[float, float] | None:
+                if not self.location_service:
+                    return None
+                loc = self.location_service.get_current_location()
+                if loc and loc.get("latitude") is not None and loc.get("longitude") is not None:
+                    return loc["latitude"], loc["longitude"]
+                return None
+
+            can_park = self.hardware_adapter.supports_park()
+            observing_session_manager = ObservingSessionManager(
+                settings=self.settings,
+                logger=CITRASCOPE_LOGGER,
+                get_location=_get_location_tuple,
+                request_autofocus=self.task_manager.autofocus_manager.request,
+                is_autofocus_running=self.task_manager.autofocus_manager.is_running,
+                is_imaging_idle=self.task_manager.imaging_queue.is_idle,
+                are_queues_idle=self.task_manager.are_queues_idle,
+                park_mount=self.hardware_adapter.park_mount if can_park else None,
+                unpark_mount=self.hardware_adapter.unpark_mount if can_park else None,
+            )
+
+            self_tasking_manager = SelfTaskingManager(
+                api_client=self.api_client,
+                settings=self.settings,
+                logger=CITRASCOPE_LOGGER,
+                ground_station_id=ground_station["id"],
+                get_session_state=lambda: observing_session_manager.state,
+                get_observing_window=lambda: observing_session_manager.observing_window,
+            )
+
+            self.task_manager.set_session_managers(observing_session_manager, self_tasking_manager)
+
             # Restore preserved task metadata
             if old_task_dict:
                 CITRASCOPE_LOGGER.info(f"Restoring {len(old_task_dict)} task(s) from previous TaskManager")

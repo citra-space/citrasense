@@ -40,6 +40,7 @@ class NinaAdvancedHttpAdapter(AbstractAstroHardwareAdapter):
 
     # Hardware operation timeouts (seconds) — waiting for physical movement to complete
     HARDWARE_MOVE_TIMEOUT = 60
+    MOUNT_PARK_TIMEOUT = 120  # park/unpark can require a full-sky slew
     AUTOFOCUS_TIMEOUT = 300
     SEQUENCE_TIMEOUT_MINUTES = 60
 
@@ -516,6 +517,33 @@ class NinaAdvancedHttpAdapter(AbstractAstroHardwareAdapter):
         else:
             self.logger.error(f"Failed to get telescope status: {mount_info.get('Error')}")
             return False
+
+    def park_mount(self) -> bool:
+        try:
+            resp = requests.get(f"{self.nina_api_path}{self.MOUNT_URL}park", timeout=self.MOUNT_PARK_TIMEOUT).json()
+            if resp.get("Success"):
+                self.logger.info("Mount parked via NINA")
+                return True
+            self.logger.error(f"Failed to park mount: {resp.get('Error')}")
+            return False
+        except Exception as e:
+            self.logger.error(f"Error parking mount: {e}")
+            return False
+
+    def unpark_mount(self) -> bool:
+        try:
+            resp = requests.get(f"{self.nina_api_path}{self.MOUNT_URL}unpark", timeout=self.MOUNT_PARK_TIMEOUT).json()
+            if resp.get("Success"):
+                self.logger.info("Mount unparked via NINA")
+                return True
+            self.logger.error(f"Failed to unpark mount: {resp.get('Error')}")
+            return False
+        except Exception as e:
+            self.logger.error(f"Error unparking mount: {e}")
+            return False
+
+    def supports_park(self) -> bool:
+        return True
 
     def get_camera_info(self) -> dict | None:
         """Query NINA camera info endpoint for sensor specs."""
