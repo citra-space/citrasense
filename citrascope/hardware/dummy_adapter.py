@@ -20,6 +20,7 @@ from citrascope.hardware.abstract_astro_hardware_adapter import (
 )
 from citrascope.hardware.devices.focuser.abstract_focuser import AbstractFocuser
 from citrascope.hardware.devices.mount.abstract_mount import AbstractMount
+from citrascope.hardware.devices.mount.altaz_pointing_model import AltAzPointingModel
 from citrascope.hardware.devices.mount.mount_state_cache import MountStateCache
 
 # Default observer location — Pikes Peak, matches DummyApiClient.
@@ -98,8 +99,18 @@ class _DummyMount(AbstractMount):
     _MOVE_RATE_DEG_PER_S = 16.0
     _TRACKING_DRIFT_DEG_PER_S = 0.005
 
-    def __init__(self, logger: logging.Logger) -> None:
+    def __init__(
+        self,
+        logger: logging.Logger,
+        sim_AN: float = 0.4,
+        sim_AW: float = -0.25,
+        sim_IE: float = 0.08,
+    ) -> None:
         super().__init__(logger)
+        self._sim_AN = sim_AN
+        self._sim_AW = sim_AW
+        self._sim_IE = sim_IE
+
         self._ra: float = _current_lst_deg()
         self._dec: float = _OBSERVER_LAT_DEG
         az, alt = _radec_to_altaz(self._ra, self._dec)
@@ -310,6 +321,37 @@ class _DummyMount(AbstractMount):
             return max(-90.0, min(90.0, self._alt + sign * rate * dt))
         return self._alt
 
+    # -- Simulated pointing error (where the optics actually land) ----------
+
+    def true_altaz(self) -> tuple[float, float]:
+        """Apply the simulated tripod-tilt error model to the mount's position.
+
+        Returns where the optics actually point, as opposed to where the
+        mount's encoders believe they point.  Uses the same 3-term model
+        (AN, AW, IE) the ``AltAzPointingModel`` fits.
+
+        Returns:
+            ``(true_az, true_alt)`` in degrees.
+        """
+        az_deg = self.get_azimuth() or 0.0
+        alt_deg = self.get_altitude() or 0.0
+
+        az_r = math.radians(az_deg)
+        alt_r = math.radians(alt_deg)
+        tan_alt = math.tan(alt_r) if abs(math.cos(alt_r)) > 1e-10 else 0.0
+
+        d_az = self._sim_AN * math.sin(az_r) * tan_alt - self._sim_AW * math.cos(az_r) * tan_alt
+        d_alt = self._sim_IE - self._sim_AN * math.cos(az_r) - self._sim_AW * math.sin(az_r)
+
+        true_az = (az_deg + d_az) % 360.0
+        true_alt = max(-90.0, min(90.0, alt_deg + d_alt))
+        return true_az, true_alt
+
+    def true_radec(self) -> tuple[float, float]:
+        """Return the RA/Dec where the optics actually point (with error)."""
+        true_az, true_alt = self.true_altaz()
+        return _altaz_to_radec(true_az, true_alt)
+
     def start_move(self, direction: str, rate: int | None = None) -> bool:
         self._snap()
         self._moving_dir = direction
@@ -440,7 +482,12 @@ class DummyAdapter(AbstractAstroHardwareAdapter):
         self._camera_connected = False
         self._is_moving = False
         self._tracking_rate = (15.041, 0.0)  # arcsec/sec (sidereal rate)
-        self._mount = _DummyMount(logger)
+        self._mount = _DummyMount(
+            logger,
+            sim_AN=float(kwargs.get("sim_AN", 0.4)),
+            sim_AW=float(kwargs.get("sim_AW", -0.25)),
+            sim_IE=float(kwargs.get("sim_IE", 0.08)),
+        )
         self._mount_cache: MountStateCache | None = None
         self._focuser = _DummyFocuser(logger)
 
@@ -482,6 +529,39 @@ class DummyAdapter(AbstractAstroHardwareAdapter):
                 "required": False,
                 "group": "Testing",
             },
+            {
+                "name": "sim_AN",
+                "friendly_name": "Tripod Tilt N-S (AN)",
+                "type": "float",
+                "default": 0.4,
+                "min": -2.0,
+                "max": 2.0,
+                "description": "Simulated azimuth-axis tilt north-south in degrees",
+                "required": False,
+                "group": "Pointing Error Simulation",
+            },
+            {
+                "name": "sim_AW",
+                "friendly_name": "Tripod Tilt E-W (AW)",
+                "type": "float",
+                "default": -0.25,
+                "min": -2.0,
+                "max": 2.0,
+                "description": "Simulated azimuth-axis tilt east-west in degrees",
+                "required": False,
+                "group": "Pointing Error Simulation",
+            },
+            {
+                "name": "sim_IE",
+                "friendly_name": "Altitude Offset (IE)",
+                "type": "float",
+                "default": 0.08,
+                "min": -2.0,
+                "max": 2.0,
+                "description": "Simulated constant altitude index error in degrees",
+                "required": False,
+                "group": "Pointing Error Simulation",
+            },
         ]
 
     def get_observation_strategy(self) -> ObservationStrategy:
@@ -515,6 +595,23 @@ class DummyAdapter(AbstractAstroHardwareAdapter):
         cache.start()
         self._mount._state_cache = cache  # type: ignore[attr-defined]
         self._mount_cache = cache
+
+        import platformdirs
+
+        data_dir = Path(platformdirs.user_data_dir("citrascope", appauthor="citrascope"))
+        state_file = data_dir / "pointing_model_state.json"
+        self._pointing_model = AltAzPointingModel(state_file=state_file)
+        if self._pointing_model.is_active:
+            status = self._pointing_model.status()
+            self.logger.info(
+                "Pointing model loaded: %s (%d pts, tilt=%.3f° toward %s, accuracy=%.1f')",
+                status["state"],
+                status["point_count"],
+                status["tilt_deg"],
+                status["tilt_direction_label"],
+                status["pointing_accuracy_arcmin"],
+            )
+
         self.logger.info("DummyAdapter: Connected successfully")
         return True
 
@@ -614,10 +711,10 @@ class DummyAdapter(AbstractAstroHardwareAdapter):
         filepath = self.images_dir / filename
         filepath.parent.mkdir(parents=True, exist_ok=True)
 
-        ra, dec = self._mount.get_radec()
+        true_ra, true_dec = self._mount.true_radec()
         image_data, wcs = self._generate_starfield(
-            ra,
-            dec,
+            true_ra,
+            true_dec,
             exposure_duration_seconds,
             seed=timestamp % (2**31),
         )
@@ -827,12 +924,64 @@ class DummyAdapter(AbstractAstroHardwareAdapter):
         return self._tracking_rate
 
     def perform_alignment(self, target_ra: float, target_dec: float) -> bool:
-        """Simulate plate solving alignment."""
+        """Plate-solve at the current position and conditionally sync the mount.
+
+        When the pointing model is trained, skips the sync and instead runs
+        a health check comparing the observed residual against the model's
+        prediction.  When the model is not trained, syncs as before.
+        """
         self.logger.info(f"DummyAdapter: Performing alignment to RA={target_ra}°, Dec={target_dec}°")
-        self._simulate_delay()
-        self._mount.slew_to_radec(target_ra + 0.001, target_dec + 0.001)
-        self.logger.info("DummyAdapter: Alignment successful")
-        return True
+
+        if not self.telescope_record:
+            self.logger.warning("No telescope_record available — falling back to simulated alignment")
+            self._simulate_delay()
+            self._mount.sync_to_radec(target_ra, target_dec)
+            return True
+
+        from citrascope.processors.builtin.plate_solver_processor import PlateSolverProcessor
+
+        exposure_attempts = [2.0, 4.0, 8.0]
+        for exposure_s in exposure_attempts:
+            self.logger.info(f"DummyAdapter alignment: taking {exposure_s:.0f}s exposure for plate solve...")
+            try:
+                image_path = self.take_image("alignment", exposure_s)
+            except Exception as exc:
+                self.logger.error(f"Alignment exposure failed: {exc}")
+                continue
+
+            result = PlateSolverProcessor.solve(
+                Path(image_path),
+                self.telescope_record,
+            )
+            if result is not None:
+                solved_ra, solved_dec = result
+                error = self.angular_distance(solved_ra, solved_dec, target_ra, target_dec)
+
+                if self._pointing_model and self._pointing_model.is_trained:
+                    residual_arcmin = error * 60.0
+                    self._pointing_model.record_verification_residual(residual_arcmin)
+                    self.logger.info(
+                        "DummyAdapter alignment verified (model active, no sync): "
+                        "solved RA=%.4f° Dec=%.4f° (residual: %.1f')",
+                        solved_ra,
+                        solved_dec,
+                        residual_arcmin,
+                    )
+                else:
+                    self._mount.sync_to_radec(solved_ra, solved_dec)
+                    self.logger.info(
+                        "DummyAdapter alignment successful: solved RA=%.4f° Dec=%.4f° "
+                        "(error from target: %.1f', synced)",
+                        solved_ra,
+                        solved_dec,
+                        error * 60,
+                    )
+                return True
+
+            self.logger.warning(f"Plate solve failed with {exposure_s:.0f}s exposure, retrying...")
+
+        self.logger.error("DummyAdapter alignment failed: plate solve did not converge after all attempts")
+        return False
 
     def supports_autofocus(self) -> bool:
         """Dummy adapter supports autofocus."""

@@ -16,6 +16,7 @@ if TYPE_CHECKING:
     from citrascope.hardware.devices.camera.abstract_camera import AbstractCamera
     from citrascope.hardware.devices.focuser.abstract_focuser import AbstractFocuser
     from citrascope.hardware.devices.mount.abstract_mount import AbstractMount
+    from citrascope.hardware.devices.mount.altaz_pointing_model import AltAzPointingModel
     from citrascope.safety.safety_monitor import SafetyMonitor
 
 
@@ -79,6 +80,8 @@ class AbstractAstroHardwareAdapter(ABC):
         self.images_dir = images_dir
         self.filter_map = {}
         self._safety_monitor: SafetyMonitor | None = None
+        self.location_service: Any | None = None
+        self._pointing_model: AltAzPointingModel | None = None
 
         # Load filter configuration from settings if available
         saved_filters = kwargs.get("filters", {})
@@ -149,13 +152,42 @@ class AbstractAstroHardwareAdapter(ABC):
         """
         return None
 
+    @property
+    def pointing_model(self) -> AltAzPointingModel | None:
+        """The alt-az pointing model, or ``None`` if this adapter has no model."""
+        return self._pointing_model
+
+    def get_pointing_model_status(self) -> dict[str, Any] | None:
+        """Return the pointing model status dict for the web UI, or ``None``."""
+        if self._pointing_model:
+            return self._pointing_model.status()
+        return None
+
     def point_telescope(self, ra: float, dec: float):
-        """Point the telescope to the specified RA/Dec coordinates."""
+        """Point the telescope to the specified RA/Dec coordinates.
+
+        Applies pointing model correction automatically when the model is
+        trained and site location is available.
+        """
         if self._safety_monitor and not self._safety_monitor.is_action_safe("slew", ra=ra, dec=dec):
             from citrascope.safety.safety_monitor import SafetyError
 
             raise SafetyError("Slew blocked by safety monitor")
-        self._do_point_telescope(ra, dec)
+
+        slew_ra, slew_dec = ra, dec
+        if self._pointing_model and self._pointing_model.is_active and self.location_service:
+            location = self.location_service.get_current_location()
+            if location:
+                slew_ra, slew_dec = self._pointing_model.correct(ra, dec, location["latitude"], location["longitude"])
+                correction_arcmin = self.angular_distance(ra, dec, slew_ra, slew_dec) * 60.0
+                self.logger.info(
+                    "Pointing model correction: %.1f' (RA %+.4f° Dec %+.4f°)",
+                    correction_arcmin,
+                    slew_ra - ra,
+                    slew_dec - dec,
+                )
+
+        self._do_point_telescope(slew_ra, slew_dec)
 
     @abstractmethod
     def _do_point_telescope(self, ra: float, dec: float):
@@ -198,13 +230,16 @@ class AbstractAstroHardwareAdapter(ABC):
         """For hardware driven by sequences, perform the observation sequence and return list of image paths."""
         pass
 
-    def set_location_service(self, location_service) -> None:  # noqa: B027
+    def set_location_service(self, location_service) -> None:
         """Provide a location service for site-coordinate synchronisation.
 
         Called by the daemon after creating the adapter but before ``connect()``.
-        Adapters that need site location (e.g. for mount initialisation) should
-        store the reference; the default implementation is a no-op.
+        The reference is stored as ``self.location_service`` so the pointing
+        model correction in ``point_telescope()`` can resolve site coordinates.
+        Subclasses may override to do additional setup, but should call
+        ``super().set_location_service(location_service)``.
         """
+        self.location_service = location_service
 
     @abstractmethod
     def connect(self) -> bool:

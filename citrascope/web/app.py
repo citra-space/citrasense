@@ -1107,10 +1107,8 @@ class CitraScopeWebApp:
             if not self.daemon:
                 return JSONResponse({"error": "Daemon not available"}, status_code=503)
 
-            from citrascope.hardware.direct.direct_adapter import DirectHardwareAdapter
-
             adapter = self.daemon.hardware_adapter
-            if isinstance(adapter, DirectHardwareAdapter) and adapter.pointing_model:
+            if adapter.pointing_model:
                 adapter.pointing_model.reset()
                 return {"success": True, "message": "Pointing model reset"}
             return JSONResponse({"error": "Pointing model not available"}, status_code=404)
@@ -2140,10 +2138,7 @@ class CitraScopeWebApp:
             self.status.calibration_status = self._build_calibration_status()
 
             # Pointing model status
-            from citrascope.hardware.direct.direct_adapter import DirectHardwareAdapter
-
-            if isinstance(self.daemon.hardware_adapter, DirectHardwareAdapter):
-                self.status.pointing_model = self.daemon.hardware_adapter.get_pointing_model_status()
+            self.status.pointing_model = self.daemon.hardware_adapter.get_pointing_model_status()
 
             # Config health: compare server telescope record vs hardware + plate solve
             adapter = self.daemon.hardware_adapter

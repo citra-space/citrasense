@@ -433,10 +433,8 @@ class CitraScopeDaemon:
 
             self.task_manager.set_session_managers(observing_session_manager, self_tasking_manager)
 
-            # Wire pointing model to AlignmentManager (DirectHardwareAdapter only)
-            from citrascope.hardware.direct.direct_adapter import DirectHardwareAdapter
-
-            if isinstance(self.hardware_adapter, DirectHardwareAdapter) and self.hardware_adapter.pointing_model:
+            # Wire pointing model to AlignmentManager
+            if self.hardware_adapter.pointing_model:
                 self.task_manager.alignment_manager.set_pointing_model(self.hardware_adapter.pointing_model)
 
             # Restore preserved task metadata

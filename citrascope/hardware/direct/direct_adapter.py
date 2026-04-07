@@ -60,10 +60,8 @@ class DirectHardwareAdapter(AbstractAstroHardwareAdapter):
         """
         super().__init__(images_dir, **kwargs)
         self.logger = logger
-        self.location_service: Any | None = None
         self._mount_cache: MountStateCache | None = None
         self._preview_lock = threading.Lock()
-        self._pointing_model: AltAzPointingModel | None = None
         self._pointing_model_state_file: Path | None = None
 
         # Track dependency issues for reporting
@@ -368,9 +366,6 @@ class DirectHardwareAdapter(AbstractAstroHardwareAdapter):
 
         return cast(list[SettingSchemaEntry], schema)
 
-    def set_location_service(self, location_service) -> None:
-        self.location_service = location_service
-
     @property
     def mount(self) -> AbstractMount | None:
         return self._mount
@@ -628,17 +623,6 @@ class DirectHardwareAdapter(AbstractAstroHardwareAdapter):
                 status["pointing_accuracy_arcmin"],
             )
 
-    @property
-    def pointing_model(self) -> AltAzPointingModel | None:
-        """The alt-az pointing model, if initialized."""
-        return self._pointing_model
-
-    def get_pointing_model_status(self) -> dict[str, Any] | None:
-        """Return pointing model status dict for web UI, or None."""
-        if self._pointing_model:
-            return self._pointing_model.status()
-        return None
-
     def disconnect(self):
         """Disconnect from all hardware devices."""
         self.logger.info("Disconnecting from direct hardware devices...")
@@ -682,35 +666,19 @@ class DirectHardwareAdapter(AbstractAstroHardwareAdapter):
         return self._camera.is_connected()
 
     def _do_point_telescope(self, ra: float, dec: float):
-        """Point the telescope to specified RA/Dec coordinates.
+        """Hardware-specific slew implementation.
 
-        Applies pointing model correction before slewing when the model is trained.
-
-        Args:
-            ra: Right Ascension in degrees
-            dec: Declination in degrees
+        Coordinates arriving here are already corrected by the base class's
+        pointing model logic in ``point_telescope()``.
         """
         if not self._mount:
             self.logger.warning("No mount configured - cannot point telescope (static camera mode)")
             return
 
-        slew_ra, slew_dec = ra, dec
-        if self._pointing_model and self._pointing_model.is_active and self.location_service:
-            location = self.location_service.get_current_location()
-            if location:
-                slew_ra, slew_dec = self._pointing_model.correct(ra, dec, location["latitude"], location["longitude"])
-                correction_arcmin = self.angular_distance(ra, dec, slew_ra, slew_dec) * 60.0
-                self.logger.info(
-                    "Pointing model correction: %.1f' (RA %+.4f° Dec %+.4f°)",
-                    correction_arcmin,
-                    slew_ra - ra,
-                    slew_dec - dec,
-                )
+        self.logger.info(f"Slewing telescope to RA={ra:.4f}°, Dec={dec:.4f}°")
 
-        self.logger.info(f"Slewing telescope to RA={slew_ra:.4f}°, Dec={slew_dec:.4f}°")
-
-        if not self._mount.slew_to_radec(slew_ra, slew_dec):
-            raise RuntimeError(f"Failed to initiate slew to RA={slew_ra}, Dec={slew_dec}")
+        if not self._mount.slew_to_radec(ra, dec):
+            raise RuntimeError(f"Failed to initiate slew to RA={ra}, Dec={dec}")
 
         # Wait for slew to complete
         timeout = 300  # 5 minute timeout
