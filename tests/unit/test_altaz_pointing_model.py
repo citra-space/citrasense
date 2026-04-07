@@ -102,16 +102,20 @@ def _synthetic_points(
 ) -> list[tuple[float, float, float, float, float, float]]:
     """Generate synthetic calibration point pairs with a known error model.
 
+    Simulates real calibration: the mount encoder reports (az_enc, alt_enc)
+    while the optics actually point to (az_enc + d_az, alt_enc + d_alt).
+    The plate solver returns the true optics position.
+
     Returns a list of (mount_ra, mount_dec, solved_ra, solved_dec, lat, lon).
     """
     rng = np.random.RandomState(42)
     points = []
     for _ in range(n):
-        az_true = rng.uniform(30.0, 330.0)
-        alt_true = rng.uniform(25.0, 75.0)
+        az_enc = rng.uniform(30.0, 330.0)
+        alt_enc = rng.uniform(25.0, 75.0)
 
-        az_rad = math.radians(az_true)
-        alt_rad = math.radians(alt_true)
+        az_rad = math.radians(az_enc)
+        alt_rad = math.radians(alt_enc)
         sin_az = math.sin(az_rad)
         cos_az = math.cos(az_rad)
         tan_alt = math.tan(alt_rad)
@@ -120,8 +124,8 @@ def _synthetic_points(
         d_az = CA * sec_alt + NPAE * tan_alt + AN * sin_az * tan_alt - AW * cos_az * tan_alt
         d_alt = IE - AN * cos_az - AW * sin_az
 
-        solved_ra, solved_dec = altaz_to_radec(az_true, alt_true, lat, lon)
-        mount_ra, mount_dec = altaz_to_radec(az_true + d_az, alt_true + d_alt, lat, lon)
+        mount_ra, mount_dec = altaz_to_radec(az_enc, alt_enc, lat, lon)
+        solved_ra, solved_dec = altaz_to_radec(az_enc + d_az, alt_enc + d_alt, lat, lon)
         points.append((mount_ra, mount_dec, solved_ra, solved_dec, lat, lon))
     return points
 
@@ -285,6 +289,28 @@ class TestSkyGridGeneration:
         )
         # Should still produce points, just narrower coverage
         assert len(targets) > 0
+
+    def test_asymmetric_cable_wrap_uses_unwind_direction(self):
+        """With high cumulative winding, the grid should extend mostly in
+        the unwinding direction to maximize azimuth diversity."""
+        targets = generate_calibration_grid(
+            current_az_deg=0.0,
+            cable_wrap_cumulative_deg=190.0,
+            cable_wrap_soft_limit_deg=240.0,
+            lat_deg=40.0,
+            lon_deg=-74.0,
+            n_points=10,
+        )
+        assert len(targets) == 10
+
+        # Convert targets back to alt-az and check azimuth spread
+        azimuths = []
+        for ra, dec in targets:
+            az, _alt = radec_to_altaz(ra, dec, 40.0, -74.0)
+            azimuths.append(az)
+
+        spread = AltAzPointingModel._azimuth_spread(azimuths)
+        assert spread > 120.0, f"Azimuth spread {spread:.0f}° too narrow — grid not using unwind direction"
 
     def test_empty_when_no_alt_bands(self):
         targets = generate_calibration_grid(

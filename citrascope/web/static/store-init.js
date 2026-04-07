@@ -100,7 +100,12 @@ function compareVersions(v1, v2) {
                 let tip = 'Telescope connected';
                 const pm = s.pointing_model;
                 if (pm && pm.state !== 'untrained') {
-                    tip += '\nPointing: ' + pm.tilt_deg?.toFixed(1) + '\u00b0 tilt, corrected to ~' + pm.pointing_accuracy_arcmin?.toFixed(1) + '\u2032';
+                    const live = pm.live_accuracy;
+                    if (live?.count > 0) {
+                        tip += '\nPointing: ' + live.median_arcmin?.toFixed(1) + '\u2032 live (' + live.count + ' solves)';
+                    } else {
+                        tip += '\nPointing: ~' + pm.pointing_accuracy_arcmin?.toFixed(1) + '\u2032 (model fit)';
+                    }
                 } else if (pm) {
                     tip += '\nPointing: untrained';
                 }

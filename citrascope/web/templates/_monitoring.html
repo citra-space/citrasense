@@ -451,9 +451,24 @@
                                             <div class="col-6" x-text="pm.tilt_deg?.toFixed(2) + '\u00b0 toward ' + (pm.tilt_direction_label || '-')"></div>
                                         </div>
                                         <div class="row mb-1">
-                                            <div class="col-6 text-muted">Pointing Accuracy</div>
+                                            <div class="col-6 text-muted">Model Fit RMS</div>
                                             <div class="col-6" x-text="'~' + pm.pointing_accuracy_arcmin?.toFixed(1) + '\u2032'"></div>
                                         </div>
+                                        <template x-if="pm.live_accuracy?.count > 0">
+                                            <div class="row mb-1">
+                                                <div class="col-6 text-muted">Live Accuracy</div>
+                                                <div class="col-6">
+                                                    <span x-text="pm.live_accuracy.median_arcmin?.toFixed(1) + '\u2032'"></span>
+                                                    <span class="text-muted" x-text="'median (' + pm.live_accuracy.count + ' solves)'"></span>
+                                                </div>
+                                            </div>
+                                        </template>
+                                        <template x-if="!pm.live_accuracy?.count">
+                                            <div class="row mb-1">
+                                                <div class="col-6 text-muted">Live Accuracy</div>
+                                                <div class="col-6 text-muted fst-italic">waiting for observations...</div>
+                                            </div>
+                                        </template>
                                         <div class="row mb-1">
                                             <div class="col-6 text-muted">Calibration Points</div>
                                             <div class="col-6" x-text="pm.point_count + ' points (' + pm.n_terms + '-term fit)'"></div>

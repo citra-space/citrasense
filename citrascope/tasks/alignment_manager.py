@@ -317,7 +317,14 @@ class AlignmentManager:
         # Reset model for fresh calibration
         self._pointing_model.reset()
 
-        # ---- Step 0: Bootstrap sync ----
+        # ---- Step 0: Unwind cable wrap ----
+        self._unwind_before_calibration()
+
+        if self._calibration_cancel.is_set():
+            self.logger.info("Calibration cancelled during unwind")
+            return
+
+        # ---- Step 1: Bootstrap sync ----
         self._set_progress("Bootstrap alignment...")
         self.logger.info("Calibration: bootstrap sync — plate solving at current position")
         bootstrap_result = self._plate_solve_at_current_position(telescope_record)
@@ -428,7 +435,7 @@ class AlignmentManager:
             self._pointing_model.fit()
             status = self._pointing_model.status()
             self.logger.info(
-                "Pointing calibration complete: %d/%d points, %s model, " "tilt=%.3f° toward %s, accuracy=%.1f'",
+                "Pointing calibration complete: %d/%d points, %s model, tilt=%.3f° toward %s, accuracy=%.1f'",
                 successful,
                 len(targets),
                 status["state"],
@@ -436,6 +443,12 @@ class AlignmentManager:
                 status["tilt_direction_label"],
                 status["pointing_accuracy_arcmin"],
             )
+
+            # ---- Verification: slew with correction, plate solve, compare ----
+            if not self._calibration_cancel.is_set():
+                self._verify_calibration(
+                    mount, telescope_record, targets, site_lat, site_lon, model_rms=status["pointing_accuracy_arcmin"]
+                )
         else:
             self.logger.warning(
                 "Calibration finished with only %d successful points — insufficient for model fit",
@@ -443,8 +456,164 @@ class AlignmentManager:
             )
 
     # ------------------------------------------------------------------
+    # Post-calibration verification
+    # ------------------------------------------------------------------
+
+    _VERIFY_COUNT = 2
+    _VERIFY_FAIL_FACTOR = 2.0
+
+    def _verify_calibration(
+        self,
+        mount: Any,
+        telescope_record: dict[str, Any],
+        calibration_targets: list[tuple[float, float]],
+        site_lat: float,
+        site_lon: float,
+        model_rms: float,
+    ) -> None:
+        """Slew to a few targets using the corrected path and plate-solve to
+        verify the model actually reduces error.
+
+        Picks targets from opposite ends of the calibration grid to get sky
+        diversity.  Uses ``point_telescope()`` (the production correction path)
+        so this exercises the full ``correct() → slew → solve`` chain.
+
+        If median verification residual is worse than ``_VERIFY_FAIL_FACTOR``
+        times the model RMS, the model is reset — a wrong correction is worse
+        than no correction.
+        """
+        assert self._pointing_model is not None
+
+        self._set_progress("Verifying calibration...")
+        self.logger.info("Calibration verification: checking %d targets with correction applied", self._VERIFY_COUNT)
+
+        verify_targets = self._pick_verification_targets(calibration_targets)
+        residuals: list[float] = []
+
+        for i, (target_ra, target_dec) in enumerate(verify_targets):
+            if self._calibration_cancel.is_set():
+                break
+
+            try:
+                self.hardware_adapter.point_telescope(target_ra, target_dec)
+
+                timeout = 300
+                start = time.time()
+                while mount.is_slewing():
+                    if time.time() - start > timeout:
+                        mount.abort_slew()
+                        self.logger.warning("Verification: slew timeout for target %d — skipping", i + 1)
+                        break
+                    time.sleep(0.5)
+
+                solve_result = self._plate_solve_at_current_position(telescope_record)
+                if solve_result is None:
+                    self.logger.warning("Verification: plate solve failed for target %d — skipping", i + 1)
+                    continue
+
+                solved_ra, solved_dec = solve_result
+                residual_deg = self.hardware_adapter.angular_distance(target_ra, target_dec, solved_ra, solved_dec)
+                residual_arcmin = residual_deg * 60.0
+                residuals.append(residual_arcmin)
+
+                self._pointing_model.record_verification_residual(residual_arcmin)
+                self.logger.info(
+                    "Verification target %d/%d: residual %.1f' (target RA=%.4f° Dec=%.4f°)",
+                    i + 1,
+                    len(verify_targets),
+                    residual_arcmin,
+                    target_ra,
+                    target_dec,
+                )
+            except Exception as exc:
+                self.logger.warning("Verification target %d failed: %s", i + 1, exc)
+
+        if not residuals:
+            self.logger.warning(
+                "Calibration verification: no verification solves succeeded — model kept but unverified"
+            )
+            return
+
+        median_residual = sorted(residuals)[len(residuals) // 2]
+        threshold = model_rms * self._VERIFY_FAIL_FACTOR
+
+        if median_residual > threshold:
+            self.logger.error(
+                "CALIBRATION VERIFICATION FAILED: median residual %.1f' is > %.1f' "
+                "(%.0f× model RMS of %.1f'). Correction is making pointing WORSE — resetting model.",
+                median_residual,
+                threshold,
+                median_residual / model_rms if model_rms > 0 else 0,
+                model_rms,
+            )
+            self._pointing_model.reset()
+        else:
+            self.logger.info(
+                "Calibration verification passed: median residual %.1f' (model RMS %.1f')",
+                median_residual,
+                model_rms,
+            )
+
+    def _pick_verification_targets(self, calibration_targets: list[tuple[float, float]]) -> list[tuple[float, float]]:
+        """Pick well-separated targets from the calibration grid for verification.
+
+        Uses the first and middle targets to get sky diversity without
+        generating new positions.
+        """
+        n = len(calibration_targets)
+        if n == 0:
+            return []
+        if n == 1:
+            return [calibration_targets[0]]
+        indices = [0, n // 2]
+        return [calibration_targets[i] for i in indices[: self._VERIFY_COUNT]]
+
+    # ------------------------------------------------------------------
     # Helpers
     # ------------------------------------------------------------------
+
+    _UNWIND_THRESHOLD_DEG = 30.0
+
+    def _unwind_before_calibration(self) -> None:
+        """Unwind cable wrap before calibration to maximize sky coverage.
+
+        Calibration needs the full sky (±240° of azimuth budget).  If the
+        cable is wound past the threshold, trigger an unwind and wait for
+        it to complete so the grid walk starts with near-zero cumulative.
+        """
+        if not self.safety_monitor:
+            return
+
+        from citrascope.safety.cable_wrap_check import CableWrapCheck
+
+        check = self.safety_monitor.get_check("cable_wrap")
+        if not isinstance(check, CableWrapCheck):
+            return
+
+        cumulative = check.cumulative_deg
+        if abs(cumulative) <= self._UNWIND_THRESHOLD_DEG:
+            self.logger.info("Cable wrap at %.0f° — no unwind needed before calibration", cumulative)
+            return
+
+        self.logger.info("Cable wrap at %.0f° — unwinding before calibration for full sky coverage...", cumulative)
+        self._set_progress("Unwinding cable wrap...")
+
+        check.execute_action()
+        while check.is_unwinding:
+            if self._calibration_cancel.is_set():
+                self.logger.info("Calibration cancelled during pre-calibration unwind")
+                return
+            time.sleep(1.0)
+
+        final = check.cumulative_deg
+        if abs(final) <= self._UNWIND_THRESHOLD_DEG:
+            self.logger.info("Cable unwind complete: %.0f° cumulative — ready to calibrate", final)
+        else:
+            self.logger.warning(
+                "Cable unwind finished at %.0f° (target <%.0f°) — calibrating with reduced sky coverage",
+                final,
+                self._UNWIND_THRESHOLD_DEG,
+            )
 
     def _plate_solve_at_current_position(self, telescope_record: dict[str, Any]) -> tuple[float, float] | None:
         """Take an image and plate solve at the current mount position.

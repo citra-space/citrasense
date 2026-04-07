@@ -2153,10 +2153,10 @@ class CitraScopeWebApp:
             self.status.calibration_status = self._build_calibration_status()
 
             # Pointing model status
-            self.status.pointing_model = self.daemon.hardware_adapter.get_pointing_model_status()
+            adapter = self.daemon.hardware_adapter
+            self.status.pointing_model = adapter.get_pointing_model_status() if adapter else None
 
             # Config health: compare server telescope record vs hardware + plate solve
-            adapter = self.daemon.hardware_adapter
             if self.daemon.telescope_record and adapter:
                 from citrascope.hardware.config_health import assess_config_health
 

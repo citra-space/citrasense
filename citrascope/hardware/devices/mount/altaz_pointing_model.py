@@ -16,6 +16,28 @@ Terms:
     CA   — Collimation error (optical axis vs altitude axis)
     NPAE — Non-perpendicularity of altitude and azimuth axes
 
+Sign convention
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+The error terms describe the **optical displacement from the encoder
+position**.  Concretely:
+
+    optics_az  = encoder_az  + dAz
+    optics_alt = encoder_alt + dAlt
+
+``add_point()`` records ``solved − mount`` (plate-solved optics position
+minus mount encoder position), which equals ``(dAz, dAlt)`` — a positive
+value when the optics overshoot the encoder.
+
+``correct()`` precompensates by *subtracting* the predicted error::
+
+    command_az  = target_az  − dAz
+    command_alt = target_alt − dAlt
+
+The mount drives to ``(target − dAz)``, the optics end up at
+``(target − dAz) + dAz = target``.  If the signs in ``add_point`` are
+reversed, the model terms flip sign and ``correct()`` doubles the error
+instead of cancelling it.
+
 Graceful degradation:
     0-2 points  → passthrough (no correction)
     3-7 points  → 3-term fit (AN, AW, IE)
@@ -42,8 +64,10 @@ _TS = load.timescale()
 
 _MIN_POINTS_3TERM = 3
 _MIN_POINTS_5TERM = 8
+_MIN_AZ_SPREAD_5TERM = 90.0  # degrees — need this much azimuth diversity for 5-term
 _HEALTH_WINDOW = 5
 _HEALTH_DEGRADED_FACTOR = 3.0
+_LIVE_ACCURACY_WINDOW = 20
 
 
 # ---------------------------------------------------------------------------
@@ -174,9 +198,21 @@ def generate_calibration_grid(
     - Respect cable-wrap budget via boustrophedon azimuth ordering
     - Provide good sky coverage for fitting the 5-term model
 
+    Cable wrap budget is **asymmetric**: unwinding the cable gives far
+    more range than further winding.  For example, at cumulative=+190°
+    with a 240° soft limit:
+
+    - CW (further winding): 50° remaining
+    - CCW (unwinding): 430° available
+    - Total usable: ~300° of azimuth diversity
+
+    The grid extends more in the unwinding direction to maximize sky
+    coverage for a well-conditioned fit.
+
     Args:
         current_az_deg: Mount's current azimuth in degrees.
-        cable_wrap_cumulative_deg: Current cable-wrap cumulative rotation.
+        cable_wrap_cumulative_deg: Current cable-wrap cumulative rotation
+            (positive = CW winding from neutral).
         horizon_limit_deg: Minimum altitude above horizon.
         overhead_limit_deg: Maximum altitude (avoid zenith singularity).
         lat_deg: Observer latitude in degrees.
@@ -187,27 +223,54 @@ def generate_calibration_grid(
     Returns:
         Ordered list of (ra_deg, dec_deg) targets.
     """
-    budget_deg = cable_wrap_soft_limit_deg - abs(cable_wrap_cumulative_deg)
-    if budget_deg < 60.0:
+    # Asymmetric cable wrap budget: CW = further winding, CCW = unwinding
+    cw_budget = cable_wrap_soft_limit_deg - cable_wrap_cumulative_deg
+    ccw_budget = cable_wrap_soft_limit_deg + cable_wrap_cumulative_deg
+    total_budget = max(cw_budget, 0.0) + max(ccw_budget, 0.0)
+
+    if total_budget < 60.0:
         _logger.warning(
-            "Cable wrap budget only %.0f° — calibration grid will be narrow. Consider unwinding first.",
-            budget_deg,
+            "Cable wrap budget very limited (CW: %.0f°, CCW: %.0f°) — calibration grid will be narrow.",
+            max(cw_budget, 0.0),
+            max(ccw_budget, 0.0),
         )
 
-    usable_range = min(budget_deg * 0.8, 300.0)
-    half_range = usable_range / 2.0
+    usable_range = min(total_budget * 0.8, 300.0)
+
+    # Distribute range proportionally to budget in each direction
+    if total_budget > 0:
+        frac_ccw = max(ccw_budget, 0.0) / total_budget
+    else:
+        frac_ccw = 0.5
+    range_ccw = usable_range * frac_ccw
+    range_cw = usable_range * (1.0 - frac_ccw)
+
+    _logger.info(
+        "Calibration grid: %.0f° usable range (CW %.0f°, CCW %.0f° from az %.0f°)",
+        usable_range,
+        range_cw,
+        range_ccw,
+        current_az_deg,
+    )
 
     alt_bands = [alt for alt in [30.0, 45.0, 60.0, 75.0] if horizon_limit_deg <= alt <= overhead_limit_deg]
     if not alt_bands:
         alt_bands = [(horizon_limit_deg + overhead_limit_deg) / 2.0]
 
     n_az = max(3, n_points // len(alt_bands))
-    az_start = current_az_deg - half_range
     az_step = usable_range / max(n_az - 1, 1)
+
+    # Start near current_az (CW end) and step toward the CCW end.
+    # This way the first slew is a short CW hop (<= range_cw), and
+    # each subsequent step sweeps in the CCW (unwinding) direction.
+    # The mount's shortest-path slewing agrees with our intended
+    # direction as long as az_step < 180°.
+    cw_end = current_az_deg + range_cw
+    base_positions = [(cw_end - j * az_step) % 360.0 for j in range(n_az)]
 
     grid_altaz: list[tuple[float, float]] = []
     for i, alt in enumerate(alt_bands):
-        az_positions = [(az_start + j * az_step) % 360.0 for j in range(n_az)]
+        az_positions = list(base_positions)
         if i % 2 == 1:
             az_positions.reverse()
         for az in az_positions:
@@ -235,6 +298,12 @@ class AltAzPointingModel:
 
     Owns calibration data, fitted terms, and health monitoring state.
     Persists to a JSON state file (like ``CableWrapCheck``).
+
+    Data flow:
+        ``add_point(encoder, plate_solved)``  →  ``fit()``  →  ``correct(target)``
+
+    All stored residuals use the convention **solved − mount** (optics
+    minus encoder).  See the module docstring for the full sign convention.
     """
 
     def __init__(self, state_file: Path | None = None) -> None:
@@ -258,6 +327,9 @@ class AltAzPointingModel:
         # Health monitoring: rolling window of recent verification residuals
         self._recent_residuals: deque[float] = deque(maxlen=_HEALTH_WINDOW)
         self._health: str = "unknown"  # "good", "degraded", "unknown"
+
+        # Live accuracy tracking: wider window for the UI
+        self._live_residuals: deque[tuple[float, float]] = deque(maxlen=_LIVE_ACCURACY_WINDOW)  # (timestamp, arcmin)
 
         self._load_state()
 
@@ -302,14 +374,19 @@ class AltAzPointingModel:
     ) -> None:
         """Record a (mount-reported, plate-solved) calibration pair.
 
-        Converts both positions to alt/az and stores the error.
+        Converts both positions to alt/az and stores the mount error:
+        ``solved - mount``, i.e. the displacement of the optics from the
+        encoder position.  This matches the sign convention used by
+        ``correct()`` which *subtracts* the predicted error from the
+        target coordinates.
+
         Automatically triggers a refit when enough points are available.
 
         Args:
-            mount_ra: Mount-reported RA in degrees.
-            mount_dec: Mount-reported Dec in degrees.
-            solved_ra: Plate-solved RA in degrees.
-            solved_dec: Plate-solved Dec in degrees.
+            mount_ra: Mount-reported (encoder) RA in degrees.
+            mount_dec: Mount-reported (encoder) Dec in degrees.
+            solved_ra: Plate-solved (true optics) RA in degrees.
+            solved_dec: Plate-solved (true optics) Dec in degrees.
             site_lat: Observer latitude in degrees.
             site_lon: Observer longitude in degrees.
         """
@@ -317,13 +394,13 @@ class AltAzPointingModel:
         mount_az, mount_alt = radec_to_altaz(mount_ra, mount_dec, site_lat, site_lon, _gast_override=gast)
         solved_az, solved_alt = radec_to_altaz(solved_ra, solved_dec, site_lat, site_lon, _gast_override=gast)
 
-        d_az = mount_az - solved_az
+        d_az = solved_az - mount_az
         if d_az > 180.0:
             d_az -= 360.0
         elif d_az < -180.0:
             d_az += 360.0
 
-        d_alt = mount_alt - solved_alt
+        d_alt = solved_alt - mount_alt
 
         with self._lock:
             self._points.append((solved_az, solved_alt, d_az, d_alt))
@@ -348,7 +425,10 @@ class AltAzPointingModel:
     def fit(self) -> None:
         """Fit error terms to accumulated calibration points via least-squares.
 
-        Selects 3-term (AN, AW, IE) or 5-term (+ CA, NPAE) based on point count.
+        Selects 3-term (AN, AW, IE) or 5-term (+ CA, NPAE) based on point
+        count AND azimuth diversity.  The 5-term fit requires >= 90° of
+        azimuth spread; with less, the terms become degenerate and the fit
+        distributes error into CA/NPAE incorrectly.
         """
         with self._lock:
             n = len(self._points)
@@ -356,8 +436,18 @@ class AltAzPointingModel:
                 _logger.info("Pointing model: only %d points, need %d for fit", n, _MIN_POINTS_3TERM)
                 return
 
-            use_5term = n >= _MIN_POINTS_5TERM
             points_snapshot = list(self._points)
+
+        az_values = [p[0] for p in points_snapshot]
+        az_spread = self._azimuth_spread(az_values)
+        use_5term = n >= _MIN_POINTS_5TERM and az_spread >= _MIN_AZ_SPREAD_5TERM
+        if n >= _MIN_POINTS_5TERM and not use_5term:
+            _logger.info(
+                "Azimuth spread %.0f° < %.0f° minimum — staying with 3-term fit despite %d points",
+                az_spread,
+                _MIN_AZ_SPREAD_5TERM,
+                n,
+            )
 
         rows_az = []
         rows_alt = []
@@ -412,6 +502,7 @@ class AltAzPointingModel:
             self._fit_timestamp = time.time()
             self._health = "good"
             self._recent_residuals.clear()
+            self._live_residuals.clear()
 
             tilt_mag = math.sqrt(self._AN**2 + self._AW**2)
             tilt_dir = math.degrees(math.atan2(self._AW, self._AN)) % 360.0
@@ -517,14 +608,18 @@ class AltAzPointingModel:
     # ------------------------------------------------------------------
 
     def record_verification_residual(self, residual_arcmin: float) -> None:
-        """Record a post-slew plate-solve residual for health monitoring.
+        """Record a post-slew plate-solve residual for health and live accuracy.
 
         Called by the adapter after a plate-solve-after-slew verification
-        (not during calibration).  Tracks a rolling window and degrades
-        the health status if residuals consistently exceed expectations.
+        (not during calibration).  Feeds both the health monitor (degraded
+        after sustained bad residuals) and the live accuracy tracker shown
+        in the web UI.
         """
+        now = time.time()
         with self._lock:
             self._recent_residuals.append(residual_arcmin)
+            self._live_residuals.append((now, residual_arcmin))
+
             if len(self._recent_residuals) < _HEALTH_WINDOW:
                 return
 
@@ -554,6 +649,7 @@ class AltAzPointingModel:
             self._fit_timestamp = None
             self._n_terms = 0
             self._recent_residuals.clear()
+            self._live_residuals.clear()
             self._health = "unknown"
         self._save_state()
         _logger.info("Pointing model reset")
@@ -561,6 +657,23 @@ class AltAzPointingModel:
     # ------------------------------------------------------------------
     # Status / display
     # ------------------------------------------------------------------
+
+    @staticmethod
+    def _azimuth_spread(az_values: list[float]) -> float:
+        """Compute the angular spread of azimuth values on the circle.
+
+        Returns the smallest arc (in degrees) that contains all the values.
+        A spread of 180° means good diversity; < 90° means under-constrained.
+        """
+        if len(az_values) < 2:
+            return 0.0
+        sorted_az = sorted(a % 360.0 for a in az_values)
+        max_gap = 0.0
+        for i in range(len(sorted_az)):
+            gap = (sorted_az[(i + 1) % len(sorted_az)] - sorted_az[i]) % 360.0
+            if gap > max_gap:
+                max_gap = gap
+        return 360.0 - max_gap
 
     def _compass_label(self, bearing_deg: float) -> str:
         """Convert a bearing in degrees to an 8-point compass label."""
@@ -581,6 +694,14 @@ class AltAzPointingModel:
             tilt_mag_deg = math.sqrt(self._AN**2 + self._AW**2)
             tilt_bearing_deg = math.degrees(math.atan2(self._AW, self._AN)) % 360.0
 
+            live: dict[str, Any] = {"count": len(self._live_residuals)}
+            if self._live_residuals:
+                values = [r for _, r in self._live_residuals]
+                last_ts, last_val = self._live_residuals[-1]
+                live["last_arcmin"] = round(last_val, 2)
+                live["last_timestamp"] = last_ts
+                live["median_arcmin"] = round(sorted(values)[len(values) // 2], 2)
+
             return {
                 "state": state,
                 "health": self._health,
@@ -598,6 +719,7 @@ class AltAzPointingModel:
                     "CA": round(self._CA, 5),
                     "NPAE": round(self._NPAE, 5),
                 },
+                "live_accuracy": live,
             }
 
     # ------------------------------------------------------------------
@@ -648,6 +770,7 @@ class AltAzPointingModel:
         model._fit_timestamp = None
         model._n_terms = 0
         model._recent_residuals = deque(maxlen=_HEALTH_WINDOW)
+        model._live_residuals = deque(maxlen=_LIVE_ACCURACY_WINDOW)
         model._health = "unknown"
         model._apply_dict(data)
         return model
