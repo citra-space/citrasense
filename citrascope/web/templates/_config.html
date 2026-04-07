@@ -950,6 +950,13 @@
                             <div class="col-md-6">
                                 <label class="form-label">Startup / Shutdown</label>
                                 <div class="form-check mb-2">
+                                    <input class="form-check-input" type="checkbox" id="sessionDoPointingCal"
+                                           x-model="$store.citrascope.config.observing_session_do_pointing_calibration">
+                                    <label class="form-check-label" for="sessionDoPointingCal">
+                                        Calibrate pointing model at start of night
+                                    </label>
+                                </div>
+                                <div class="form-check mb-2">
                                     <input class="form-check-input" type="checkbox" id="sessionDoAutofocus"
                                            x-model="$store.citrascope.config.observing_session_do_autofocus">
                                     <label class="form-check-label" for="sessionDoAutofocus">

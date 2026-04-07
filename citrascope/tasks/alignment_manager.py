@@ -1,4 +1,14 @@
-"""Mount alignment management: on-demand and startup plate-solve-and-sync."""
+"""Mount alignment and pointing calibration management.
+
+Provides two modes:
+- **Quick align** (``request`` / ``_execute``): single plate solve + sync at
+  the current position.  The existing "Align Now" button.
+- **Full calibration** (``request_calibration`` / ``_execute_calibration``):
+  bootstrap sync → sky grid walk → fit pointing model.  Triggered by the
+  "Calibrate" button or the NIGHT_STARTUP sequence.
+
+Follows the same request/check_and_execute pattern as AutofocusManager.
+"""
 
 from __future__ import annotations
 
@@ -10,15 +20,17 @@ from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from citrascope.hardware.abstract_astro_hardware_adapter import AbstractAstroHardwareAdapter
+    from citrascope.hardware.devices.mount.altaz_pointing_model import AltAzPointingModel
     from citrascope.settings.citrascope_settings import CitraScopeSettings
     from citrascope.tasks.base_work_queue import BaseWorkQueue
 
 
 class AlignmentManager:
-    """Manages on-demand and startup plate-solve alignment.
+    """Manages on-demand alignment and full pointing model calibration.
 
     Takes a short exposure at the mount's current position, plate-solves it,
-    and syncs the mount.  No slew is needed — the solve is blind.
+    and syncs the mount.  Also drives the multi-point calibration procedure
+    that builds an ``AltAzPointingModel``.
 
     Follows the same request/check_and_execute pattern as AutofocusManager.
     """
@@ -38,10 +50,30 @@ class AlignmentManager:
         self.imaging_queue = imaging_queue
         self.safety_monitor = safety_monitor
         self.location_service = location_service
+
+        # Quick-align state
         self._requested = False
         self._running = False
         self._progress = ""
         self._lock = threading.Lock()
+
+        # Calibration state
+        self._calibration_requested = False
+        self._calibrating = False
+        self._calibration_cancel = threading.Event()
+        self._pointing_model: AltAzPointingModel | None = None
+
+    # ------------------------------------------------------------------
+    # Pointing model reference
+    # ------------------------------------------------------------------
+
+    def set_pointing_model(self, model: AltAzPointingModel) -> None:
+        """Wire the pointing model (owned by DirectHardwareAdapter)."""
+        self._pointing_model = model
+
+    # ------------------------------------------------------------------
+    # Quick align (existing "Align Now")
+    # ------------------------------------------------------------------
 
     def request(self) -> bool:
         """Request alignment to run at next safe point between tasks."""
@@ -81,11 +113,26 @@ class AlignmentManager:
             self._progress = msg
 
     def check_and_execute(self) -> bool:
-        """Check if alignment should run and execute if so.
+        """Check if alignment or calibration should run and execute if so.
 
-        Call this between tasks in the runner loop.  Returns True if alignment ran.
+        Call this between tasks in the runner loop.  Returns True if work ran.
         Waits for the imaging queue to drain before starting.
         """
+        # Calibration takes priority over quick-align
+        with self._lock:
+            should_calibrate = self._calibration_requested
+            if should_calibrate:
+                self._calibration_requested = False
+
+        if should_calibrate:
+            if self.imaging_queue and not self.imaging_queue.is_idle():
+                self.logger.info("Calibration deferred — waiting for imaging queue to drain")
+                with self._lock:
+                    self._calibration_requested = True
+                return False
+            self._execute_calibration()
+            return True
+
         with self._lock:
             should_run = self._requested
             if should_run:
@@ -153,6 +200,26 @@ class AlignmentManager:
             solved_ra, solved_dec = result
             self.logger.info(f"Alignment: solved RA={solved_ra:.4f}°, Dec={solved_dec:.4f}°")
 
+            # Health check against pointing model if trained
+            if self._pointing_model and self._pointing_model.is_trained and self.location_service:
+                location = self.location_service.get_current_location()
+                if location:
+                    current_ra, current_dec = mount.get_radec()
+                    predicted = self._pointing_model.predict_error(
+                        current_ra, current_dec, location["latitude"], location["longitude"]
+                    )
+                    observed_error = self.hardware_adapter.angular_distance(
+                        current_ra, current_dec, solved_ra, solved_dec
+                    )
+                    observed_arcmin = observed_error * 60.0
+                    if predicted > 0 and observed_arcmin > predicted * 3.0:
+                        self.logger.warning(
+                            "Align Now: observed error %.1f' far exceeds model prediction %.1f' "
+                            "— pointing model may be stale, consider recalibrating",
+                            observed_arcmin,
+                            predicted,
+                        )
+
             self._set_progress("Syncing mount...")
             current_ra, current_dec = mount.get_radec()
             mount.sync_to_radec(solved_ra, solved_dec)
@@ -170,3 +237,251 @@ class AlignmentManager:
             if self.settings:
                 self.settings.last_alignment_timestamp = int(time.time())
                 self.settings.save()
+
+    # ------------------------------------------------------------------
+    # Full pointing calibration
+    # ------------------------------------------------------------------
+
+    def request_calibration(self) -> bool:
+        """Request a full pointing model calibration run."""
+        with self._lock:
+            if self._calibrating:
+                self.logger.warning("Calibration already running — ignoring request")
+                return False
+            self._calibration_requested = True
+            self._calibration_cancel.clear()
+            self.logger.info("Pointing calibration requested — will run between tasks")
+            return True
+
+    def cancel_calibration(self) -> None:
+        """Cancel an in-progress or pending calibration."""
+        with self._lock:
+            self._calibration_requested = False
+        self._calibration_cancel.set()
+        self.logger.info("Pointing calibration cancel requested")
+
+    def is_calibrating(self) -> bool:
+        with self._lock:
+            return self._calibrating
+
+    def _execute_calibration(self) -> None:
+        """Execute the full pointing calibration: bootstrap sync → grid walk → fit."""
+        with self._lock:
+            self._calibrating = True
+            self._progress = "Starting pointing calibration..."
+
+        try:
+            self._do_calibration()
+        except Exception as e:
+            self.logger.error(f"Pointing calibration failed: {e!s}", exc_info=True)
+        finally:
+            with self._lock:
+                self._calibrating = False
+                self._progress = ""
+            self._calibration_cancel.clear()
+
+    def _do_calibration(self) -> None:
+        """Inner calibration logic — separated for clean exception handling."""
+        from citrascope.hardware.devices.mount.altaz_pointing_model import generate_calibration_grid
+
+        if not self._pointing_model:
+            self.logger.error("Cannot calibrate — no pointing model available")
+            return
+
+        telescope_record: dict[str, Any] | None = self.hardware_adapter.telescope_record
+        if not telescope_record:
+            self.logger.error("Cannot calibrate — no telescope_record available")
+            return
+
+        mount = self.hardware_adapter.mount
+        if not self.hardware_adapter.is_camera_connected() or not mount:
+            self.logger.error("Cannot calibrate — camera and mount are both required")
+            return
+
+        if not self.location_service:
+            self.logger.error("Cannot calibrate — no location service available")
+            return
+
+        location = self.location_service.get_current_location()
+        if not location:
+            self.logger.error("Cannot calibrate — no location fix available")
+            return
+
+        site_lat = location["latitude"]
+        site_lon = location["longitude"]
+
+        if self.safety_monitor and not self.safety_monitor.is_action_safe("capture"):
+            self.logger.warning("Calibration aborted — safety monitor blocked capture")
+            return
+
+        # Reset model for fresh calibration
+        self._pointing_model.reset()
+
+        # ---- Step 0: Bootstrap sync ----
+        self._set_progress("Bootstrap alignment...")
+        self.logger.info("Calibration: bootstrap sync — plate solving at current position")
+        bootstrap_result = self._plate_solve_at_current_position(telescope_record)
+        if bootstrap_result is None:
+            self.logger.error("Calibration aborted — bootstrap plate solve failed. Check focus and sky conditions.")
+            return
+
+        solved_ra, solved_dec = bootstrap_result
+        current_ra, current_dec = mount.get_radec()
+        mount.sync_to_radec(solved_ra, solved_dec)
+        self.logger.info(
+            "Bootstrap sync complete: offset RA=%+.4f° Dec=%+.4f°",
+            solved_ra - current_ra,
+            solved_dec - current_dec,
+        )
+
+        if self._calibration_cancel.is_set():
+            self.logger.info("Calibration cancelled after bootstrap")
+            return
+
+        # ---- Generate sky grid ----
+        self._set_progress("Generating sky grid...")
+        cable_cumulative = self._get_cable_wrap_cumulative()
+
+        mount_az = mount.get_azimuth()
+        current_az = mount_az if mount_az is not None else 180.0
+
+        if hasattr(mount, "get_limits"):
+            h_limit, o_limit = mount.get_limits()
+        else:
+            h_limit, o_limit = None, None
+        horizon_limit = float(h_limit) if h_limit is not None else 15.0
+        overhead_limit = float(o_limit) if o_limit is not None else 89.0
+
+        targets = generate_calibration_grid(
+            current_az_deg=current_az,
+            cable_wrap_cumulative_deg=cable_cumulative,
+            horizon_limit_deg=horizon_limit,
+            overhead_limit_deg=overhead_limit,
+            lat_deg=site_lat,
+            lon_deg=site_lon,
+            n_points=10,
+        )
+
+        if not targets:
+            self.logger.error("Calibration aborted — grid generation produced no targets")
+            return
+
+        self.logger.info("Calibration grid: %d targets generated", len(targets))
+
+        # ---- Grid walk ----
+        successful = 0
+        for i, (target_ra, target_dec) in enumerate(targets):
+            if self._calibration_cancel.is_set():
+                self.logger.info("Calibration cancelled at point %d/%d", i + 1, len(targets))
+                break
+
+            self._set_progress(f"Calibrating {i + 1}/{len(targets)}...")
+            self.logger.info(
+                "Calibration point %d/%d: slewing to RA=%.4f° Dec=%.4f°",
+                i + 1,
+                len(targets),
+                target_ra,
+                target_dec,
+            )
+
+            # Slew (raw — no model correction since we're building the model)
+            try:
+                if not mount.slew_to_radec(target_ra, target_dec):
+                    self.logger.warning("Calibration: slew failed for point %d — skipping", i + 1)
+                    continue
+
+                timeout = 300
+                start = time.time()
+                while mount.is_slewing():
+                    if time.time() - start > timeout:
+                        mount.abort_slew()
+                        self.logger.warning("Calibration: slew timeout for point %d — skipping", i + 1)
+                        break
+                    if self._calibration_cancel.is_set():
+                        mount.abort_slew()
+                        break
+                    time.sleep(0.5)
+
+                if self._calibration_cancel.is_set():
+                    break
+            except Exception as exc:
+                self.logger.warning("Calibration: slew error for point %d: %s — skipping", i + 1, exc)
+                continue
+
+            # Read mount-reported position before plate solve
+            mount_ra, mount_dec = mount.get_radec()
+
+            # Plate solve
+            solve_result = self._plate_solve_at_current_position(telescope_record)
+            if solve_result is None:
+                self.logger.warning("Calibration: plate solve failed for point %d — skipping", i + 1)
+                continue
+
+            solved_ra, solved_dec = solve_result
+
+            # Record point (NO sync)
+            self._pointing_model.add_point(mount_ra, mount_dec, solved_ra, solved_dec, site_lat, site_lon)
+            successful += 1
+
+        # ---- Fit model ----
+        if successful >= 3:
+            self._pointing_model.fit()
+            status = self._pointing_model.status()
+            self.logger.info(
+                "Pointing calibration complete: %d/%d points, %s model, " "tilt=%.3f° toward %s, accuracy=%.1f'",
+                successful,
+                len(targets),
+                status["state"],
+                status["tilt_deg"],
+                status["tilt_direction_label"],
+                status["pointing_accuracy_arcmin"],
+            )
+        else:
+            self.logger.warning(
+                "Calibration finished with only %d successful points — insufficient for model fit",
+                successful,
+            )
+
+    # ------------------------------------------------------------------
+    # Helpers
+    # ------------------------------------------------------------------
+
+    def _plate_solve_at_current_position(self, telescope_record: dict[str, Any]) -> tuple[float, float] | None:
+        """Take an image and plate solve at the current mount position.
+
+        Tries increasing exposure times (2s, 4s, 8s).  Returns (ra, dec)
+        on success or None.
+        """
+        from citrascope.processors.builtin.plate_solver_processor import PlateSolverProcessor
+
+        exposure_attempts = [2.0, 4.0, 8.0]
+        for exposure_s in exposure_attempts:
+            try:
+                image_path = self.hardware_adapter.take_image("calibration", exposure_s)
+            except Exception as exc:
+                self.logger.warning("Calibration exposure failed (%.0fs): %s", exposure_s, exc)
+                continue
+
+            result = PlateSolverProcessor.solve(
+                Path(image_path), telescope_record, location_service=self.location_service
+            )
+            if result is not None:
+                return result
+
+            self.logger.warning("Plate solve failed with %.0fs exposure, retrying...", exposure_s)
+
+        return None
+
+    def _get_cable_wrap_cumulative(self) -> float:
+        """Read current cable wrap cumulative rotation, or 0.0 if unavailable."""
+        if not self.safety_monitor:
+            return 0.0
+        try:
+            from citrascope.safety.cable_wrap_check import CableWrapCheck
+
+            check = self.safety_monitor.get_check("cable_wrap")
+            if isinstance(check, CableWrapCheck):
+                return check.cumulative_deg
+        except Exception:
+            pass
+        return 0.0

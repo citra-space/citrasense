@@ -56,7 +56,6 @@ def mock_settings():
     s.is_configured.return_value = True
     s.keep_processing_output = False
     s.alignment_exposure_seconds = 2.0
-    s.align_on_startup = False
     s.last_alignment_timestamp = None
     s.task_processing_paused = False
     s.observation_mode = "auto"
@@ -87,7 +86,6 @@ def mock_settings():
         "autofocus_target_custom_ra": s.autofocus_target_custom_ra,
         "autofocus_target_custom_dec": s.autofocus_target_custom_dec,
         "alignment_exposure_seconds": s.alignment_exposure_seconds,
-        "align_on_startup": s.align_on_startup,
         "last_alignment_timestamp": s.last_alignment_timestamp,
         "time_check_interval_minutes": s.time_check_interval_minutes,
         "time_offset_pause_ms": s.time_offset_pause_ms,

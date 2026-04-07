@@ -428,6 +428,62 @@
                                 </div>
                             </template>
 
+                            <!-- Pointing Model -->
+                            <div x-show="$store.citrascope.status?.supports_direct_mount_control && $store.citrascope.status?.pointing_model"
+                                 class="mt-3 pt-3 border-top border-secondary"
+                                 x-data="{ get pm() { return $store.citrascope.status?.pointing_model || {}; } }">
+
+                                <div class="d-flex align-items-center justify-content-between mb-2">
+                                    <span class="fw-semibold small">Pointing Model</span>
+                                    <span class="badge rounded-pill"
+                                          :class="{
+                                              'bg-secondary': pm.state === 'untrained',
+                                              'bg-success': pm.state !== 'untrained' && pm.health !== 'degraded',
+                                              'bg-warning text-dark': pm.health === 'degraded'
+                                          }"
+                                          x-text="pm.state === 'untrained' ? 'Untrained' : (pm.health === 'degraded' ? 'Degraded' : (pm.state === 'partial' ? 'Partial' : 'Trained'))"></span>
+                                </div>
+
+                                <template x-if="pm.state !== 'untrained'">
+                                    <div class="small">
+                                        <div class="row mb-1">
+                                            <div class="col-6 text-muted">Tripod Tilt</div>
+                                            <div class="col-6" x-text="pm.tilt_deg?.toFixed(2) + '\u00b0 toward ' + (pm.tilt_direction_label || '-')"></div>
+                                        </div>
+                                        <div class="row mb-1">
+                                            <div class="col-6 text-muted">Pointing Accuracy</div>
+                                            <div class="col-6" x-text="'~' + pm.pointing_accuracy_arcmin?.toFixed(1) + '\u2032'"></div>
+                                        </div>
+                                        <div class="row mb-1">
+                                            <div class="col-6 text-muted">Calibration Points</div>
+                                            <div class="col-6" x-text="pm.point_count + ' points (' + pm.n_terms + '-term fit)'"></div>
+                                        </div>
+                                    </div>
+                                </template>
+
+                                <template x-if="pm.health === 'degraded'">
+                                    <div class="alert alert-warning py-1 px-2 mt-2 mb-0 small">
+                                        <i class="bi bi-exclamation-triangle-fill me-1"></i>Recalibration recommended
+                                    </div>
+                                </template>
+
+                                <div class="d-flex gap-2 mt-2">
+                                    <button class="btn btn-sm btn-outline-light"
+                                            @click="calibratePointingModel()"
+                                            :disabled="$store.citrascope.status?.pointing_calibration_running">
+                                        <template x-if="$store.citrascope.status?.pointing_calibration_running">
+                                            <span class="spinner-border spinner-border-sm me-1" style="width:.6rem;height:.6rem;"></span>
+                                        </template>
+                                        <span x-text="$store.citrascope.status?.pointing_calibration_running ? 'Calibrating...' : 'Calibrate'"></span>
+                                    </button>
+                                    <button class="btn btn-sm btn-outline-danger"
+                                            x-show="pm.state !== 'untrained'"
+                                            @click="if (confirm('Reset the pointing model? This clears all calibration data.')) resetPointingModel()">
+                                        Reset
+                                    </button>
+                                </div>
+                            </div>
+
                             <!-- Mount Controls (direct hardware adapters only) -->
                             <div x-show="$store.citrascope.status?.supports_direct_mount_control"
                                  x-data="{ gotoRa: '', gotoDec: '' }"

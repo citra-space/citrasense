@@ -25,6 +25,7 @@ from citrascope.hardware.devices.device_registry import (
 from citrascope.hardware.devices.filter_wheel import AbstractFilterWheel
 from citrascope.hardware.devices.focuser import AbstractFocuser
 from citrascope.hardware.devices.mount import AbstractMount
+from citrascope.hardware.devices.mount.altaz_pointing_model import AltAzPointingModel
 from citrascope.hardware.devices.mount.mount_state_cache import MountStateCache
 from citrascope.hardware.filter_sync import is_trash_filter_name
 from citrascope.location.gps_fix import GPSFix
@@ -62,6 +63,8 @@ class DirectHardwareAdapter(AbstractAstroHardwareAdapter):
         self.location_service: Any | None = None
         self._mount_cache: MountStateCache | None = None
         self._preview_lock = threading.Lock()
+        self._pointing_model: AltAzPointingModel | None = None
+        self._pointing_model_state_file: Path | None = None
 
         # Track dependency issues for reporting
         self._dependency_issues: list[dict[str, str]] = []
@@ -453,6 +456,7 @@ class DirectHardwareAdapter(AbstractAstroHardwareAdapter):
                 cache.start()
                 self._mount._state_cache = cache  # type: ignore[attr-defined]
                 self._mount_cache = cache
+                self._init_pointing_model()
         else:
             self.logger.info("No mount configured (static camera mode)")
 
@@ -601,6 +605,40 @@ class DirectHardwareAdapter(AbstractAstroHardwareAdapter):
             except Exception:
                 self.logger.debug("Meridian auto-flip not supported", exc_info=True)
 
+    def _init_pointing_model(self) -> None:
+        """Initialize the pointing model, loading persisted state if available."""
+        if self._pointing_model_state_file:
+            self._pointing_model = AltAzPointingModel(state_file=self._pointing_model_state_file)
+        else:
+            import platformdirs
+
+            data_dir = Path(platformdirs.user_data_dir("citrascope", appauthor="citrascope"))
+            state_file = data_dir / "pointing_model_state.json"
+            self._pointing_model = AltAzPointingModel(state_file=state_file)
+            self._pointing_model_state_file = state_file
+
+        if self._pointing_model.is_active:
+            status = self._pointing_model.status()
+            self.logger.info(
+                "Pointing model loaded: %s (%d pts, tilt=%.3f° toward %s, accuracy=%.1f')",
+                status["state"],
+                status["point_count"],
+                status["tilt_deg"],
+                status["tilt_direction_label"],
+                status["pointing_accuracy_arcmin"],
+            )
+
+    @property
+    def pointing_model(self) -> AltAzPointingModel | None:
+        """The alt-az pointing model, if initialized."""
+        return self._pointing_model
+
+    def get_pointing_model_status(self) -> dict[str, Any] | None:
+        """Return pointing model status dict for web UI, or None."""
+        if self._pointing_model:
+            return self._pointing_model.status()
+        return None
+
     def disconnect(self):
         """Disconnect from all hardware devices."""
         self.logger.info("Disconnecting from direct hardware devices...")
@@ -646,6 +684,8 @@ class DirectHardwareAdapter(AbstractAstroHardwareAdapter):
     def _do_point_telescope(self, ra: float, dec: float):
         """Point the telescope to specified RA/Dec coordinates.
 
+        Applies pointing model correction before slewing when the model is trained.
+
         Args:
             ra: Right Ascension in degrees
             dec: Declination in degrees
@@ -654,10 +694,23 @@ class DirectHardwareAdapter(AbstractAstroHardwareAdapter):
             self.logger.warning("No mount configured - cannot point telescope (static camera mode)")
             return
 
-        self.logger.info(f"Slewing telescope to RA={ra:.4f}°, Dec={dec:.4f}°")
+        slew_ra, slew_dec = ra, dec
+        if self._pointing_model and self._pointing_model.is_active and self.location_service:
+            location = self.location_service.get_current_location()
+            if location:
+                slew_ra, slew_dec = self._pointing_model.correct(ra, dec, location["latitude"], location["longitude"])
+                correction_arcmin = self.angular_distance(ra, dec, slew_ra, slew_dec) * 60.0
+                self.logger.info(
+                    "Pointing model correction: %.1f' (RA %+.4f° Dec %+.4f°)",
+                    correction_arcmin,
+                    slew_ra - ra,
+                    slew_dec - dec,
+                )
 
-        if not self._mount.slew_to_radec(ra, dec):
-            raise RuntimeError(f"Failed to initiate slew to RA={ra}, Dec={dec}")
+        self.logger.info(f"Slewing telescope to RA={slew_ra:.4f}°, Dec={slew_dec:.4f}°")
+
+        if not self._mount.slew_to_radec(slew_ra, slew_dec):
+            raise RuntimeError(f"Failed to initiate slew to RA={slew_ra}, Dec={slew_dec}")
 
         # Wait for slew to complete
         timeout = 300  # 5 minute timeout
@@ -1277,17 +1330,19 @@ class DirectHardwareAdapter(AbstractAstroHardwareAdapter):
             )
 
     def perform_alignment(self, target_ra: float, target_dec: float) -> bool:
-        """Plate-solve at the current position and sync the mount.
+        """Plate-solve at the current position and conditionally sync the mount.
 
-        Takes a short exposure, plate-solves it, and syncs the mount to the
-        solved coordinates.  Retries with increasing exposure if the solve fails.
+        When the pointing model is trained, skips the sync (model handles
+        corrections) and instead runs a health check comparing the observed
+        residual against the model's prediction.  When the model is not
+        trained, syncs as before.
 
         Args:
             target_ra: Expected RA in degrees (for logging/error reporting).
             target_dec: Expected Dec in degrees (for logging/error reporting).
 
         Returns:
-            True if plate solve + sync succeeded.
+            True if plate solve succeeded.
         """
         if not self._mount:
             self.logger.warning("No mount configured — cannot perform alignment")
@@ -1316,12 +1371,25 @@ class DirectHardwareAdapter(AbstractAstroHardwareAdapter):
             )
             if result is not None:
                 solved_ra, solved_dec = result
-                self._mount.sync_to_radec(solved_ra, solved_dec)
                 error = self.angular_distance(solved_ra, solved_dec, target_ra, target_dec)
-                self.logger.info(
-                    f"Alignment successful: solved RA={solved_ra:.4f}°, Dec={solved_dec:.4f}° "
-                    f"(error from target: {error * 60:.1f} arcmin)"
-                )
+
+                if self._pointing_model and self._pointing_model.is_trained:
+                    residual_arcmin = error * 60.0
+                    self._pointing_model.record_verification_residual(residual_arcmin)
+                    self.logger.info(
+                        "Alignment verified (model active, no sync): solved RA=%.4f° Dec=%.4f° " "(residual: %.1f')",
+                        solved_ra,
+                        solved_dec,
+                        residual_arcmin,
+                    )
+                else:
+                    self._mount.sync_to_radec(solved_ra, solved_dec)
+                    self.logger.info(
+                        "Alignment successful: solved RA=%.4f° Dec=%.4f° " "(error from target: %.1f', synced)",
+                        solved_ra,
+                        solved_dec,
+                        error * 60,
+                    )
                 return True
 
             self.logger.warning(f"Plate solve failed with {exposure_s:.0f}s exposure, retrying...")

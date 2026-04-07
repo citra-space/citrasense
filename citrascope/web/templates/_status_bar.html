@@ -53,7 +53,19 @@
 
             <span class="badge rounded-pill"
                   data-bs-toggle="tooltip" data-bs-theme="dark"
-                  :data-bs-title="$store.citrascope.status?.telescope_connected ? 'Telescope connected' : 'Telescope disconnected'"
+                  style="white-space:pre-line;"
+                  :data-bs-title="(() => {
+                      const s = $store.citrascope.status;
+                      if (!s?.telescope_connected) return 'Telescope disconnected';
+                      let tip = 'Telescope connected';
+                      const pm = s.pointing_model;
+                      if (pm && pm.state !== 'untrained') {
+                          tip += '\nPointing: ' + pm.tilt_deg?.toFixed(1) + '\u00b0 tilt, corrected to ~' + pm.pointing_accuracy_arcmin?.toFixed(1) + '\u2032';
+                      } else if (pm) {
+                          tip += '\nPointing: untrained';
+                      }
+                      return tip;
+                  })()"
                   :class="$store.citrascope.status?.telescope_connected ? 'bg-success' : 'bg-danger'">Telescope</span>
 
             <span class="badge rounded-pill"

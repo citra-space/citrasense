@@ -104,7 +104,6 @@ class CitraScopeSettings(BaseModel):
 
     # Alignment
     alignment_exposure_seconds: float = 2.0
-    align_on_startup: bool = False
     last_alignment_timestamp: int | None = None
 
     # Time synchronization
@@ -143,8 +142,8 @@ class CitraScopeSettings(BaseModel):
     # Observing session (darkness-driven night lifecycle)
     observing_session_enabled: bool = False
     observing_session_sun_altitude_threshold: float = -12.0  # Civil=-6, Nautical=-12, Astronomical=-18
+    observing_session_do_pointing_calibration: bool = False
     observing_session_do_autofocus: bool = True
-    observing_session_do_alignment: bool = False  # future
     observing_session_do_park: bool = True
 
     # Self-tasking (autonomous work requests)
