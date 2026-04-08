@@ -41,7 +41,7 @@ class NinaAdvancedHttpAdapter(AbstractAstroHardwareAdapter):
     # Hardware operation timeouts (seconds) — waiting for physical movement to complete
     HARDWARE_MOVE_TIMEOUT = 60
     MOUNT_PARK_TIMEOUT = 120  # park/unpark can require a full-sky slew
-    AUTOFOCUS_TIMEOUT = 300
+    AUTOFOCUS_TIMEOUT = 60 * 15  # 15 minutes
     SEQUENCE_TIMEOUT_MINUTES = 60
 
     # Polling intervals (seconds)
