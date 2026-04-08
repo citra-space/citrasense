@@ -46,6 +46,9 @@ _MAX_AZ_DELTA_PER_TICK_DEG = 30.0
 # Log the first rejection, hush ticks 2–N, then resume per-tick warnings
 # if the rejection persists (something is genuinely wrong, not just homing).
 _REJECTION_HUSH_LIMIT = 10
+# After this many consecutive rejected ticks, re-baseline _last_az.
+# Staying suspended indefinitely is worse than losing track of one gap.
+_REBASELINE_AFTER_REJECTIONS = 20
 
 
 def _shortest_arc(from_deg: float, to_deg: float) -> float:
@@ -190,10 +193,20 @@ class CableWrapCheck(SafetyCheck):
                     self._consecutive_rejections += 1
                     if self._consecutive_rejections == 1 or self._consecutive_rejections > _REJECTION_HUSH_LIMIT:
                         self._logger.warning(
-                            "Cable wrap: azimuth tracking suspended — " "impossible delta %.1f° (max %.1f°)",
+                            "Cable wrap: azimuth tracking suspended — impossible delta %.1f° (max %.1f°)",
                             delta,
                             _MAX_AZ_DELTA_PER_TICK_DEG,
                         )
+                    if self._consecutive_rejections >= _REBASELINE_AFTER_REJECTIONS:
+                        self._logger.warning(
+                            "Cable wrap: re-baselining after %d rejected ticks — "
+                            "cumulative tracking may be inaccurate (gap: %.1f° → %.1f°)",
+                            self._consecutive_rejections,
+                            self._last_az,
+                            az,
+                        )
+                        self._last_az = az
+                        self._consecutive_rejections = 0
                 else:
                     if self._consecutive_rejections:
                         self._logger.info(

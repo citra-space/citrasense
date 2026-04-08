@@ -649,33 +649,14 @@ class TestSigmaClipping:
 
 
 # ------------------------------------------------------------------
-# Nearest-neighbor grid ordering
+# Grid ordering and cable wrap safety
 # ------------------------------------------------------------------
 
 
-class TestGridNearestNeighbor:
-    def test_first_point_near_start(self):
-        """First grid point should be close to the starting position."""
-        targets = generate_calibration_grid(
-            current_az_deg=90.0,
-            cable_wrap_cumulative_deg=0.0,
-            lat_deg=40.0,
-            lon_deg=-74.0,
-            n_points=15,
-        )
-        assert len(targets) == 15
-
-        first_ra, first_dec = targets[0]
-        first_az, first_alt = radec_to_altaz(first_ra, first_dec, 40.0, -74.0)
-
-        d_az = abs(first_az - 90.0)
-        if d_az > 180.0:
-            d_az = 360.0 - d_az
-        sep = math.sqrt(d_az**2 + (first_alt - 45.0) ** 2)
-        assert sep < 100.0, f"First point (az={first_az:.0f}°, alt={first_alt:.0f}°) too far from start"
-
-    def test_consecutive_points_are_close(self):
-        """Consecutive grid points should not have extreme jumps."""
+class TestGridOrdering:
+    def test_serpentine_reverses_direction(self):
+        """Adjacent altitude bands should sweep azimuth in opposite directions
+        so cable wrap accumulation stays near zero."""
         targets = generate_calibration_grid(
             current_az_deg=180.0,
             cable_wrap_cumulative_deg=0.0,
@@ -683,18 +664,55 @@ class TestGridNearestNeighbor:
             lon_deg=-74.0,
             n_points=15,
         )
-        max_step = 0.0
-        for i in range(len(targets) - 1):
-            az1, alt1 = radec_to_altaz(targets[i][0], targets[i][1], 40.0, -74.0)
-            az2, alt2 = radec_to_altaz(targets[i + 1][0], targets[i + 1][1], 40.0, -74.0)
-            d_az = abs(az1 - az2)
-            if d_az > 180.0:
-                d_az = 360.0 - d_az
-            step = math.sqrt(d_az**2 + (alt1 - alt2) ** 2)
-            max_step = max(max_step, step)
+        assert len(targets) == 15
 
-        # With nearest-neighbor, max step should be well under the full grid extent
-        assert max_step < 120.0, f"Max consecutive step {max_step:.0f}° is too large"
+        azimuths: list[list[float]] = [[], [], []]
+        for ra, dec in targets:
+            az, alt = radec_to_altaz(ra, dec, 40.0, -74.0)
+            if alt < 37.5:
+                azimuths[0].append(az)
+            elif alt < 52.5:
+                azimuths[1].append(az)
+            else:
+                azimuths[2].append(az)
+
+        def _signed_delta(a: float, b: float) -> float:
+            d = b - a
+            if d > 180.0:
+                d -= 360.0
+            elif d < -180.0:
+                d += 360.0
+            return d
+
+        # Band 0 and band 1 should sweep in opposite az directions
+        if len(azimuths[0]) >= 2 and len(azimuths[1]) >= 2:
+            dir0 = _signed_delta(azimuths[0][0], azimuths[0][-1])
+            dir1 = _signed_delta(azimuths[1][0], azimuths[1][-1])
+            assert dir0 * dir1 < 0, f"Bands should reverse: band0 delta={dir0:.0f}°, band1 delta={dir1:.0f}°"
+
+    def test_cable_wrap_stays_bounded(self):
+        """Simulating shortest-path slews through the grid should keep
+        cumulative cable wrap well within the soft limit."""
+        targets = generate_calibration_grid(
+            current_az_deg=180.0,
+            cable_wrap_cumulative_deg=0.0,
+            lat_deg=40.0,
+            lon_deg=-74.0,
+            n_points=15,
+        )
+        cumulative = 0.0
+        prev_az = 180.0
+        for ra, dec in targets:
+            az, _ = radec_to_altaz(ra, dec, 40.0, -74.0)
+            delta = az - prev_az
+            if delta > 180.0:
+                delta -= 360.0
+            elif delta < -180.0:
+                delta += 360.0
+            cumulative += delta
+            prev_az = az
+
+        assert abs(cumulative) < 240.0, f"Cumulative cable wrap {cumulative:.0f}° exceeds soft limit"
 
     def test_no_75_degree_band(self):
         """Grid should not contain points at 75° altitude."""

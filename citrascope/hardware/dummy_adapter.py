@@ -352,11 +352,17 @@ class _DummyMount(AbstractMount):
         return _altaz_to_radec(true_az, true_alt)
 
     def start_move(self, direction: str, rate: int | None = None) -> bool:
+        if self._slewing:
+            return False
         self._snap()
         self._moving_dir = direction
         return True
 
     def stop_move(self, direction: str) -> bool:
+        if self._slewing:
+            return False
+        if self._moving_dir != direction:
+            return True
         self._snap()
         self._moving_dir = None
         self._ra, self._dec = _altaz_to_radec(self._base_az % 360.0, self._alt)

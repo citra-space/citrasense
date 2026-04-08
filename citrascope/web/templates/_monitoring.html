@@ -451,6 +451,24 @@
                                             <div class="col-6" x-text="pm.tilt_deg?.toFixed(2) + '\u00b0 toward ' + (pm.tilt_direction_label || '-')"></div>
                                         </div>
                                         <div class="row mb-1">
+                                            <div class="col-6 text-muted">Model Terms</div>
+                                            <div class="col-6 font-monospace" style="font-size:.75rem;">
+                                                <span x-text="'AN ' + (pm.terms?.AN * 60).toFixed(1) + '\u2032'"></span>
+                                                <span class="text-muted mx-1">|</span>
+                                                <span x-text="'AW ' + (pm.terms?.AW * 60).toFixed(1) + '\u2032'"></span>
+                                                <span class="text-muted mx-1">|</span>
+                                                <span x-text="'IE ' + (pm.terms?.IE * 60).toFixed(1) + '\u2032'"></span>
+                                                <template x-if="pm.n_terms >= 5">
+                                                    <span>
+                                                        <span class="text-muted mx-1">|</span>
+                                                        <span x-text="'CA ' + (pm.terms?.CA * 60).toFixed(1) + '\u2032'"></span>
+                                                        <span class="text-muted mx-1">|</span>
+                                                        <span x-text="'NPAE ' + (pm.terms?.NPAE * 60).toFixed(1) + '\u2032'"></span>
+                                                    </span>
+                                                </template>
+                                            </div>
+                                        </div>
+                                        <div class="row mb-1">
                                             <div class="col-6 text-muted">Model Fit RMS</div>
                                             <div class="col-6" x-text="'~' + pm.pointing_accuracy_arcmin?.toFixed(1) + '\u2032'"></div>
                                         </div>
@@ -506,7 +524,9 @@
 
                             <!-- Mount Controls (direct hardware adapters only) -->
                             <div x-show="$store.citrascope.status?.supports_direct_mount_control"
-                                 x-data="{ gotoRa: '', gotoDec: '' }"
+                                 x-data="{ gotoRa: '', gotoDec: '', jogActive: null,
+                                            jogStart(dir) { this.jogActive = dir; mountMove('start', dir); },
+                                            jogStop(dir)  { if (this.jogActive === dir) { this.jogActive = null; mountMove('stop', dir); } } }"
                                  class="mt-3 pt-3 border-top border-secondary">
 
                                 <div class="d-flex align-items-start gap-4">
@@ -516,53 +536,53 @@
                                             <div></div>
                                             <button class="btn btn-sm btn-outline-light d-flex align-items-center justify-content-center p-0"
                                                     style="width:36px;height:36px;"
-                                                    @mousedown="mountMove('start','north')"
-                                                    @mouseup="mountMove('stop','north')"
-                                                    @mouseleave="mountMove('stop','north')"
-                                                    @touchstart.prevent="mountMove('start','north')"
-                                                    @touchend.prevent="mountMove('stop','north')"
-                                                    @touchcancel.prevent="mountMove('stop','north')"
+                                                    @mousedown="jogStart('north')"
+                                                    @mouseup="jogStop('north')"
+                                                    @mouseleave="jogStop('north')"
+                                                    @touchstart.prevent="jogStart('north')"
+                                                    @touchend.prevent="jogStop('north')"
+                                                    @touchcancel.prevent="jogStop('north')"
                                                     title="Up (Alt+)">
                                                 <i class="bi bi-chevron-up"></i>
                                             </button>
                                             <div></div>
                                             <button class="btn btn-sm btn-outline-light d-flex align-items-center justify-content-center p-0"
                                                     style="width:36px;height:36px;"
-                                                    @mousedown="mountMove('start','west')"
-                                                    @mouseup="mountMove('stop','west')"
-                                                    @mouseleave="mountMove('stop','west')"
-                                                    @touchstart.prevent="mountMove('start','west')"
-                                                    @touchend.prevent="mountMove('stop','west')"
-                                                    @touchcancel.prevent="mountMove('stop','west')"
+                                                    @mousedown="jogStart('west')"
+                                                    @mouseup="jogStop('west')"
+                                                    @mouseleave="jogStop('west')"
+                                                    @touchstart.prevent="jogStart('west')"
+                                                    @touchend.prevent="jogStop('west')"
+                                                    @touchcancel.prevent="jogStop('west')"
                                                     title="Left (Az-)">
                                                 <i class="bi bi-chevron-left"></i>
                                             </button>
                                             <button class="btn btn-sm btn-outline-danger d-flex align-items-center justify-content-center p-0"
                                                     style="width:36px;height:36px;"
-                                                    @click="mountMove('stop','north'); mountMove('stop','south'); mountMove('stop','east'); mountMove('stop','west')"
+                                                    @click="jogActive = null; mountMove('stop','north'); mountMove('stop','south'); mountMove('stop','east'); mountMove('stop','west')"
                                                     title="Stop all motion">
                                                 <i class="bi bi-stop-fill"></i>
                                             </button>
                                             <button class="btn btn-sm btn-outline-light d-flex align-items-center justify-content-center p-0"
                                                     style="width:36px;height:36px;"
-                                                    @mousedown="mountMove('start','east')"
-                                                    @mouseup="mountMove('stop','east')"
-                                                    @mouseleave="mountMove('stop','east')"
-                                                    @touchstart.prevent="mountMove('start','east')"
-                                                    @touchend.prevent="mountMove('stop','east')"
-                                                    @touchcancel.prevent="mountMove('stop','east')"
+                                                    @mousedown="jogStart('east')"
+                                                    @mouseup="jogStop('east')"
+                                                    @mouseleave="jogStop('east')"
+                                                    @touchstart.prevent="jogStart('east')"
+                                                    @touchend.prevent="jogStop('east')"
+                                                    @touchcancel.prevent="jogStop('east')"
                                                     title="Right (Az+)">
                                                 <i class="bi bi-chevron-right"></i>
                                             </button>
                                             <div></div>
                                             <button class="btn btn-sm btn-outline-light d-flex align-items-center justify-content-center p-0"
                                                     style="width:36px;height:36px;"
-                                                    @mousedown="mountMove('start','south')"
-                                                    @mouseup="mountMove('stop','south')"
-                                                    @mouseleave="mountMove('stop','south')"
-                                                    @touchstart.prevent="mountMove('start','south')"
-                                                    @touchend.prevent="mountMove('stop','south')"
-                                                    @touchcancel.prevent="mountMove('stop','south')"
+                                                    @mousedown="jogStart('south')"
+                                                    @mouseup="jogStop('south')"
+                                                    @mouseleave="jogStop('south')"
+                                                    @touchstart.prevent="jogStart('south')"
+                                                    @touchend.prevent="jogStop('south')"
+                                                    @touchcancel.prevent="jogStop('south')"
                                                     title="Down (Alt-)">
                                                 <i class="bi bi-chevron-down"></i>
                                             </button>

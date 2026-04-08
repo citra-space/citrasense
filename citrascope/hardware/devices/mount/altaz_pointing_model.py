@@ -185,17 +185,6 @@ def altaz_to_radec(
 # ---------------------------------------------------------------------------
 
 
-def _altaz_angular_sep(a: tuple[float, float], b: tuple[float, float]) -> float:
-    """Angular separation between two (az, alt) points in degrees."""
-    d_alt = a[1] - b[1]
-    d_az = a[0] - b[0]
-    if d_az > 180.0:
-        d_az -= 360.0
-    elif d_az < -180.0:
-        d_az += 360.0
-    return math.sqrt(d_az**2 + d_alt**2)
-
-
 def generate_calibration_grid(
     current_az_deg: float,
     cable_wrap_cumulative_deg: float,
@@ -212,8 +201,9 @@ def generate_calibration_grid(
     - Stay within mount altitude limits (drops 75° band — tan(75)=3.73
       amplifies azimuth noise by nearly 4x)
     - Respect cable-wrap budget (asymmetric CW/CCW allocation)
-    - Use nearest-neighbor ordering from the current mount position to
-      minimize total slew distance
+    - Use serpentine (boustrophedon) ordering that sweeps azimuth in one
+      direction per altitude band, reversing for the next.  This keeps
+      net cable-wrap accumulation near zero.
 
     Cable wrap budget is **asymmetric**: unwinding the cable gives far
     more range than further winding.  The grid extends more in the
@@ -269,11 +259,17 @@ def generate_calibration_grid(
     n_az = max(3, n_points // len(alt_bands))
     az_step = usable_range / max(n_az - 1, 1)
 
-    az_start = current_az_deg - range_ccw
-    az_positions = [(az_start + j * az_step) % 360.0 for j in range(n_az)]
+    # Start near current_az and step toward the CCW end.  The first
+    # band sweeps CW→CCW, the second reverses CCW→CW, etc.  This
+    # serpentine pattern keeps cumulative cable wrap near zero.
+    cw_end = current_az_deg + range_cw
+    base_positions = [(cw_end - j * az_step) % 360.0 for j in range(n_az)]
 
     grid_altaz: list[tuple[float, float]] = []
-    for alt in alt_bands:
+    for i, alt in enumerate(alt_bands):
+        az_positions = list(base_positions)
+        if i % 2 == 1:
+            az_positions.reverse()
         for az in az_positions:
             grid_altaz.append((az, alt))
 
@@ -281,18 +277,8 @@ def generate_calibration_grid(
         step = len(grid_altaz) / n_points
         grid_altaz = [grid_altaz[int(i * step)] for i in range(n_points)]
 
-    # Nearest-neighbor ordering starting from current mount position
-    current_alt = grid_altaz[0][1] if grid_altaz else 45.0
-    current_pos = (current_az_deg, current_alt)
-    ordered: list[tuple[float, float]] = []
-    remaining = list(grid_altaz)
-    while remaining:
-        nearest_idx = min(range(len(remaining)), key=lambda i: _altaz_angular_sep(current_pos, remaining[i]))
-        current_pos = remaining.pop(nearest_idx)
-        ordered.append(current_pos)
-
     targets: list[tuple[float, float]] = []
-    for az, alt in ordered:
+    for az, alt in grid_altaz:
         ra, dec = altaz_to_radec(az, alt, lat_deg, lon_deg)
         targets.append((ra, dec))
 
