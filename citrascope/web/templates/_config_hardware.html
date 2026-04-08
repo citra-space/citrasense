@@ -340,7 +340,7 @@
                     </div>
                 </div>
                 <button type="button" class="btn btn-sm btn-outline-primary w-100"
-                    :disabled="$store.citrascope.status?.mount_at_home"
+                    :disabled="$store.citrascope.status?.mount_at_home || $store.citrascope.isSystemBusy"
                     @click="window.manualSync(syncRa, syncDec)">
                     <i class="bi bi-crosshair me-1"></i> Manually Sync Mount
                 </button>

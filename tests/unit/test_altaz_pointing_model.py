@@ -662,9 +662,9 @@ class TestGridOrdering:
             cable_wrap_cumulative_deg=0.0,
             lat_deg=40.0,
             lon_deg=-74.0,
-            n_points=15,
+            n_points=30,
         )
-        assert len(targets) == 15
+        assert len(targets) == 30
 
         azimuths: list[list[float]] = [[], [], []]
         for ra, dec in targets:
@@ -676,19 +676,23 @@ class TestGridOrdering:
             else:
                 azimuths[2].append(az)
 
-        def _signed_delta(a: float, b: float) -> float:
-            d = b - a
-            if d > 180.0:
-                d -= 360.0
-            elif d < -180.0:
-                d += 360.0
-            return d
+        def _net_sweep(azs: list[float]) -> float:
+            """Sum of consecutive signed deltas — positive = CW, negative = CCW."""
+            total = 0.0
+            for i in range(len(azs) - 1):
+                d = azs[i + 1] - azs[i]
+                if d > 180.0:
+                    d -= 360.0
+                elif d < -180.0:
+                    d += 360.0
+                total += d
+            return total
 
         # Band 0 and band 1 should sweep in opposite az directions
         if len(azimuths[0]) >= 2 and len(azimuths[1]) >= 2:
-            dir0 = _signed_delta(azimuths[0][0], azimuths[0][-1])
-            dir1 = _signed_delta(azimuths[1][0], azimuths[1][-1])
-            assert dir0 * dir1 < 0, f"Bands should reverse: band0 delta={dir0:.0f}°, band1 delta={dir1:.0f}°"
+            dir0 = _net_sweep(azimuths[0])
+            dir1 = _net_sweep(azimuths[1])
+            assert dir0 * dir1 < 0, f"Bands should reverse: band0 sweep={dir0:.0f}°, band1 sweep={dir1:.0f}°"
 
     def test_cable_wrap_stays_bounded(self):
         """Simulating shortest-path slews through the grid should keep

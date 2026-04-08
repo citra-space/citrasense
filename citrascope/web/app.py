@@ -144,6 +144,9 @@ class SystemStatus(BaseModel):
     config_health: dict[str, Any] | None = None
     status_collection_ms: float | None = None
     status_collection_breakdown: dict[str, float] | None = None
+    # System busy guard — true when automated hardware operations are in progress
+    system_busy: bool = False
+    system_busy_reason: str = ""
     # Observing session / self-tasking
     observing_session_enabled: bool = False
     self_tasking_enabled: bool = False
@@ -274,6 +277,15 @@ class CitraScopeWebApp:
     def set_daemon(self, daemon):
         """Set the daemon instance after initialization."""
         self.daemon = daemon
+
+    def _require_system_idle(self) -> JSONResponse | None:
+        """Return a 409 response if the system is busy with automated operations, else None."""
+        if self.status.system_busy:
+            return JSONResponse(
+                {"error": f"System busy ({self.status.system_busy_reason})", "system_busy": True},
+                status_code=409,
+            )
+        return None
 
     def _setup_routes(self):
         """Setup all API routes."""
@@ -923,6 +935,8 @@ class CitraScopeWebApp:
         @self.app.post("/api/adapter/filter/set")
         async def set_filter_position(body: dict[str, Any]):
             """Command the filter wheel to move to a specific position."""
+            if busy := self._require_system_idle():
+                return busy
             if not self.daemon or not self.daemon.hardware_adapter:
                 return JSONResponse({"error": "Hardware adapter not initialized"}, status_code=503)
 
@@ -956,6 +970,8 @@ class CitraScopeWebApp:
             status poll.  Issuing a move while the focuser is already moving
             stops the previous move first.
             """
+            if busy := self._require_system_idle():
+                return busy
             if not self.daemon or not self.daemon.hardware_adapter:
                 return JSONResponse({"error": "Hardware adapter not initialized"}, status_code=503)
 
@@ -1104,6 +1120,8 @@ class CitraScopeWebApp:
         @self.app.post("/api/mount/pointing-model/reset")
         async def reset_pointing_model():
             """Clear the pointing model and persisted state."""
+            if busy := self._require_system_idle():
+                return busy
             if not self.daemon:
                 return JSONResponse({"error": "Daemon not available"}, status_code=503)
 
@@ -1344,6 +1362,8 @@ class CitraScopeWebApp:
         @self.app.post("/api/adapter/sync")
         async def manual_sync(request: dict[str, Any]):
             """Manually sync the mount to given RA/Dec coordinates."""
+            if busy := self._require_system_idle():
+                return busy
             if not self.daemon:
                 return JSONResponse({"error": "Daemon not available"}, status_code=503)
             if not self.daemon.hardware_adapter:
@@ -1440,6 +1460,8 @@ class CitraScopeWebApp:
 
             In alt-az mode: north=up, south=down, east=right, west=left.
             """
+            if busy := self._require_system_idle():
+                return busy
             if not self.daemon or not self.daemon.hardware_adapter:
                 return JSONResponse({"error": "Hardware adapter not initialized"}, status_code=503)
 
@@ -1480,6 +1502,8 @@ class CitraScopeWebApp:
             Fire-and-forget: initiates the slew and returns immediately.
             The UI tracks slew progress via mount_slewing in the status poll.
             """
+            if busy := self._require_system_idle():
+                return busy
             if not self.daemon or not self.daemon.hardware_adapter:
                 return JSONResponse({"error": "Hardware adapter not initialized"}, status_code=503)
 
@@ -1508,6 +1532,8 @@ class CitraScopeWebApp:
         @self.app.post("/api/mount/tracking")
         async def mount_tracking(body: dict[str, Any]):
             """Start or stop sidereal tracking."""
+            if busy := self._require_system_idle():
+                return busy
             if not self.daemon or not self.daemon.hardware_adapter:
                 return JSONResponse({"error": "Hardware adapter not initialized"}, status_code=503)
 
@@ -1618,6 +1644,8 @@ class CitraScopeWebApp:
         @self.app.post("/api/mount/limits")
         async def set_mount_limits(request: dict[str, Any]):
             """Set the mount's altitude limits."""
+            if busy := self._require_system_idle():
+                return busy
             if not self.daemon or not self.daemon.hardware_adapter:
                 return JSONResponse({"error": "Hardware not available"}, status_code=503)
             adapter = self.daemon.hardware_adapter
@@ -1635,6 +1663,8 @@ class CitraScopeWebApp:
         @self.app.post("/api/camera/capture")
         async def camera_capture(request: dict[str, Any]):
             """Trigger a test camera capture."""
+            if busy := self._require_system_idle():
+                return busy
             if not self.daemon:
                 return JSONResponse({"error": "Daemon not available"}, status_code=503)
 
@@ -1956,6 +1986,20 @@ class CitraScopeWebApp:
                 self.status.alignment_progress = task_manager.alignment_manager.progress
                 self.status.pointing_calibration_running = task_manager.alignment_manager.is_calibrating()
                 self.status.tasks_pending = task_manager.pending_task_count
+
+                busy_reasons: list[str] = []
+                if not task_manager.imaging_queue.is_idle():
+                    busy_reasons.append("imaging")
+                if self.status.alignment_running:
+                    busy_reasons.append("alignment")
+                if self.status.autofocus_running:
+                    busy_reasons.append("autofocus")
+                if self.status.pointing_calibration_running:
+                    busy_reasons.append("calibration")
+                if self.status.mount_homing:
+                    busy_reasons.append("homing")
+                self.status.system_busy = bool(busy_reasons)
+                self.status.system_busy_reason = ", ".join(busy_reasons)
 
             _mark("task_manager")
 

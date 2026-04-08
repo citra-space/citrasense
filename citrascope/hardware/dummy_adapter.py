@@ -121,6 +121,7 @@ class _DummyMount(AbstractMount):
         self._parked = False
         self._homed = False
         self._moving_dir: str | None = None
+        self._motion_rate: float = self._SLEW_RATE_DEG_PER_S
         self._abort_event = threading.Event()
 
     # -- AbstractHardwareDevice ------------------------------------------------
@@ -146,20 +147,18 @@ class _DummyMount(AbstractMount):
     def is_connected(self) -> bool:
         return True
 
-    # -- AbstractMount core ----------------------------------------------------
+    # -- Internal motion simulation --------------------------------------------
 
-    def slew_to_radec(self, ra: float, dec: float) -> bool:
-        """Simulate a slew by sweeping azimuth at a realistic rate.
+    def _simulate_motion(self, target_az: float, target_alt: float, rate: float) -> bool:
+        """Sweep azimuth toward *target_az* at *rate* deg/s, then set altitude.
 
-        Uses shortest-arc to determine direction, then advances azimuth
-        via start_move/stop_move so the cable wrap check sees gradual
-        accumulation during the transit.  The sleep is interruptible via
-        abort_slew() so the safety monitor can cut a slew short.
+        All simulated motion funnels through here so ``get_azimuth()`` always
+        reports gradual interpolation and the cable-wrap observer never sees
+        an instantaneous jump.  The wait is interruptible via ``_abort_event``.
+
+        Returns True if completed, False if aborted.
         """
-        self._homed = False
         self._abort_event.clear()
-        target_az, target_alt = _radec_to_altaz(ra, dec)
-
         self._snap()
         current_az = self._base_az % 360.0
         delta = ((target_az - current_az + 180.0) % 360.0) - 180.0
@@ -167,21 +166,36 @@ class _DummyMount(AbstractMount):
         aborted = False
         if abs(delta) > 1.0:
             self._slewing = True
-            direction = "east" if delta > 0 else "west"
-            self.start_move(direction)
-            wait_s = abs(delta) / self._SLEW_RATE_DEG_PER_S
+            self._motion_rate = rate
+            self._moving_dir = "east" if delta > 0 else "west"
+            wait_s = abs(delta) / rate
             aborted = self._abort_event.wait(wait_s)
-            self.stop_move(direction)
+            self._snap()
+            self._moving_dir = None
             self._slewing = False
 
         if aborted:
-            self.logger.info("Slew aborted mid-transit")
+            self._ra, self._dec = _altaz_to_radec(self._base_az % 360.0, self._alt)
             return False
 
-        self._ra = ra
-        self._dec = dec
         self._base_az = target_az
         self._alt = target_alt
+        self._ra, self._dec = _altaz_to_radec(target_az, target_alt)
+        self._ref_time = time.monotonic()
+        return True
+
+    # -- AbstractMount core ----------------------------------------------------
+
+    def slew_to_radec(self, ra: float, dec: float) -> bool:
+        self._homed = False
+        target_az, target_alt = _radec_to_altaz(ra, dec)
+        if not self._simulate_motion(target_az, target_alt, self._SLEW_RATE_DEG_PER_S):
+            self.logger.info("Slew aborted mid-transit")
+            return False
+        # Recompute az/alt at current LST — the sky rotated during the slew.
+        self._base_az, self._alt = _radec_to_altaz(ra, dec)
+        self._ra = ra
+        self._dec = dec
         self._ref_time = time.monotonic()
         return True
 
@@ -191,9 +205,6 @@ class _DummyMount(AbstractMount):
     def abort_slew(self) -> None:
         self._abort_event.set()
         self._slewing = False
-        self._snap()
-        self._moving_dir = None
-        self._ra, self._dec = _altaz_to_radec(self._base_az % 360.0, self._alt)
 
     def get_radec(self) -> tuple[float, float]:
         if self._moving_dir is not None:
@@ -217,9 +228,10 @@ class _DummyMount(AbstractMount):
         return self._tracking
 
     def park(self) -> bool:
+        park_alt = 90.0 - abs(_OBSERVER_LAT_DEG)
+        if not self._simulate_motion(0.0, park_alt, self._SLEW_RATE_DEG_PER_S):
+            return False
         self._parked = True
-        self._base_az = 0.0
-        self._ref_time = time.monotonic()
         return True
 
     def unpark(self) -> bool:
@@ -249,50 +261,15 @@ class _DummyMount(AbstractMount):
     # -- Homing ----------------------------------------------------------------
 
     def find_home(self) -> bool:
-        """Simulate homing by slewing back toward az=0 via continuous motion.
-
-        Uses start_move/stop_move so the cable wrap check sees the azimuth
-        sweeping through intermediate positions, just like a real mount.
-        Returns True once the mount reaches the home position.
-        """
-        self._snap()
-        current_az = self._base_az % 360.0
-        delta = ((self._HOME_AZ - current_az + 180.0) % 360.0) - 180.0
-
-        if abs(delta) < 1.0:
-            self._finish_home()
-            return True
-
-        self._abort_event.clear()
-        direction = "east" if delta > 0 else "west"
-        self.start_move(direction)
-
-        travel_needed = abs(delta)
-        wait_s = travel_needed / self._MOVE_RATE_DEG_PER_S
-        aborted = self._abort_event.wait(wait_s + 0.05)
-
-        self.stop_move(direction)
-        if aborted:
+        home_alt = 90.0 - abs(_OBSERVER_LAT_DEG)
+        if not self._simulate_motion(self._HOME_AZ, home_alt, self._MOVE_RATE_DEG_PER_S):
             self.logger.info("Homing aborted mid-transit")
             return False
-        self._finish_home()
-        return True
-
-    def _finish_home(self) -> None:
-        old_az = self._base_az
-        self._base_az = self._HOME_AZ
-        self._alt = 90.0 - abs(_OBSERVER_LAT_DEG)
-        self._ra, self._dec = _altaz_to_radec(self._HOME_AZ, self._alt)
-        self._ref_time = time.monotonic()
         self._tracking = False
         self._homed = True
-        self.logger.info(
-            "DummyMount homed: az %.1f° → %.1f° (delta=%.1f°)",
-            old_az,
-            self._HOME_AZ,
-            abs(self._HOME_AZ - old_az),
-        )
+        self.logger.info("DummyMount homed to az=%.1f°", self._HOME_AZ)
         self._fire_sync_listeners(self._HOME_AZ)
+        return True
 
     def is_home(self) -> bool:
         return self._homed
@@ -306,8 +283,7 @@ class _DummyMount(AbstractMount):
         dt = time.monotonic() - self._ref_time
         if self._moving_dir in ("east", "west"):
             sign = 1.0 if self._moving_dir == "east" else -1.0
-            rate = self._SLEW_RATE_DEG_PER_S if self._slewing else self._MOVE_RATE_DEG_PER_S
-            return (self._base_az + sign * rate * dt) % 360.0
+            return (self._base_az + sign * self._motion_rate * dt) % 360.0
         if self._tracking:
             return (self._base_az + self._TRACKING_DRIFT_DEG_PER_S * dt) % 360.0
         return self._base_az % 360.0
@@ -316,8 +292,7 @@ class _DummyMount(AbstractMount):
         dt = time.monotonic() - self._ref_time
         if self._moving_dir in ("north", "south"):
             sign = 1.0 if self._moving_dir == "north" else -1.0
-            rate = self._SLEW_RATE_DEG_PER_S if self._slewing else self._MOVE_RATE_DEG_PER_S
-            return max(-90.0, min(90.0, self._alt + sign * rate * dt))
+            return max(-90.0, min(90.0, self._alt + sign * self._motion_rate * dt))
         return self._alt
 
     # -- Simulated pointing error (where the optics actually land) ----------
@@ -355,6 +330,7 @@ class _DummyMount(AbstractMount):
         if self._slewing:
             return False
         self._snap()
+        self._motion_rate = self._MOVE_RATE_DEG_PER_S
         self._moving_dir = direction
         return True
 
@@ -372,13 +348,12 @@ class _DummyMount(AbstractMount):
         """Commit the current computed az/alt as the new base, resetting the reference clock."""
         dt = time.monotonic() - self._ref_time
         if self._moving_dir is not None:
-            rate = self._SLEW_RATE_DEG_PER_S if self._slewing else self._MOVE_RATE_DEG_PER_S
             if self._moving_dir in ("north", "south"):
                 sign = 1.0 if self._moving_dir == "north" else -1.0
-                self._alt = max(-90.0, min(90.0, self._alt + sign * rate * dt))
+                self._alt = max(-90.0, min(90.0, self._alt + sign * self._motion_rate * dt))
             else:
                 sign = 1.0 if self._moving_dir == "east" else -1.0
-                self._base_az = (self._base_az + sign * rate * dt) % 360.0
+                self._base_az = (self._base_az + sign * self._motion_rate * dt) % 360.0
         elif self._tracking:
             self._base_az = (self._base_az + self._TRACKING_DRIFT_DEG_PER_S * dt) % 360.0
         self._ref_time = time.monotonic()

@@ -235,7 +235,7 @@ def generate_calibration_grid(
             max(ccw_budget, 0.0),
         )
 
-    usable_range = min(total_budget * 0.8, 300.0)
+    usable_range = min(total_budget * 0.8, 360.0)
 
     if total_budget > 0:
         frac_ccw = max(ccw_budget, 0.0) / total_budget
@@ -257,7 +257,10 @@ def generate_calibration_grid(
         alt_bands = [(horizon_limit_deg + min(overhead_limit_deg, 65.0)) / 2.0]
 
     n_az = max(3, n_points // len(alt_bands))
-    az_step = usable_range / max(n_az - 1, 1)
+    if usable_range >= 360.0:
+        az_step = 360.0 / n_az
+    else:
+        az_step = usable_range / max(n_az - 1, 1)
 
     # Start near current_az and step toward the CCW end.  The first
     # band sweeps CW→CCW, the second reverses CCW→CW, etc.  This
@@ -400,14 +403,14 @@ class AltAzPointingModel:
         d_alt = solved_alt - mount_alt
 
         with self._lock:
-            self._points.append((solved_az, solved_alt, d_az, d_alt))
+            self._points.append((mount_az, mount_alt, d_az, d_alt))
             n_points = len(self._points)
 
         _logger.info(
             "Pointing model: added point #%d — az=%.1f° alt=%.1f° dAz=%.2f' dAlt=%.2f'",
             n_points,
-            solved_az,
-            solved_alt,
+            mount_az,
+            mount_alt,
             d_az * 60.0,
             d_alt * 60.0,
         )

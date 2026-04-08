@@ -358,7 +358,7 @@ class DummyApiClient(AbstractCitraApiClient):
                 self.data["tasks"] = active_tasks + completed_tasks
 
                 if new_tasks and self.logger:
-                    self.logger.info(f"DummyApiClient: Auto-generated {len(new_tasks)} new tasks")
+                    self.logger.debug(f"DummyApiClient: Auto-generated {len(new_tasks)} new tasks")
 
             if self.logger:
                 self.logger.debug(f"DummyApiClient: get_telescope_tasks({telescope_id}) -> {len(active_tasks)} tasks")
@@ -470,7 +470,7 @@ class DummyApiClient(AbstractCitraApiClient):
             immediate_tasks.append(self._make_task(sat_id, task_start, task_stop, telescope, ground_station))
             cat = self._satellite_catalog.get(sat_id, {})
             if self.logger:
-                self.logger.info(
+                self.logger.debug(
                     "DummyApiClient: %s visible now at %.1f° — task in %ds",
                     cat.get("name", sat_id),
                     alt_deg,

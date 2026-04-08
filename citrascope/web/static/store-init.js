@@ -245,12 +245,18 @@ function compareVersions(v1, v2) {
                 }
             },
 
+            get isSystemBusy() {
+                return this.status?.system_busy === true;
+            },
+            get systemBusyReason() {
+                return this.status?.system_busy_reason || '';
+            },
             get isImagingTaskActive() {
-                return this.status?.processing_active === true;
+                return this.isSystemBusy;
             },
 
             async capturePreview() {
-                if (this.isImagingTaskActive) {
+                if (this.isSystemBusy) {
                     this.isLooping = false;
                     return;
                 }
@@ -289,7 +295,7 @@ function compareVersions(v1, v2) {
             },
 
             startFocusLoop() {
-                if (this.isLooping || this.isImagingTaskActive) return;
+                if (this.isLooping || this.isSystemBusy) return;
                 this.isLooping = true;
                 this.loopCount = 0;
                 this.capturePreview();
