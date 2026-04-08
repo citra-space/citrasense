@@ -56,11 +56,21 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
-from skyfield.api import load
 
 _logger = logging.getLogger(__name__)
 
-_TS = load.timescale()
+_TS: Any = None
+
+
+def _get_timescale() -> Any:
+    """Return cached Skyfield timescale (lazy-loaded on first call)."""
+    global _TS
+    if _TS is None:
+        from skyfield.api import load
+
+        _TS = load.timescale()
+    return _TS
+
 
 _MIN_POINTS_3TERM = 3
 _MIN_POINTS_5TERM = 8
@@ -81,7 +91,7 @@ _NEARBY_POINT_MIN_SEP = 2.0  # degrees — operational feeding guard
 
 def _skyfield_gast() -> float:
     """Greenwich Apparent Sidereal Time in degrees via Skyfield."""
-    return float(_TS.now().gast) * 15.0  # type: ignore[arg-type]
+    return float(_get_timescale().now().gast) * 15.0  # type: ignore[arg-type]
 
 
 def lst_deg(longitude_deg: float, *, _gast_override: float | None = None) -> float:
@@ -546,7 +556,15 @@ class AltAzPointingModel:
 
         predicted = A @ result
         fit_residuals = b - predicted
-        rms_deg = float(np.sqrt(np.mean(fit_residuals**2)))
+        n_active = len(active)
+        resid_az_final = fit_residuals[:n_active]
+        resid_alt_final = fit_residuals[n_active:]
+        sky_resid_final = np.empty(n_active)
+        for k in range(n_active):
+            alt_deg_k = points_snapshot[active[k]][1]
+            cos_alt_k = math.cos(math.radians(alt_deg_k))
+            sky_resid_final[k] = math.sqrt((resid_az_final[k] * cos_alt_k) ** 2 + resid_alt_final[k] ** 2)
+        rms_deg = float(np.sqrt(np.mean(sky_resid_final**2))) if n_active > 0 else 0.0
 
         with self._lock:
             self._AN = float(result[0])

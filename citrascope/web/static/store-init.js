@@ -252,11 +252,11 @@ function compareVersions(v1, v2) {
                 return this.status?.system_busy_reason || '';
             },
             get isImagingTaskActive() {
-                return this.isSystemBusy;
+                return this.isSystemBusy || this.status?.processing_active === true;
             },
 
             async capturePreview() {
-                if (this.isSystemBusy) {
+                if (this.isImagingTaskActive) {
                     this.isLooping = false;
                     return;
                 }

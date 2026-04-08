@@ -222,13 +222,27 @@ class AlignmentManager:
                             predicted,
                         )
 
-            self._set_progress("Syncing mount...")
             current_ra, current_dec = mount.get_radec()
-            mount.sync_to_radec(solved_ra, solved_dec)
-            self.logger.info(
-                f"Alignment successful: mount synced "
-                f"(offset RA={solved_ra - current_ra:+.4f}°, Dec={solved_dec - current_dec:+.4f}°)"
-            )
+            residual = self.hardware_adapter.angular_distance(solved_ra, solved_dec, current_ra, current_dec)
+
+            if self._pointing_model and self._pointing_model.is_trained:
+                self._pointing_model.record_verification_residual(residual)
+                self._set_progress("Verified (model active)")
+                self.logger.info(
+                    "Alignment verified (model active, no sync): residual %.4f° "
+                    "(RA offset %+.4f°, Dec offset %+.4f°)",
+                    residual,
+                    solved_ra - current_ra,
+                    solved_dec - current_dec,
+                )
+            else:
+                self._set_progress("Syncing mount...")
+                mount.sync_to_radec(solved_ra, solved_dec)
+                self.logger.info(
+                    "Alignment successful: mount synced " "(offset RA=%+.4f°, Dec=%+.4f°)",
+                    solved_ra - current_ra,
+                    solved_dec - current_dec,
+                )
 
         except Exception as e:
             self.logger.error(f"Alignment failed: {e!s}", exc_info=True)

@@ -288,7 +288,7 @@ class AbstractAstroHardwareAdapter(ABC):
         """Point the telescope to the specified RA/Dec coordinates.
 
         Applies pointing model correction automatically when the model is
-        trained and site location is available.
+        active (3+ calibration points) and site location is available.
 
         Returns the full correction snapshot so the caller can thread it
         through to processing artifacts without shared mutable state.
@@ -316,10 +316,18 @@ class AbstractAstroHardwareAdapter(ABC):
             if location:
                 slew_ra, slew_dec = self._pointing_model.correct(ra, dec, location["latitude"], location["longitude"])
                 correction_deg = self.angular_distance(ra, dec, slew_ra, slew_dec)
+
+                d_ra = slew_ra - ra
+                if d_ra > 180.0:
+                    d_ra -= 360.0
+                elif d_ra < -180.0:
+                    d_ra += 360.0
+                d_dec = slew_dec - dec
+
                 correction.update(
                     {
-                        "correction_ra_deg": slew_ra - ra,
-                        "correction_dec_deg": slew_dec - dec,
+                        "correction_ra_deg": d_ra,
+                        "correction_dec_deg": d_dec,
                         "correction_total_deg": correction_deg,
                         "command_ra_deg": slew_ra,
                         "command_dec_deg": slew_dec,
@@ -330,8 +338,8 @@ class AbstractAstroHardwareAdapter(ABC):
                 self.logger.info(
                     "Pointing model correction: %.4f° (RA %+.4f° Dec %+.4f°)",
                     correction_deg,
-                    slew_ra - ra,
-                    slew_dec - dec,
+                    d_ra,
+                    d_dec,
                 )
 
         self._do_point_telescope(slew_ra, slew_dec)
