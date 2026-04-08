@@ -683,7 +683,7 @@ class AltAzPointingModel:
             if len(self._recent_residuals) < _HEALTH_WINDOW:
                 return
 
-            threshold = self._rms_deg * _HEALTH_DEGRADED_FACTOR if self._rms_deg > 0 else 5.0 / 60.0
+            threshold = max(self._rms_deg * _HEALTH_DEGRADED_FACTOR, 5.0 / 60.0)
             above = sum(1 for r in self._recent_residuals if r > threshold)
             if above >= _HEALTH_WINDOW:
                 if self._health != "degraded":

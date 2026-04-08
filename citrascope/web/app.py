@@ -127,6 +127,7 @@ class SystemStatus(BaseModel):
     pointing_model: dict[str, Any] | None = None
     pointing_calibration_running: bool = False
     pointing_calibration_progress: dict[str, int] | None = None
+    fov_short_deg: float | None = None
     camera_temperature: float | None = None
     current_filter_position: int | None = None
     current_filter_name: str | None = None
@@ -2201,6 +2202,7 @@ class CitraScopeWebApp:
             # Pointing model status
             adapter = self.daemon.hardware_adapter
             self.status.pointing_model = adapter.get_pointing_model_status() if adapter else None
+            self.status.fov_short_deg = adapter.observed_fov_short_deg if adapter else None
 
             # Config health: compare server telescope record vs hardware + plate solve
             if self.daemon.telescope_record and adapter:

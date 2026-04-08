@@ -431,7 +431,18 @@
                             <!-- Pointing Model -->
                             <div x-show="$store.citrascope.status?.supports_direct_mount_control && $store.citrascope.status?.pointing_model"
                                  class="mt-3 pt-3 border-top border-secondary"
-                                 x-data="{ get pm() { return $store.citrascope.status?.pointing_model || {}; } }">
+                                 x-data="{
+                                     get pm() { return $store.citrascope.status?.pointing_model || {}; },
+                                     accColor(deg) {
+                                         if (deg == null) return '';
+                                         const fov = $store.citrascope.status?.fov_short_deg;
+                                         const green = fov ? fov * 0.10 : 0.05;
+                                         const yellow = fov ? fov * 0.33 : 0.15;
+                                         if (deg < green) return 'text-success';
+                                         if (deg < yellow) return 'text-warning';
+                                         return 'text-danger';
+                                     }
+                                 }">
 
                                 <div class="d-flex align-items-center justify-content-between mb-2">
                                     <span class="fw-semibold small">Pointing Model</span>
@@ -470,29 +481,42 @@
                                         </div>
                                         <div class="row mb-1">
                                             <div class="col-6 text-muted">Model Fit RMS</div>
-                                            <div class="col-6" x-text="'~' + pm.pointing_accuracy_deg?.toFixed(4) + '°'"></div>
+                                            <div class="col-6" :class="accColor(pm.pointing_accuracy_deg)" x-text="'~' + pm.pointing_accuracy_deg?.toFixed(4) + '°'"></div>
                                         </div>
                                         <template x-if="pm.live_accuracy?.count > 0">
                                             <div class="row mb-1">
                                                 <div class="col-6 text-muted">Live Accuracy</div>
                                                 <div class="col-6 d-flex align-items-center gap-2">
                                                     <span>
-                                                        <span x-text="pm.live_accuracy.median_deg?.toFixed(4) + '°'"></span>
+                                                        <span :class="accColor(pm.live_accuracy.median_deg)" x-text="pm.live_accuracy.median_deg?.toFixed(4) + '°'"></span>
                                                         <span class="text-muted" x-text="'median (' + pm.live_accuracy.count + ' solves)'"></span>
                                                     </span>
                                                     <template x-if="pm.live_accuracy?.history?.length >= 2">
                                                         <svg width="120" height="24" x-data="{
-                                                            get pts() {
+                                                            get vals() {
                                                                 const h = pm.live_accuracy.history;
-                                                                if (!h || h.length < 2) return '';
-                                                                const vals = h.map(e => e.v);
-                                                                const mx = Math.max(...vals) || 1;
-                                                                return vals.map((v, i) =>
-                                                                    (i * 120 / (vals.length - 1)).toFixed(1) + ',' +
-                                                                    (22 - v / mx * 20).toFixed(1)
+                                                                return (h && h.length >= 2) ? h.map(e => e.v) : [];
+                                                            },
+                                                            get mx() { return Math.max(...this.vals) || 1; },
+                                                            get pts() {
+                                                                return this.vals.map((v, i) =>
+                                                                    (i * 120 / (this.vals.length - 1)).toFixed(1) + ',' +
+                                                                    (22 - v / this.mx * 20).toFixed(1)
                                                                 ).join(' ');
+                                                            },
+                                                            bandY(deg) { return Math.max(2, 22 - deg / this.mx * 20); },
+                                                            get greenLim() {
+                                                                const fov = $store.citrascope.status?.fov_short_deg;
+                                                                return fov ? fov * 0.10 : 0.05;
+                                                            },
+                                                            get yellowLim() {
+                                                                const fov = $store.citrascope.status?.fov_short_deg;
+                                                                return fov ? fov * 0.33 : 0.15;
                                                             }
                                                         }">
+                                                            <rect x="0" :y="bandY(greenLim)" width="120" :height="22 - bandY(greenLim)" fill="#198754" opacity="0.15"/>
+                                                            <rect x="0" :y="bandY(yellowLim)" width="120" :height="bandY(greenLim) - bandY(yellowLim)" fill="#ffc107" opacity="0.15"/>
+                                                            <rect x="0" y="2" width="120" :height="bandY(yellowLim) - 2" fill="#dc3545" opacity="0.15"/>
                                                             <polyline :points="pts" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/>
                                                         </svg>
                                                     </template>
