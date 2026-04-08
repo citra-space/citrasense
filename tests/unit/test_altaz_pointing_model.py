@@ -201,7 +201,7 @@ class TestCorrectionAccuracy:
 
         Using a model with known AN and all other terms zero, compute
         expected error at az=90, alt=60 and verify the cos(alt) factor
-        appears in the result.
+        appears in the result.  predict_error returns degrees.
         """
         lat, lon = 40.0, -74.0
         AN = 0.5
@@ -217,19 +217,19 @@ class TestCorrectionAccuracy:
         #   Without cos(alt): sqrt(dAz^2 + dAlt^2) = dAz
         alt_rad = math.radians(60.0)
         expected_d_az = AN * math.sin(math.radians(90.0)) * math.tan(alt_rad)
-        expected_with_cos = abs(expected_d_az * math.cos(alt_rad)) * 60.0
-        expected_without_cos = abs(expected_d_az) * 60.0
+        expected_with_cos = abs(expected_d_az * math.cos(alt_rad))
+        expected_without_cos = abs(expected_d_az)
 
         ra_test, dec_test = altaz_to_radec(90.0, 60.0, lat, lon)
         result = model.predict_error(ra_test, dec_test, lat, lon)
 
         # Should match the cos(alt)-projected value, not the raw one
         assert (
-            abs(result - expected_with_cos) < 1.0
-        ), f"predict_error={result:.2f}' should be close to cos(alt)-projected {expected_with_cos:.2f}'"
+            abs(result - expected_with_cos) < 1.0 / 60.0
+        ), f"predict_error={result:.4f}° should be close to cos(alt)-projected {expected_with_cos:.4f}°"
         assert (
-            abs(result - expected_without_cos) > 1.0
-        ), f"predict_error={result:.2f}' should NOT match raw {expected_without_cos:.2f}'"
+            abs(result - expected_without_cos) > 1.0 / 60.0
+        ), f"predict_error={result:.4f}° should NOT match raw {expected_without_cos:.4f}°"
 
 
 # ------------------------------------------------------------------
@@ -354,7 +354,7 @@ class TestSerialization:
 
         assert restored.point_count == model.point_count
         assert restored.is_trained == model.is_trained
-        assert restored.rms_arcmin == model.rms_arcmin
+        assert restored.rms_deg == model.rms_deg
         original_status = model.status()
         restored_status = restored.status()
         for term in ("AN", "AW", "IE", "CA", "NPAE"):
@@ -376,7 +376,7 @@ class TestSerialization:
             model2 = AltAzPointingModel(state_file=state_file)
             assert model2.is_trained
             assert model2.point_count == model.point_count
-            assert abs(model2.rms_arcmin - model.rms_arcmin) < 0.01
+            assert abs(model2.rms_deg - model.rms_deg) < 0.01
 
 
 # ------------------------------------------------------------------
@@ -397,7 +397,7 @@ class TestReset:
         assert not model.is_active
         assert not model.is_trained
         assert model.point_count == 0
-        assert model.rms_arcmin == 0.0
+        assert model.rms_deg == 0.0
         # Correction should be passthrough
         ra, dec = 45.0, 30.0
         assert model.correct(ra, dec, 40.0, -74.0) == (ra, dec)
@@ -430,7 +430,7 @@ class TestHealthMonitoring:
 
         assert model.health == "good"
         # Record residuals far exceeding the model's RMS
-        huge_residual = model.rms_arcmin * 10.0
+        huge_residual = model.rms_deg * 10.0
         for _ in range(5):
             model.record_verification_residual(huge_residual)
 
@@ -443,7 +443,7 @@ class TestHealthMonitoring:
             model.add_point(mount_ra, mount_dec, solved_ra, solved_dec, lat, lon)
 
         for _ in range(5):
-            model.record_verification_residual(model.rms_arcmin * 0.5)
+            model.record_verification_residual(model.rms_deg * 0.5)
 
         assert model.health == "good"
 
@@ -470,7 +470,7 @@ class TestStatus:
         assert status["state"] == "trained"
         assert status["tilt_deg"] > 0
         assert status["tilt_direction_label"] != ""
-        assert status["pointing_accuracy_arcmin"] >= 0
+        assert status["pointing_accuracy_deg"] >= 0
 
     def test_tilt_direction_labels_via_status(self):
         """Verify compass labels through the public status() interface."""
@@ -524,7 +524,7 @@ class TestSigmaClipping:
             model.add_point(mount_ra, mount_dec, solved_ra, solved_dec, lat_, lon_)
 
         assert model.point_count == 15
-        assert model.rms_arcmin < 1.0
+        assert model.rms_deg < 1.0 / 60.0
 
     def test_few_points_skips_clipping(self):
         """With barely enough points for a 3-term fit (< min_for_clip),
@@ -624,8 +624,8 @@ class TestSigmaClipping:
         assert abs(status["terms"]["AW"] - AW) < 0.1, f"AW={status['terms']['AW']}"
         assert abs(status["terms"]["IE"] - IE) < 0.1, f"IE={status['terms']['IE']}"
         # RMS should reflect the noise floor, not be absurdly small
-        assert status["pointing_accuracy_arcmin"] > 0.1
-        assert status["pointing_accuracy_arcmin"] < 3.0
+        assert status["pointing_accuracy_deg"] > 0.1 / 60.0
+        assert status["pointing_accuracy_deg"] < 3.0 / 60.0
 
     def test_noisy_data_with_outliers(self):
         """Noise + outliers together: the sigma-clipping should reject the

@@ -126,6 +126,7 @@ class SystemStatus(BaseModel):
     last_alignment_timestamp: int | None = None
     pointing_model: dict[str, Any] | None = None
     pointing_calibration_running: bool = False
+    pointing_calibration_progress: dict[str, int] | None = None
     camera_temperature: float | None = None
     current_filter_position: int | None = None
     current_filter_name: str | None = None
@@ -1985,6 +1986,7 @@ class CitraScopeWebApp:
                 self.status.alignment_running = task_manager.alignment_manager.is_running()
                 self.status.alignment_progress = task_manager.alignment_manager.progress
                 self.status.pointing_calibration_running = task_manager.alignment_manager.is_calibrating()
+                self.status.pointing_calibration_progress = task_manager.alignment_manager.calibration_progress
                 self.status.tasks_pending = task_manager.pending_task_count
 
                 busy_reasons: list[str] = []

@@ -62,6 +62,8 @@ class AlignmentManager:
         self._calibration_requested = False
         self._calibrating = False
         self._calibration_cancel = threading.Event()
+        self._calibration_step: int = 0
+        self._calibration_total: int = 0
         self._pointing_model: AltAzPointingModel | None = None
 
     # ------------------------------------------------------------------
@@ -212,12 +214,11 @@ class AlignmentManager:
                     observed_error = self.hardware_adapter.angular_distance(
                         current_ra, current_dec, solved_ra, solved_dec
                     )
-                    observed_arcmin = observed_error * 60.0
-                    if predicted > 0 and observed_arcmin > predicted * 3.0:
+                    if predicted > 0 and observed_error > predicted * 3.0:
                         self.logger.warning(
-                            "Align Now: observed error %.1f' far exceeds model prediction %.1f' "
+                            "Align Now: observed error %.4f° far exceeds model prediction %.4f° "
                             "— pointing model may be stale, consider recalibrating",
-                            observed_arcmin,
+                            observed_error,
                             predicted,
                         )
 
@@ -265,6 +266,14 @@ class AlignmentManager:
         with self._lock:
             return self._calibrating
 
+    @property
+    def calibration_progress(self) -> dict[str, int] | None:
+        """Return structured calibration progress, or None if not calibrating."""
+        with self._lock:
+            if not self._calibrating:
+                return None
+            return {"step": self._calibration_step, "total": self._calibration_total}
+
     def _execute_calibration(self) -> None:
         """Execute the full pointing calibration: bootstrap sync → grid walk → fit."""
         with self._lock:
@@ -278,6 +287,8 @@ class AlignmentManager:
         finally:
             with self._lock:
                 self._calibrating = False
+                self._calibration_step = 0
+                self._calibration_total = 0
                 self._progress = ""
             self._calibration_cancel.clear()
 
@@ -378,11 +389,16 @@ class AlignmentManager:
 
         # ---- Grid walk ----
         successful = 0
+        with self._lock:
+            self._calibration_total = len(targets)
+            self._calibration_step = 0
         for i, (target_ra, target_dec) in enumerate(targets):
             if self._calibration_cancel.is_set():
                 self.logger.info("Calibration cancelled at point %d/%d", i + 1, len(targets))
                 break
 
+            with self._lock:
+                self._calibration_step = i + 1
             self._set_progress(f"Calibrating {i + 1}/{len(targets)}...")
             self.logger.info(
                 "Calibration point %d/%d: slewing to RA=%.4f° Dec=%.4f°",
@@ -436,20 +452,20 @@ class AlignmentManager:
             self._pointing_model.fit()
             status = self._pointing_model.status()
             self.logger.info(
-                "Pointing calibration complete: %d/%d points, %s model, tilt=%.3f° toward %s, accuracy=%.1f'",
+                "Pointing calibration complete: %d/%d points, %s model, tilt=%.3f° toward %s, accuracy=%.4f°",
                 successful,
                 len(targets),
                 status["state"],
                 status["tilt_deg"],
                 status["tilt_direction_label"],
-                status["pointing_accuracy_arcmin"],
+                status["pointing_accuracy_deg"],
             )
 
             # ---- Verification: slew with correction, plate solve, compare ----
             if not self._calibration_cancel.is_set():
                 self._unwind_if_needed("verification")
                 self._verify_calibration(
-                    mount, telescope_record, site_lat, site_lon, model_rms=status["pointing_accuracy_arcmin"]
+                    mount, telescope_record, site_lat, site_lon, model_rms=status["pointing_accuracy_deg"]
                 )
         else:
             self.logger.warning(
@@ -463,7 +479,7 @@ class AlignmentManager:
 
     _VERIFY_COUNT = 2
     _VERIFY_FAIL_FACTOR = 2.0
-    _VERIFY_FLOOR_ARCMIN = 5.0
+    _VERIFY_FLOOR_DEG = 5.0 / 60.0
 
     def _verify_calibration(
         self,
@@ -516,15 +532,14 @@ class AlignmentManager:
 
                 solved_ra, solved_dec = solve_result
                 residual_deg = self.hardware_adapter.angular_distance(target_ra, target_dec, solved_ra, solved_dec)
-                residual_arcmin = residual_deg * 60.0
-                residuals.append(residual_arcmin)
+                residuals.append(residual_deg)
 
-                self._pointing_model.record_verification_residual(residual_arcmin)
+                self._pointing_model.record_verification_residual(residual_deg)
                 self.logger.info(
-                    "Verification target %d/%d: residual %.1f' (target RA=%.4f° Dec=%.4f°)",
+                    "Verification target %d/%d: residual %.4f° (target RA=%.4f° Dec=%.4f°)",
                     i + 1,
                     len(verify_targets),
-                    residual_arcmin,
+                    residual_deg,
                     target_ra,
                     target_dec,
                 )
@@ -538,12 +553,12 @@ class AlignmentManager:
             return
 
         median_residual = statistics.median(residuals)
-        threshold = max(model_rms * self._VERIFY_FAIL_FACTOR, self._VERIFY_FLOOR_ARCMIN)
+        threshold = max(model_rms * self._VERIFY_FAIL_FACTOR, self._VERIFY_FLOOR_DEG)
 
         if median_residual > threshold:
             self.logger.error(
-                "CALIBRATION VERIFICATION FAILED: median residual %.1f' is > %.1f' threshold "
-                "(%.0f× model RMS of %.1f'). Correction is making pointing WORSE — resetting model.",
+                "CALIBRATION VERIFICATION FAILED: median residual %.4f° is > %.4f° threshold "
+                "(%.0f× model RMS of %.4f°). Correction is making pointing WORSE — resetting model.",
                 median_residual,
                 threshold,
                 median_residual / model_rms if model_rms > 0 else 0,
@@ -552,7 +567,7 @@ class AlignmentManager:
             self._pointing_model.reset()
         else:
             self.logger.info(
-                "Calibration verification passed: median residual %.1f' (threshold %.1f', model RMS %.1f')",
+                "Calibration verification passed: median residual %.4f° (threshold %.4f°, model RMS %.4f°)",
                 median_residual,
                 threshold,
                 model_rms,

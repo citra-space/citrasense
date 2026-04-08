@@ -102,9 +102,9 @@ function compareVersions(v1, v2) {
                 if (pm && pm.state !== 'untrained') {
                     const live = pm.live_accuracy;
                     if (live?.count > 0) {
-                        tip += '\nPointing: ' + live.median_arcmin?.toFixed(1) + '\u2032 live (' + live.count + ' solves)';
+                        tip += '\nPointing: ' + live.median_deg?.toFixed(4) + '° live (' + live.count + ' solves)';
                     } else {
-                        tip += '\nPointing: ~' + pm.pointing_accuracy_arcmin?.toFixed(1) + '\u2032 (model fit)';
+                        tip += '\nPointing: ~' + pm.pointing_accuracy_deg?.toFixed(4) + '° (model fit)';
                     }
                 } else if (pm) {
                     tip += '\nPointing: untrained';

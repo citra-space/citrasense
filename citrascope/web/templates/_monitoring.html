@@ -453,31 +453,49 @@
                                         <div class="row mb-1">
                                             <div class="col-6 text-muted">Model Terms</div>
                                             <div class="col-6 font-monospace" style="font-size:.75rem;">
-                                                <span x-text="'AN ' + (pm.terms?.AN * 60).toFixed(1) + '\u2032'"></span>
+                                                <span x-text="'AN ' + pm.terms?.AN?.toFixed(4) + '°'"></span>
                                                 <span class="text-muted mx-1">|</span>
-                                                <span x-text="'AW ' + (pm.terms?.AW * 60).toFixed(1) + '\u2032'"></span>
+                                                <span x-text="'AW ' + pm.terms?.AW?.toFixed(4) + '°'"></span>
                                                 <span class="text-muted mx-1">|</span>
-                                                <span x-text="'IE ' + (pm.terms?.IE * 60).toFixed(1) + '\u2032'"></span>
+                                                <span x-text="'IE ' + pm.terms?.IE?.toFixed(4) + '°'"></span>
                                                 <template x-if="pm.n_terms >= 5">
                                                     <span>
                                                         <span class="text-muted mx-1">|</span>
-                                                        <span x-text="'CA ' + (pm.terms?.CA * 60).toFixed(1) + '\u2032'"></span>
+                                                        <span x-text="'CA ' + pm.terms?.CA?.toFixed(4) + '°'"></span>
                                                         <span class="text-muted mx-1">|</span>
-                                                        <span x-text="'NPAE ' + (pm.terms?.NPAE * 60).toFixed(1) + '\u2032'"></span>
+                                                        <span x-text="'NPAE ' + pm.terms?.NPAE?.toFixed(4) + '°'"></span>
                                                     </span>
                                                 </template>
                                             </div>
                                         </div>
                                         <div class="row mb-1">
                                             <div class="col-6 text-muted">Model Fit RMS</div>
-                                            <div class="col-6" x-text="'~' + pm.pointing_accuracy_arcmin?.toFixed(1) + '\u2032'"></div>
+                                            <div class="col-6" x-text="'~' + pm.pointing_accuracy_deg?.toFixed(4) + '°'"></div>
                                         </div>
                                         <template x-if="pm.live_accuracy?.count > 0">
                                             <div class="row mb-1">
                                                 <div class="col-6 text-muted">Live Accuracy</div>
-                                                <div class="col-6">
-                                                    <span x-text="pm.live_accuracy.median_arcmin?.toFixed(1) + '\u2032'"></span>
-                                                    <span class="text-muted" x-text="'median (' + pm.live_accuracy.count + ' solves)'"></span>
+                                                <div class="col-6 d-flex align-items-center gap-2">
+                                                    <span>
+                                                        <span x-text="pm.live_accuracy.median_deg?.toFixed(4) + '°'"></span>
+                                                        <span class="text-muted" x-text="'median (' + pm.live_accuracy.count + ' solves)'"></span>
+                                                    </span>
+                                                    <template x-if="pm.live_accuracy?.history?.length >= 2">
+                                                        <svg width="120" height="24" x-data="{
+                                                            get pts() {
+                                                                const h = pm.live_accuracy.history;
+                                                                if (!h || h.length < 2) return '';
+                                                                const vals = h.map(e => e.v);
+                                                                const mx = Math.max(...vals) || 1;
+                                                                return vals.map((v, i) =>
+                                                                    (i * 120 / (vals.length - 1)).toFixed(1) + ',' +
+                                                                    (22 - v / mx * 20).toFixed(1)
+                                                                ).join(' ');
+                                                            }
+                                                        }">
+                                                            <polyline :points="pts" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/>
+                                                        </svg>
+                                                    </template>
                                                 </div>
                                             </div>
                                         </template>
@@ -500,27 +518,38 @@
                                     </div>
                                 </template>
 
-                                <div class="d-flex gap-2 mt-2">
-                                    <template x-if="!$store.citrascope.status?.pointing_calibration_running">
+                                <template x-if="!$store.citrascope.status?.pointing_calibration_running">
+                                    <div class="d-flex gap-2 mt-2">
                                         <button class="btn btn-sm btn-outline-light"
                                                 @click="calibratePointingModel()">
                                             Calibrate
                                         </button>
-                                    </template>
-                                    <template x-if="$store.citrascope.status?.pointing_calibration_running">
-                                        <button class="btn btn-sm btn-outline-warning"
+                                        <button class="btn btn-sm btn-outline-danger"
+                                                x-show="pm.state !== 'untrained'"
+                                                :disabled="$store.citrascope.isSystemBusy"
+                                                @click="if (confirm('Reset the pointing model? This clears all calibration data.')) resetPointingModel()">
+                                            Reset
+                                        </button>
+                                    </div>
+                                </template>
+                                <template x-if="$store.citrascope.status?.pointing_calibration_running">
+                                    <div class="d-flex align-items-center gap-2 mt-2"
+                                         x-data="{ get prog() { return $store.citrascope.status?.pointing_calibration_progress } }">
+                                        <div class="progress flex-grow-1" style="height: 18px;">
+                                            <div class="progress-bar progress-bar-striped progress-bar-animated"
+                                                 role="progressbar"
+                                                 :style="'width:' + (prog?.total > 0 ? Math.round((prog.step / prog.total) * 100) : 100) + '%'"
+                                                 :aria-valuenow="prog?.step || 0"
+                                                 :aria-valuemax="prog?.total || 1"
+                                                 x-text="prog?.total > 0 ? (prog.step + ' / ' + prog.total) : ($store.citrascope.status?.alignment_progress || 'Working...')">
+                                            </div>
+                                        </div>
+                                        <button class="btn btn-sm btn-outline-warning flex-shrink-0"
                                                 @click="cancelPointingCalibration()">
-                                            <span class="spinner-border spinner-border-sm me-1" style="width:.6rem;height:.6rem;"></span>
                                             Cancel
                                         </button>
-                                    </template>
-                                    <button class="btn btn-sm btn-outline-danger"
-                                            x-show="pm.state !== 'untrained' && !$store.citrascope.status?.pointing_calibration_running"
-                                            :disabled="$store.citrascope.isSystemBusy"
-                                            @click="if (confirm('Reset the pointing model? This clears all calibration data.')) resetPointingModel()">
-                                        Reset
-                                    </button>
-                                </div>
+                                    </div>
+                                </template>
                             </div>
 
                             <!-- Mount Controls (direct hardware adapters only) -->

@@ -70,7 +70,7 @@ _SIGMA_CLIP_MAX_ITER = 3
 _SIGMA_CLIP_FLOOR_DEG = 1.0 / 60.0  # never clip points with < 1 arcmin residual
 _HEALTH_WINDOW = 5
 _HEALTH_DEGRADED_FACTOR = 3.0
-_LIVE_ACCURACY_WINDOW = 20
+_LIVE_ACCURACY_WINDOW = 100
 _NEARBY_POINT_MIN_SEP = 2.0  # degrees — operational feeding guard
 
 
@@ -320,7 +320,7 @@ class AltAzPointingModel:
         self._CA: float = 0.0
         self._NPAE: float = 0.0
 
-        self._rms_arcmin: float = 0.0
+        self._rms_deg: float = 0.0
         self._fit_timestamp: float | None = None
         self._n_terms: int = 0
 
@@ -329,7 +329,7 @@ class AltAzPointingModel:
         self._health: str = "unknown"  # "good", "degraded", "unknown"
 
         # Live accuracy tracking: wider window for the UI
-        self._live_residuals: deque[tuple[float, float]] = deque(maxlen=_LIVE_ACCURACY_WINDOW)  # (timestamp, arcmin)
+        self._live_residuals: deque[tuple[float, float]] = deque(maxlen=_LIVE_ACCURACY_WINDOW)  # (timestamp, deg)
 
         self._load_state()
 
@@ -352,8 +352,8 @@ class AltAzPointingModel:
         return len(self._points)
 
     @property
-    def rms_arcmin(self) -> float:
-        return self._rms_arcmin
+    def rms_deg(self) -> float:
+        return self._rms_deg
 
     @property
     def health(self) -> str:
@@ -407,12 +407,12 @@ class AltAzPointingModel:
             n_points = len(self._points)
 
         _logger.info(
-            "Pointing model: added point #%d — az=%.1f° alt=%.1f° dAz=%.2f' dAlt=%.2f'",
+            "Pointing model: added point #%d — az=%.1f° alt=%.1f° dAz=%.4f° dAlt=%.4f°",
             n_points,
             mount_az,
             mount_alt,
-            d_az * 60.0,
-            d_alt * 60.0,
+            d_az,
+            d_alt,
         )
 
         if n_points >= _MIN_POINTS_3TERM:
@@ -526,12 +526,12 @@ class AltAzPointingModel:
                 else:
                     az_deg, alt_deg = points_snapshot[idx][0], points_snapshot[idx][1]
                     _logger.info(
-                        "Sigma clip: rejected point #%d (az=%.0f° alt=%.0f°, residual=%.1f' > %.1f' threshold)",
+                        "Sigma clip: rejected point #%d (az=%.0f° alt=%.0f°, residual=%.4f° > %.4f° threshold)",
                         idx + 1,
                         az_deg,
                         alt_deg,
-                        sky_resid[k] * 60.0,
-                        threshold * 60.0,
+                        sky_resid[k],
+                        threshold,
                     )
 
             clipped_this_round = len(active) - len(new_active)
@@ -557,11 +557,10 @@ class AltAzPointingModel:
                 self._NPAE = 0.0
                 self._n_terms = 3
 
-            self._rms_arcmin = rms_deg * 60.0
+            self._rms_deg = rms_deg
             self._fit_timestamp = time.time()
             self._health = "good"
             self._recent_residuals.clear()
-            self._live_residuals.clear()
 
             tilt_mag = math.sqrt(self._AN**2 + self._AW**2)
             tilt_dir = math.degrees(math.atan2(self._AW, self._AN)) % 360.0
@@ -569,7 +568,7 @@ class AltAzPointingModel:
         _logger.info(
             "Pointing model fit (%d-term, %d used, %d clipped): "
             "AN=%.4f° AW=%.4f° IE=%.4f° CA=%.4f° NPAE=%.4f° "
-            "| tilt=%.3f° toward %.0f° | RMS=%.1f'",
+            "| tilt=%.3f° toward %.0f° | RMS=%.4f°",
             self._n_terms,
             len(active),
             total_clipped,
@@ -580,7 +579,7 @@ class AltAzPointingModel:
             self._NPAE,
             tilt_mag,
             tilt_dir,
-            self._rms_arcmin,
+            self._rms_deg,
         )
 
         self._save_state()
@@ -634,9 +633,9 @@ class AltAzPointingModel:
         site_lat: float,
         site_lon: float,
     ) -> float:
-        """Predicted pointing error magnitude in arcmin at the given position.
+        """Predicted pointing error magnitude in degrees at the given position.
 
-        Returns ``sqrt((dAz * cos(alt))^2 + dAlt^2) * 60`` so the azimuth
+        Returns ``sqrt((dAz * cos(alt))^2 + dAlt^2)`` so the azimuth
         component is projected onto the sky.  Used by callers to compare
         against observed residuals for health checks.
         Returns 0.0 if the model is not active.
@@ -647,7 +646,7 @@ class AltAzPointingModel:
         with self._lock:
             d_az, d_alt = self._predict_error_altaz(az, alt)
         cos_alt = math.cos(math.radians(alt))
-        return math.sqrt((d_az * cos_alt) ** 2 + d_alt**2) * 60.0
+        return math.sqrt((d_az * cos_alt) ** 2 + d_alt**2)
 
     def _predict_error_altaz(self, az_deg: float, alt_deg: float) -> tuple[float, float]:
         """Predicted (dAz, dAlt) error in degrees at the given alt/az."""
@@ -668,28 +667,28 @@ class AltAzPointingModel:
     # Health monitoring
     # ------------------------------------------------------------------
 
-    def record_verification_residual(self, residual_arcmin: float) -> None:
+    def record_verification_residual(self, residual_deg: float) -> None:
         """Record a post-slew plate-solve residual for health and live accuracy.
 
         Called by the adapter after a plate-solve-after-slew verification
         (not during calibration).  Feeds both the health monitor (degraded
         after sustained bad residuals) and the live accuracy tracker shown
-        in the web UI.
+        in the web UI.  All values in degrees.
         """
         now = time.time()
         with self._lock:
-            self._recent_residuals.append(residual_arcmin)
-            self._live_residuals.append((now, residual_arcmin))
+            self._recent_residuals.append(residual_deg)
+            self._live_residuals.append((now, residual_deg))
 
             if len(self._recent_residuals) < _HEALTH_WINDOW:
                 return
 
-            threshold = self._rms_arcmin * _HEALTH_DEGRADED_FACTOR if self._rms_arcmin > 0 else 5.0
+            threshold = self._rms_deg * _HEALTH_DEGRADED_FACTOR if self._rms_deg > 0 else 5.0 / 60.0
             above = sum(1 for r in self._recent_residuals if r > threshold)
             if above >= _HEALTH_WINDOW:
                 if self._health != "degraded":
                     _logger.warning(
-                        "Pointing model health DEGRADED: last %d residuals exceeded %.1f' threshold (3x RMS)",
+                        "Pointing model health DEGRADED: last %d residuals exceeded %.4f° threshold (3x RMS)",
                         _HEALTH_WINDOW,
                         threshold,
                     )
@@ -706,7 +705,7 @@ class AltAzPointingModel:
         with self._lock:
             self._points.clear()
             self._AN = self._AW = self._IE = self._CA = self._NPAE = 0.0
-            self._rms_arcmin = 0.0
+            self._rms_deg = 0.0
             self._fit_timestamp = None
             self._n_terms = 0
             self._recent_residuals.clear()
@@ -777,9 +776,10 @@ class AltAzPointingModel:
             if self._live_residuals:
                 values = [r for _, r in self._live_residuals]
                 last_ts, last_val = self._live_residuals[-1]
-                live["last_arcmin"] = round(last_val, 2)
+                live["last_deg"] = round(last_val, 5)
                 live["last_timestamp"] = last_ts
-                live["median_arcmin"] = round(sorted(values)[len(values) // 2], 2)
+                live["median_deg"] = round(sorted(values)[len(values) // 2], 5)
+                live["history"] = [{"t": t, "v": round(v, 5)} for t, v in self._live_residuals]
 
             return {
                 "state": state,
@@ -789,7 +789,7 @@ class AltAzPointingModel:
                 "tilt_deg": round(tilt_mag_deg, 3),
                 "tilt_direction_deg": round(tilt_bearing_deg, 1),
                 "tilt_direction_label": self._compass_label(tilt_bearing_deg) if tilt_mag_deg > 0.001 else "",
-                "pointing_accuracy_arcmin": round(self._rms_arcmin, 1),
+                "pointing_accuracy_deg": round(self._rms_deg, 5),
                 "fit_timestamp": self._fit_timestamp,
                 "terms": {
                     "AN": round(self._AN, 5),
@@ -818,7 +818,7 @@ class AltAzPointingModel:
                     "NPAE": self._NPAE,
                 },
                 "n_terms": self._n_terms,
-                "rms_arcmin": self._rms_arcmin,
+                "rms_deg": self._rms_deg,
                 "fit_timestamp": self._fit_timestamp,
             }
 
@@ -832,7 +832,7 @@ class AltAzPointingModel:
         self._CA = terms.get("CA", 0.0)
         self._NPAE = terms.get("NPAE", 0.0)
         self._n_terms = data.get("n_terms", 0)
-        self._rms_arcmin = data.get("rms_arcmin", 0.0)
+        self._rms_deg = data.get("rms_deg", data.get("rms_arcmin", 0.0) / 60.0)
         self._fit_timestamp = data.get("fit_timestamp")
         if self._n_terms > 0:
             self._health = "good"
@@ -845,7 +845,7 @@ class AltAzPointingModel:
         model._lock = threading.Lock()
         model._points = []
         model._AN = model._AW = model._IE = model._CA = model._NPAE = 0.0
-        model._rms_arcmin = 0.0
+        model._rms_deg = 0.0
         model._fit_timestamp = None
         model._n_terms = 0
         model._recent_residuals = deque(maxlen=_HEALTH_WINDOW)
@@ -876,10 +876,10 @@ class AltAzPointingModel:
             data = json.loads(self._state_file.read_text(encoding="utf-8"))
             self._apply_dict(data)
             _logger.info(
-                "Loaded pointing model: %d-term, %d points, RMS=%.1f'",
+                "Loaded pointing model: %d-term, %d points, RMS=%.4f°",
                 self._n_terms,
                 len(self._points),
-                self._rms_arcmin,
+                self._rms_deg,
             )
         except Exception:
             _logger.warning("Failed to load pointing model state", exc_info=True)

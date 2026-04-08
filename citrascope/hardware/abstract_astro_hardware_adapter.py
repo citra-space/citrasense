@@ -63,7 +63,7 @@ class PointingCorrection(TypedDict):
     target_dec_deg: float
     correction_ra_deg: float
     correction_dec_deg: float
-    correction_total_arcmin: float
+    correction_total_deg: float
     command_ra_deg: float
     command_dec_deg: float
     model_n_terms: int
@@ -203,12 +203,12 @@ class AbstractAstroHardwareAdapter(ABC):
         if self._pointing_model.is_active:
             status = self._pointing_model.status()
             self.logger.info(
-                "Pointing model loaded: %s (%d pts, tilt=%.3f° toward %s, accuracy=%.1f')",
+                "Pointing model loaded: %s (%d pts, tilt=%.3f° toward %s, accuracy=%.4f°)",
                 status["state"],
                 status["point_count"],
                 status["tilt_deg"],
                 status["tilt_direction_label"],
-                status["pointing_accuracy_arcmin"],
+                status["pointing_accuracy_deg"],
             )
 
     def _perform_alignment_with_model(
@@ -262,21 +262,20 @@ class AbstractAstroHardwareAdapter(ABC):
                 error = self.angular_distance(solved_ra, solved_dec, target_ra, target_dec)
 
                 if self._pointing_model and self._pointing_model.is_trained:
-                    residual_arcmin = error * 60.0
-                    self._pointing_model.record_verification_residual(residual_arcmin)
+                    self._pointing_model.record_verification_residual(error)
                     self.logger.info(
-                        "Alignment verified (model active, no sync): solved RA=%.4f° Dec=%.4f° (residual: %.1f')",
+                        "Alignment verified (model active, no sync): solved RA=%.4f° Dec=%.4f° (residual: %.4f°)",
                         solved_ra,
                         solved_dec,
-                        residual_arcmin,
+                        error,
                     )
                 else:
                     mount.sync_to_radec(solved_ra, solved_dec)
                     self.logger.info(
-                        "Alignment successful: solved RA=%.4f° Dec=%.4f° (error from target: %.1f', synced)",
+                        "Alignment successful: solved RA=%.4f° Dec=%.4f° (error from target: %.4f°, synced)",
                         solved_ra,
                         solved_dec,
-                        error * 60,
+                        error,
                     )
                 return True
 
@@ -305,7 +304,7 @@ class AbstractAstroHardwareAdapter(ABC):
             "target_dec_deg": dec,
             "correction_ra_deg": 0.0,
             "correction_dec_deg": 0.0,
-            "correction_total_arcmin": 0.0,
+            "correction_total_deg": 0.0,
             "command_ra_deg": ra,
             "command_dec_deg": dec,
             "model_n_terms": 0,
@@ -316,12 +315,12 @@ class AbstractAstroHardwareAdapter(ABC):
             location = self.location_service.get_current_location()
             if location:
                 slew_ra, slew_dec = self._pointing_model.correct(ra, dec, location["latitude"], location["longitude"])
-                correction_arcmin = self.angular_distance(ra, dec, slew_ra, slew_dec) * 60.0
+                correction_deg = self.angular_distance(ra, dec, slew_ra, slew_dec)
                 correction.update(
                     {
                         "correction_ra_deg": slew_ra - ra,
                         "correction_dec_deg": slew_dec - dec,
-                        "correction_total_arcmin": correction_arcmin,
+                        "correction_total_deg": correction_deg,
                         "command_ra_deg": slew_ra,
                         "command_dec_deg": slew_dec,
                         "model_n_terms": self._pointing_model._n_terms,
@@ -329,8 +328,8 @@ class AbstractAstroHardwareAdapter(ABC):
                     }
                 )
                 self.logger.info(
-                    "Pointing model correction: %.1f' (RA %+.4f° Dec %+.4f°)",
-                    correction_arcmin,
+                    "Pointing model correction: %.4f° (RA %+.4f° Dec %+.4f°)",
+                    correction_deg,
                     slew_ra - ra,
                     slew_dec - dec,
                 )
