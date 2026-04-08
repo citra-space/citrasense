@@ -323,7 +323,7 @@ class AbstractAstroHardwareAdapter(ABC):
                         "correction_total_deg": correction_deg,
                         "command_ra_deg": slew_ra,
                         "command_dec_deg": slew_dec,
-                        "model_n_terms": self._pointing_model._n_terms,
+                        "model_n_terms": self._pointing_model.n_terms,
                         "model_n_points": self._pointing_model.point_count,
                     }
                 )

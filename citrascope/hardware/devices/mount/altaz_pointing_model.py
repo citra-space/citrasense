@@ -352,6 +352,10 @@ class AltAzPointingModel:
         return len(self._points)
 
     @property
+    def n_terms(self) -> int:
+        return self._n_terms
+
+    @property
     def rms_deg(self) -> float:
         return self._rms_deg
 
