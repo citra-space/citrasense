@@ -235,13 +235,18 @@ class AutofocusManager:
         if last_ts is not None and (time.time() - last_ts) < self._HFR_REFOCUS_COOLDOWN_SECONDS:
             return False
 
-        recent = [h[0] for h in list(self._hfr_history)[-window:]]
+        history = list(self._hfr_history)
+        current_filter = history[-1][2] if history else ""
+        same_filter = [h[0] for h in history if h[2] == current_filter]
+        recent = same_filter[-window:]
+        if len(recent) < window:
+            return False
         median_hfr = statistics.median(recent)
         threshold = baseline * (1 + self.settings.autofocus_hfr_increase_percent / 100)
         if median_hfr > threshold:
             self.logger.info(
                 f"HFR degradation detected: median {median_hfr:.2f} > threshold {threshold:.2f} "
-                f"(baseline {baseline:.2f} + {self.settings.autofocus_hfr_increase_percent}%%)"
+                f"(baseline {baseline:.2f} + {self.settings.autofocus_hfr_increase_percent}%)"
             )
             return True
         return False
