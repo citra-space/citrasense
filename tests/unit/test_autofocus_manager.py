@@ -399,9 +399,35 @@ class TestResolveAutofocusTargetName:
 # ---------------------------------------------------------------------------
 
 
+def _ensure_star_catalog() -> bool:
+    """Ensure the Pixelemon star catalog is available, downloading if needed.
+
+    Returns True if the catalog is present (or was just downloaded).
+    """
+    from pixelemon._plate_solve import TETRA_DATABASE_PATH  # type: ignore[import-untyped]
+
+    if TETRA_DATABASE_PATH.exists():
+        return True
+    try:
+        from pixelemon import TetraSolver  # type: ignore[import-untyped]
+
+        TetraSolver.high_memory()
+        return True
+    except Exception:
+        return False
+
+
+_has_star_catalog = pytest.mark.skipif(
+    not _ensure_star_catalog(),
+    reason="Pixelemon star catalog not available (1.3 GB download failed or skipped)",
+)
+
+
 class TestDummyAdapterAutofocusTargeting:
     """Verify DummyAdapter handles None/real coords correctly in do_autofocus."""
 
+    @_has_star_catalog
+    @pytest.mark.slow
     def test_skips_slew_when_both_none(self, tmp_path: Path):
         from citrascope.hardware.dummy_adapter import DummyAdapter
 
@@ -409,6 +435,8 @@ class TestDummyAdapterAutofocusTargeting:
         adapter.connect()
         adapter.do_autofocus(target_ra=None, target_dec=None)
 
+    @_has_star_catalog
+    @pytest.mark.slow
     def test_uses_provided_coords(self, tmp_path: Path):
         from citrascope.hardware.dummy_adapter import DummyAdapter
 
