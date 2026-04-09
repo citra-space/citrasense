@@ -1065,6 +1065,13 @@ class DummyAdapter(AbstractAstroHardwareAdapter):
             return False
         name = fdata.get("name", f"Filter {filter_position}")
         self._current_filter_position = filter_position
+        self._current_filter_offset = _DUMMY_FILTER_FOCUS_OFFSETS.get(name.lower(), 0)
+
+        focus_position = fdata.get("focus_position")
+        if focus_position is not None and self._focuser:
+            self.logger.info(f"DummyAdapter: Adjusting focus to {focus_position} for filter {name}")
+            self._focuser.move_absolute(focus_position)
+
         self.logger.info(f"DummyAdapter: Filter changed to {name} (position {filter_position})")
         return True
 

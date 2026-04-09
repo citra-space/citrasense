@@ -522,9 +522,14 @@ class PlateSolverProcessor(AbstractImageProcessor):
             return result
 
         except Exception as e:
+            hfr_median = None
+            try:
+                hfr_median = self._compute_hfr_from_image(context)
+            except Exception:
+                pass
             result = ProcessorResult(
                 should_upload=True,
-                extracted_data={"plate_solved": False},
+                extracted_data={"plate_solved": False, "hfr_median": hfr_median},
                 confidence=0.0,
                 reason=f"Plate solving failed: {e!s}",
                 processing_time_seconds=time.time() - start_time,

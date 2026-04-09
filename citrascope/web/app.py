@@ -108,7 +108,7 @@ class SystemStatus(BaseModel):
     autofocus_target_name: str = ""
     last_autofocus_timestamp: int | None = None
     next_autofocus_minutes: int | None = None
-    hfr_history: list[dict[str, float | str]] = []
+    hfr_history: list[dict[str, int | float | str]] = []
     last_hfr_median: float | None = None
     time_health: dict[str, Any] | None = None
     gps_location: dict[str, Any] | None = None
