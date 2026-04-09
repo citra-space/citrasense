@@ -402,9 +402,11 @@ class TaskManager:
                             if not self._processing_active:
                                 break
 
-                        # Don't pile more work onto the imaging queue when maintenance
-                        # or safety needs the hardware.  Tasks stay on the heap and
-                        # resume after the interruption completes.
+                        # Only submit one task at a time so maintenance (autofocus,
+                        # alignment) and safety checks run between every task.
+                        if not self.imaging_queue.is_idle():
+                            break
+
                         if (
                             self.autofocus_manager.is_requested()
                             or self.autofocus_manager.is_running()
