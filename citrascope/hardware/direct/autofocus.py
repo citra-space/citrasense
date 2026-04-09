@@ -1,25 +1,23 @@
 """V-curve autofocus for the DirectHardwareAdapter.
 
-Sweeps the focuser through a range of positions, measures a focus metric
-at each step, fits a parabola, and moves to the optimum.
+Sweeps the focuser through a range of positions, measures HFR (Half-Flux
+Radius) at each step via SEP, fits a parabola with outlier rejection, and
+moves to the optimum.
 
-Two metrics are supported with automatic fallback:
-  - HFR (Half-Flux Radius) for star fields — lower is better
-  - Laplacian variance for daytime / featureless scenes — higher is better
-
-Only numpy and scipy are required (both already project dependencies).
+SEP (Source Extractor for Python) handles background subtraction, source
+detection, and half-flux radius computation — it is already installed as a
+dependency of pixelemon.
 """
 
 from __future__ import annotations
 
 import logging
-import math
 import time
 from collections.abc import Callable
 from typing import TYPE_CHECKING
 
 import numpy as np
-from scipy import ndimage
+import sep
 
 if TYPE_CHECKING:
     import threading
@@ -29,13 +27,13 @@ if TYPE_CHECKING:
 
 MIN_STARS_FOR_HFR = 5
 MAX_STARS_FOR_HFR = 20
-DEFAULT_SIGMA_THRESHOLD = 5.0
-MIN_SOURCE_PIXELS = 5
 MAX_ELONGATION = 3.0
+SETTLE_DELAY = 0.5
+HFR_RMAX = 50.0
 
 
 # ---------------------------------------------------------------------------
-# Focus metrics
+# Focus metric
 # ---------------------------------------------------------------------------
 
 
@@ -61,114 +59,40 @@ def _crop_center(image: np.ndarray, ratio: float) -> np.ndarray:
     return image[y0 : y0 + ch, x0 : x0 + cw]
 
 
-def _sigma_clipped_stats(data: np.ndarray, sigma: float = 3.0, iters: int = 3) -> tuple[float, float]:
-    """Return (median, std) after iterative sigma-clipping."""
-    d = data.ravel().astype(np.float64)
-    for _ in range(iters):
-        med = float(np.median(d))
-        std = float(np.std(d))
-        if std == 0:
-            break
-        mask = np.abs(d - med) < sigma * std
-        d = d[mask]
-    return float(np.median(d)), float(np.std(d))
-
-
 def compute_hfr(image: np.ndarray, crop_ratio: float = 0.5) -> float | None:
-    """Compute median Half-Flux Radius of detected stars.
+    """Compute median Half-Flux Radius of detected stars using SEP.
 
-    Returns None if fewer than MIN_STARS_FOR_HFR sources are found,
-    signalling the caller to fall back to a sharpness metric.
+    Returns None if fewer than MIN_STARS_FOR_HFR usable sources are found,
+    signalling the caller to skip this position.
     """
-    img = _crop_center(image, crop_ratio).astype(np.float64)
+    img = _crop_center(_ensure_2d(image), crop_ratio).astype(np.float64, copy=True)
+    if not img.flags["C_CONTIGUOUS"]:
+        img = np.ascontiguousarray(img)
 
-    med, std = _sigma_clipped_stats(img)
-    if std == 0:
+    bkg = sep.Background(img)
+    data_sub: np.ndarray = img - bkg
+
+    objects = sep.extract(data_sub, thresh=3.0, err=bkg.globalrms, minarea=5)
+    if len(objects) < MIN_STARS_FOR_HFR:
         return None
 
-    threshold = med + DEFAULT_SIGMA_THRESHOLD * std
-    binary = img > threshold
-    label_result: tuple[np.ndarray, int] = ndimage.label(binary)  # type: ignore[assignment]
-    labeled = label_result[0]
-    n_objects = label_result[1]
-
-    if n_objects < MIN_STARS_FOR_HFR:
+    with np.errstate(divide="ignore", invalid="ignore"):
+        elong = objects["a"] / np.maximum(objects["b"], 1e-6)
+    star_mask = elong < MAX_ELONGATION
+    objects = objects[star_mask]
+    if len(objects) < MIN_STARS_FOR_HFR:
         return None
 
-    # Measure each source
-    sources: list[tuple[float, float]] = []  # (total_flux, hfr)
-    for label_id in range(1, n_objects + 1):
-        slices = ndimage.find_objects(labeled == label_id)
-        if not slices:
-            continue
-        sy, sx = slices[0]
-
-        cutout_mask = labeled[sy, sx] == label_id
-        cutout_data = img[sy, sx]
-
-        n_pixels = int(np.sum(cutout_mask))
-        if n_pixels < MIN_SOURCE_PIXELS:
-            continue
-
-        # Check elongation via bounding box aspect ratio
-        h, w = cutout_mask.shape
-        aspect = max(h, w) / max(min(h, w), 1)
-        if aspect > MAX_ELONGATION:
-            continue
-
-        # Flux-weighted centroid within the cutout
-        ys, xs = np.mgrid[0 : cutout_data.shape[0], 0 : cutout_data.shape[1]]
-        flux = cutout_data * cutout_mask
-        total = float(np.sum(flux))
-        if total <= 0:
-            continue
-
-        cy = float(np.sum(ys * flux)) / total
-        cx = float(np.sum(xs * flux)) / total
-
-        # Radial distances from centroid
-        r = np.sqrt((ys - cy) ** 2 + (xs - cx) ** 2)
-        r_flat = r[cutout_mask]
-        flux_flat = flux[cutout_mask]
-
-        # Sort by radius and find the radius enclosing 50 % of flux
-        order = np.argsort(r_flat)
-        cumflux = np.cumsum(flux_flat[order])
-        half_idx = np.searchsorted(cumflux, total * 0.5)
-        if half_idx >= len(r_flat):
-            half_idx = len(r_flat) - 1
-
-        hfr = float(r_flat[order][half_idx])
-        if hfr > 0:
-            sources.append((total, hfr))
-
-    if len(sources) < MIN_STARS_FOR_HFR:
+    rmax = np.full(len(objects), HFR_RMAX)
+    hfr, flags = sep.flux_radius(data_sub, objects["x"], objects["y"], rmax, frac=0.5)
+    good = (flags == 0) & np.isfinite(hfr) & (hfr > 0)
+    hfr_good = hfr[good]
+    if len(hfr_good) < MIN_STARS_FOR_HFR:
         return None
 
-    # Use median HFR of the brightest sources
-    sources.sort(key=lambda s: s[0], reverse=True)
-    top = sources[:MAX_STARS_FOR_HFR]
-    return float(np.median([s[1] for s in top]))
-
-
-def compute_sharpness(image: np.ndarray, crop_ratio: float = 0.5) -> float:
-    """Laplacian-variance sharpness metric (higher = sharper)."""
-    img = _crop_center(image, crop_ratio).astype(np.float64)
-    lap = ndimage.laplace(img)
-    return float(np.var(lap))
-
-
-def compute_focus_metric(image: np.ndarray, crop_ratio: float = 0.5) -> tuple[float, bool]:
-    """Compute the best available focus metric.
-
-    Returns:
-        (value, minimize) where *minimize* is True for HFR (lower=better)
-        and False for sharpness (higher=better).
-    """
-    hfr = compute_hfr(image, crop_ratio)
-    if hfr is not None:
-        return hfr, True
-    return compute_sharpness(image, crop_ratio), False
+    flux_order = np.argsort(objects["flux"][good])[::-1]
+    top = hfr_good[flux_order[:MAX_STARS_FOR_HFR]]
+    return float(np.median(top))
 
 
 # ---------------------------------------------------------------------------
@@ -186,6 +110,65 @@ def _wait_for_focuser(focuser: AbstractFocuser, timeout: float = 60.0) -> None:
         time.sleep(0.15)
 
 
+def _robust_polyfit(
+    pos_arr: np.ndarray,
+    val_arr: np.ndarray,
+    sigma_clip: float = 3.0,
+    max_iters: int = 3,
+) -> tuple[float, float, float]:
+    """Fit a quadratic with trimmed-then-sigma-clipped outlier rejection.
+
+    High-leverage outliers (at the edges of the x-range) distort ordinary
+    least-squares enough that residual-based rejection misses them. To
+    counter this, the first pass trims the worst-fitting fraction of
+    points, producing a clean initial fit. Subsequent passes apply
+    MAD-based sigma clipping against that better fit.
+
+    Returns (a, b, c) coefficients of a*x^2 + b*x + c.
+
+    Raises ValueError if the fit fails or the parabola opens downward.
+    """
+    n = len(pos_arr)
+    if n < 3:
+        raise ValueError("Need at least 3 points for quadratic fit")
+
+    # First pass: fit all, then trim the worst 25% (at least 1 point) to get
+    # a cleaner initial fit that isn't pulled by high-leverage outliers.
+    coeffs = np.polyfit(pos_arr, val_arr, 2)
+    residuals = np.abs(val_arr - np.polyval(coeffs, pos_arr))
+    n_keep = max(3, int(n * 0.75))
+    keep_idx = np.argsort(residuals)[:n_keep]
+    mask = np.zeros(n, dtype=bool)
+    mask[keep_idx] = True
+
+    # Subsequent passes: refit on kept points, then MAD-based sigma clip.
+    for _ in range(max_iters):
+        p = pos_arr[mask]
+        v = val_arr[mask]
+        if len(p) < 3:
+            raise ValueError("Too few points remaining after outlier rejection")
+
+        coeffs = np.polyfit(p, v, 2)
+
+        residuals = val_arr - np.polyval(coeffs, pos_arr)
+        med_res = float(np.median(np.abs(residuals[mask])))
+        mad_sigma = 1.4826 * med_res
+        if mad_sigma < 1e-10:
+            break
+
+        new_mask = np.abs(residuals) < sigma_clip * mad_sigma
+        if np.sum(new_mask) < 3:
+            break
+        if np.array_equal(new_mask, mask):
+            break
+        mask = new_mask
+
+    a, b, c = np.polyfit(pos_arr[mask], val_arr[mask], 2)
+    if a <= 0:
+        raise ValueError("Parabola opens downward — no valid minimum")
+    return float(a), float(b), float(c)
+
+
 def run_autofocus(
     camera: AbstractCamera,
     focuser: AbstractFocuser,
@@ -201,9 +184,8 @@ def run_autofocus(
     """Run V-curve autofocus and return the best focuser position.
 
     Sweeps the focuser through (2 * num_steps + 1) positions centred on the
-    current position, measures a focus metric at each, fits a parabola, and
-    moves to the computed optimum.  All image data is acquired in-memory via
-    ``camera.capture_array()`` — no files are written to disk.
+    current position, measures HFR at each via SEP, fits a parabola with
+    outlier rejection, and moves to the computed optimum.
 
     Args:
         camera: Connected camera device.
@@ -226,7 +208,6 @@ def run_autofocus(
     log = logger or logging.getLogger(__name__)
     report = on_progress or (lambda _msg: None)
 
-    # Determine sweep centre and range
     center = focuser.get_position()
     if center is None:
         raise RuntimeError("Cannot read current focuser position")
@@ -234,15 +215,22 @@ def run_autofocus(
 
     positions = [center + (i - num_steps) * step_size for i in range(2 * num_steps + 1)]
     positions = [max(0, min(p, max_pos)) for p in positions]
-    # Deduplicate (clamp may have collapsed extremes)
     positions = list(dict.fromkeys(positions))
 
     total = len(positions)
     log.info(f"Autofocus sweep: {total} positions from {positions[0]} to {positions[-1]} (step {step_size})")
 
+    # --- Backlash-aware initial positioning ---
+    # Overshoot past the first position, then approach from below so all
+    # subsequent measurement moves are in the same (upward) direction.
+    overshoot = max(0, positions[0] - step_size)
+    report(f"Moving to overshoot position {overshoot} for backlash compensation")
+    if focuser.move_absolute(overshoot):
+        _wait_for_focuser(focuser)
+    else:
+        log.warning(f"Failed to move to overshoot position {overshoot}, proceeding anyway")
+
     measurements: list[tuple[int, float]] = []
-    metric_mode: bool | None = None  # True = minimize (HFR), False = maximize (sharpness)
-    mode_name = "unknown"
 
     for idx, pos in enumerate(positions, 1):
         if cancel_event and cancel_event.is_set():
@@ -256,6 +244,8 @@ def run_autofocus(
             continue
         _wait_for_focuser(focuser)
 
+        time.sleep(SETTLE_DELAY)
+
         report(f"Step {idx}/{total}: exposing {exposure_time:.1f}s")
 
         try:
@@ -268,44 +258,30 @@ def run_autofocus(
             log.warning(f"Exposure failed at position {pos}: {e}")
             continue
 
-        if metric_mode is None:
-            value, minimize = compute_focus_metric(image_data, crop_ratio)
-            metric_mode = minimize
-            mode_name = "HFR" if minimize else "sharpness"
-            log.info(f"Autofocus: using {mode_name} metric")
-        else:
-            if metric_mode:
-                hfr = compute_hfr(image_data, crop_ratio)
-                value = hfr if hfr is not None else math.inf
-            else:
-                value = compute_sharpness(image_data, crop_ratio)
+        hfr = compute_hfr(image_data, crop_ratio)
+        if hfr is None:
+            log.warning(f"HFR detection failed at position {pos} (too few stars), skipping")
+            continue
 
-        measurements.append((pos, value))
-        report(f"Step {idx}/{total}: pos={pos} {mode_name}={value:.3f}")
-        log.info(f"Autofocus point: position={pos}, {mode_name}={value:.3f}")
+        measurements.append((pos, hfr))
+        report(f"Step {idx}/{total}: pos={pos} HFR={hfr:.3f}")
+        log.info(f"Autofocus point: position={pos}, HFR={hfr:.3f}")
 
     if len(measurements) < 3:
-        raise RuntimeError(f"Too few valid measurements ({len(measurements)}) for curve fit")
+        raise RuntimeError(
+            f"Too few valid HFR measurements ({len(measurements)}/{total}) for curve fit. "
+            "Check that the field has enough stars and the exposure time is sufficient."
+        )
 
-    # --- Curve fitting ---
+    # --- Curve fitting with outlier rejection ---
     pos_arr = np.array([m[0] for m in measurements], dtype=np.float64)
     val_arr = np.array([m[1] for m in measurements], dtype=np.float64)
 
-    # For sharpness (maximize), negate so we can always look for a minimum
-    fit_vals = val_arr if metric_mode else -val_arr
-
     best_pos: int
     try:
-        coeffs = np.polyfit(pos_arr, fit_vals, 2)
-        a, b, _c = coeffs
-
-        # Parabola must open upward (a > 0) for a valid minimum
-        if a <= 0:
-            raise ValueError("Parabola opens downward — no valid minimum")
-
+        a, b, _c = _robust_polyfit(pos_arr, val_arr)
         vertex = -b / (2 * a)
 
-        # Vertex must be within (or near) the sampled range
         margin = step_size
         if vertex < positions[0] - margin or vertex > positions[-1] + margin:
             raise ValueError(f"Vertex {vertex:.0f} outside sampled range [{positions[0]}, {positions[-1]}]")
@@ -316,12 +292,9 @@ def run_autofocus(
 
     except (ValueError, np.linalg.LinAlgError) as e:
         log.warning(f"Curve fit failed ({e}), using best measured position")
-        if metric_mode:
-            best_idx = int(np.argmin(val_arr))
-        else:
-            best_idx = int(np.argmax(val_arr))
+        best_idx = int(np.argmin(val_arr))
         best_pos = measurements[best_idx][0]
-        log.info(f"Fallback: best measured position {best_pos} ({mode_name}={measurements[best_idx][1]:.3f})")
+        log.info(f"Fallback: best measured position {best_pos} (HFR={measurements[best_idx][1]:.3f})")
 
     # Move to best position
     report(f"Moving to optimal position: {best_pos}")
@@ -331,18 +304,15 @@ def run_autofocus(
 
     # Verification exposure
     try:
+        time.sleep(SETTLE_DELAY)
         verify_raw = camera.capture_array(
             duration=exposure_time,
             binning=camera.get_default_binning(),
         )
         verify_data = _ensure_2d(verify_raw).astype(np.float64)
-        if metric_mode:
-            verify_val = compute_hfr(verify_data, crop_ratio)
-            if verify_val is not None:
-                log.info(f"Verification: position={best_pos}, HFR={verify_val:.3f}")
-        else:
-            verify_val_s = compute_sharpness(verify_data, crop_ratio)
-            log.info(f"Verification: position={best_pos}, sharpness={verify_val_s:.3f}")
+        verify_hfr = compute_hfr(verify_data, crop_ratio)
+        if verify_hfr is not None:
+            log.info(f"Verification: position={best_pos}, HFR={verify_hfr:.3f}")
     except Exception as e:
         log.debug(f"Verification exposure failed (non-critical): {e}")
 
