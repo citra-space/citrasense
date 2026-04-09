@@ -110,6 +110,10 @@ class SystemStatus(BaseModel):
     next_autofocus_minutes: int | None = None
     hfr_history: list[dict[str, int | float | str]] = []
     last_hfr_median: float | None = None
+    hfr_baseline: float | None = None
+    hfr_increase_percent: int = 30
+    hfr_refocus_enabled: bool = False
+    hfr_sample_window: int = 5
     time_health: dict[str, Any] | None = None
     gps_location: dict[str, Any] | None = None
     last_update: str = ""
@@ -1968,6 +1972,11 @@ class CitraScopeWebApp:
                 hfr_hist = task_manager.autofocus_manager.hfr_history
                 self.status.hfr_history = [{"hfr": h, "ts": t, "filter": f} for h, t, f in hfr_hist]
                 self.status.last_hfr_median = hfr_hist[-1][0] if hfr_hist else None
+                if self.daemon.settings:
+                    self.status.hfr_baseline = self.daemon.settings.adapter_settings.get("hfr_baseline")
+                    self.status.hfr_increase_percent = self.daemon.settings.autofocus_hfr_increase_percent
+                    self.status.hfr_refocus_enabled = self.daemon.settings.autofocus_on_hfr_increase_enabled
+                    self.status.hfr_sample_window = self.daemon.settings.autofocus_hfr_sample_window
                 self.status.alignment_requested = task_manager.alignment_manager.is_requested()
                 self.status.alignment_running = task_manager.alignment_manager.is_running()
                 self.status.alignment_progress = task_manager.alignment_manager.progress

@@ -102,6 +102,11 @@ class CitraScopeSettings(BaseModel):
     autofocus_target_custom_ra: float | None = None
     autofocus_target_custom_dec: float | None = None
 
+    # HFR-based auto-refocus (hfr_baseline is per-adapter, stored in adapter_settings)
+    autofocus_on_hfr_increase_enabled: bool = False
+    autofocus_hfr_increase_percent: int = 30
+    autofocus_hfr_sample_window: int = 5
+
     # Alignment
     alignment_exposure_seconds: float = 2.0
     align_on_startup: bool = False
@@ -228,6 +233,36 @@ class CitraScopeSettings(BaseModel):
         if v < 1 or v > 1440:
             CITRASCOPE_LOGGER.warning("Invalid autofocus_interval_minutes (%s). Setting to default 60 minutes.", v)
             return 60
+        return v
+
+    @field_validator("autofocus_hfr_increase_percent", mode="before")
+    @classmethod
+    def _validate_hfr_increase_percent(cls, v: Any) -> int:
+        try:
+            v = int(v)
+        except (TypeError, ValueError):
+            CITRASCOPE_LOGGER.warning("Invalid autofocus_hfr_increase_percent (%r). Falling back to 30.", v)
+            return 30
+        if v < 10 or v > 200:
+            clamped = max(10, min(200, v))
+            CITRASCOPE_LOGGER.warning(
+                "autofocus_hfr_increase_percent %d out of range [10, 200]. Clamped to %d.", v, clamped
+            )
+            return clamped
+        return v
+
+    @field_validator("autofocus_hfr_sample_window", mode="before")
+    @classmethod
+    def _validate_hfr_sample_window(cls, v: Any) -> int:
+        try:
+            v = int(v)
+        except (TypeError, ValueError):
+            CITRASCOPE_LOGGER.warning("Invalid autofocus_hfr_sample_window (%r). Falling back to 5.", v)
+            return 5
+        if v < 3 or v > 20:
+            clamped = max(3, min(20, v))
+            CITRASCOPE_LOGGER.warning("autofocus_hfr_sample_window %d out of range [3, 20]. Clamped to %d.", v, clamped)
+            return clamped
         return v
 
     @field_validator("observation_mode", mode="before")

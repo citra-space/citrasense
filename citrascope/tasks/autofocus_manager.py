@@ -7,6 +7,7 @@ to support at-a-glance monitoring and future adaptive autofocus (#203).
 from __future__ import annotations
 
 import logging
+import statistics
 import threading
 import time
 from collections import deque
@@ -162,6 +163,21 @@ class AutofocusManager:
             if actual_pos is not None:
                 result["position"] = actual_pos
 
+    def _update_hfr_baseline(self) -> None:
+        """Persist the best HFR from this AF run as the per-adapter monitoring baseline.
+
+        Stored in adapter_settings so each adapter gets its own baseline.
+        Must be called while holding self._lock.
+        """
+        if not self._filter_results or not self.settings:
+            return
+        hfr_values = [float(r["hfr"]) for r in self._filter_results if isinstance(r.get("hfr"), (int, float))]
+        if not hfr_values:
+            return
+        baseline = round(min(hfr_values), 2)
+        self.settings.adapter_settings["hfr_baseline"] = baseline
+        self.logger.info(f"HFR baseline updated to {baseline:.2f} px")
+
     def clear_points(self) -> None:
         """Clear V-curve points (thread-safe)."""
         with self._lock:
@@ -196,6 +212,40 @@ class AutofocusManager:
         with self._lock:
             return self._last_result
 
+    _HFR_REFOCUS_COOLDOWN_SECONDS = 600  # 10 min — don't re-trigger immediately after an AF run
+
+    def _should_trigger_hfr_refocus(self) -> bool:
+        """Check if recent imaging HFR has degraded enough to warrant a refocus.
+
+        Must be called while holding self._lock (reads _hfr_history).
+        """
+        if not self.settings or not self.settings.autofocus_on_hfr_increase_enabled:
+            return False
+        baseline = self.settings.adapter_settings.get("hfr_baseline")
+        if baseline is None or baseline <= 0:
+            return False
+        if not self.hardware_adapter.supports_autofocus():
+            return False
+
+        window = self.settings.autofocus_hfr_sample_window
+        if len(self._hfr_history) < window:
+            return False
+
+        last_ts = self.settings.last_autofocus_timestamp
+        if last_ts is not None and (time.time() - last_ts) < self._HFR_REFOCUS_COOLDOWN_SECONDS:
+            return False
+
+        recent = [h[0] for h in list(self._hfr_history)[-window:]]
+        median_hfr = statistics.median(recent)
+        threshold = baseline * (1 + self.settings.autofocus_hfr_increase_percent / 100)
+        if median_hfr > threshold:
+            self.logger.info(
+                f"HFR degradation detected: median {median_hfr:.2f} > threshold {threshold:.2f} "
+                f"(baseline {baseline:.2f} + {self.settings.autofocus_hfr_increase_percent}%%)"
+            )
+            return True
+        return False
+
     def check_and_execute(self) -> bool:
         """Check if autofocus should run (manual or scheduled) and execute if so.
 
@@ -210,6 +260,8 @@ class AutofocusManager:
             elif self._should_run_scheduled():
                 should_run = True
                 self._requested = False
+            elif self._should_trigger_hfr_refocus():
+                should_run = True
 
         if not should_run:
             return False
@@ -392,6 +444,7 @@ class AutofocusManager:
             with self._lock:
                 self._snapshot_current_filter_result()
                 self._reconcile_results_with_adapter()
+                self._update_hfr_baseline()
 
             if self.hardware_adapter.supports_filter_management():
                 try:

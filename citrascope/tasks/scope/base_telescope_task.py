@@ -239,9 +239,11 @@ class AbstractBaseTelescopeTask(ABC):
                 try:
                     filter_name = self.task.assigned_filter_name or "" if self.task else ""
                     self.task_manager.autofocus_manager.record_hfr(float(hfr), filter_name)
-                    self.logger.debug(f"Recorded HFR {hfr:.2f} for filter '{filter_name}'")
+                    self.logger.info(f"Recorded HFR {hfr:.2f} for filter '{filter_name}'")
                 except Exception as e:
                     self.logger.warning(f"Failed to record HFR: {e}")
+            else:
+                self.logger.info(f"No HFR in processing result for {task_id}")
 
         # Surface annotated image to the web UI
         if result and result.extracted_data:

@@ -80,5 +80,48 @@
         <div class="small text-muted" x-show="$store.citrascope.status?.next_autofocus_minutes != null">
             Next autofocus in: <span x-text="$store.citrascope.status?.next_autofocus_minutes === 0 ? 'now (overdue)' : $store.citrascope.formatMinutes($store.citrascope.status?.next_autofocus_minutes || 0)">--</span>
         </div>
+
+        <!-- ─── HFR-triggered refocus ─── -->
+        <hr class="border-secondary my-3">
+        <div class="mb-3">
+            <div class="form-check mb-2">
+                <input class="form-check-input" type="checkbox" id="autofocus_on_hfr_increase_enabled"
+                    x-model="$store.citrascope.config.autofocus_on_hfr_increase_enabled">
+                <label class="form-check-label" for="autofocus_on_hfr_increase_enabled">
+                    Auto-refocus on HFR increase
+                </label>
+            </div>
+            <div class="form-text small mb-2">Triggers a refocus when imaging HFR degrades beyond a percentage of the last autofocus baseline.</div>
+        </div>
+        <div x-show="$store.citrascope.config.autofocus_on_hfr_increase_enabled">
+            <div class="mb-3">
+                <div class="d-flex align-items-center gap-2">
+                    <label class="form-label small mb-0 text-nowrap">Trigger at</label>
+                    <input type="number" class="form-control form-control-sm" style="width: 5rem;"
+                        min="10" max="200" step="5"
+                        x-model.number="$store.citrascope.config.autofocus_hfr_increase_percent">
+                    <span class="small text-muted text-nowrap">% increase</span>
+                </div>
+            </div>
+            <div class="mb-3">
+                <div class="d-flex align-items-center gap-2">
+                    <label class="form-label small mb-0 text-nowrap">Sample window</label>
+                    <input type="number" class="form-control form-control-sm" style="width: 5rem;"
+                        min="3" max="20" step="1"
+                        x-model.number="$store.citrascope.config.autofocus_hfr_sample_window">
+                    <span class="small text-muted text-nowrap">frames</span>
+                </div>
+            </div>
+        </div>
+        <div class="small text-muted" x-show="$store.citrascope.status?.hfr_baseline != null">
+            Current baseline: <strong x-text="$store.citrascope.status?.hfr_baseline?.toFixed(2)"></strong> px
+            <button class="btn btn-link btn-sm p-0 ms-2 text-muted" type="button"
+                @click="$store.citrascope.config.adapter_settings.hfr_baseline = null; $store.citrascope.saveConfiguration()">
+                Clear
+            </button>
+        </div>
+        <div class="small text-muted fst-italic" x-show="$store.citrascope.status?.hfr_baseline == null">
+            No baseline &mdash; run autofocus to establish one.
+        </div>
     </div>
 </div>

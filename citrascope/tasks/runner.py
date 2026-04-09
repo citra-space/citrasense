@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING
 from dateutil import parser as dtparser
 
 from citrascope.hardware.abstract_astro_hardware_adapter import AbstractAstroHardwareAdapter
+from citrascope.safety.safety_monitor import SafetyAction
 from citrascope.tasks.alignment_manager import AlignmentManager
 from citrascope.tasks.autofocus_manager import AutofocusManager
 from citrascope.tasks.calibration_manager import CalibrationManager
@@ -401,6 +402,20 @@ class TaskManager:
                             if not self._processing_active:
                                 break
 
+                        # Don't pile more work onto the imaging queue when maintenance
+                        # or safety needs the hardware.  Tasks stay on the heap and
+                        # resume after the interruption completes.
+                        if (
+                            self.autofocus_manager.is_requested()
+                            or self.autofocus_manager.is_running()
+                            or self.alignment_manager.is_requested()
+                            or self.alignment_manager.is_running()
+                        ):
+                            break
+
+                        if self._last_safety_action in (SafetyAction.EMERGENCY, SafetyAction.QUEUE_STOP):
+                            break
+
                         with self.heap_lock:
                             if not (self.task_heap and self.task_heap[0][0] <= now):
                                 break
@@ -450,8 +465,6 @@ class TaskManager:
         safety_monitor = self.safety_monitor
         if not safety_monitor:
             return False
-
-        from citrascope.safety.safety_monitor import SafetyAction
 
         try:
             action, triggered_check = safety_monitor.evaluate()

@@ -861,10 +861,12 @@
 
                             <!-- ─── HFR Focus Health ─── -->
                             <div class="pt-2 mt-2 border-top border-secondary"
-                                 x-show="$store.citrascope.status?.last_hfr_median != null"
+                                 x-show="$store.citrascope.status?.last_hfr_median != null || $store.citrascope.status?.hfr_baseline != null"
                                  x-data="{
-                                     greenLim: 2.0,
-                                     yellowLim: 3.0,
+                                     get baseline() { return $store.citrascope.status?.hfr_baseline },
+                                     get pct() { return $store.citrascope.status?.hfr_increase_percent || 30 },
+                                     get greenLim() { return this.baseline ? this.baseline * (1 + this.pct / 200) : null },
+                                     get yellowLim() { return this.baseline ? this.baseline * (1 + this.pct / 100) : null },
                                      get hist() { return $store.citrascope.status?.hfr_history || [] },
                                      get hfr() { return $store.citrascope.status?.last_hfr_median },
                                      get lastFilter() {
@@ -872,7 +874,7 @@
                                          return this.hist[this.hist.length - 1].filter || '';
                                      },
                                      hfrColor(v) {
-                                         if (v == null) return 'text-muted';
+                                         if (v == null || !this.greenLim) return 'text-muted';
                                          if (v < this.greenLim) return 'text-success';
                                          if (v < this.yellowLim) return 'text-warning';
                                          return 'text-danger';
@@ -896,12 +898,17 @@
                                     <div class="row mb-1">
                                         <div class="col-6 text-muted">Focus HFR</div>
                                         <div class="col-6 d-flex align-items-center gap-2">
-                                            <span>
-                                                <span :class="hfrColor(hfr)" x-text="hfr != null ? hfr.toFixed(2) + ' px' : '—'"></span>
-                                                <span class="text-muted" x-show="lastFilter" x-text="lastFilter"></span>
-                                                <span class="text-muted" x-text="hfrAge"></span>
-                                            </span>
-                                            <template x-if="hist.length >= 2">
+                                            <template x-if="hfr != null">
+                                                <span>
+                                                    <span :class="hfrColor(hfr)" x-text="hfr.toFixed(2) + ' px'"></span>
+                                                    <span class="text-muted" x-show="lastFilter" x-text="lastFilter"></span>
+                                                    <span class="text-muted" x-text="hfrAge"></span>
+                                                </span>
+                                            </template>
+                                            <template x-if="hfr == null && !baseline">
+                                                <span class="text-muted fst-italic">Run autofocus to calibrate</span>
+                                            </template>
+                                            <template x-if="hist.length >= 2 && greenLim">
                                                 <svg width="120" height="24">
                                                     <rect x="0" :y="bandY(greenLim)" width="120" :height="22 - bandY(greenLim)" fill="#198754" opacity="0.15"/>
                                                     <rect x="0" :y="bandY(yellowLim)" width="120" :height="bandY(greenLim) - bandY(yellowLim)" fill="#ffc107" opacity="0.15"/>
@@ -909,8 +916,21 @@
                                                     <polyline :points="pts" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/>
                                                 </svg>
                                             </template>
+                                            <template x-if="hist.length >= 2 && !greenLim">
+                                                <svg width="120" height="24">
+                                                    <polyline :points="pts" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/>
+                                                </svg>
+                                            </template>
                                         </div>
                                     </div>
+                                    <template x-if="baseline">
+                                        <div class="text-muted" style="font-size: 0.7rem;">
+                                            Baseline: <span x-text="baseline.toFixed(2)"></span> px
+                                            <template x-if="$store.citrascope.status?.hfr_refocus_enabled">
+                                                <span>&middot; refocus at +<span x-text="pct"></span>%</span>
+                                            </template>
+                                        </div>
+                                    </template>
                                 </div>
                             </div>
 
