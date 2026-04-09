@@ -434,7 +434,7 @@ class PlateSolverProcessor(AbstractImageProcessor):
             if img is None:
                 logging.getLogger("citrascope").debug("HFR: image_data is None, skipping")
                 return None
-            hfr = compute_hfr(img, crop_ratio=0.5)
+            hfr = compute_hfr(img, crop_ratio=1.0)
             if hfr is not None:
                 logging.getLogger("citrascope").debug(f"HFR computation: {hfr:.2f}")
             else:

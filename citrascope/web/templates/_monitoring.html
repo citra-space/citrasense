@@ -886,11 +886,29 @@
                                          return Math.round(ago / 60) + 'm ago';
                                      },
                                      get mx() { return this.hist.length ? Math.max(...this.hist.map(h => h.hfr)) : 1 },
-                                     get pts() {
-                                         return this.hist.map((h, i) =>
-                                             (i * 120 / Math.max(this.hist.length - 1, 1)).toFixed(1) + ',' +
-                                             (22 - h.hfr / this.mx * 20).toFixed(1)
-                                         ).join(' ');
+                                     get sparkFilterNames() {
+                                         return [...new Set(this.hist.map(h => h.filter || ''))];
+                                     },
+                                     sparkFilterColor(name) {
+                                         return $store.citrascope.filterColors[name] || '#888';
+                                     },
+                                     get sparkSvg() {
+                                         return this.sparkFilterNames.map(fname => {
+                                             const color = this.sparkFilterColor(fname);
+                                             const pts = [];
+                                             const dots = [];
+                                             this.hist.forEach((h, i) => {
+                                                 if ((h.filter || '') === fname) {
+                                                     const x = (i * 120 / Math.max(this.hist.length - 1, 1)).toFixed(1);
+                                                     const y = (22 - h.hfr / this.mx * 20).toFixed(1);
+                                                     pts.push(x + ',' + y);
+                                                     dots.push(`<circle cx='${x}' cy='${y}' r='1.5' fill='${color}'/>`);
+                                                 }
+                                             });
+                                             let s = '';
+                                             if (pts.length > 1) s += `<polyline points='${pts.join(' ')}' fill='none' stroke='${color}' stroke-width='1.5' stroke-linejoin='round' opacity='0.8'/>`;
+                                             return s + dots.join('');
+                                         }).join('');
                                      },
                                      bandY(lim) { return Math.max(2, 22 - lim / this.mx * 20); }
                                  }">
@@ -913,12 +931,12 @@
                                                     <rect x="0" :y="bandY(greenLim)" width="120" :height="22 - bandY(greenLim)" fill="#198754" opacity="0.15"/>
                                                     <rect x="0" :y="bandY(yellowLim)" width="120" :height="bandY(greenLim) - bandY(yellowLim)" fill="#ffc107" opacity="0.15"/>
                                                     <rect x="0" y="2" width="120" :height="bandY(yellowLim) - 2" fill="#dc3545" opacity="0.15"/>
-                                                    <polyline :points="pts" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/>
+                                                    <g x-html="sparkSvg"></g>
                                                 </svg>
                                             </template>
                                             <template x-if="hist.length >= 2 && !greenLim">
                                                 <svg width="120" height="24">
-                                                    <polyline :points="pts" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/>
+                                                    <g x-html="sparkSvg"></g>
                                                 </svg>
                                             </template>
                                         </div>
