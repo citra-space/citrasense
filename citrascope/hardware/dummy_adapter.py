@@ -876,7 +876,7 @@ class DummyAdapter(AbstractAstroHardwareAdapter):
         current_pos = self._focuser.get_position()
         pos = optimal if current_pos is None else current_pos
         base = _DUMMY_PSF_SIGMA_PX + _DUMMY_DEFOCUS_K * abs(pos - optimal)
-        jitter = np.random.default_rng().normal(0, 0.05 * base)
+        jitter = np.random.default_rng().normal(0, 0.02 * base)
         return max(0.5, base + jitter)
 
     def do_autofocus(
@@ -974,7 +974,7 @@ class DummyAdapter(AbstractAstroHardwareAdapter):
                 step_size=500,
                 num_steps=5,
                 exposure_time=1.0,
-                crop_ratio=1.0,
+                crop_ratio=0.5,
                 on_progress=on_progress,
                 logger=self.logger,
                 cancel_event=cancel_event,
@@ -1019,7 +1019,7 @@ class DummyAdapter(AbstractAstroHardwareAdapter):
                     step_size=500,
                     num_steps=5,
                     exposure_time=1.0,
-                    crop_ratio=1.0,
+                    crop_ratio=0.5,
                     on_progress=filter_progress,
                     logger=self.logger,
                     cancel_event=cancel_event,

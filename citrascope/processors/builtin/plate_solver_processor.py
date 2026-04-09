@@ -434,11 +434,13 @@ class PlateSolverProcessor(AbstractImageProcessor):
             if img is None:
                 logging.getLogger("citrascope").debug("HFR: image_data is None, skipping")
                 return None
-            hfr = compute_hfr(img, crop_ratio=1.0)
+            hfr = compute_hfr(img, crop_ratio=0.5)
+            if hfr is None:
+                hfr = compute_hfr(img, crop_ratio=1.0)
             if hfr is not None:
                 logging.getLogger("citrascope").debug(f"HFR computation: {hfr:.2f}")
             else:
-                logging.getLogger("citrascope").debug("HFR: too few stars in crop")
+                logging.getLogger("citrascope").debug("HFR: too few stars even at full frame")
             return hfr
         except Exception as e:
             logging.getLogger("citrascope").warning(f"HFR computation failed: {e}")
