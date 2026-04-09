@@ -199,7 +199,7 @@ class DummyApiClient(AbstractCitraApiClient):
                 "pixelSize": 5.86,
                 "focalLength": 200.0,
                 "focalRatio": 3.4,
-                "horizontalPixelCount": 1024,
+                "horizontalPixelCount": 1280,
                 "verticalPixelCount": 1024,
                 "imageCircleDiameter": None,
                 "angularNoise": 2.0,

@@ -863,17 +863,18 @@
                             <div class="pt-2 mt-2 border-top border-secondary"
                                  x-show="$store.citrascope.status?.last_hfr_median != null"
                                  x-data="{
+                                     greenLim: 2.0,
+                                     yellowLim: 3.0,
                                      get hist() { return $store.citrascope.status?.hfr_history || [] },
                                      get hfr() { return $store.citrascope.status?.last_hfr_median },
                                      get lastFilter() {
                                          if (!this.hist.length) return '';
                                          return this.hist[this.hist.length - 1].filter || '';
                                      },
-                                     get hfrColor() {
-                                         const v = this.hfr;
+                                     hfrColor(v) {
                                          if (v == null) return 'text-muted';
-                                         if (v < 2) return 'text-success';
-                                         if (v < 3) return 'text-warning';
+                                         if (v < this.greenLim) return 'text-success';
+                                         if (v < this.yellowLim) return 'text-warning';
                                          return 'text-danger';
                                      },
                                      get hfrAge() {
@@ -882,35 +883,34 @@
                                          if (ago < 60) return ago + 's ago';
                                          return Math.round(ago / 60) + 'm ago';
                                      },
-                                     get sparkMinY() { return this.hist.length ? Math.min(...this.hist.map(h => h.hfr)) : 0 },
-                                     get sparkMaxY() { return this.hist.length ? Math.max(...this.hist.map(h => h.hfr)) : 1 },
-                                     sparkX(i) { return 5 + (i / Math.max(this.hist.length - 1, 1)) * 190; },
-                                     sparkY(hfr) {
-                                         const range = this.sparkMaxY - this.sparkMinY || 1;
-                                         return 35 - (hfr - this.sparkMinY) / range * 30;
+                                     get mx() { return this.hist.length ? Math.max(...this.hist.map(h => h.hfr)) : 1 },
+                                     get pts() {
+                                         return this.hist.map((h, i) =>
+                                             (i * 120 / Math.max(this.hist.length - 1, 1)).toFixed(1) + ',' +
+                                             (22 - h.hfr / this.mx * 20).toFixed(1)
+                                         ).join(' ');
                                      },
-                                     sparkColor(pt) {
-                                         return $store.citrascope.filterColors[pt.filter] || 'var(--bs-info)';
-                                     },
-                                     get sparkline() {
-                                         return this.hist.map((h, i) => this.sparkX(i) + ',' + this.sparkY(h.hfr)).join(' ');
-                                     }
+                                     bandY(lim) { return Math.max(2, 22 - lim / this.mx * 20); }
                                  }">
-                                <div class="d-flex align-items-center gap-2">
-                                    <small class="text-muted">HFR:</small>
-                                    <span class="fw-semibold" :class="hfrColor"
-                                          x-text="hfr != null ? hfr.toFixed(1) + ' px' : '—'"></span>
-                                    <small class="text-muted" x-show="lastFilter" x-text="lastFilter"></small>
-                                    <small class="text-muted" x-text="hfrAge"></small>
-                                </div>
-                                <div x-show="hist.length > 1" class="mt-1">
-                                    <svg viewBox="0 0 200 40" class="w-100" style="max-height:40px">
-                                        <polyline :points="sparkline"
-                                                  fill="none" stroke="var(--bs-info)" stroke-width="1.5" opacity="0.4"/>
-                                        <g x-html="hist.map((h, i) =>
-                                            `<circle cx='${sparkX(i)}' cy='${sparkY(h.hfr)}' r='2' fill='${sparkColor(h)}' opacity='0.8'/>`
-                                        ).join('')"></g>
-                                    </svg>
+                                <div class="small">
+                                    <div class="row mb-1">
+                                        <div class="col-6 text-muted">Focus HFR</div>
+                                        <div class="col-6 d-flex align-items-center gap-2">
+                                            <span>
+                                                <span :class="hfrColor(hfr)" x-text="hfr != null ? hfr.toFixed(2) + ' px' : '—'"></span>
+                                                <span class="text-muted" x-show="lastFilter" x-text="lastFilter"></span>
+                                                <span class="text-muted" x-text="hfrAge"></span>
+                                            </span>
+                                            <template x-if="hist.length >= 2">
+                                                <svg width="120" height="24">
+                                                    <rect x="0" :y="bandY(greenLim)" width="120" :height="22 - bandY(greenLim)" fill="#198754" opacity="0.15"/>
+                                                    <rect x="0" :y="bandY(yellowLim)" width="120" :height="bandY(greenLim) - bandY(yellowLim)" fill="#ffc107" opacity="0.15"/>
+                                                    <rect x="0" y="2" width="120" :height="bandY(yellowLim) - 2" fill="#dc3545" opacity="0.15"/>
+                                                    <polyline :points="pts" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/>
+                                                </svg>
+                                            </template>
+                                        </div>
+                                    </div>
                                 </div>
                             </div>
 

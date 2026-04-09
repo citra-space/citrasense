@@ -631,11 +631,13 @@ class DummyAdapter(AbstractAstroHardwareAdapter):
         filepath.parent.mkdir(parents=True, exist_ok=True)
 
         ra, dec = self._mount.get_radec()
+        sigma = self._focus_dependent_psf_sigma()
         image_data, wcs = self._generate_starfield(
             ra,
             dec,
             exposure_duration_seconds,
             seed=timestamp % (2**31),
+            psf_sigma=sigma,
         )
 
         hdu = fits.PrimaryHDU(image_data, header=wcs.to_header())
@@ -1099,7 +1101,8 @@ class DummyAdapter(AbstractAstroHardwareAdapter):
         from citrascope.web.preview import array_to_jpeg_data_url
 
         ra, dec = self._mount.get_radec()
-        image_data, _ = self._generate_starfield(ra, dec, exposure_time, seed=int(time.time() * 1000))
+        sigma = self._focus_dependent_psf_sigma()
+        image_data, _ = self._generate_starfield(ra, dec, exposure_time, seed=int(time.time() * 1000), psf_sigma=sigma)
         return array_to_jpeg_data_url(image_data, flip_horizontal=flip_horizontal)
 
     def expose_camera(self, exposure_seconds: float = 1.0) -> str:
