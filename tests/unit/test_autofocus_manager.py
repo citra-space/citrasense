@@ -399,10 +399,25 @@ class TestResolveAutofocusTargetName:
 # ---------------------------------------------------------------------------
 
 
+def _has_apass_catalog() -> bool:
+    """Return True only if the APASS catalog DB exists and is queryable."""
+    try:
+        from citrascope.catalogs.apass_catalog import ApassCatalog
+
+        cat = ApassCatalog()
+        if not cat.is_available():
+            return False
+        df = cat.cone_search(180.0, 30.0, 1.0)
+        return len(df) > 0
+    except Exception:
+        return False
+
+
 class TestDummyAdapterAutofocusTargeting:
     """Verify DummyAdapter handles None/real coords correctly in do_autofocus."""
 
     @pytest.mark.slow
+    @pytest.mark.skipif(not _has_apass_catalog(), reason="APASS catalog not available")
     def test_skips_slew_when_both_none(self, tmp_path: Path):
         from citrascope.hardware.dummy_adapter import DummyAdapter
 
@@ -411,6 +426,7 @@ class TestDummyAdapterAutofocusTargeting:
         adapter.do_autofocus(target_ra=None, target_dec=None)
 
     @pytest.mark.slow
+    @pytest.mark.skipif(not _has_apass_catalog(), reason="APASS catalog not available")
     def test_uses_provided_coords(self, tmp_path: Path):
         from citrascope.hardware.dummy_adapter import DummyAdapter
 
