@@ -84,9 +84,11 @@ class SelfTaskingManager:
         group_ids = settings.self_tasking_satellite_group_ids or None
         exclude_types = settings.self_tasking_exclude_object_types or None
         orbit_regimes = settings.self_tasking_include_orbit_regimes or None
+        collection_type = settings.self_tasking_collection_type or "Track"
 
         self._logger.info(
-            "Self-tasking: requesting batch work (window %s → %s, gs=%s)",
+            "Self-tasking: requesting batch work (type=%s, window %s → %s, gs=%s)",
+            collection_type,
             window.dark_start,
             dark_end,
             self._ground_station_id,
@@ -100,6 +102,7 @@ class SelfTaskingManager:
                 sensor_id=self._sensor_id,
                 discover_visible=not bool(group_ids),
                 satellite_group_ids=group_ids,
+                request_type=collection_type,
                 exclude_types=exclude_types,
                 include_orbit_regimes=orbit_regimes,
             )

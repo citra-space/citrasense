@@ -390,7 +390,16 @@ class DummyApiClient(AbstractCitraApiClient):
             "groundStationName": ground_station.get("name", "Test Ground Station"),
             "userId": "dummy-user",
             "username": "Test User",
+            "assignedFilterName": self._random_filter_name(),
         }
+
+    def _random_filter_name(self) -> str | None:
+        """Pick a random filter from the telescope's spectralConfig, if any."""
+        spec = self.data.get("telescope", {}).get("spectralConfig", {})
+        filters = spec.get("filters", [])
+        if not filters:
+            return None
+        return random.choice(filters)["name"]
 
     def _find_upcoming_passes(
         self,

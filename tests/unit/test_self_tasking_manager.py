@@ -18,6 +18,7 @@ def _make_manager(
     exclude_types=None,
     orbit_regimes=None,
     group_ids=None,
+    collection_type="Track",
 ):
     api_client = MagicMock()
     api_client.create_batch_collection_requests.return_value = {"status": "ok", "created": 5}
@@ -27,6 +28,7 @@ def _make_manager(
     settings.self_tasking_satellite_group_ids = group_ids or []
     settings.self_tasking_exclude_object_types = exclude_types or []
     settings.self_tasking_include_orbit_regimes = orbit_regimes or []
+    settings.self_tasking_collection_type = collection_type
 
     logger = logging.getLogger("test_self_tasking")
 
@@ -169,3 +171,17 @@ def test_next_request_seconds_decreases_over_time():
     sd2 = mgr.status_dict()
 
     assert sd2["next_request_seconds"] < sd1["next_request_seconds"]
+
+
+def test_default_collection_type_is_track():
+    mgr, api_client, _ = _make_manager()
+    mgr.check_and_request()
+    call_kwargs = api_client.create_batch_collection_requests.call_args
+    assert call_kwargs.kwargs["request_type"] == "Track"
+
+
+def test_passes_characterization_collection_type():
+    mgr, api_client, _ = _make_manager(collection_type="Characterization")
+    mgr.check_and_request()
+    call_kwargs = api_client.create_batch_collection_requests.call_args
+    assert call_kwargs.kwargs["request_type"] == "Characterization"

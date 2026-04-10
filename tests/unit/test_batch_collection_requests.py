@@ -63,3 +63,22 @@ def test_citra_client_batch_constructs_payload():
     assert body["excludeTypes"] == ["Debris"]
     assert body["includeOrbitRegimes"] == ["LEO"]
     assert "satelliteGroupIds" not in body  # Empty list not sent
+
+
+def test_citra_client_batch_characterization_type():
+    """Verify request_type='Characterization' lands in the payload as type."""
+    from citrascope.api.citra_api_client import CitraApiClient
+
+    client = CitraApiClient(host="test.api.citra.space", token="fake", logger=logging.getLogger("test"))
+
+    with patch.object(client, "_request", return_value={"status": "ok"}) as mock_req:
+        client.create_batch_collection_requests(
+            window_start="2025-01-01T00:00:00Z",
+            window_stop="2025-01-01T06:00:00Z",
+            ground_station_id="gs-001",
+            sensor_id="sensor-001",
+            request_type="Characterization",
+        )
+
+    body = mock_req.call_args[1]["json"]
+    assert body["type"] == "Characterization"
