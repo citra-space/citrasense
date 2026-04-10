@@ -438,7 +438,7 @@ _DUMMY_SKY_RATE = 5.0  # ADU/s sky background rate (dark site)
 _DUMMY_READ_NOISE = 1.0  # electrons RMS
 _DUMMY_GAIN = 1.5  # electrons/ADU
 _DUMMY_PSF_SIGMA_PX = 3.0 / 2.3548  # sigma from 3.0 px FWHM seeing
-_DUMMY_MAG_LIMIT = 12.0  # faintest catalog star to render (Vmag)
+_DUMMY_MAG_LIMIT = 14.0  # faintest catalog star to render (Vmag)
 _DUMMY_MAG_ZERO = 20.0  # instrument zero-point: V=10 → SNR~58, V=12 → SNR~9
 _DUMMY_OPTIMAL_FOCUS = 25000  # focuser position for sharpest PSF
 _DUMMY_DEFOCUS_K = 0.002  # PSF broadening per focuser step from optimal
@@ -896,33 +896,10 @@ class DummyAdapter(AbstractAstroHardwareAdapter):
                     )
                     return np.asarray(ras), np.asarray(decs), np.asarray(mags)
         except Exception as e:
-            self.logger.debug(f"DummyAdapter: APASS catalog query failed, using synthetic stars: {e}")
+            self.logger.debug(f"DummyAdapter: APASS catalog unavailable: {e}")
 
-        seed = int(abs(ra * 1000 + dec * 1000)) % (2**31)
-        rng = np.random.RandomState(seed)
-
-        area_sq_deg = fov_deg * fov_deg
-        n_stars = max(20, int(150 * area_sq_deg))
-
-        cos_dec = max(math.cos(math.radians(dec)), 0.05)
-        ras = ra + rng.uniform(-fov_deg / 2, fov_deg / 2, n_stars) / cos_dec
-        decs = dec + rng.uniform(-fov_deg / 2, fov_deg / 2, n_stars)
-        mags = rng.uniform(5.0, _DUMMY_MAG_LIMIT, n_stars)
-
-        ras = ras % 360.0
-        decs = np.clip(decs, -90.0, 90.0)
-
-        if len(ras) == 0:
-            self.logger.warning(
-                f"DummyAdapter: No catalog stars found " f"around RA={ra:.3f}, Dec={dec:.3f} — generating empty field"
-            )
-            return np.array([]), np.array([]), np.array([])
-
-        self.logger.debug(
-            f"DummyAdapter: Synthetic fallback — {len(ras)} stars "
-            f"(Vmag < {_DUMMY_MAG_LIMIT}) around RA={ra:.3f}, Dec={dec:.3f}"
-        )
-        return ras, decs, mags
+        self.logger.debug(f"DummyAdapter: No catalog stars around RA={ra:.3f}, Dec={dec:.3f}")
+        return np.array([]), np.array([]), np.array([])
 
     def set_custom_tracking_rate(self, ra_rate: float, dec_rate: float):
         """Simulate setting tracking rate."""
