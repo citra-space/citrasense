@@ -50,6 +50,7 @@ dependencies = [
   "keplemon>=3.6.3",
   "astropy-healpix>=1.0.0",
   "astroquery>=0.4.6",
+  "Pillow>=10.0.0",
 ]
 
 [project.scripts]
