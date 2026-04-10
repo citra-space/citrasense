@@ -153,6 +153,7 @@ class CitraScopeSettings(BaseModel):
     self_tasking_satellite_group_ids: list[str] = Field(default_factory=list)
     self_tasking_include_orbit_regimes: list[str] = Field(default_factory=list)
     self_tasking_exclude_object_types: list[str] = Field(default_factory=list)
+    self_tasking_collection_type: str = "Track"
 
     # ── Non-persisted public attrs (excluded from model_dump) ─────────
     web_port: int = Field(default=DEFAULT_WEB_PORT, exclude=True)

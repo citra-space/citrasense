@@ -155,11 +155,12 @@
                      },
                      get targetingLabel() {
                          const cfg = $store.citrascope.config || {};
+                         const collType = cfg.self_tasking_collection_type || 'Track';
                          const regimes = cfg.self_tasking_include_orbit_regimes || [];
                          const excluded = cfg.self_tasking_exclude_object_types || [];
                          const allTypes = ['Payload', 'Rocket Body', 'Debris', 'Unknown'];
                          const included = allTypes.filter(t => !excluded.includes(t));
-                         const parts = [];
+                         const parts = [collType];
                          if (regimes.length) parts.push(regimes.join(', '));
                          else parts.push('All orbits');
                          if (excluded.length && included.length) parts.push(included.join(', '));
@@ -1343,6 +1344,8 @@
                                     <thead>
                                         <tr>
                                             <th>Target</th>
+                                            <th>Type</th>
+                                            <th>Filter</th>
                                             <th>Start Time</th>
                                             <th>End Time</th>
                                             <th>Status</th>
@@ -1353,6 +1356,14 @@
                                             <tr x-data="taskRow(task)"
                                                 class="task-row" :class="rowClass">
                                                 <td class="fw-semibold" x-text="task.target"></td>
+                                                <td class="text-secondary small" x-text="task.type || '-'"></td>
+                                                <td class="small">
+                                                    <span x-show="task.filter"
+                                                          class="badge"
+                                                          :style="'background-color:' + ($store.citrascope.filterColors[task.filter] || '#777') + ';color:white'"
+                                                          x-text="task.filter"></span>
+                                                    <span x-show="!task.filter" class="text-secondary">-</span>
+                                                </td>
                                                 <td class="text-secondary small" x-text="$store.citrascope.formatLocalTime(task.start_time)"></td>
                                                 <td class="text-secondary small" x-text="task.stop_time ? $store.citrascope.formatLocalTime(task.stop_time) : '-'"></td>
                                                 <td>

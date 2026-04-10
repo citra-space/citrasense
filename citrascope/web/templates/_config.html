@@ -1043,6 +1043,15 @@
                                        @change="$store.citrascope.config.self_tasking_satellite_group_ids = $event.target.value ? $event.target.value.split(',').map(s => s.trim()).filter(Boolean) : []">
                                 <small class="text-muted d-block mt-1">Comma-separated group UUIDs. Empty = server discovers visible satellites automatically.</small>
                             </div>
+                            <div class="col-md-6">
+                                <label class="form-label" for="selfTaskingCollectionType">Collection Type</label>
+                                <select id="selfTaskingCollectionType" class="form-select"
+                                        x-model="$store.citrascope.config.self_tasking_collection_type">
+                                    <option value="Track">Track (single filter)</option>
+                                    <option value="Characterization">Characterization (multi-filter)</option>
+                                </select>
+                                <small class="text-muted d-block mt-1">Track collects in one filter. Characterization cycles through multiple filters per target.</small>
+                            </div>
                         </div>
                     </div>
 

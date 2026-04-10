@@ -50,6 +50,8 @@ def _task_to_dict(task: Any) -> dict:
         "stop_time": task.taskStop or None,
         "status": task.status,
         "target": task.satelliteName,
+        "type": task.type,
+        "filter": task.assigned_filter_name,
     }
 
 
@@ -796,6 +798,7 @@ class CitraScopeWebApp:
             group_ids = settings.self_tasking_satellite_group_ids or None
             exclude_types = settings.self_tasking_exclude_object_types or None
             orbit_regimes = settings.self_tasking_include_orbit_regimes or None
+            collection_type = settings.self_tasking_collection_type or "Track"
 
             from datetime import timedelta, timezone
 
@@ -804,7 +807,8 @@ class CitraScopeWebApp:
             window_stop = (now + timedelta(minutes=20)).strftime("%Y-%m-%dT%H:%M:%SZ")
 
             CITRASCOPE_LOGGER.info(
-                "Manual batch request: window %s → %s, gs=%s, sensor=%s",
+                "Manual batch request: type=%s, window %s → %s, gs=%s, sensor=%s",
+                collection_type,
                 window_start,
                 window_stop,
                 ground_station_id,
@@ -820,6 +824,7 @@ class CitraScopeWebApp:
                     sensor_id=sensor_id,
                     discover_visible=not bool(group_ids),
                     satellite_group_ids=group_ids,
+                    request_type=collection_type,
                     exclude_types=exclude_types,
                     include_orbit_regimes=orbit_regimes,
                 )
