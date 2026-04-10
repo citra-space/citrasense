@@ -1003,7 +1003,7 @@ class DirectHardwareAdapter(AbstractAstroHardwareAdapter):
         # Slew to target star if we have a mount and coordinates
         if target_ra is not None and target_dec is not None and self._mount:
             report("Slewing to autofocus target...")
-            self._do_point_telescope(target_ra, target_dec)
+            self.point_telescope(target_ra, target_dec)
 
         # Determine which filters to autofocus
         enabled_filters = {fid: fdata for fid, fdata in self.filter_map.items() if fdata.get("enabled", True)}

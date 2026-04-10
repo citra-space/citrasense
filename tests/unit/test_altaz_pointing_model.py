@@ -380,6 +380,69 @@ class TestSerialization:
 
 
 # ------------------------------------------------------------------
+# restore_from_dict
+# ------------------------------------------------------------------
+
+
+class TestRestoreFromDict:
+    def test_round_trip_preserves_model(self):
+        """Snapshot → reset → restore should give back the original model."""
+        pts = _synthetic_points(0.4, -0.2, 0.1, 0.05, -0.03, n=12)
+        model = AltAzPointingModel()
+        for mount_ra, mount_dec, solved_ra, solved_dec, lat, lon in pts:
+            model.add_point(mount_ra, mount_dec, solved_ra, solved_dec, lat, lon)
+
+        snapshot = model.to_dict()
+        original_status = model.status()
+        assert model.is_trained
+
+        model.reset()
+        assert not model.is_active
+
+        model.restore_from_dict(snapshot)
+        assert model.is_trained
+        assert model.point_count == 12
+
+        restored_status = model.status()
+        for term in ("AN", "AW", "IE", "CA", "NPAE"):
+            assert original_status["terms"][term] == restored_status["terms"][term]
+        assert restored_status["pointing_accuracy_deg"] == original_status["pointing_accuracy_deg"]
+
+    def test_restore_persists_to_file(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            state_file = Path(tmpdir) / "pm.json"
+            pts = _synthetic_points(0.3, 0.2, 0.1, n=8)
+            model = AltAzPointingModel(state_file=state_file)
+            for mount_ra, mount_dec, solved_ra, solved_dec, lat, lon in pts:
+                model.add_point(mount_ra, mount_dec, solved_ra, solved_dec, lat, lon)
+
+            snapshot = model.to_dict()
+            model.reset()
+
+            data_after_reset = json.loads(state_file.read_text())
+            assert data_after_reset["n_terms"] == 0
+
+            model.restore_from_dict(snapshot)
+            data_after_restore = json.loads(state_file.read_text())
+            assert data_after_restore["n_terms"] == 5
+            assert len(data_after_restore["points"]) == 8
+
+    def test_restore_empty_snapshot_clears_model(self):
+        """Restoring from an empty/untrained snapshot should leave the model inactive."""
+        model = AltAzPointingModel()
+        empty_snapshot = model.to_dict()
+
+        pts = _synthetic_points(0.3, 0.2, 0.1, n=8)
+        for mount_ra, mount_dec, solved_ra, solved_dec, lat, lon in pts:
+            model.add_point(mount_ra, mount_dec, solved_ra, solved_dec, lat, lon)
+        assert model.is_trained
+
+        model.restore_from_dict(empty_snapshot)
+        assert not model.is_active
+        assert model.point_count == 0
+
+
+# ------------------------------------------------------------------
 # Reset
 # ------------------------------------------------------------------
 

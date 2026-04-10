@@ -460,7 +460,7 @@
                                         <div class="row mb-1">
                                             <div class="col-6 text-muted">
                                                 <span data-bs-toggle="tooltip" data-bs-placement="top"
-                                                      title="Average error left over after the model corrects for tripod tilt and alignment. This is the best accuracy the model can achieve."
+                                                      title="Average error left over after the model corrects for leveling and alignment. This is the best accuracy the model can achieve."
                                                       style="border-bottom: 1px dotted; cursor: help;"
                                                       x-init="new bootstrap.Tooltip($el)">Model Fit RMS</span>
                                             </div>
@@ -530,11 +530,11 @@
                                             </summary>
                                             <div class="mt-1">
                                                 <div class="row mb-1">
-                                                    <div class="col-6 text-muted">Tripod Tilt N-S</div>
+                                                    <div class="col-6 text-muted">Leveling Error N-S</div>
                                                     <div class="col-6" x-text="(pm.terms?.AN >= 0 ? '+' : '') + pm.terms?.AN?.toFixed(4) + '°'"></div>
                                                 </div>
                                                 <div class="row mb-1">
-                                                    <div class="col-6 text-muted">Tripod Tilt E-W</div>
+                                                    <div class="col-6 text-muted">Leveling Error E-W</div>
                                                     <div class="col-6" x-text="(pm.terms?.AW >= 0 ? '+' : '') + pm.terms?.AW?.toFixed(4) + '°'"></div>
                                                 </div>
                                                 <div class="row mb-1">

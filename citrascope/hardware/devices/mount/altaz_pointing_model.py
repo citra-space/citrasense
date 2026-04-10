@@ -876,6 +876,24 @@ class AltAzPointingModel:
         model._apply_dict(data)
         return model
 
+    def restore_from_dict(self, data: dict[str, Any]) -> None:
+        """Restore model state from a previously captured ``to_dict()`` snapshot.
+
+        Used by the calibration workflow to roll back to a working model
+        when a fresh calibration fails or is cancelled.
+        """
+        with self._lock:
+            self._apply_dict(data)
+            self._recent_residuals.clear()
+            self._live_residuals.clear()
+        self._save_state()
+        _logger.info(
+            "Pointing model restored: %d-term, %d points, RMS=%.4f°",
+            self._n_terms,
+            len(self._points),
+            self._rms_deg,
+        )
+
     # ------------------------------------------------------------------
     # File persistence
     # ------------------------------------------------------------------

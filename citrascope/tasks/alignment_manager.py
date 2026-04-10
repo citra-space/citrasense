@@ -289,16 +289,31 @@ class AlignmentManager:
             return {"step": self._calibration_step, "total": self._calibration_total}
 
     def _execute_calibration(self) -> None:
-        """Execute the full pointing calibration: bootstrap sync → grid walk → fit."""
+        """Execute the full pointing calibration: bootstrap sync → grid walk → fit.
+
+        Snapshots the current model before starting so a failed or cancelled
+        calibration can roll back rather than leaving the operator with no model.
+        """
         with self._lock:
             self._calibrating = True
             self._progress = "Starting pointing calibration..."
+
+        previous_state: dict[str, Any] | None = None
+        had_working_model = False
+        if self._pointing_model:
+            previous_state = self._pointing_model.to_dict()
+            had_working_model = self._pointing_model.is_active
 
         try:
             self._do_calibration()
         except Exception as e:
             self.logger.error(f"Pointing calibration failed: {e!s}", exc_info=True)
         finally:
+            if had_working_model and self._pointing_model and not self._pointing_model.is_active:
+                assert previous_state is not None
+                self.logger.warning("Calibration did not produce a working model — restoring previous model")
+                self._pointing_model.restore_from_dict(previous_state)
+
             with self._lock:
                 self._calibrating = False
                 self._calibration_step = 0
@@ -336,9 +351,13 @@ class AlignmentManager:
         site_lat = location["latitude"]
         site_lon = location["longitude"]
 
-        if self.safety_monitor and not self.safety_monitor.is_action_safe("capture"):
-            self.logger.warning("Calibration aborted — safety monitor blocked capture")
-            return
+        if self.safety_monitor:
+            if not self.safety_monitor.is_action_safe("capture"):
+                self.logger.warning("Calibration aborted — safety monitor blocked capture")
+                return
+            if not self.safety_monitor.is_action_safe("slew"):
+                self.logger.warning("Calibration aborted — safety monitor blocked slew")
+                return
 
         # Reset model for fresh calibration
         self._pointing_model.reset()
@@ -422,7 +441,12 @@ class AlignmentManager:
                 target_dec,
             )
 
-            # Slew (raw — no model correction since we're building the model)
+            # Raw slew — bypasses point_telescope() because we're building
+            # the model (no correction to apply yet).  Safety is checked here.
+            if self.safety_monitor and not self.safety_monitor.is_action_safe("slew"):
+                self.logger.warning("Calibration: slew blocked by safety monitor at point %d — skipping", i + 1)
+                continue
+
             try:
                 if not mount.slew_to_radec(target_ra, target_dec):
                     self.logger.warning("Calibration: slew failed for point %d — skipping", i + 1)
