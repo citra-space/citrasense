@@ -59,9 +59,10 @@ def check_all_dependencies(settings) -> dict:
 def read_source_catalog(catalog_path: Path) -> pd.DataFrame:
     """Read an output.cat source catalog, auto-detecting the format.
 
-    Supports both the new 5-column layout written by PlateSolverProcessor
-    (mag, magerr, ra, dec, elongation) and the legacy 11+ column SExtractor
-    layout (columns 4,5,8,9,10 -> mag, magerr, ra, dec, elongation).
+    Supports three layouts:
+    - Compact 5-column (mag, magerr, ra, dec, elongation)
+    - Current 13-column SExtractor (with FWHM_IMAGE at col 10, ELONGATION at col 11)
+    - Legacy 11-column SExtractor (without FWHM_IMAGE, ELONGATION at col 10)
     """
     with open(catalog_path) as f:
         for line in f:
@@ -79,11 +80,12 @@ def read_source_catalog(catalog_path: Path) -> pd.DataFrame:
             header=None,
             names=["mag", "magerr", "ra", "dec", "elongation"],
         )
+    elong_col = 11 if ncols >= 13 else 10
     return pd.read_csv(
         catalog_path,
         sep=r"\s+",
         comment="#",
         header=None,
-        usecols=[4, 5, 8, 9, 11],
+        usecols=[4, 5, 8, 9, elong_col],
         names=["mag", "magerr", "ra", "dec", "elongation"],
     )
