@@ -20,7 +20,10 @@ from citrascope.hardware.nina.nina_event_listener import NinaEventListener, deri
 class NinaAdvancedHttpAdapter(AbstractAstroHardwareAdapter):
     """HTTP adapter for controlling astronomical equipment through N.I.N.A.
     (Nighttime Imaging 'N' Astronomy) Advanced API.
-    https://bump.sh/christian-photo/doc/advanced-api/"""
+
+    REST API docs:  https://christian-photo.github.io/github-page/projects/ninaAPI/v2/doc/api
+    WebSocket docs: https://github.com/christian-photo/ninaAPI/wiki/Websocket-V2
+    """
 
     DEFAULT_FOCUS_POSITION = 9000
 
@@ -41,12 +44,16 @@ class NinaAdvancedHttpAdapter(AbstractAstroHardwareAdapter):
     # Hardware operation timeouts (seconds) — waiting for physical movement to complete
     HARDWARE_MOVE_TIMEOUT = 60
     MOUNT_PARK_TIMEOUT = 120  # park/unpark can require a full-sky slew
-    AUTOFOCUS_TIMEOUT = 60 * 15  # 15 minutes
+    AUTOFOCUS_TIMEOUT = 60 * 10  # 10 minutes
     SEQUENCE_TIMEOUT_MINUTES = 60
 
     # Polling intervals (seconds)
     SLEW_POLL_INTERVAL = 2
     FOCUSER_POLL_INTERVAL = 5
+
+    # If no AUTOFOCUS-POINT-ADDED events arrive for this long and the focuser
+    # is idle, assume NINA autofocus failed silently (no WS completion event).
+    AF_ACTIVITY_TIMEOUT = 60
 
     def __init__(self, logger: logging.Logger, images_dir: Path, **kwargs):
         super().__init__(images_dir=images_dir, **kwargs)
@@ -199,6 +206,20 @@ class NinaAdvancedHttpAdapter(AbstractAstroHardwareAdapter):
             self.filter_map[id]["focus_position"] = focus_value
             filter_progress(f"done (position {focus_value})")
 
+    def _is_focuser_idle(self) -> bool:
+        """Return True if the focuser reports IsMoving=false; return False when state is unknown."""
+        try:
+            resp = requests.get(
+                self.nina_api_path + self.FOCUSER_URL + "info",
+                timeout=self.INFO_QUERY_TIMEOUT,
+            ).json()
+            if resp.get("Success"):
+                return not resp["Response"].get("IsMoving", False)
+            self.logger.debug("Focuser idle check: NINA API returned Success=false")
+        except Exception as e:
+            self.logger.debug(f"Focuser idle check failed: {e}")
+        return False
+
     def _auto_focus_one_filter(
         self,
         filter_id: int,
@@ -255,6 +276,7 @@ class NinaAdvancedHttpAdapter(AbstractAstroHardwareAdapter):
 
         self._event_listener.autofocus_finished.clear()
         self._event_listener.autofocus_error.clear()
+        self._event_listener.last_af_point_time = time.time()
         prev_af_callback = self._event_listener.on_af_point
         self._event_listener.on_af_point = on_af_point
 
@@ -265,6 +287,7 @@ class NinaAdvancedHttpAdapter(AbstractAstroHardwareAdapter):
             raise RuntimeError(f"Autofocus trigger rejected by NINA: {af_resp.get('Error')}")
         self.logger.info(f"Focuser {af_resp['Response']}")
 
+        silent_failure = False
         try:
             deadline = time.time() + self.AUTOFOCUS_TIMEOUT
             while not self._event_listener.autofocus_finished.is_set():
@@ -275,23 +298,40 @@ class NinaAdvancedHttpAdapter(AbstractAstroHardwareAdapter):
                 if remaining <= 0:
                     self.logger.warning(f"Autofocus timed out after {self.AUTOFOCUS_TIMEOUT}s for filter {filter_name}")
                     break
+                last_point = self._event_listener.last_af_point_time
+                if last_point > 0 and time.time() - last_point > self.AF_ACTIVITY_TIMEOUT:
+                    if self._is_focuser_idle():
+                        self.logger.warning(
+                            f"Autofocus for filter {filter_name} appears to have failed silently — "
+                            f"no AF points for {self.AF_ACTIVITY_TIMEOUT}s and focuser is idle"
+                        )
+                        silent_failure = True
+                        break
                 self._event_listener.autofocus_finished.wait(timeout=min(remaining, 1.0))
         finally:
             self._event_listener.on_af_point = prev_af_callback
 
         if self._event_listener.autofocus_finished.is_set():
-            last_af = requests.get(
-                self.nina_api_path + self.FOCUSER_URL + "last-af", timeout=self.INFO_QUERY_TIMEOUT
-            ).json()
-            if last_af.get("Success"):
-                resp = last_af["Response"]
-                position = resp["CalculatedFocusPoint"]["Position"]
-                hfr = resp["CalculatedFocusPoint"]["Value"]
-                self.logger.info(f"Autofocus complete for filter {filter_name}: Position {position}, HFR {hfr}")
-                return position
-            self.logger.warning(f"last-af fetch after AUTOFOCUS-FINISHED failed: {last_af.get('Error')}")
+            try:
+                last_af = requests.get(
+                    self.nina_api_path + self.FOCUSER_URL + "last-af", timeout=self.INFO_QUERY_TIMEOUT
+                ).json()
+                if last_af.get("Success"):
+                    resp = last_af["Response"]
+                    position = resp["CalculatedFocusPoint"]["Position"]
+                    hfr = resp["CalculatedFocusPoint"]["Value"]
+                    self.logger.info(f"Autofocus complete for filter {filter_name}: Position {position}, HFR {hfr}")
+                    return position
+                self.logger.warning(f"last-af query failed after AUTOFOCUS-FINISHED: {last_af.get('Error')}")
+            except Exception as e:
+                self.logger.warning(f"last-af query error after AUTOFOCUS-FINISHED: {e}")
 
-        self.logger.warning(f"Preserving existing focus position {existing_focus_position} for {filter_name}")
+        if silent_failure:
+            self.logger.warning(
+                f"Preserving focus position {existing_focus_position} for {filter_name} after silent AF failure"
+            )
+        else:
+            self.logger.warning(f"Preserving existing focus position {existing_focus_position} for {filter_name}")
         return existing_focus_position
 
     def _find_task_images(self, task_id: str, expected_count: int) -> list[int]:

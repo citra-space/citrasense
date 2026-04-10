@@ -62,6 +62,7 @@ class NinaEventListener:
         self._last_filter_change: dict[str, Any] | None = None
         self._last_image_save: dict[str, Any] | None = None
         self._last_sequence_error: dict[str, Any] | None = None
+        self._last_af_point_time: float = 0.0
 
         # Optional callbacks set by the adapter
         self.on_af_point: Callable[[int, float], None] | None = None
@@ -83,6 +84,16 @@ class NinaEventListener:
     def last_sequence_error(self) -> dict[str, Any] | None:
         with self._data_lock:
             return dict(self._last_sequence_error) if self._last_sequence_error else None
+
+    @property
+    def last_af_point_time(self) -> float:
+        with self._data_lock:
+            return self._last_af_point_time
+
+    @last_af_point_time.setter
+    def last_af_point_time(self, value: float) -> None:
+        with self._data_lock:
+            self._last_af_point_time = value
 
     # -- lifecycle --
 
@@ -163,6 +174,8 @@ class NinaEventListener:
             self.autofocus_error.set()
 
         elif event == "AUTOFOCUS-POINT-ADDED":
+            with self._data_lock:
+                self._last_af_point_time = time.time()
             stats = response.get("ImageStatistics") or response
             position = stats.get("Position")
             hfr = stats.get("HFR")
