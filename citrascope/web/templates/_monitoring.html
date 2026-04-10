@@ -1344,7 +1344,6 @@
                                     <thead>
                                         <tr>
                                             <th>Target</th>
-                                            <th>Type</th>
                                             <th>Filter</th>
                                             <th>Start Time</th>
                                             <th>End Time</th>
@@ -1356,7 +1355,6 @@
                                             <tr x-data="taskRow(task)"
                                                 class="task-row" :class="rowClass">
                                                 <td class="fw-semibold" x-text="task.target"></td>
-                                                <td class="text-secondary small" x-text="task.type || '-'"></td>
                                                 <td class="small">
                                                     <span x-show="task.filter"
                                                           class="badge"

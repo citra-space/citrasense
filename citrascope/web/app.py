@@ -50,7 +50,6 @@ def _task_to_dict(task: Any) -> dict:
         "stop_time": task.taskStop or None,
         "status": task.status,
         "target": task.satelliteName,
-        "type": task.type,
         "filter": task.assigned_filter_name,
     }
 
