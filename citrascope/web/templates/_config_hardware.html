@@ -220,13 +220,6 @@
                         step="0.5" min="0.5" max="30"
                         x-model.number="$store.citrascope.config.alignment_exposure_seconds">
                 </div>
-                <div class="form-check">
-                    <input class="form-check-input" type="checkbox" id="align_on_startup"
-                        x-model="$store.citrascope.config.align_on_startup">
-                    <label class="form-check-label" for="align_on_startup">
-                        Align on startup
-                    </label>
-                </div>
             </div>
 
             <!-- Manual Sync Column -->
@@ -253,7 +246,7 @@
                     </div>
                 </div>
                 <button type="button" class="btn btn-sm btn-outline-primary w-100"
-                    :disabled="$store.citrascope.status?.mount_at_home"
+                    :disabled="$store.citrascope.status?.mount_at_home || $store.citrascope.isSystemBusy"
                     @click="window.manualSync(syncRa, syncDec)">
                     <i class="bi bi-crosshair me-1"></i> Manually Sync Mount
                 </button>

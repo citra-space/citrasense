@@ -52,7 +52,6 @@ def mock_settings():
     s.is_configured.return_value = True
     s.keep_processing_output = False
     s.alignment_exposure_seconds = 2.0
-    s.align_on_startup = False
     s.last_alignment_timestamp = None
     s.task_processing_paused = False
     s.observation_mode = "auto"

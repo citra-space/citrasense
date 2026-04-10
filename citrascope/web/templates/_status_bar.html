@@ -53,7 +53,8 @@
 
             <span class="badge rounded-pill"
                   data-bs-toggle="tooltip" data-bs-theme="dark"
-                  :data-bs-title="$store.citrascope.status?.telescope_connected ? 'Telescope connected' : 'Telescope disconnected'"
+                  style="white-space:pre-line;"
+                  :data-bs-title="$store.citrascope.telescopeTooltip()"
                   :class="$store.citrascope.status?.telescope_connected ? 'bg-success' : 'bg-danger'">Telescope</span>
 
             <span class="badge rounded-pill"

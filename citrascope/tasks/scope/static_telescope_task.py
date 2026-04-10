@@ -21,7 +21,6 @@ class StaticTelescopeTask(AbstractBaseTelescopeTask):
         if not satellite_data or satellite_data.get("most_recent_elset") is None:
             raise ValueError("Could not fetch valid satellite data or TLE.")
 
-        self.pointing_report: dict | None = None
         try:
             strategy = self.hardware_adapter.get_observation_strategy()
 
@@ -56,7 +55,6 @@ class StaticTelescopeTask(AbstractBaseTelescopeTask):
         """
         exposure = self.settings.exposure_seconds
         num_exposures = self.settings.num_exposures
-        plate_solve = self.settings.plate_solve_after_slew
         imaging_window = num_exposures * exposure
 
         # -- Slow-mover detection --
@@ -76,8 +74,7 @@ class StaticTelescopeTask(AbstractBaseTelescopeTask):
             )
             extra_lead = 0.0
         else:
-            plate_solve_budget = 15.0 if plate_solve else 0.0
-            extra_lead = plate_solve_budget + imaging_window / 2.0
+            extra_lead = imaging_window / 2.0
             self.logger.info(
                 "Fast mover (%.4f\u00b0/s, travels %.3f\u00b0 in %.1fs window) " "\u2014 leading by %.1fs extra",
                 angular_rate,
@@ -106,15 +103,7 @@ class StaticTelescopeTask(AbstractBaseTelescopeTask):
             "extra_lead_seconds": round(extra_lead, 2),
             "num_exposures": num_exposures,
             "exposure_seconds": exposure,
-            "plate_solve_after_slew": plate_solve,
         }
-
-        # -- Verify pointing --
-        if plate_solve:
-            lead_ra = self.pointing_report["final_telescope_ra_deg"]
-            lead_dec = self.pointing_report["final_telescope_dec_deg"]
-            verified = self.verify_pointing(lead_ra, lead_dec)
-            self.pointing_report["slew_ahead"]["plate_solve_succeeded"] = verified
 
         # -- Real-time timing gate (fast movers only) --
         if not is_slow_mover:

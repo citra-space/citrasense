@@ -99,8 +99,18 @@ class _DummyMount(AbstractMount):
     _MOVE_RATE_DEG_PER_S = 16.0
     _TRACKING_DRIFT_DEG_PER_S = 0.005
 
-    def __init__(self, logger: logging.Logger) -> None:
+    def __init__(
+        self,
+        logger: logging.Logger,
+        sim_AN: float = 0.4,
+        sim_AW: float = -0.25,
+        sim_IE: float = 0.08,
+    ) -> None:
         super().__init__(logger)
+        self._sim_AN = sim_AN
+        self._sim_AW = sim_AW
+        self._sim_IE = sim_IE
+
         self._ra: float = _current_lst_deg()
         self._dec: float = _OBSERVER_LAT_DEG
         az, alt = _radec_to_altaz(self._ra, self._dec)
@@ -112,6 +122,7 @@ class _DummyMount(AbstractMount):
         self._parked = False
         self._homed = False
         self._moving_dir: str | None = None
+        self._motion_rate: float = self._SLEW_RATE_DEG_PER_S
         self._abort_event = threading.Event()
 
     # -- AbstractHardwareDevice ------------------------------------------------
@@ -137,20 +148,18 @@ class _DummyMount(AbstractMount):
     def is_connected(self) -> bool:
         return True
 
-    # -- AbstractMount core ----------------------------------------------------
+    # -- Internal motion simulation --------------------------------------------
 
-    def slew_to_radec(self, ra: float, dec: float) -> bool:
-        """Simulate a slew by sweeping azimuth at a realistic rate.
+    def _simulate_motion(self, target_az: float, target_alt: float, rate: float) -> bool:
+        """Sweep azimuth toward *target_az* at *rate* deg/s, then set altitude.
 
-        Uses shortest-arc to determine direction, then advances azimuth
-        via start_move/stop_move so the cable wrap check sees gradual
-        accumulation during the transit.  The sleep is interruptible via
-        abort_slew() so the safety monitor can cut a slew short.
+        All simulated motion funnels through here so ``get_azimuth()`` always
+        reports gradual interpolation and the cable-wrap observer never sees
+        an instantaneous jump.  The wait is interruptible via ``_abort_event``.
+
+        Returns True if completed, False if aborted.
         """
-        self._homed = False
         self._abort_event.clear()
-        target_az, target_alt = _radec_to_altaz(ra, dec)
-
         self._snap()
         current_az = self._base_az % 360.0
         delta = ((target_az - current_az + 180.0) % 360.0) - 180.0
@@ -158,21 +167,36 @@ class _DummyMount(AbstractMount):
         aborted = False
         if abs(delta) > 1.0:
             self._slewing = True
-            direction = "east" if delta > 0 else "west"
-            self.start_move(direction)
-            wait_s = abs(delta) / self._SLEW_RATE_DEG_PER_S
+            self._motion_rate = rate
+            self._moving_dir = "east" if delta > 0 else "west"
+            wait_s = abs(delta) / rate
             aborted = self._abort_event.wait(wait_s)
-            self.stop_move(direction)
+            self._snap()
+            self._moving_dir = None
             self._slewing = False
 
         if aborted:
-            self.logger.info("Slew aborted mid-transit")
+            self._ra, self._dec = _altaz_to_radec(self._base_az % 360.0, self._alt)
             return False
 
-        self._ra = ra
-        self._dec = dec
         self._base_az = target_az
         self._alt = target_alt
+        self._ra, self._dec = _altaz_to_radec(target_az, target_alt)
+        self._ref_time = time.monotonic()
+        return True
+
+    # -- AbstractMount core ----------------------------------------------------
+
+    def slew_to_radec(self, ra: float, dec: float) -> bool:
+        self._homed = False
+        target_az, target_alt = _radec_to_altaz(ra, dec)
+        if not self._simulate_motion(target_az, target_alt, self._SLEW_RATE_DEG_PER_S):
+            self.logger.info("Slew aborted mid-transit")
+            return False
+        # Recompute az/alt at current LST — the sky rotated during the slew.
+        self._base_az, self._alt = _radec_to_altaz(ra, dec)
+        self._ra = ra
+        self._dec = dec
         self._ref_time = time.monotonic()
         return True
 
@@ -182,9 +206,6 @@ class _DummyMount(AbstractMount):
     def abort_slew(self) -> None:
         self._abort_event.set()
         self._slewing = False
-        self._snap()
-        self._moving_dir = None
-        self._ra, self._dec = _altaz_to_radec(self._base_az % 360.0, self._alt)
 
     def get_radec(self) -> tuple[float, float]:
         if self._moving_dir is not None:
@@ -208,9 +229,10 @@ class _DummyMount(AbstractMount):
         return self._tracking
 
     def park(self) -> bool:
+        park_alt = 90.0 - abs(_OBSERVER_LAT_DEG)
+        if not self._simulate_motion(0.0, park_alt, self._SLEW_RATE_DEG_PER_S):
+            return False
         self._parked = True
-        self._base_az = 0.0
-        self._ref_time = time.monotonic()
         return True
 
     def unpark(self) -> bool:
@@ -240,50 +262,15 @@ class _DummyMount(AbstractMount):
     # -- Homing ----------------------------------------------------------------
 
     def find_home(self) -> bool:
-        """Simulate homing by slewing back toward az=0 via continuous motion.
-
-        Uses start_move/stop_move so the cable wrap check sees the azimuth
-        sweeping through intermediate positions, just like a real mount.
-        Returns True once the mount reaches the home position.
-        """
-        self._snap()
-        current_az = self._base_az % 360.0
-        delta = ((self._HOME_AZ - current_az + 180.0) % 360.0) - 180.0
-
-        if abs(delta) < 1.0:
-            self._finish_home()
-            return True
-
-        self._abort_event.clear()
-        direction = "east" if delta > 0 else "west"
-        self.start_move(direction)
-
-        travel_needed = abs(delta)
-        wait_s = travel_needed / self._MOVE_RATE_DEG_PER_S
-        aborted = self._abort_event.wait(wait_s + 0.05)
-
-        self.stop_move(direction)
-        if aborted:
+        home_alt = 90.0 - abs(_OBSERVER_LAT_DEG)
+        if not self._simulate_motion(self._HOME_AZ, home_alt, self._MOVE_RATE_DEG_PER_S):
             self.logger.info("Homing aborted mid-transit")
             return False
-        self._finish_home()
-        return True
-
-    def _finish_home(self) -> None:
-        old_az = self._base_az
-        self._base_az = self._HOME_AZ
-        self._alt = 90.0 - abs(_OBSERVER_LAT_DEG)
-        self._ra, self._dec = _altaz_to_radec(self._HOME_AZ, self._alt)
-        self._ref_time = time.monotonic()
         self._tracking = False
         self._homed = True
-        self.logger.info(
-            "DummyMount homed: az %.1f° → %.1f° (delta=%.1f°)",
-            old_az,
-            self._HOME_AZ,
-            abs(self._HOME_AZ - old_az),
-        )
+        self.logger.info("DummyMount homed to az=%.1f°", self._HOME_AZ)
         self._fire_sync_listeners(self._HOME_AZ)
+        return True
 
     def is_home(self) -> bool:
         return self._homed
@@ -297,8 +284,7 @@ class _DummyMount(AbstractMount):
         dt = time.monotonic() - self._ref_time
         if self._moving_dir in ("east", "west"):
             sign = 1.0 if self._moving_dir == "east" else -1.0
-            rate = self._SLEW_RATE_DEG_PER_S if self._slewing else self._MOVE_RATE_DEG_PER_S
-            return (self._base_az + sign * rate * dt) % 360.0
+            return (self._base_az + sign * self._motion_rate * dt) % 360.0
         if self._tracking:
             return (self._base_az + self._TRACKING_DRIFT_DEG_PER_S * dt) % 360.0
         return self._base_az % 360.0
@@ -307,16 +293,53 @@ class _DummyMount(AbstractMount):
         dt = time.monotonic() - self._ref_time
         if self._moving_dir in ("north", "south"):
             sign = 1.0 if self._moving_dir == "north" else -1.0
-            rate = self._SLEW_RATE_DEG_PER_S if self._slewing else self._MOVE_RATE_DEG_PER_S
-            return max(-90.0, min(90.0, self._alt + sign * rate * dt))
+            return max(-90.0, min(90.0, self._alt + sign * self._motion_rate * dt))
         return self._alt
 
+    # -- Simulated pointing error (where the optics actually land) ----------
+
+    def true_altaz(self) -> tuple[float, float]:
+        """Apply the simulated tripod-tilt error model to the mount's position.
+
+        Returns where the optics actually point, as opposed to where the
+        mount's encoders believe they point.  Uses the same 3-term model
+        (AN, AW, IE) the ``AltAzPointingModel`` fits.
+
+        Returns:
+            ``(true_az, true_alt)`` in degrees.
+        """
+        az_deg = self.get_azimuth() or 0.0
+        alt_deg = self.get_altitude() or 0.0
+
+        az_r = math.radians(az_deg)
+        alt_r = math.radians(alt_deg)
+        tan_alt = math.tan(alt_r) if abs(math.cos(alt_r)) > 1e-10 else 0.0
+
+        d_az = self._sim_AN * math.sin(az_r) * tan_alt - self._sim_AW * math.cos(az_r) * tan_alt
+        d_alt = self._sim_IE - self._sim_AN * math.cos(az_r) - self._sim_AW * math.sin(az_r)
+
+        true_az = (az_deg + d_az) % 360.0
+        true_alt = max(-90.0, min(90.0, alt_deg + d_alt))
+        return true_az, true_alt
+
+    def true_radec(self) -> tuple[float, float]:
+        """Return the RA/Dec where the optics actually point (with error)."""
+        true_az, true_alt = self.true_altaz()
+        return _altaz_to_radec(true_az, true_alt)
+
     def start_move(self, direction: str, rate: int | None = None) -> bool:
+        if self._slewing:
+            return False
         self._snap()
+        self._motion_rate = self._MOVE_RATE_DEG_PER_S
         self._moving_dir = direction
         return True
 
     def stop_move(self, direction: str) -> bool:
+        if self._slewing:
+            return False
+        if self._moving_dir != direction:
+            return True
         self._snap()
         self._moving_dir = None
         self._ra, self._dec = _altaz_to_radec(self._base_az % 360.0, self._alt)
@@ -326,13 +349,12 @@ class _DummyMount(AbstractMount):
         """Commit the current computed az/alt as the new base, resetting the reference clock."""
         dt = time.monotonic() - self._ref_time
         if self._moving_dir is not None:
-            rate = self._SLEW_RATE_DEG_PER_S if self._slewing else self._MOVE_RATE_DEG_PER_S
             if self._moving_dir in ("north", "south"):
                 sign = 1.0 if self._moving_dir == "north" else -1.0
-                self._alt = max(-90.0, min(90.0, self._alt + sign * rate * dt))
+                self._alt = max(-90.0, min(90.0, self._alt + sign * self._motion_rate * dt))
             else:
                 sign = 1.0 if self._moving_dir == "east" else -1.0
-                self._base_az = (self._base_az + sign * rate * dt) % 360.0
+                self._base_az = (self._base_az + sign * self._motion_rate * dt) % 360.0
         elif self._tracking:
             self._base_az = (self._base_az + self._TRACKING_DRIFT_DEG_PER_S * dt) % 360.0
         self._ref_time = time.monotonic()
@@ -451,7 +473,12 @@ class DummyAdapter(AbstractAstroHardwareAdapter):
         self._camera_connected = False
         self._is_moving = False
         self._tracking_rate = (15.041, 0.0)  # arcsec/sec (sidereal rate)
-        self._mount = _DummyMount(logger)
+        self._mount = _DummyMount(
+            logger,
+            sim_AN=float(kwargs.get("sim_AN", 0.4)),
+            sim_AW=float(kwargs.get("sim_AW", -0.25)),
+            sim_IE=float(kwargs.get("sim_IE", 0.08)),
+        )
         self._mount_cache: MountStateCache | None = None
         self._focuser = _DummyFocuser(logger)
         self._current_filter_position: int = 0
@@ -495,6 +522,39 @@ class DummyAdapter(AbstractAstroHardwareAdapter):
                 "required": False,
                 "group": "Testing",
             },
+            {
+                "name": "sim_AN",
+                "friendly_name": "Tripod Tilt N-S (AN)",
+                "type": "float",
+                "default": 0.4,
+                "min": -2.0,
+                "max": 2.0,
+                "description": "Simulated azimuth-axis tilt north-south in degrees",
+                "required": False,
+                "group": "Pointing Error Simulation",
+            },
+            {
+                "name": "sim_AW",
+                "friendly_name": "Tripod Tilt E-W (AW)",
+                "type": "float",
+                "default": -0.25,
+                "min": -2.0,
+                "max": 2.0,
+                "description": "Simulated azimuth-axis tilt east-west in degrees",
+                "required": False,
+                "group": "Pointing Error Simulation",
+            },
+            {
+                "name": "sim_IE",
+                "friendly_name": "Altitude Offset (IE)",
+                "type": "float",
+                "default": 0.08,
+                "min": -2.0,
+                "max": 2.0,
+                "description": "Simulated constant altitude index error in degrees",
+                "required": False,
+                "group": "Pointing Error Simulation",
+            },
         ]
 
     def get_observation_strategy(self) -> ObservationStrategy:
@@ -531,6 +591,9 @@ class DummyAdapter(AbstractAstroHardwareAdapter):
         cache.start()
         self._mount._state_cache = cache  # type: ignore[attr-defined]
         self._mount_cache = cache
+
+        self._init_pointing_model("DummyAdapter")
+
         self.logger.info("DummyAdapter: Connected successfully")
         return True
 
@@ -630,11 +693,11 @@ class DummyAdapter(AbstractAstroHardwareAdapter):
         filepath = self.images_dir / filename
         filepath.parent.mkdir(parents=True, exist_ok=True)
 
-        ra, dec = self._mount.get_radec()
+        true_ra, true_dec = self._mount.true_radec()
         sigma = self._focus_dependent_psf_sigma()
         image_data, wcs = self._generate_starfield(
-            ra,
-            dec,
+            true_ra,
+            true_dec,
             exposure_duration_seconds,
             seed=timestamp % (2**31),
             psf_sigma=sigma,
@@ -847,12 +910,47 @@ class DummyAdapter(AbstractAstroHardwareAdapter):
         return self._tracking_rate
 
     def perform_alignment(self, target_ra: float, target_dec: float) -> bool:
-        """Simulate plate solving alignment."""
-        self.logger.info(f"DummyAdapter: Performing alignment to RA={target_ra}°, Dec={target_dec}°")
-        self._simulate_delay()
-        self._mount.slew_to_radec(target_ra + 0.001, target_dec + 0.001)
-        self.logger.info("DummyAdapter: Alignment successful")
-        return True
+        """Plate-solve at the current position and conditionally sync the mount."""
+        if not self.telescope_record:
+            self.logger.warning("No telescope_record available — falling back to simulated alignment")
+            self._simulate_delay()
+            self._mount.sync_to_radec(target_ra, target_dec)
+            return True
+
+        return self._perform_alignment_with_model(target_ra, target_dec)
+
+    def update_from_plate_solve(
+        self,
+        solved_ra_deg: float,
+        solved_dec_deg: float,
+        expected_ra_deg: float | None = None,
+        expected_dec_deg: float | None = None,
+        target_ra_deg: float | None = None,
+        target_dec_deg: float | None = None,
+    ) -> None:
+        """Feed pipeline plate-solve results into the pointing model."""
+        if expected_ra_deg is None or expected_dec_deg is None:
+            return
+
+        residual_ra = target_ra_deg if target_ra_deg is not None else expected_ra_deg
+        residual_dec = target_dec_deg if target_dec_deg is not None else expected_dec_deg
+        residual_deg = self.angular_distance(solved_ra_deg, solved_dec_deg, residual_ra, residual_dec)
+
+        if self._pointing_model and self.location_service:
+            location = self.location_service.get_current_location()
+            if location:
+                from citrascope.hardware.devices.mount.altaz_pointing_model import radec_to_altaz
+
+                lat, lon = location["latitude"], location["longitude"]
+                cmd_az, cmd_alt = radec_to_altaz(expected_ra_deg, expected_dec_deg, lat, lon)
+                if not self._pointing_model.has_nearby_point(cmd_az, cmd_alt):
+                    self._pointing_model.add_point(
+                        expected_ra_deg, expected_dec_deg, solved_ra_deg, solved_dec_deg, lat, lon
+                    )
+                    self.logger.info("Pipeline fed pointing model (residual %.4f°)", residual_deg)
+                else:
+                    self._pointing_model.record_verification_residual(residual_deg)
+                    self.logger.debug("Pipeline skip: nearby point exists (residual %.4f°)", residual_deg)
 
     def supports_autofocus(self) -> bool:
         """Dummy adapter supports autofocus."""

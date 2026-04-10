@@ -673,6 +673,8 @@ class IndiAdapter(PyIndi.BaseClient, AbstractAstroHardwareAdapter):
         solved_dec_deg: float,
         expected_ra_deg: float | None = None,
         expected_dec_deg: float | None = None,
+        target_ra_deg: float | None = None,
+        target_dec_deg: float | None = None,
     ) -> None:
         """Update alignment offsets from pipeline plate solve result."""
         if expected_ra_deg is not None and expected_dec_deg is not None:

@@ -133,6 +133,10 @@ class SystemStatus(BaseModel):
     alignment_running: bool = False
     alignment_progress: str = ""
     last_alignment_timestamp: int | None = None
+    pointing_model: dict[str, Any] | None = None
+    pointing_calibration_running: bool = False
+    pointing_calibration_progress: dict[str, int] | None = None
+    fov_short_deg: float | None = None
     camera_temperature: float | None = None
     current_filter_position: int | None = None
     current_filter_name: str | None = None
@@ -151,6 +155,9 @@ class SystemStatus(BaseModel):
     config_health: dict[str, Any] | None = None
     status_collection_ms: float | None = None
     status_collection_breakdown: dict[str, float] | None = None
+    # System busy guard — true when automated hardware operations are in progress
+    system_busy: bool = False
+    system_busy_reason: str = ""
     # Observing session / self-tasking
     observing_session_enabled: bool = False
     self_tasking_enabled: bool = False
@@ -281,6 +288,15 @@ class CitraScopeWebApp:
     def set_daemon(self, daemon):
         """Set the daemon instance after initialization."""
         self.daemon = daemon
+
+    def _require_system_idle(self) -> JSONResponse | None:
+        """Return a 409 response if the system is busy with automated operations, else None."""
+        if self.status.system_busy:
+            return JSONResponse(
+                {"error": f"System busy ({self.status.system_busy_reason})", "system_busy": True},
+                status_code=409,
+            )
+        return None
 
     def _setup_routes(self):
         """Setup all API routes."""
@@ -986,6 +1002,8 @@ class CitraScopeWebApp:
         @self.app.post("/api/adapter/filter/set")
         async def set_filter_position(body: dict[str, Any]):
             """Command the filter wheel to move to a specific position."""
+            if busy := self._require_system_idle():
+                return busy
             if not self.daemon or not self.daemon.hardware_adapter:
                 return JSONResponse({"error": "Hardware adapter not initialized"}, status_code=503)
 
@@ -1019,6 +1037,8 @@ class CitraScopeWebApp:
             status poll.  Issuing a move while the focuser is already moving
             stops the previous move first.
             """
+            if busy := self._require_system_idle():
+                return busy
             if not self.daemon or not self.daemon.hardware_adapter:
                 return JSONResponse({"error": "Hardware adapter not initialized"}, status_code=503)
 
@@ -1139,6 +1159,58 @@ class CitraScopeWebApp:
                 return {"success": was_cancelled}
             except Exception as e:
                 CITRASCOPE_LOGGER.error(f"Error cancelling alignment: {e}", exc_info=True)
+                return JSONResponse({"error": str(e)}, status_code=500)
+
+        # ── Pointing model endpoints ───────────────────────────────────
+
+        @self.app.post("/api/mount/pointing-model/calibrate")
+        async def calibrate_pointing_model():
+            """Trigger a full pointing model calibration run."""
+            if not self.daemon:
+                return JSONResponse({"error": "Daemon not available"}, status_code=503)
+            if not self.daemon.task_manager:
+                return JSONResponse({"error": "Task manager not available"}, status_code=503)
+
+            alignment_mgr = self.daemon.task_manager.alignment_manager
+            if alignment_mgr.is_calibrating():
+                return JSONResponse({"error": "Calibration already running"}, status_code=409)
+
+            try:
+                ok = alignment_mgr.request_calibration()
+                if ok:
+                    return {"success": True, "message": "Pointing calibration queued"}
+                return JSONResponse({"error": "Calibration request rejected"}, status_code=409)
+            except Exception as e:
+                CITRASCOPE_LOGGER.error(f"Error starting pointing calibration: {e}", exc_info=True)
+                return JSONResponse({"error": str(e)}, status_code=500)
+
+        @self.app.post("/api/mount/pointing-model/reset")
+        async def reset_pointing_model():
+            """Clear the pointing model and persisted state."""
+            if busy := self._require_system_idle():
+                return busy
+            if not self.daemon:
+                return JSONResponse({"error": "Daemon not available"}, status_code=503)
+
+            adapter = self.daemon.hardware_adapter
+            if adapter.pointing_model:
+                adapter.pointing_model.reset()
+                return {"success": True, "message": "Pointing model reset"}
+            return JSONResponse({"error": "Pointing model not available"}, status_code=404)
+
+        @self.app.post("/api/mount/pointing-model/calibrate/cancel")
+        async def cancel_pointing_calibration():
+            """Cancel an in-progress or pending pointing calibration."""
+            if not self.daemon:
+                return JSONResponse({"error": "Daemon not available"}, status_code=503)
+            if not self.daemon.task_manager:
+                return JSONResponse({"error": "Task manager not available"}, status_code=503)
+
+            try:
+                self.daemon.task_manager.alignment_manager.cancel_calibration()
+                return {"success": True}
+            except Exception as e:
+                CITRASCOPE_LOGGER.error(f"Error cancelling pointing calibration: {e}", exc_info=True)
                 return JSONResponse({"error": str(e)}, status_code=500)
 
         # ── Calibration endpoints ─────────────────────────────────────
@@ -1357,6 +1429,8 @@ class CitraScopeWebApp:
         @self.app.post("/api/adapter/sync")
         async def manual_sync(request: dict[str, Any]):
             """Manually sync the mount to given RA/Dec coordinates."""
+            if busy := self._require_system_idle():
+                return busy
             if not self.daemon:
                 return JSONResponse({"error": "Daemon not available"}, status_code=503)
             if not self.daemon.hardware_adapter:
@@ -1453,6 +1527,8 @@ class CitraScopeWebApp:
 
             In alt-az mode: north=up, south=down, east=right, west=left.
             """
+            if busy := self._require_system_idle():
+                return busy
             if not self.daemon or not self.daemon.hardware_adapter:
                 return JSONResponse({"error": "Hardware adapter not initialized"}, status_code=503)
 
@@ -1493,6 +1569,8 @@ class CitraScopeWebApp:
             Fire-and-forget: initiates the slew and returns immediately.
             The UI tracks slew progress via mount_slewing in the status poll.
             """
+            if busy := self._require_system_idle():
+                return busy
             if not self.daemon or not self.daemon.hardware_adapter:
                 return JSONResponse({"error": "Hardware adapter not initialized"}, status_code=503)
 
@@ -1521,6 +1599,8 @@ class CitraScopeWebApp:
         @self.app.post("/api/mount/tracking")
         async def mount_tracking(body: dict[str, Any]):
             """Start or stop sidereal tracking."""
+            if busy := self._require_system_idle():
+                return busy
             if not self.daemon or not self.daemon.hardware_adapter:
                 return JSONResponse({"error": "Hardware adapter not initialized"}, status_code=503)
 
@@ -1631,6 +1711,8 @@ class CitraScopeWebApp:
         @self.app.post("/api/mount/limits")
         async def set_mount_limits(request: dict[str, Any]):
             """Set the mount's altitude limits."""
+            if busy := self._require_system_idle():
+                return busy
             if not self.daemon or not self.daemon.hardware_adapter:
                 return JSONResponse({"error": "Hardware not available"}, status_code=503)
             adapter = self.daemon.hardware_adapter
@@ -1648,6 +1730,8 @@ class CitraScopeWebApp:
         @self.app.post("/api/camera/capture")
         async def camera_capture(request: dict[str, Any]):
             """Trigger a test camera capture."""
+            if busy := self._require_system_idle():
+                return busy
             if not self.daemon:
                 return JSONResponse({"error": "Daemon not available"}, status_code=503)
 
@@ -1980,7 +2064,25 @@ class CitraScopeWebApp:
                 self.status.alignment_requested = task_manager.alignment_manager.is_requested()
                 self.status.alignment_running = task_manager.alignment_manager.is_running()
                 self.status.alignment_progress = task_manager.alignment_manager.progress
+                self.status.pointing_calibration_running = task_manager.alignment_manager.is_calibrating()
+                self.status.pointing_calibration_progress = task_manager.alignment_manager.calibration_progress
                 self.status.tasks_pending = task_manager.pending_task_count
+
+                busy_reasons: list[str] = []
+                if task_manager.is_processing_active():
+                    busy_reasons.append("processing")
+                if not task_manager.imaging_queue.is_idle():
+                    busy_reasons.append("imaging")
+                if self.status.alignment_running:
+                    busy_reasons.append("alignment")
+                if self.status.autofocus_running:
+                    busy_reasons.append("autofocus")
+                if self.status.pointing_calibration_running:
+                    busy_reasons.append("calibration")
+                if self.status.mount_homing:
+                    busy_reasons.append("homing")
+                self.status.system_busy = bool(busy_reasons)
+                self.status.system_busy_reason = ", ".join(busy_reasons)
 
             _mark("task_manager")
 
@@ -2177,8 +2279,12 @@ class CitraScopeWebApp:
             # Calibration status
             self.status.calibration_status = self._build_calibration_status()
 
-            # Config health: compare server telescope record vs hardware + plate solve
+            # Pointing model status
             adapter = self.daemon.hardware_adapter
+            self.status.pointing_model = adapter.get_pointing_model_status() if adapter else None
+            self.status.fov_short_deg = adapter.observed_fov_short_deg if adapter else None
+
+            # Config health: compare server telescope record vs hardware + plate solve
             if self.daemon.telescope_record and adapter:
                 from citrascope.hardware.config_health import assess_config_health
 

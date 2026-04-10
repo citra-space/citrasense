@@ -407,6 +407,7 @@ class CitraScopeDaemon:
                 return None
 
             can_park = self.hardware_adapter.supports_park()
+            alignment_mgr = self.task_manager.alignment_manager
             observing_session_manager = ObservingSessionManager(
                 settings=self.settings,
                 logger=CITRASCOPE_LOGGER,
@@ -417,6 +418,8 @@ class CitraScopeDaemon:
                 are_queues_idle=self.task_manager.are_queues_idle,
                 park_mount=self.hardware_adapter.park_mount if can_park else None,
                 unpark_mount=self.hardware_adapter.unpark_mount if can_park else None,
+                request_pointing_calibration=alignment_mgr.request_calibration,
+                is_pointing_calibration_running=alignment_mgr.is_calibrating,
             )
 
             self_tasking_manager = SelfTaskingManager(
@@ -430,6 +433,10 @@ class CitraScopeDaemon:
             )
 
             self.task_manager.set_session_managers(observing_session_manager, self_tasking_manager)
+
+            # Wire pointing model to AlignmentManager
+            if self.hardware_adapter.pointing_model:
+                self.task_manager.alignment_manager.set_pointing_model(self.hardware_adapter.pointing_model)
 
             # Restore preserved task metadata
             if old_task_dict:
@@ -469,10 +476,6 @@ class CitraScopeDaemon:
                         break
 
             self.task_manager.start()
-
-            if self.settings and self.settings.align_on_startup:
-                CITRASCOPE_LOGGER.info("Requesting startup alignment (align_on_startup=True)")
-                self.task_manager.alignment_manager.request()
 
             CITRASCOPE_LOGGER.info("Telescope initialized successfully!")
             return True, None

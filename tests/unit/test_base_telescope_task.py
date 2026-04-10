@@ -308,6 +308,19 @@ class TestOnProcessingComplete:
 
     def test_feeds_plate_solve_to_adapter(self):
         ct = self._make_concrete()
+        ct.pointing_report = {
+            "pointing_model_correction": {
+                "target_ra_deg": 179.0,
+                "target_dec_deg": 44.0,
+                "command_ra_deg": 179.5,
+                "command_dec_deg": 44.5,
+                "correction_ra_deg": 0.5,
+                "correction_dec_deg": 0.5,
+                "correction_total_deg": 0.707,
+                "model_n_terms": 3,
+                "model_n_points": 10,
+            }
+        }
         result = MagicMock()
         result.should_upload = True
         result.extracted_data = {
@@ -316,7 +329,14 @@ class TestOnProcessingComplete:
         }
         with patch.object(ct, "_queue_for_upload"):
             ct._on_processing_complete("/img.fits", "task-1", result)
-        ct.hardware_adapter.update_from_plate_solve.assert_called_once()
+        ct.hardware_adapter.update_from_plate_solve.assert_called_once_with(
+            180.0,
+            45.0,
+            expected_ra_deg=179.5,
+            expected_dec_deg=44.5,
+            target_ra_deg=179.0,
+            target_dec_deg=44.0,
+        )
 
     def test_no_result_queues_for_upload(self):
         ct = self._make_concrete()
@@ -893,8 +913,19 @@ class TestAdaptiveSlewRate:
         def fake_time():
             return base_time[0]
 
-        def point_and_advance(*_args, **_kwargs):
+        def point_and_advance(ra, dec):
             base_time[0] += slew_duration
+            return {
+                "target_ra_deg": ra,
+                "target_dec_deg": dec,
+                "correction_ra_deg": 0.0,
+                "correction_dec_deg": 0.0,
+                "correction_total_deg": 0.0,
+                "command_ra_deg": ra,
+                "command_dec_deg": dec,
+                "model_n_terms": 0,
+                "model_n_points": 0,
+            }
 
         ct.hardware_adapter.point_telescope.side_effect = point_and_advance
 

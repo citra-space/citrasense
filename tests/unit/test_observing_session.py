@@ -15,8 +15,8 @@ def _make_settings(**overrides):
     s = MagicMock()
     s.observing_session_enabled = True
     s.observing_session_sun_altitude_threshold = -12.0
+    s.observing_session_do_pointing_calibration = False
     s.observing_session_do_autofocus = True
-    s.observing_session_do_alignment = False
     s.observing_session_do_park = True
     for k, v in overrides.items():
         setattr(s, k, v)

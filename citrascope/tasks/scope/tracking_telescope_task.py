@@ -21,9 +21,8 @@ class TrackingTelescopeTask(AbstractBaseTelescopeTask):
             return False
 
         self.task.set_status_msg("Slewing to target...")
-        pointing_report: dict | None = None
         try:
-            pointing_report = self.point_to_lead_position(satellite_data)
+            self.pointing_report = self.point_to_lead_position(satellite_data)
         except RuntimeError as e:
             self.logger.error(f"Observation failed for task {self.task.id}: {e}")
             return False
@@ -50,7 +49,7 @@ class TrackingTelescopeTask(AbstractBaseTelescopeTask):
             self.task.set_status_msg(f"Exposing image ({exposure}s)...")
             filepath = self.hardware_adapter.take_image(self.task.id, exposure)
             return self.upload_image_and_mark_complete(
-                [filepath], satellite_data=satellite_data, pointing_report=pointing_report
+                [filepath], satellite_data=satellite_data, pointing_report=self.pointing_report
             )
         finally:
             try:

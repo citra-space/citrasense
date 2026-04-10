@@ -986,6 +986,51 @@ async function mountSetTracking(enabled) {
     }
 }
 
+async function calibratePointingModel() {
+    try {
+        const response = await fetch('/api/mount/pointing-model/calibrate', { method: 'POST' });
+        const data = await response.json();
+        if (response.ok && data.success) {
+            createToast('Pointing calibration started', 'success');
+        } else {
+            createToast(data.error || 'Failed to start calibration', 'danger', false);
+        }
+    } catch (error) {
+        console.error('Error starting pointing calibration:', error);
+        createToast('Failed to start pointing calibration', 'danger', false);
+    }
+}
+
+async function resetPointingModel() {
+    try {
+        const response = await fetch('/api/mount/pointing-model/reset', { method: 'POST' });
+        const data = await response.json();
+        if (response.ok && data.success) {
+            createToast('Pointing model reset', 'success');
+        } else {
+            createToast(data.error || 'Failed to reset pointing model', 'danger', false);
+        }
+    } catch (error) {
+        console.error('Error resetting pointing model:', error);
+        createToast('Failed to reset pointing model', 'danger', false);
+    }
+}
+
+async function cancelPointingCalibration() {
+    try {
+        const response = await fetch('/api/mount/pointing-model/calibrate/cancel', { method: 'POST' });
+        const data = await response.json();
+        if (response.ok && data.success) {
+            createToast('Pointing calibration cancelled', 'success');
+        } else {
+            createToast(data.error || 'Failed to cancel calibration', 'danger', false);
+        }
+    } catch (error) {
+        console.error('Error cancelling pointing calibration:', error);
+        createToast('Failed to cancel pointing calibration', 'danger', false);
+    }
+}
+
 export function setupAutofocusButton() {
     window.triggerAutofocus = triggerAutofocus;
     window.triggerAlignment = triggerAlignment;
@@ -993,6 +1038,9 @@ export function setupAutofocusButton() {
     window.homeMount = homeMount;
     window.triggerCableUnwind = triggerCableUnwind;
     window.resetCableWrap = resetCableWrap;
+    window.calibratePointingModel = calibratePointingModel;
+    window.resetPointingModel = resetPointingModel;
+    window.cancelPointingCalibration = cancelPointingCalibration;
     window.emergencyStop = emergencyStop;
     window.clearOperatorStop = clearOperatorStop;
     window.changeFilterPosition = changeFilterPosition;

@@ -61,6 +61,8 @@ class ObservingSessionManager:
         are_queues_idle: Callable[[], bool],
         park_mount: Callable[[], bool] | None,
         unpark_mount: Callable[[], bool] | None,
+        request_pointing_calibration: Callable[[], Any] | None = None,
+        is_pointing_calibration_running: Callable[[], bool] | None = None,
     ):
         self._settings = settings
         self._logger = logger
@@ -71,12 +73,15 @@ class ObservingSessionManager:
         self._are_queues_idle = are_queues_idle
         self._park_mount = park_mount
         self._unpark_mount = unpark_mount
+        self._request_pointing_calibration = request_pointing_calibration
+        self._is_pointing_calibration_running = is_pointing_calibration_running
 
         self._state = SessionState.DAYTIME
         self._observing_window: ObservingWindow | None = None
 
         # Track which startup actions have been initiated/completed
         self._unpark_done = False
+        self._pointing_calibration_requested = False
         self._autofocus_requested = False
         self._park_done = False
         self._shutdown_entered_at: float | None = None
@@ -108,6 +113,7 @@ class ObservingSessionManager:
                 )
                 self._state = SessionState.NIGHT_STARTUP
                 self._unpark_done = False
+                self._pointing_calibration_requested = False
                 self._autofocus_requested = False
 
         elif self._state == SessionState.NIGHT_STARTUP:
@@ -145,7 +151,7 @@ class ObservingSessionManager:
             self._observing_window = None
 
     def _run_startup_actions(self) -> None:
-        """Execute enabled startup actions in order: unpark → autofocus → done."""
+        """Execute enabled startup actions in order: unpark → pointing calibration → autofocus → done."""
         # Step 1: Unpark
         if self._settings.observing_session_do_park and not self._unpark_done:
             if self._unpark_mount is not None:
@@ -160,7 +166,28 @@ class ObservingSessionManager:
             self._unpark_done = True
             return
 
-        # Step 2: Autofocus
+        # Step 2: Pointing calibration (before autofocus — plate solving tolerates mild defocus)
+        if (
+            self._settings.observing_session_do_pointing_calibration
+            and self._request_pointing_calibration is not None
+            and not self._pointing_calibration_requested
+        ):
+            self._logger.info("NIGHT_STARTUP: Running pointing calibration")
+            try:
+                self._request_pointing_calibration()
+            except Exception:
+                self._logger.warning("Pointing calibration request failed", exc_info=True)
+            self._pointing_calibration_requested = True
+            return
+
+        if (
+            self._settings.observing_session_do_pointing_calibration
+            and self._is_pointing_calibration_running is not None
+            and self._is_pointing_calibration_running()
+        ):
+            return  # Still calibrating
+
+        # Step 3: Autofocus
         if self._settings.observing_session_do_autofocus and not self._autofocus_requested:
             self._logger.info("NIGHT_STARTUP: Requesting autofocus")
             try:
@@ -217,6 +244,7 @@ class ObservingSessionManager:
     def _reset_to_daytime(self) -> None:
         self._state = SessionState.DAYTIME
         self._unpark_done = False
+        self._pointing_calibration_requested = False
         self._autofocus_requested = False
         self._park_done = False
         self._shutdown_entered_at = None
@@ -230,6 +258,14 @@ class ObservingSessionManager:
         if self._state == SessionState.NIGHT_STARTUP:
             if self._settings.observing_session_do_park and not self._unpark_done:
                 return "Unparking mount"
+            if (
+                self._settings.observing_session_do_pointing_calibration
+                and self._request_pointing_calibration is not None
+            ):
+                if not self._pointing_calibration_requested:
+                    return "Requesting pointing calibration"
+                if self._is_pointing_calibration_running and self._is_pointing_calibration_running():
+                    return "Calibrating pointing model"
             if self._settings.observing_session_do_autofocus:
                 if not self._autofocus_requested:
                     return "Requesting autofocus"

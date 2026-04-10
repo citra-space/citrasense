@@ -25,6 +25,7 @@ from citrascope.hardware.devices.device_registry import (
 from citrascope.hardware.devices.filter_wheel import AbstractFilterWheel
 from citrascope.hardware.devices.focuser import AbstractFocuser
 from citrascope.hardware.devices.mount import AbstractMount
+from citrascope.hardware.devices.mount.altaz_pointing_model import radec_to_altaz
 from citrascope.hardware.devices.mount.mount_state_cache import MountStateCache
 from citrascope.hardware.filter_sync import is_trash_filter_name
 from citrascope.location.gps_fix import GPSFix
@@ -59,7 +60,6 @@ class DirectHardwareAdapter(AbstractAstroHardwareAdapter):
         """
         super().__init__(images_dir, **kwargs)
         self.logger = logger
-        self.location_service: Any | None = None
         self._mount_cache: MountStateCache | None = None
         self._preview_lock = threading.Lock()
 
@@ -365,9 +365,6 @@ class DirectHardwareAdapter(AbstractAstroHardwareAdapter):
 
         return cast(list[SettingSchemaEntry], schema)
 
-    def set_location_service(self, location_service) -> None:
-        self.location_service = location_service
-
     @property
     def mount(self) -> AbstractMount | None:
         return self._mount
@@ -453,6 +450,7 @@ class DirectHardwareAdapter(AbstractAstroHardwareAdapter):
                 cache.start()
                 self._mount._state_cache = cache  # type: ignore[attr-defined]
                 self._mount_cache = cache
+                self._init_pointing_model()
         else:
             self.logger.info("No mount configured (static camera mode)")
 
@@ -601,6 +599,10 @@ class DirectHardwareAdapter(AbstractAstroHardwareAdapter):
             except Exception:
                 self.logger.debug("Meridian auto-flip not supported", exc_info=True)
 
+    def _init_pointing_model(self) -> None:  # type: ignore[override]
+        """Initialize the pointing model, loading persisted state if available."""
+        super()._init_pointing_model("DirectHardwareAdapter")
+
     def disconnect(self):
         """Disconnect from all hardware devices."""
         self.logger.info("Disconnecting from direct hardware devices...")
@@ -644,11 +646,10 @@ class DirectHardwareAdapter(AbstractAstroHardwareAdapter):
         return self._camera.is_connected()
 
     def _do_point_telescope(self, ra: float, dec: float):
-        """Point the telescope to specified RA/Dec coordinates.
+        """Hardware-specific slew implementation.
 
-        Args:
-            ra: Right Ascension in degrees
-            dec: Declination in degrees
+        Coordinates arriving here are already corrected by the base class's
+        pointing model logic in ``point_telescope()``.
         """
         if not self._mount:
             self.logger.warning("No mount configured - cannot point telescope (static camera mode)")
@@ -1004,7 +1005,7 @@ class DirectHardwareAdapter(AbstractAstroHardwareAdapter):
         # Slew to target star if we have a mount and coordinates
         if target_ra is not None and target_dec is not None and self._mount:
             report("Slewing to autofocus target...")
-            self._do_point_telescope(target_ra, target_dec)
+            self.point_telescope(target_ra, target_dec)
 
         # Determine which filters to autofocus
         enabled_filters = {fid: fdata for fid, fdata in self.filter_map.items() if fdata.get("enabled", True)}
@@ -1282,66 +1283,40 @@ class DirectHardwareAdapter(AbstractAstroHardwareAdapter):
         solved_dec_deg: float,
         expected_ra_deg: float | None = None,
         expected_dec_deg: float | None = None,
+        target_ra_deg: float | None = None,
+        target_dec_deg: float | None = None,
     ) -> None:
-        # Intentional no-op: async plate solves from the processing queue
-        # arrive after the mount has potentially moved on to the next task.
-        # Syncing stale coordinates corrupts the pointing model.
-        # Mount syncs happen only through the explicit AlignmentManager path.
-        if expected_ra_deg is not None and expected_dec_deg is not None:
-            error = self.angular_distance(solved_ra_deg, solved_dec_deg, expected_ra_deg, expected_dec_deg)
-            self.logger.info(
-                "Plate solve result: pointing error %.1f arcmin (not syncing — use alignment instead)", error * 60
-            )
+        """Feed pipeline plate-solve results into the pointing model.
+
+        When ``expected_ra_deg``/``expected_dec_deg`` (the corrected command
+        from ``point_telescope``) are provided, the solved vs commanded pair
+        is added to the pointing model — unless a nearby point already exists.
+        This grows the model continuously from every science image.
+        """
+        if expected_ra_deg is None or expected_dec_deg is None:
+            return
+
+        residual_ra = target_ra_deg if target_ra_deg is not None else expected_ra_deg
+        residual_dec = target_dec_deg if target_dec_deg is not None else expected_dec_deg
+        residual_deg = self.angular_distance(solved_ra_deg, solved_dec_deg, residual_ra, residual_dec)
+
+        if self._pointing_model and self.location_service:
+            location = self.location_service.get_current_location()
+            if location:
+                lat, lon = location["latitude"], location["longitude"]
+                cmd_az, cmd_alt = radec_to_altaz(expected_ra_deg, expected_dec_deg, lat, lon)
+                if not self._pointing_model.has_nearby_point(cmd_az, cmd_alt):
+                    self._pointing_model.add_point(
+                        expected_ra_deg, expected_dec_deg, solved_ra_deg, solved_dec_deg, lat, lon
+                    )
+                    self.logger.info("Pipeline fed pointing model (residual %.4f°)", residual_deg)
+                else:
+                    self._pointing_model.record_verification_residual(residual_deg)
+                    self.logger.debug("Pipeline skip: nearby point exists (residual %.4f°)", residual_deg)
+                return
+
+        self.logger.info("Plate solve result: pointing residual %.4f° (no model to feed)", residual_deg)
 
     def perform_alignment(self, target_ra: float, target_dec: float) -> bool:
-        """Plate-solve at the current position and sync the mount.
-
-        Takes a short exposure, plate-solves it, and syncs the mount to the
-        solved coordinates.  Retries with increasing exposure if the solve fails.
-
-        Args:
-            target_ra: Expected RA in degrees (for logging/error reporting).
-            target_dec: Expected Dec in degrees (for logging/error reporting).
-
-        Returns:
-            True if plate solve + sync succeeded.
-        """
-        if not self._mount:
-            self.logger.warning("No mount configured — cannot perform alignment")
-            return False
-        if not self._camera:
-            self.logger.warning("No camera configured — cannot perform alignment")
-            return False
-        if not self.telescope_record:
-            self.logger.warning("No telescope_record available — cannot plate-solve for alignment")
-            return False
-
-        from citrascope.processors.builtin.plate_solver_processor import PlateSolverProcessor
-
-        exposure_attempts = [2.0, 4.0, 8.0]
-        for exposure_s in exposure_attempts:
-            self.logger.info(f"Alignment: taking {exposure_s:.0f}s exposure for plate solve...")
-            try:
-                image_path = self.take_image("alignment", exposure_s)
-            except Exception as exc:
-                self.logger.error(f"Alignment exposure failed: {exc}")
-                continue
-
-            result = PlateSolverProcessor.solve(
-                Path(image_path),
-                self.telescope_record,
-            )
-            if result is not None:
-                solved_ra, solved_dec = result
-                self._mount.sync_to_radec(solved_ra, solved_dec)
-                error = self.angular_distance(solved_ra, solved_dec, target_ra, target_dec)
-                self.logger.info(
-                    f"Alignment successful: solved RA={solved_ra:.4f}°, Dec={solved_dec:.4f}° "
-                    f"(error from target: {error * 60:.1f} arcmin)"
-                )
-                return True
-
-            self.logger.warning(f"Plate solve failed with {exposure_s:.0f}s exposure, retrying...")
-
-        self.logger.error("Alignment failed: plate solve did not converge after all attempts")
-        return False
+        """Plate-solve at the current position and conditionally sync the mount."""
+        return self._perform_alignment_with_model(target_ra, target_dec)

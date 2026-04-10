@@ -16,6 +16,7 @@ if TYPE_CHECKING:
     from citrascope.hardware.devices.camera.abstract_camera import AbstractCamera
     from citrascope.hardware.devices.focuser.abstract_focuser import AbstractFocuser
     from citrascope.hardware.devices.mount.abstract_mount import AbstractMount
+    from citrascope.hardware.devices.mount.altaz_pointing_model import AltAzPointingModel
     from citrascope.safety.safety_monitor import SafetyMonitor
 
 
@@ -50,6 +51,25 @@ class FilterConfig(TypedDict):
     enabled: bool
 
 
+class PointingCorrection(TypedDict):
+    """Snapshot of the pointing model correction applied during a slew.
+
+    Created by ``point_telescope`` and flowed through ``pointing_report``
+    into the processing pipeline.  Gives a complete
+    target → correction → command chain for every observation.
+    """
+
+    target_ra_deg: float
+    target_dec_deg: float
+    correction_ra_deg: float
+    correction_dec_deg: float
+    correction_total_deg: float
+    command_ra_deg: float
+    command_dec_deg: float
+    model_n_terms: int
+    model_n_points: int
+
+
 class ObservationStrategy(Enum):
     MANUAL = 1
     SEQUENCE_TO_CONTROLLER = 2
@@ -79,6 +99,8 @@ class AbstractAstroHardwareAdapter(ABC):
         self.images_dir = images_dir
         self.filter_map = {}
         self._safety_monitor: SafetyMonitor | None = None
+        self.location_service: Any | None = None
+        self._pointing_model: AltAzPointingModel | None = None
 
         # Load filter configuration from settings if available
         saved_filters = kwargs.get("filters", {})
@@ -149,13 +171,179 @@ class AbstractAstroHardwareAdapter(ABC):
         """
         return None
 
-    def point_telescope(self, ra: float, dec: float):
-        """Point the telescope to the specified RA/Dec coordinates."""
+    @property
+    def pointing_model(self) -> AltAzPointingModel | None:
+        """The alt-az pointing model, or ``None`` if this adapter has no model."""
+        return self._pointing_model
+
+    def get_pointing_model_status(self) -> dict[str, Any] | None:
+        """Return the pointing model status dict for the web UI, or ``None``."""
+        if self._pointing_model:
+            return self._pointing_model.status()
+        return None
+
+    def _init_pointing_model(self, adapter_name: str) -> None:
+        """Initialize the pointing model, loading persisted state if available.
+
+        State file is namespaced per adapter so different adapters don't
+        share calibration data.
+
+        Args:
+            adapter_name: Used to derive the state file name
+                (e.g. ``"DirectHardwareAdapter"``).
+        """
+        import platformdirs
+
+        from citrascope.hardware.devices.mount.altaz_pointing_model import AltAzPointingModel
+
+        data_dir = Path(platformdirs.user_data_dir("citrascope", appauthor="citrascope"))
+        state_file = data_dir / f"pointing_model_{adapter_name}.json"
+        self._pointing_model = AltAzPointingModel(state_file=state_file)
+
+        if self._pointing_model.is_active:
+            status = self._pointing_model.status()
+            self.logger.info(
+                "Pointing model loaded: %s (%d pts, tilt=%.3f° toward %s, accuracy=%.4f°)",
+                status["state"],
+                status["point_count"],
+                status["tilt_deg"],
+                status["tilt_direction_label"],
+                status["pointing_accuracy_deg"],
+            )
+
+    def _perform_alignment_with_model(
+        self,
+        target_ra: float,
+        target_dec: float,
+    ) -> bool:
+        """Plate-solve at the current position and conditionally sync the mount.
+
+        When the pointing model is trained, skips the sync and records the
+        residual for health monitoring.  Otherwise syncs as before.
+
+        Requires ``self.mount``, ``self.telescope_record``, and
+        ``self.is_camera_connected()`` to be available.
+
+        Args:
+            target_ra: Expected RA in degrees (for logging/error reporting).
+            target_dec: Expected Dec in degrees (for logging/error reporting).
+
+        Returns:
+            True if plate solve succeeded.
+        """
+        mount = self.mount
+        if not mount:
+            self.logger.warning("No mount configured — cannot perform alignment")
+            return False
+        if not self.is_camera_connected():
+            self.logger.warning("No camera configured — cannot perform alignment")
+            return False
+        if not self.telescope_record:
+            self.logger.warning("No telescope_record available — cannot plate-solve for alignment")
+            return False
+
+        from citrascope.processors.builtin.plate_solver_processor import PlateSolverProcessor
+
+        exposure_attempts = [2.0, 4.0, 8.0]
+        for exposure_s in exposure_attempts:
+            self.logger.info("Alignment: taking %.0fs exposure for plate solve...", exposure_s)
+            try:
+                image_path = self.take_image("alignment", exposure_s)
+            except Exception as exc:
+                self.logger.error("Alignment exposure failed: %s", exc)
+                continue
+
+            result = PlateSolverProcessor.solve(
+                Path(image_path),
+                self.telescope_record,
+            )
+            if result is not None:
+                solved_ra, solved_dec = result
+                error = self.angular_distance(solved_ra, solved_dec, target_ra, target_dec)
+
+                if self._pointing_model and self._pointing_model.is_trained:
+                    self._pointing_model.record_verification_residual(error)
+                    self.logger.info(
+                        "Alignment verified (model active, no sync): solved RA=%.4f° Dec=%.4f° (residual: %.4f°)",
+                        solved_ra,
+                        solved_dec,
+                        error,
+                    )
+                else:
+                    mount.sync_to_radec(solved_ra, solved_dec)
+                    self.logger.info(
+                        "Alignment successful: solved RA=%.4f° Dec=%.4f° (error from target: %.4f°, synced)",
+                        solved_ra,
+                        solved_dec,
+                        error,
+                    )
+                return True
+
+            self.logger.warning("Plate solve failed with %.0fs exposure, retrying...", exposure_s)
+
+        self.logger.error("Alignment failed: plate solve did not converge after all attempts")
+        return False
+
+    def point_telescope(self, ra: float, dec: float) -> PointingCorrection:
+        """Point the telescope to the specified RA/Dec coordinates.
+
+        Applies pointing model correction automatically when the model is
+        active (3+ calibration points) and site location is available.
+
+        Returns the full correction snapshot so the caller can thread it
+        through to processing artifacts without shared mutable state.
+        """
         if self._safety_monitor and not self._safety_monitor.is_action_safe("slew", ra=ra, dec=dec):
             from citrascope.safety.safety_monitor import SafetyError
 
             raise SafetyError("Slew blocked by safety monitor")
-        self._do_point_telescope(ra, dec)
+
+        slew_ra, slew_dec = ra, dec
+        correction: PointingCorrection = {
+            "target_ra_deg": ra,
+            "target_dec_deg": dec,
+            "correction_ra_deg": 0.0,
+            "correction_dec_deg": 0.0,
+            "correction_total_deg": 0.0,
+            "command_ra_deg": ra,
+            "command_dec_deg": dec,
+            "model_n_terms": 0,
+            "model_n_points": 0,
+        }
+
+        if self._pointing_model and self._pointing_model.is_active and self.location_service:
+            location = self.location_service.get_current_location()
+            if location:
+                slew_ra, slew_dec = self._pointing_model.correct(ra, dec, location["latitude"], location["longitude"])
+                correction_deg = self.angular_distance(ra, dec, slew_ra, slew_dec)
+
+                d_ra = slew_ra - ra
+                if d_ra > 180.0:
+                    d_ra -= 360.0
+                elif d_ra < -180.0:
+                    d_ra += 360.0
+                d_dec = slew_dec - dec
+
+                correction.update(
+                    {
+                        "correction_ra_deg": d_ra,
+                        "correction_dec_deg": d_dec,
+                        "correction_total_deg": correction_deg,
+                        "command_ra_deg": slew_ra,
+                        "command_dec_deg": slew_dec,
+                        "model_n_terms": self._pointing_model.n_terms,
+                        "model_n_points": self._pointing_model.point_count,
+                    }
+                )
+                self.logger.info(
+                    "Pointing model correction: %.4f° (RA %+.4f° Dec %+.4f°)",
+                    correction_deg,
+                    d_ra,
+                    d_dec,
+                )
+
+        self._do_point_telescope(slew_ra, slew_dec)
+        return correction
 
     @abstractmethod
     def _do_point_telescope(self, ra: float, dec: float):
@@ -198,13 +386,16 @@ class AbstractAstroHardwareAdapter(ABC):
         """For hardware driven by sequences, perform the observation sequence and return list of image paths."""
         pass
 
-    def set_location_service(self, location_service) -> None:  # noqa: B027
+    def set_location_service(self, location_service) -> None:
         """Provide a location service for site-coordinate synchronisation.
 
         Called by the daemon after creating the adapter but before ``connect()``.
-        Adapters that need site location (e.g. for mount initialisation) should
-        store the reference; the default implementation is a no-op.
+        The reference is stored as ``self.location_service`` so the pointing
+        model correction in ``point_telescope()`` can resolve site coordinates.
+        Subclasses may override to do additional setup, but should call
+        ``super().set_location_service(location_service)``.
         """
+        self.location_service = location_service
 
     @abstractmethod
     def connect(self) -> bool:
@@ -320,6 +511,8 @@ class AbstractAstroHardwareAdapter(ABC):
         solved_dec_deg: float,
         expected_ra_deg: float | None = None,
         expected_dec_deg: float | None = None,
+        target_ra_deg: float | None = None,
+        target_dec_deg: float | None = None,
     ) -> None:
         """Update mount model from a plate solve result (pipeline → adapter).
 
@@ -331,9 +524,13 @@ class AbstractAstroHardwareAdapter(ABC):
         Args:
             solved_ra_deg: Solved right ascension in degrees.
             solved_dec_deg: Solved declination in degrees.
-            expected_ra_deg: Optional target RA (e.g. from task/mount); if set with
-                expected_dec_deg, adapter can compute offset = solved - expected.
-            expected_dec_deg: Optional target Dec in degrees.
+            expected_ra_deg: Command RA sent to the mount (with pointing model
+                correction applied).  Used as the "encoder" position for
+                ``add_point``.
+            expected_dec_deg: Command Dec sent to the mount.
+            target_ra_deg: Original intended target RA (before correction).
+                Used to compute the true pointing residual.
+            target_dec_deg: Original intended target Dec.
         """
         pass
 

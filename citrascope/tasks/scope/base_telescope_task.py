@@ -81,6 +81,7 @@ class AbstractBaseTelescopeTask(ABC):
         self.processor_registry = processor_registry
         self._on_annotated_image = on_annotated_image
         self._cancelled = threading.Event()
+        self.pointing_report: dict | None = None
 
         # Multi-image completion tracking (reset per upload_image_and_mark_complete call)
         self._completion_lock = threading.Lock()
@@ -223,12 +224,24 @@ class AbstractBaseTelescopeTask(ABC):
         if result and result.extracted_data:
             self.logger.info(self._format_processing_summary(task_id, result.extracted_data))
 
-        # Feed plate solve result to hardware adapter so mount model can update (e.g. alignment offsets)
+        # Feed plate solve result to hardware adapter so mount model can update
         if result and result.extracted_data and self.hardware_adapter:
             ra = result.extracted_data.get("plate_solver.ra_center")
             dec = result.extracted_data.get("plate_solver.dec_center")
             if ra is not None and dec is not None:
-                self.hardware_adapter.update_from_plate_solve(float(ra), float(dec))
+                correction = (self.pointing_report or {}).get("pointing_model_correction")
+                cmd_ra = correction["command_ra_deg"] if correction else None
+                cmd_dec = correction["command_dec_deg"] if correction else None
+                tgt_ra = correction["target_ra_deg"] if correction else None
+                tgt_dec = correction["target_dec_deg"] if correction else None
+                self.hardware_adapter.update_from_plate_solve(
+                    float(ra),
+                    float(dec),
+                    expected_ra_deg=cmd_ra,
+                    expected_dec_deg=cmd_dec,
+                    target_ra_deg=tgt_ra,
+                    target_dec_deg=tgt_dec,
+                )
 
             self._update_observed_fov_from_plate_solve(result.extracted_data)
 
@@ -520,6 +533,7 @@ class AbstractBaseTelescopeTask(ABC):
         max_attempts = 10
 
         iteration_log: list[dict] = []
+        last_correction = None
         report: dict = {
             "convergence_threshold_deg": round(max_angular_distance_deg, 4),
             "max_attempts": max_attempts,
@@ -543,7 +557,7 @@ class AbstractBaseTelescopeTask(ABC):
             )
 
             slew_start_time = time.time()
-            self.hardware_adapter.point_telescope(lead_ra.degrees, lead_dec.degrees)  # type: ignore
+            last_correction = self.hardware_adapter.point_telescope(lead_ra.degrees, lead_dec.degrees)  # type: ignore
             while self.hardware_adapter.telescope_is_moving():
                 if self.is_cancelled:
                     raise RuntimeError("Task cancelled")
@@ -589,11 +603,15 @@ class AbstractBaseTelescopeTask(ABC):
                 f"off by {abs(slew_duration - est_slew_time):.1f} sec."
             )
 
-            # Convergence: did we arrive at our intended target?
+            # Convergence: did the mount arrive at the commanded position?
+            # Compare against the command position (with correction applied), not
+            # the original target — those differ by the pointing model correction.
+            cmd_ra_deg = last_correction["command_ra_deg"]
+            cmd_dec_deg = last_correction["command_dec_deg"]
             target_lead_ra_deg = float(lead_ra.degrees)  # type: ignore[union-attr]
             target_lead_dec_deg = float(lead_dec.degrees)  # type: ignore[union-attr]
             target_distance_deg = self.hardware_adapter.angular_distance(
-                post_slew_ra, post_slew_dec, target_lead_ra_deg, target_lead_dec_deg
+                post_slew_ra, post_slew_dec, cmd_ra_deg, cmd_dec_deg
             )
 
             # Satellite's current position (diagnostic only — may differ from
@@ -643,6 +661,10 @@ class AbstractBaseTelescopeTask(ABC):
             report["final_angular_distance_deg"] = iteration_log[-1]["angular_distance_to_satellite_deg"]
             report["final_telescope_ra_deg"] = iteration_log[-1]["post_slew_ra_deg"]
             report["final_telescope_dec_deg"] = iteration_log[-1]["post_slew_dec_deg"]
+
+        if last_correction is not None:
+            report["pointing_model_correction"] = last_correction
+
         return report
 
     def _compute_convergence_threshold(self) -> float:
