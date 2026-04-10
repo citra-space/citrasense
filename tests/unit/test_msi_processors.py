@@ -169,7 +169,7 @@ class TestPlateSolverProcessor:
         new_file = tmp_path / "test_image.new"
         mock_solve.return_value = (new_file, MagicMock())
         mock_extract.return_value = pd.DataFrame(
-            {"ra": [120.1], "dec": [45.1], "mag": [-5.0], "magerr": [0.0], "elongation": [1.1]}
+            {"ra": [120.1], "dec": [45.1], "mag": [-5.0], "magerr": [0.0], "elongation": [1.1], "fwhm": [3.2]}
         )
 
         mock_primary = MagicMock(spec=fits.PrimaryHDU)

@@ -400,6 +400,10 @@ class PlateSolverProcessor(AbstractImageProcessor):
         y = objects["y"][mask]
         ra, dec = wcs.all_pix2world(x, y, 0)
 
+        a = objects["a"][mask]
+        b = objects["b"][mask]
+        fwhm = 2.0 * np.sqrt(np.log(2.0)) * np.sqrt(a**2 + b**2)
+
         return pd.DataFrame(
             {
                 "ra": np.asarray(ra, dtype=np.float64),
@@ -407,8 +411,40 @@ class PlateSolverProcessor(AbstractImageProcessor):
                 "mag": np.asarray(-2.5 * np.log10(flux[mask] / image.exposure_time), dtype=np.float64),
                 "magerr": np.zeros(int(mask.sum()), dtype=np.float64),
                 "elongation": np.asarray((objects["a"] / objects["b"])[mask], dtype=np.float64),
+                "fwhm": np.asarray(fwhm, dtype=np.float64),
             }
         )
+
+    @staticmethod
+    def _compute_hfr_from_image(context: ProcessingContext) -> float | None:
+        """Compute median HFR from the image using the autofocus SEP routine.
+
+        Uses context.image_data (pre-loaded) or falls back to reading from the
+        working image path.  Returns None if computation fails or too few stars.
+        """
+        try:
+            from citrascope.hardware.direct.autofocus import compute_hfr
+
+            img = context.image_data
+            if img is None:
+                with fits.open(context.working_image_path) as hdul:
+                    primary = hdul[0]
+                    assert isinstance(primary, fits.PrimaryHDU)
+                    img = primary.data
+            if img is None:
+                logging.getLogger("citrascope").debug("HFR: image_data is None, skipping")
+                return None
+            hfr = compute_hfr(img, crop_ratio=0.5)
+            if hfr is None:
+                hfr = compute_hfr(img, crop_ratio=1.0)
+            if hfr is not None:
+                logging.getLogger("citrascope").debug(f"HFR computation: {hfr:.2f}")
+            else:
+                logging.getLogger("citrascope").debug("HFR: too few stars even at full frame")
+            return hfr
+        except Exception as e:
+            logging.getLogger("citrascope").warning(f"HFR computation failed: {e}")
+            return None
 
     def process(self, context: ProcessingContext) -> ProcessorResult:
         """Process image with plate solving.
@@ -466,6 +502,11 @@ class PlateSolverProcessor(AbstractImageProcessor):
 
             elapsed = time.time() - start_time
 
+            fwhm_median = float(sources_df["fwhm"].median()) if num_sources > 0 else None
+            elongation_median = float(sources_df["elongation"].median()) if num_sources > 0 else None
+
+            hfr_median = self._compute_hfr_from_image(context)
+
             result = ProcessorResult(
                 should_upload=True,
                 extracted_data={
@@ -477,6 +518,9 @@ class PlateSolverProcessor(AbstractImageProcessor):
                     "field_height_deg": field_height_deg,
                     "wcs_image_path": str(wcs_image_path),
                     "num_sources": num_sources,
+                    "fwhm_median": fwhm_median,
+                    "hfr_median": hfr_median,
+                    "elongation_median": elongation_median,
                 },
                 confidence=1.0,
                 reason=f"Plate solved in {elapsed:.1f}s, {num_sources} sources extracted",
@@ -487,9 +531,14 @@ class PlateSolverProcessor(AbstractImageProcessor):
             return result
 
         except Exception as e:
+            hfr_median = None
+            try:
+                hfr_median = self._compute_hfr_from_image(context)
+            except Exception:
+                pass
             result = ProcessorResult(
                 should_upload=True,
-                extracted_data={"plate_solved": False},
+                extracted_data={"plate_solved": False, "hfr_median": hfr_median},
                 confidence=0.0,
                 reason=f"Plate solving failed: {e!s}",
                 processing_time_seconds=time.time() - start_time,

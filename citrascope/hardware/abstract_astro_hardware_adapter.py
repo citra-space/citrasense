@@ -431,6 +431,8 @@ class AbstractAstroHardwareAdapter(ABC):
         target_dec: float | None = None,
         on_progress: Callable[[str], None] | None = None,
         cancel_event: threading.Event | None = None,
+        on_point: Callable[[int, float], None] | None = None,
+        on_filter_start: Callable[[str], None] | None = None,
     ) -> None:
         """Perform autofocus routine for all filters.
 
@@ -443,6 +445,10 @@ class AbstractAstroHardwareAdapter(ABC):
             target_dec: Dec of the slew target in degrees (J2000), or None for adapter default
             on_progress: Optional callback(str) to report progress updates
             cancel_event: If set, the routine should abort at the next safe point.
+            on_point: Optional callback(position, hfr) fired after each V-curve sample.
+            on_filter_start: Optional callback(filter_name) fired at the start of each
+                per-filter autofocus run. Used by AutofocusManager to clear V-curve
+                points and tag subsequent samples with the active filter.
 
         Raises:
             NotImplementedError: If the adapter doesn't support autofocus

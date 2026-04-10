@@ -1,6 +1,7 @@
     <div class="container my-4" id="configSection" x-show="$store.citrascope.currentSection === 'config'" x-cloak
          x-data="{ configTab: $persist('api').as('configTab') }"
-         x-effect="if (configTab === 'calibration' && !($store.citrascope.status?.supports_direct_camera_control)) configTab = 'api'">
+         x-effect="if (configTab === 'calibration' && !($store.citrascope.status?.supports_direct_camera_control)) configTab = 'api';
+                  if (configTab === 'autofocus' && !($store.citrascope.status?.supports_autofocus)) configTab = 'hardware'">
         <form @submit.prevent="window.saveConfiguration($event)">
             <div class="row">
                 <!-- Side Navigation -->
@@ -13,6 +14,11 @@
                         <a class="nav-link" href="#" :class="{ active: configTab === 'hardware' }"
                            @click.prevent="configTab = 'hardware'">
                             <i class="bi bi-hdd-network me-2"></i>Hardware
+                        </a>
+                        <a class="nav-link" href="#" :class="{ active: configTab === 'autofocus' }"
+                           @click.prevent="configTab = 'autofocus'"
+                           x-show="$store.citrascope.status?.supports_autofocus">
+                            <i class="bi bi-arrows-expand me-2"></i>Autofocus
                         </a>
                         <a class="nav-link" href="#" :class="{ active: configTab === 'calibration' }"
                            @click.prevent="configTab = 'calibration'"
@@ -104,6 +110,17 @@
                             <i class="bi bi-hdd-network"></i>Hardware Configuration
                         </h5>
                         {% include '_config_hardware.html' %}
+                    </div>
+
+
+                    <!-- ============================================ -->
+                    <!-- Autofocus                                    -->
+                    <!-- ============================================ -->
+                    <div x-show="configTab === 'autofocus'">
+                        <h5 class="mb-3 pb-2 border-bottom border-secondary d-flex align-items-center gap-2">
+                            <i class="bi bi-arrows-expand"></i>Autofocus
+                        </h5>
+                        {% include '_config_autofocus.html' %}
                     </div>
 
 

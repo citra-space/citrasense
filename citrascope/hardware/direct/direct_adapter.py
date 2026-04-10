@@ -986,6 +986,8 @@ class DirectHardwareAdapter(AbstractAstroHardwareAdapter):
         target_dec: float | None = None,
         on_progress: Callable[[str], None] | None = None,
         cancel_event: threading.Event | None = None,
+        on_point: Callable[[int, float], None] | None = None,
+        on_filter_start: Callable[[str], None] | None = None,
     ) -> None:
         """Run V-curve autofocus for each enabled filter.
 
@@ -1025,6 +1027,7 @@ class DirectHardwareAdapter(AbstractAstroHardwareAdapter):
                 on_progress=on_progress,
                 logger=self.logger,
                 cancel_event=cancel_event,
+                on_point=on_point,
             )
             self.logger.info(f"Autofocus result: position {best}")
             return
@@ -1034,15 +1037,27 @@ class DirectHardwareAdapter(AbstractAstroHardwareAdapter):
             if cancel_event and cancel_event.is_set():
                 report("Autofocus cancelled")
                 self.logger.info("Autofocus cancelled between filters")
-                return
+                raise RuntimeError("Autofocus cancelled")
 
             fname = fdata.get("name", f"Filter {fid}")
-            report(f"Filter {idx}/{total_filters}: {fname}")
+
+            if on_filter_start:
+                on_filter_start(fname)
+
+            def filter_progress(msg: str, _prefix=f"Filter {idx}/{total_filters}: {fname}"):
+                report(f"{_prefix} — {msg}")
+
+            filter_progress("focusing...")
             self.logger.info(f"Autofocusing filter '{fname}' (position {fid})")
 
             if not self.set_filter(fid):
                 self.logger.error(f"Failed to switch to filter {fid}, skipping")
                 continue
+
+            starting_pos = fdata.get("focus_position")
+            if starting_pos is not None:
+                self.logger.info(f"Moving focuser to last known position {starting_pos} for '{fname}'")
+                self._focuser.move_absolute(starting_pos)
 
             best = run_autofocus(
                 camera=self._camera,
@@ -1051,13 +1066,15 @@ class DirectHardwareAdapter(AbstractAstroHardwareAdapter):
                 num_steps=af_steps,
                 exposure_time=af_exp,
                 crop_ratio=af_crop,
-                on_progress=on_progress,
+                on_progress=filter_progress,
                 logger=self.logger,
                 cancel_event=cancel_event,
+                on_point=on_point,
             )
 
             self.filter_map[fid]["focus_position"] = best
             self.logger.info(f"Filter '{fname}' focus position: {best}")
+            filter_progress(f"done (position {best})")
 
         report("Autofocus complete for all filters")
 

@@ -18,6 +18,7 @@ from citrascope.hardware.abstract_astro_hardware_adapter import (
     ObservationStrategy,
     SettingSchemaEntry,
 )
+from citrascope.hardware.devices.camera.abstract_camera import AbstractCamera
 from citrascope.hardware.devices.focuser.abstract_focuser import AbstractFocuser
 from citrascope.hardware.devices.mount.abstract_mount import AbstractMount
 from citrascope.hardware.devices.mount.mount_state_cache import MountStateCache
@@ -410,6 +411,16 @@ _DUMMY_GAIN = 1.5  # electrons/ADU
 _DUMMY_PSF_SIGMA_PX = 3.0 / 2.3548  # sigma from 3.0 px FWHM seeing
 _DUMMY_MAG_LIMIT = 14.0  # faintest catalog star to render (Vmag)
 _DUMMY_MAG_ZERO = 20.0  # instrument zero-point: V=10 → SNR~58, V=12 → SNR~9
+_DUMMY_OPTIMAL_FOCUS = 25000  # focuser position for sharpest PSF
+_DUMMY_DEFOCUS_K = 0.002  # PSF broadening per focuser step from optimal
+_DUMMY_FILTER_FOCUS_OFFSETS: dict[str, int] = {
+    "luminance": 0,
+    "clear": 0,
+    "red": 500,
+    "green": 350,
+    "blue": 700,
+    "ha": 1200,
+}
 
 
 class DummyAdapter(AbstractAstroHardwareAdapter):
@@ -443,6 +454,8 @@ class DummyAdapter(AbstractAstroHardwareAdapter):
         self._mount = _DummyMount(logger)
         self._mount_cache: MountStateCache | None = None
         self._focuser = _DummyFocuser(logger)
+        self._current_filter_position: int = 0
+        self._current_filter_offset: int = 0
 
         # Set by the daemon after connecting, mirrors the real telescope_record from the API.
         # When present, take_image() derives sensor dimensions and pixel scale from it.
@@ -502,11 +515,14 @@ class DummyAdapter(AbstractAstroHardwareAdapter):
 
         if not self.filter_map:
             self.filter_map = {
-                0: {"name": "Luminance", "focus_position": 9000, "enabled": True},
-                1: {"name": "Red", "focus_position": 9050, "enabled": True},
-                2: {"name": "Green", "focus_position": 9040, "enabled": True},
-                3: {"name": "Blue", "focus_position": 9060, "enabled": True},
-                4: {"name": "Ha", "focus_position": 9100, "enabled": False},
+                fid: {
+                    "name": name,
+                    "focus_position": _DUMMY_OPTIMAL_FOCUS + _DUMMY_FILTER_FOCUS_OFFSETS.get(name.lower(), 0),
+                    "enabled": enabled,
+                }
+                for fid, (name, enabled) in enumerate(
+                    [("Luminance", True), ("Red", True), ("Green", True), ("Blue", True), ("Ha", False)]
+                )
             }
             self.logger.info(f"DummyAdapter: Populated {len(self.filter_map)} simulated filters")
 
@@ -615,11 +631,13 @@ class DummyAdapter(AbstractAstroHardwareAdapter):
         filepath.parent.mkdir(parents=True, exist_ok=True)
 
         ra, dec = self._mount.get_radec()
+        sigma = self._focus_dependent_psf_sigma()
         image_data, wcs = self._generate_starfield(
             ra,
             dec,
             exposure_duration_seconds,
             seed=timestamp % (2**31),
+            psf_sigma=sigma,
         )
 
         hdu = fits.PrimaryHDU(image_data, header=wcs.to_header())
@@ -641,6 +659,7 @@ class DummyAdapter(AbstractAstroHardwareAdapter):
         dec_center: float,
         exptime: float,
         seed: int,
+        psf_sigma: float | None = None,
     ) -> tuple[np.ndarray, WCS]:
         """Generate a synthetic starfield from the Tycho-2 catalog with a TAN WCS.
 
@@ -652,6 +671,7 @@ class DummyAdapter(AbstractAstroHardwareAdapter):
             dec_center:    Dec of the field centre in degrees.
             exptime:       Exposure duration in seconds (scales star brightness).
             seed:          RNG seed for the noise model (use Unix timestamp).
+            psf_sigma:     Override PSF sigma in pixels (None uses default seeing).
 
         Returns:
             Tuple of (image array uint16, WCS object).
@@ -708,8 +728,8 @@ class DummyAdapter(AbstractAstroHardwareAdapter):
             self.logger.debug("DummyAdapter: No catalog stars in FOV — returning noise-only image")
             return np.clip(image, 0, 65535).astype(np.uint16), wcs
 
-        psf_sigma = _DUMMY_PSF_SIGMA_PX
-        stamp_r = max(int(5 * psf_sigma), 15)
+        effective_psf_sigma = psf_sigma if psf_sigma is not None else _DUMMY_PSF_SIGMA_PX
+        stamp_r = max(int(5 * effective_psf_sigma), 15)
 
         pixel_coords = wcs.all_world2pix(np.column_stack([star_ras, star_decs]), 0)
 
@@ -728,7 +748,7 @@ class DummyAdapter(AbstractAstroHardwareAdapter):
             # Build a small stamp and blur it to the PSF shape
             stamp = np.zeros((2 * stamp_r + 1, 2 * stamp_r + 1))
             stamp[stamp_r, stamp_r] = total_adu
-            stamp = gaussian_filter(stamp, sigma=psf_sigma)
+            stamp = gaussian_filter(stamp, sigma=effective_psf_sigma)
             if stamp.sum() > 0:
                 stamp *= total_adu / stamp.sum()
 
@@ -845,40 +865,173 @@ class DummyAdapter(AbstractAstroHardwareAdapter):
     def query_hardware_safety(self) -> bool | None:
         return True
 
+    def _focus_dependent_psf_sigma(self) -> float:
+        """Compute PSF sigma based on current focuser distance from optimal.
+
+        Uses `_current_filter_offset` to shift the optimal position per filter,
+        simulating wavelength-dependent focus shifts. Adds ~5% RNG jitter to
+        simulate seeing variation between exposures.
+        """
+        optimal = _DUMMY_OPTIMAL_FOCUS + self._current_filter_offset
+        current_pos = self._focuser.get_position()
+        pos = optimal if current_pos is None else current_pos
+        base = _DUMMY_PSF_SIGMA_PX + _DUMMY_DEFOCUS_K * abs(pos - optimal)
+        jitter = np.random.default_rng().normal(0, 0.02 * base)
+        return max(0.5, base + jitter)
+
     def do_autofocus(
         self,
         target_ra: float | None = None,
         target_dec: float | None = None,
         on_progress: Callable[[str], None] | None = None,
         cancel_event: threading.Event | None = None,
+        on_point: Callable[[int, float], None] | None = None,
+        on_filter_start: Callable[[str], None] | None = None,
     ) -> None:
-        """Simulate autofocus routine."""
+        """Run V-curve autofocus for each enabled filter.
+
+        Mirrors the DirectHardwareAdapter pattern: iterates enabled filters,
+        switches to each, runs autofocus, labels progress with the filter
+        name, and stores the resulting focus_position per filter.
+        """
+        from citrascope.hardware.direct.autofocus import run_autofocus
+
         if (target_ra is None) != (target_dec is None):
             raise ValueError(
-                f"target_ra and target_dec must both be set or both be None, " f"got ra={target_ra}, dec={target_dec}"
+                f"target_ra and target_dec must both be set or both be None, got ra={target_ra}, dec={target_dec}"
             )
 
+        report = on_progress or (lambda _msg: None)
+
         if target_ra is not None and target_dec is not None:
-            self.logger.info(f"DummyAdapter: Starting autofocus on target RA={target_ra:.4f}, Dec={target_dec:.4f}")
-        else:
-            self.logger.info("DummyAdapter: Starting autofocus at current position (no slew)")
+            report("Slewing to autofocus target...")
+            self.logger.info(f"DummyAdapter: Slewing to AF target RA={target_ra:.4f}, Dec={target_dec:.4f}")
+            self._mount.slew_to_radec(target_ra, target_dec)
 
-        filters = [f for f in self.filter_map.values() if f.get("enabled", True)] if self.filter_map else []
-        total = len(filters) or 1
-        for idx, f in enumerate(filters or [{"name": "Default"}], 1):
-            if cancel_event and cancel_event.is_set():
-                self.logger.info("DummyAdapter: Autofocus cancelled")
-                raise RuntimeError("Autofocus cancelled")
-            if on_progress:
-                on_progress(f"Filter {idx}/{total}: {f['name']} — focusing...")
-            self._simulate_delay(1.0)
-            if cancel_event and cancel_event.is_set():
-                self.logger.info("DummyAdapter: Autofocus cancelled")
-                raise RuntimeError("Autofocus cancelled")
-            if on_progress:
-                on_progress(f"Filter {idx}/{total}: {f['name']} — done")
+        adapter = self
 
-        self.logger.info("DummyAdapter: Autofocus complete")
+        class _DummyAfCamera(AbstractCamera):
+            """Minimal camera that renders focus-dependent synthetic starfields."""
+
+            @classmethod
+            def get_friendly_name(cls) -> str:
+                return "Dummy AF Camera"
+
+            @classmethod
+            def get_dependencies(cls) -> dict[str, str | list[str]]:
+                return {"packages": [], "install_extra": ""}
+
+            @classmethod
+            def get_settings_schema(cls) -> list[SettingSchemaEntry]:
+                return []
+
+            def connect(self) -> bool:
+                return True
+
+            def disconnect(self) -> None:
+                pass
+
+            def is_connected(self) -> bool:
+                return True
+
+            def capture_array(self, duration: float, **kwargs) -> np.ndarray:
+                ra, dec = adapter._mount.get_radec()
+                sigma = adapter._focus_dependent_psf_sigma()
+                seed = int(time.time_ns() % (2**31))
+                img, _ = adapter._generate_starfield(ra, dec, duration, seed=seed, psf_sigma=sigma)
+                return img
+
+            def take_exposure(self, duration: float, **kwargs):
+                raise NotImplementedError
+
+            def abort_exposure(self):
+                pass
+
+            def get_temperature(self) -> float | None:
+                return 20.0
+
+            def set_temperature(self, temperature: float) -> bool:
+                return True
+
+            def start_cooling(self) -> bool:
+                return True
+
+            def stop_cooling(self) -> bool:
+                return True
+
+            def get_camera_info(self) -> dict:
+                return {"model": "DummyAfCamera", "width": _DUMMY_IMG_SIZE, "height": _DUMMY_IMG_SIZE}
+
+        cam = _DummyAfCamera(adapter.logger)
+
+        enabled_filters = {fid: fdata for fid, fdata in self.filter_map.items() if fdata.get("enabled", True)}
+
+        if not enabled_filters:
+            report("Running autofocus (no filters)...")
+            run_autofocus(
+                camera=cam,
+                focuser=self._focuser,
+                step_size=500,
+                num_steps=5,
+                exposure_time=1.0,
+                crop_ratio=1.0,
+                on_progress=on_progress,
+                logger=self.logger,
+                cancel_event=cancel_event,
+                on_point=on_point,
+            )
+            self.logger.info("DummyAdapter: Autofocus complete")
+            return
+
+        total = len(enabled_filters)
+        self.logger.info(f"DummyAdapter: Autofocusing {total} enabled filter(s)")
+
+        for idx, (fid, fdata) in enumerate(enabled_filters.items(), 1):
+            if cancel_event and cancel_event.is_set():
+                report("Autofocus cancelled")
+                self.logger.info("Autofocus cancelled between filters")
+                raise RuntimeError("Autofocus cancelled")
+
+            fname = fdata.get("name", f"Filter {fid}")
+
+            if on_filter_start:
+                on_filter_start(fname)
+
+            def filter_progress(msg: str, _prefix=f"Filter {idx}/{total}: {fname}"):
+                report(f"{_prefix} — {msg}")
+
+            filter_progress("focusing...")
+            self.logger.info(f"Autofocusing filter '{fname}' (position {fid})")
+
+            self.set_filter(fid)
+
+            starting_pos = fdata.get("focus_position")
+            if starting_pos is not None:
+                self.logger.info(f"Moving focuser to last known position {starting_pos} for '{fname}'")
+                self._focuser.move_absolute(starting_pos)
+
+            self._current_filter_offset = _DUMMY_FILTER_FOCUS_OFFSETS.get(fname.lower(), 0)
+
+            try:
+                best = run_autofocus(
+                    camera=cam,
+                    focuser=self._focuser,
+                    step_size=500,
+                    num_steps=5,
+                    exposure_time=1.0,
+                    crop_ratio=1.0,
+                    on_progress=filter_progress,
+                    logger=self.logger,
+                    cancel_event=cancel_event,
+                    on_point=on_point,
+                )
+                self.filter_map[fid]["focus_position"] = best
+                self.logger.info(f"Filter '{fname}' focus position: {best}")
+                filter_progress(f"done (position {best})")
+            finally:
+                self._current_filter_offset = 0
+
+        report("Autofocus complete for all filters")
 
     def supports_filter_management(self) -> bool:
         """Dummy adapter supports filter management."""
@@ -890,13 +1043,40 @@ class DummyAdapter(AbstractAstroHardwareAdapter):
     def update_filter_name(self, filter_id: str, name: str) -> bool:
         """Rename a simulated filter position."""
         try:
-            fid = int(filter_id)
+            fid: int | str = int(filter_id)
+            if fid not in self.filter_map:
+                fid = filter_id
             if fid in self.filter_map:
                 self.filter_map[fid]["name"] = name
                 return True
             return False
         except (ValueError, KeyError):
             return False
+
+    def get_filter_position(self) -> int | None:
+        """Get the current simulated filter wheel position."""
+        return self._current_filter_position
+
+    def set_filter(self, filter_position: int) -> bool:
+        """Switch to a simulated filter position."""
+        if filter_position in self.filter_map:
+            fdata = self.filter_map[filter_position]
+        elif str(filter_position) in self.filter_map:
+            fdata = self.filter_map[str(filter_position)]  # type: ignore[arg-type]
+        else:
+            self.logger.warning(f"DummyAdapter: Unknown filter position {filter_position}")
+            return False
+        name = fdata.get("name", f"Filter {filter_position}")
+        self._current_filter_position = filter_position
+        self._current_filter_offset = _DUMMY_FILTER_FOCUS_OFFSETS.get(name.lower(), 0)
+
+        focus_position = fdata.get("focus_position")
+        if focus_position is not None and self._focuser:
+            self.logger.info(f"DummyAdapter: Adjusting focus to {focus_position} for filter {name}")
+            self._focuser.move_absolute(focus_position)
+
+        self.logger.info(f"DummyAdapter: Filter changed to {name} (position {filter_position})")
+        return True
 
     def set_focus(self, position: int) -> bool:
         """Move simulated focuser to absolute position."""
@@ -922,7 +1102,8 @@ class DummyAdapter(AbstractAstroHardwareAdapter):
         from citrascope.web.preview import array_to_jpeg_data_url
 
         ra, dec = self._mount.get_radec()
-        image_data, _ = self._generate_starfield(ra, dec, exposure_time, seed=int(time.time() * 1000))
+        sigma = self._focus_dependent_psf_sigma()
+        image_data, _ = self._generate_starfield(ra, dec, exposure_time, seed=int(time.time() * 1000), psf_sigma=sigma)
         return array_to_jpeg_data_url(image_data, flip_horizontal=flip_horizontal)
 
     def expose_camera(self, exposure_seconds: float = 1.0) -> str:

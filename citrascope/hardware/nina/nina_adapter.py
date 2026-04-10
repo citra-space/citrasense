@@ -106,6 +106,8 @@ class NinaAdvancedHttpAdapter(AbstractAstroHardwareAdapter):
         target_dec: float | None = None,
         on_progress: Callable[[str], None] | None = None,
         cancel_event: threading.Event | None = None,
+        on_point: Callable[[int, float], None] | None = None,
+        on_filter_start: Callable[[str], None] | None = None,
     ):
         """Perform autofocus routine for all enabled filters.
 
@@ -123,6 +125,8 @@ class NinaAdvancedHttpAdapter(AbstractAstroHardwareAdapter):
                 focus at the current telescope position (no slew).
             on_progress: Optional callback(str) to report progress updates
             cancel_event: Unused (NINA manages its own autofocus lifecycle)
+            on_filter_start: Optional callback(filter_name) fired at the start
+                of each per-filter autofocus run.
 
         Raises:
             RuntimeError: If no filters discovered or no enabled filters
@@ -175,16 +179,25 @@ class NinaAdvancedHttpAdapter(AbstractAstroHardwareAdapter):
 
         for idx, (id, filter) in enumerate(enabled_filters.items(), 1):
             name = filter["name"]
-            report(f"Filter {idx}/{total}: {name} — focusing...")
+
+            if on_filter_start:
+                on_filter_start(name)
+
+            def filter_progress(msg: str, _prefix=f"Filter {idx}/{total}: {name}"):
+                report(f"{_prefix} — {msg}")
+
+            filter_progress("focusing...")
             self.logger.info(f"Focusing Filter ID: {id}, Name: {name}")
             existing_focus = filter.get("focus_position", self.DEFAULT_FOCUS_POSITION)
 
             def af_point_progress(position: int, hfr: float, _idx=idx, _total=total, _name=name):
                 report(f"Filter {_idx}/{_total}: {_name} — pos {position}, HFR {hfr:.2f}")
+                if on_point:
+                    on_point(position, hfr)
 
             focus_value = self._auto_focus_one_filter(id, name, existing_focus, on_af_point=af_point_progress)
             self.filter_map[id]["focus_position"] = focus_value
-            report(f"Filter {idx}/{total}: {name} — done (position {focus_value})")
+            filter_progress(f"done (position {focus_value})")
 
     def _auto_focus_one_filter(
         self,

@@ -679,7 +679,7 @@
                                             <select class="form-select form-select-sm"
                                                     :value="String($store.citrascope.status?.current_filter_position ?? '')"
                                                     @change="window.changeFilterPosition($event.target.value)">
-                                                <template x-for="[fid, fdata] in Object.entries($store.citrascope.filters || {})" :key="fid">
+                                                <template x-for="[fid, fdata] in Object.entries($store.citrascope.filters || {}).filter(([_, f]) => f.enabled !== false)" :key="fid">
                                                     <option :value="fid" x-text="fdata.name"></option>
                                                 </template>
                                             </select>
@@ -771,30 +771,184 @@
 
                             <!-- ─── Autofocus ─── -->
                             <div class="pt-2 mt-2 border-top border-secondary"
-                                 x-show="$store.citrascope.status?.supports_autofocus">
-                                <div class="d-flex align-items-center gap-2 flex-wrap">
-                                    <button type="button" class="btn btn-sm"
-                                            :class="$store.citrascope.status?.autofocus_running ? 'btn-outline-danger' : ($store.citrascope.status?.autofocus_requested ? 'btn-outline-warning' : 'btn-outline-primary')"
-                                            @click="window.triggerAutofocus()">
-                                        <template x-if="$store.citrascope.status?.autofocus_running">
-                                            <span><i class="bi bi-stop-fill me-1"></i>Cancel AF</span>
-                                        </template>
-                                        <template x-if="!$store.citrascope.status?.autofocus_running">
-                                            <span x-text="$store.citrascope.status?.autofocus_requested ? 'Cancel AF' : 'Autofocus'"></span>
-                                        </template>
-                                    </button>
-                                    <small class="text-muted" x-show="!$store.citrascope.status?.autofocus_running"
-                                           x-text="$store.citrascope.formatLastAutofocus($store.citrascope.status)"></small>
-                                    <span class="small" x-show="$store.citrascope.status?.autofocus_running"
-                                          x-text="$store.citrascope.status?.autofocus_progress || 'Autofocusing...'"></span>
+                                 x-show="$store.citrascope.status?.supports_autofocus"
+                                 x-data="{
+                                     get pts() { return $store.citrascope.status?.autofocus_points || [] },
+                                     get filterResults() { return $store.citrascope.status?.autofocus_filter_results || [] },
+                                     get minPos() { return this.pts.length ? Math.min(...this.pts.map(p => p.pos)) : 0 },
+                                     get maxPos() { return this.pts.length ? Math.max(...this.pts.map(p => p.pos)) : 1 },
+                                     get minHfr() { return this.pts.length ? Math.min(...this.pts.map(p => p.hfr)) : 0 },
+                                     get maxHfr() { return this.pts.length ? Math.max(...this.pts.map(p => p.hfr)) : 1 },
+                                     sx(pos) {
+                                         const range = this.maxPos - this.minPos || 1;
+                                         return 30 + (pos - this.minPos) / range * 260;
+                                     },
+                                     sy(hfr) {
+                                         const range = this.maxHfr - this.minHfr || 1;
+                                         return 130 - (hfr - this.minHfr) / range * 110;
+                                     },
+                                     get filterNames() {
+                                         return [...new Set(this.pts.map(p => p.filter || ''))];
+                                     },
+                                     filterColor(name) {
+                                         return $store.citrascope.filterColors[name] || 'var(--bs-info)';
+                                     },
+                                     polylineFor(fname) {
+                                         const filtered = this.pts.filter(p => (p.filter || '') === fname);
+                                         const sorted = [...filtered].sort((a, b) => a.pos - b.pos);
+                                         return sorted.map(p => this.sx(p.pos) + ',' + this.sy(p.hfr)).join(' ');
+                                     }
+                                 }">
+                                <div class="row g-2">
+                                    <!-- Left: controls + readouts -->
+                                    <div class="col-12 col-md-5">
+                                        <div class="d-flex align-items-center gap-2 flex-wrap mb-2">
+                                            <button type="button" class="btn btn-sm"
+                                                    :class="$store.citrascope.status?.autofocus_running ? 'btn-outline-danger' : ($store.citrascope.status?.autofocus_requested ? 'btn-outline-warning' : 'btn-outline-primary')"
+                                                    @click="window.triggerAutofocus()">
+                                                <template x-if="$store.citrascope.status?.autofocus_running">
+                                                    <span><i class="bi bi-stop-fill me-1"></i>Cancel AF</span>
+                                                </template>
+                                                <template x-if="!$store.citrascope.status?.autofocus_running">
+                                                    <span x-text="$store.citrascope.status?.autofocus_requested ? 'Cancel AF' : 'Autofocus'"></span>
+                                                </template>
+                                            </button>
+                                            <small class="text-muted" x-show="!$store.citrascope.status?.autofocus_running"
+                                                   x-text="$store.citrascope.formatLastAutofocus($store.citrascope.status)"></small>
+                                        </div>
+                                        <div class="small mb-1" x-show="$store.citrascope.status?.autofocus_running">
+                                            <span class="spinner-border spinner-border-sm me-1" role="status"></span>
+                                            <span x-text="$store.citrascope.status?.autofocus_progress || 'Autofocusing...'"></span>
+                                        </div>
+                                        <div x-show="!$store.citrascope.status?.autofocus_running && filterResults.length > 0" class="mb-1">
+                                            <template x-for="r in filterResults" :key="r.filter">
+                                                <div>
+                                                    <small :style="'color:' + filterColor(r.filter)">
+                                                        <span x-text="r.filter"></span>: <span x-text="r.position"></span>
+                                                        <span class="text-muted" x-text="'(HFR ' + r.hfr + ')'"></span>
+                                                    </small>
+                                                </div>
+                                            </template>
+                                        </div>
+                                        <div x-show="!$store.citrascope.status?.autofocus_running && $store.citrascope.status?.autofocus_last_result && filterResults.length === 0">
+                                            <small :class="$store.citrascope.status?.autofocus_last_result?.includes('one-sided') || $store.citrascope.status?.autofocus_last_result?.includes('Failed') ? 'text-warning' : 'text-success'"
+                                                   x-text="$store.citrascope.status?.autofocus_last_result"></small>
+                                        </div>
+                                        <div x-show="!$store.citrascope.status?.autofocus_running">
+                                            <small class="text-muted" x-show="$store.citrascope.status?.autofocus_target_name"
+                                                   x-text="'Target: ' + $store.citrascope.status?.autofocus_target_name"></small>
+                                        </div>
+                                        <div x-show="!$store.citrascope.status?.autofocus_running && $store.citrascope.status?.next_autofocus_minutes != null">
+                                            <small class="text-muted"
+                                                   x-text="'Next in: ' + ($store.citrascope.status?.next_autofocus_minutes === 0 ? 'now (overdue)' : $store.citrascope.formatMinutes($store.citrascope.status?.next_autofocus_minutes || 0))"></small>
+                                        </div>
+                                    </div>
+                                    <!-- Right: V-curve chart -->
+                                    <div class="col-12 col-md-7" x-show="pts.length > 0">
+                                        <svg viewBox="0 0 300 150" class="w-100" style="max-height:150px">
+                                            <line x1="30" y1="130" x2="290" y2="130" stroke="var(--bs-secondary)" stroke-width="0.5"/>
+                                            <line x1="30" y1="20" x2="30" y2="130" stroke="var(--bs-secondary)" stroke-width="0.5"/>
+                                            <text x="160" y="148" text-anchor="middle" fill="var(--bs-secondary)" font-size="9">Position</text>
+                                            <text x="8" y="75" text-anchor="middle" fill="var(--bs-secondary)" font-size="9" transform="rotate(-90, 8, 75)">HFR</text>
+                                            <!-- x-for <template> is invalid inside SVG; use x-html on <g> instead -->
+                                            <g x-html="filterNames.map(fname =>
+                                                `<polyline points='${polylineFor(fname)}' fill='none' stroke='${filterColor(fname)}' stroke-width='1.5' opacity='0.6'/>`
+                                            ).join('')"></g>
+                                        </svg>
+                                    </div>
                                 </div>
-                                <div x-show="!$store.citrascope.status?.autofocus_running">
-                                    <small class="text-muted" x-show="$store.citrascope.status?.autofocus_target_name"
-                                           x-text="'Target: ' + $store.citrascope.status?.autofocus_target_name"></small>
-                                </div>
-                                <div x-show="!$store.citrascope.status?.autofocus_running && $store.citrascope.status?.next_autofocus_minutes != null">
-                                    <small class="text-muted"
-                                           x-text="'Next in: ' + ($store.citrascope.status?.next_autofocus_minutes === 0 ? 'now (overdue)' : $store.citrascope.formatMinutes($store.citrascope.status?.next_autofocus_minutes || 0))"></small>
+                            </div>
+
+                            <!-- ─── HFR Focus Health ─── -->
+                            <div class="pt-2 mt-2 border-top border-secondary"
+                                 x-show="$store.citrascope.status?.last_hfr_median != null || $store.citrascope.status?.hfr_baseline != null"
+                                 x-data="{
+                                     get baseline() { return $store.citrascope.status?.hfr_baseline },
+                                     get pct() { return $store.citrascope.status?.hfr_increase_percent || 30 },
+                                     get greenLim() { return this.baseline ? this.baseline * (1 + this.pct / 200) : null },
+                                     get yellowLim() { return this.baseline ? this.baseline * (1 + this.pct / 100) : null },
+                                     get hist() { return $store.citrascope.status?.hfr_history || [] },
+                                     get hfr() { return $store.citrascope.status?.last_hfr_median },
+                                     get lastFilter() {
+                                         if (!this.hist.length) return '';
+                                         return this.hist[this.hist.length - 1].filter || '';
+                                     },
+                                     hfrColor(v) {
+                                         if (v == null || !this.greenLim) return 'text-muted';
+                                         if (v < this.greenLim) return 'text-success';
+                                         if (v < this.yellowLim) return 'text-warning';
+                                         return 'text-danger';
+                                     },
+                                     get hfrAge() {
+                                         if (!this.hist.length) return '';
+                                         const ago = Math.round((Date.now() / 1000) - this.hist[this.hist.length - 1].ts);
+                                         if (ago < 60) return ago + 's ago';
+                                         return Math.round(ago / 60) + 'm ago';
+                                     },
+                                     get mx() { return this.hist.length ? Math.max(...this.hist.map(h => h.hfr)) : 1 },
+                                     get sparkFilterNames() {
+                                         return [...new Set(this.hist.map(h => h.filter || ''))];
+                                     },
+                                     sparkFilterColor(name) {
+                                         return $store.citrascope.filterColors[name] || '#888';
+                                     },
+                                     get sparkSvg() {
+                                         return this.sparkFilterNames.map(fname => {
+                                             const color = this.sparkFilterColor(fname);
+                                             const pts = [];
+                                             const dots = [];
+                                             this.hist.forEach((h, i) => {
+                                                 if ((h.filter || '') === fname) {
+                                                     const x = (i * 120 / Math.max(this.hist.length - 1, 1)).toFixed(1);
+                                                     const y = (22 - h.hfr / this.mx * 20).toFixed(1);
+                                                     pts.push(x + ',' + y);
+                                                     dots.push(`<circle cx='${x}' cy='${y}' r='1.5' fill='${color}'/>`);
+                                                 }
+                                             });
+                                             let s = '';
+                                             if (pts.length > 1) s += `<polyline points='${pts.join(' ')}' fill='none' stroke='${color}' stroke-width='1.5' stroke-linejoin='round' opacity='0.8'/>`;
+                                             return s + dots.join('');
+                                         }).join('');
+                                     },
+                                     bandY(lim) { return Math.max(2, 22 - lim / this.mx * 20); }
+                                 }">
+                                <div class="small">
+                                    <div class="row mb-1">
+                                        <div class="col-6 text-muted">Focus HFR</div>
+                                        <div class="col-6 d-flex align-items-center gap-2">
+                                            <template x-if="hfr != null">
+                                                <span>
+                                                    <span :class="hfrColor(hfr)" x-text="hfr.toFixed(2) + ' px'"></span>
+                                                    <span class="text-muted" x-show="lastFilter" x-text="lastFilter"></span>
+                                                    <span class="text-muted" x-text="hfrAge"></span>
+                                                </span>
+                                            </template>
+                                            <template x-if="hfr == null && !baseline">
+                                                <span class="text-muted fst-italic">Run autofocus to calibrate</span>
+                                            </template>
+                                            <template x-if="hist.length >= 2 && greenLim">
+                                                <svg width="120" height="24">
+                                                    <rect x="0" :y="bandY(greenLim)" width="120" :height="22 - bandY(greenLim)" fill="#198754" opacity="0.15"/>
+                                                    <rect x="0" :y="bandY(yellowLim)" width="120" :height="bandY(greenLim) - bandY(yellowLim)" fill="#ffc107" opacity="0.15"/>
+                                                    <rect x="0" y="2" width="120" :height="bandY(yellowLim) - 2" fill="#dc3545" opacity="0.15"/>
+                                                    <g x-html="sparkSvg"></g>
+                                                </svg>
+                                            </template>
+                                            <template x-if="hist.length >= 2 && !greenLim">
+                                                <svg width="120" height="24">
+                                                    <g x-html="sparkSvg"></g>
+                                                </svg>
+                                            </template>
+                                        </div>
+                                    </div>
+                                    <template x-if="baseline">
+                                        <div class="text-muted" style="font-size: 0.7rem;">
+                                            Baseline: <span x-text="baseline.toFixed(2)"></span> px
+                                            <template x-if="$store.citrascope.status?.hfr_refocus_enabled">
+                                                <span>&middot; refocus at +<span x-text="pct"></span>%</span>
+                                            </template>
+                                        </div>
+                                    </template>
                                 </div>
                             </div>
 
@@ -954,19 +1108,6 @@
                 </div>
             </div>
 
-            <div class="row g-3 mb-3" x-show="$store.citrascope.status?.autofocus_running">
-                <div class="col-12">
-                    <div class="alert alert-info d-flex align-items-center mb-0 py-2" role="alert">
-                        <span class="spinner-border spinner-border-sm me-2" role="status"></span>
-                        <span>
-                            Autofocus in progress &mdash; task processing is paused.
-                            <span x-show="$store.citrascope.status?.autofocus_progress"
-                                  class="ms-1 fw-semibold"
-                                  x-text="$store.citrascope.status?.autofocus_progress"></span>
-                        </span>
-                    </div>
-                </div>
-            </div>
 
             <div class="row g-3 mb-3">
                 <div class="col-12">
