@@ -1198,7 +1198,7 @@ class DummyAdapter(AbstractAstroHardwareAdapter):
         """Return a synthetic preview image as a JPEG data URL."""
         import time
 
-        from citrascope.web.preview import array_to_jpeg_data_url
+        from citrascope.preview_bus import array_to_jpeg_data_url
 
         ra, dec = self._mount.get_radec()
         sigma = self._focus_dependent_psf_sigma()

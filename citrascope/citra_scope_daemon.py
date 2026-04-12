@@ -399,7 +399,7 @@ class CitraScopeDaemon:
                 telescope_record=self.telescope_record,
                 ground_station=self.ground_station,
                 on_annotated_image=self._on_annotated_image,
-                push_preview=self.preview_bus.push,
+                preview_bus=self.preview_bus,
             )
 
             # Wire self-tasking session managers

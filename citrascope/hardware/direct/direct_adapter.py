@@ -823,7 +823,7 @@ class DirectHardwareAdapter(AbstractAstroHardwareAdapter):
             raise RuntimeError("Preview capture already in progress")
 
         try:
-            from citrascope.web.preview import array_to_jpeg_data_url
+            from citrascope.preview_bus import array_to_jpeg_data_url
 
             data = self._camera.capture_array(
                 duration=exposure_time,

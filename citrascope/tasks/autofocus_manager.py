@@ -11,12 +11,12 @@ import statistics
 import threading
 import time
 from collections import deque
-from collections.abc import Callable
 from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING
 
 from citrascope.constants import AUTOFOCUS_TARGET_PRESETS
 from citrascope.hardware.abstract_astro_hardware_adapter import AbstractAstroHardwareAdapter
+from citrascope.preview_bus import PreviewBus
 
 if TYPE_CHECKING:
     import numpy as np
@@ -41,14 +41,14 @@ class AutofocusManager:
         settings: CitraScopeSettings,
         imaging_queue: BaseWorkQueue | None = None,
         location_service: LocationService | None = None,
-        push_preview: Callable[[str, str], None] | None = None,
+        preview_bus: PreviewBus | None = None,
     ):
         self.logger = logger
         self.hardware_adapter = hardware_adapter
         self.settings = settings
         self.imaging_queue = imaging_queue
         self.location_service = location_service
-        self._push_preview = push_preview
+        self._preview_bus = preview_bus
         self._requested = False
         self._running = False
         self._progress = ""
@@ -431,13 +431,13 @@ class AutofocusManager:
 
     def _on_af_image(self, image: np.ndarray) -> None:
         """Convert an autofocus sweep frame to JPEG and push to the preview bus."""
-        if not self._push_preview:
+        if not self._preview_bus:
             return
         try:
-            from citrascope.web.preview import array_to_jpeg_data_url
+            from citrascope.preview_bus import array_to_jpeg_data_url
 
             data_url = array_to_jpeg_data_url(image)
-            self._push_preview(data_url, "autofocus")
+            self._preview_bus.push(data_url, "autofocus")
         except Exception as e:
             self.logger.debug(f"Failed to push AF preview frame: {e}")
 
