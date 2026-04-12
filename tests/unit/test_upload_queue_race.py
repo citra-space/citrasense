@@ -128,6 +128,7 @@ class TestConfigReloadDropsInFlightStages:
         daemon.telescope_record = None
         daemon.ground_station = None
         daemon.latest_annotated_image_path = None
+        daemon.preview_bus = MagicMock()
         return daemon
 
     def test_processing_and_uploading_not_restored(self):

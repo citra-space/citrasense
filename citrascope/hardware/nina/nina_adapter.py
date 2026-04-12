@@ -115,6 +115,7 @@ class NinaAdvancedHttpAdapter(AbstractAstroHardwareAdapter):
         cancel_event: threading.Event | None = None,
         on_point: Callable[[int, float], None] | None = None,
         on_filter_start: Callable[[str], None] | None = None,
+        on_image=None,
     ):
         """Perform autofocus routine for all enabled filters.
 
@@ -125,6 +126,10 @@ class NinaAdvancedHttpAdapter(AbstractAstroHardwareAdapter):
         checked — NINA runs autofocus internally and there is no REST API
         endpoint to cancel a NINA autofocus in progress.
 
+        Note: on_image is accepted for interface compatibility but never
+        called — NINA runs autofocus internally and does not expose
+        intermediate frames.
+
         Args:
             target_ra: RA of the slew target in degrees (J2000), or None to
                 focus at the current telescope position (no slew).
@@ -134,6 +139,7 @@ class NinaAdvancedHttpAdapter(AbstractAstroHardwareAdapter):
             cancel_event: Unused (NINA manages its own autofocus lifecycle)
             on_filter_start: Optional callback(filter_name) fired at the start
                 of each per-filter autofocus run.
+            on_image: Unused (NINA manages its own autofocus imaging)
 
         Raises:
             RuntimeError: If no filters discovered or no enabled filters

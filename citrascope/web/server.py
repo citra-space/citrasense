@@ -133,6 +133,7 @@ class CitraScopeWebServer:
                 if self.web_app:
                     await self.web_app.broadcast_status()
                     await self.web_app.broadcast_tasks()
+                    await self.web_app.broadcast_preview()
 
                 # Every 10 iterations (10 seconds), check if log handler is still attached
                 check_counter += 1

@@ -438,18 +438,6 @@ class AbstractBaseTelescopeTask(ABC):
 
         self.logger.info(f"Filter set to '{filter_name}' (position {filter_id}) for task {self.task.id}")
 
-    def verify_pointing(self, target_ra_deg: float, target_dec_deg: float) -> bool:
-        """Plate-solve to confirm and correct pointing after slewing.
-
-        Calls the adapter's ``perform_alignment`` which captures, solves, and
-        syncs the mount.  Returns True on success.
-        """
-        self.task.set_status_msg("Verifying pointing (plate solve)...")
-        success = self.hardware_adapter.perform_alignment(target_ra_deg, target_dec_deg)
-        if not success:
-            self.logger.warning("Post-slew plate solve failed — proceeding with unverified pointing")
-        return success
-
     @abstractmethod
     def execute(self):
         pass

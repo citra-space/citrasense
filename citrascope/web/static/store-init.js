@@ -73,6 +73,7 @@ function compareVersions(v1, v2) {
             // Focus loop state
             isLooping: false,
             previewDataUrl: null,
+            previewSource: '',
             loopCount: 0,
             previewExposure: 0.01,
             _lastTaskImageUrl: null,

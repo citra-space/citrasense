@@ -2319,6 +2319,18 @@ class CitraScopeWebApp:
         tasks = [_task_to_dict(t) for t in task_manager.get_tasks_snapshot()]
         await self.connection_manager.broadcast({"type": "tasks", "data": tasks})
 
+    async def broadcast_preview(self):
+        """Pop a frame from the PreviewBus and broadcast it to all clients."""
+        if not self.daemon:
+            return
+        bus = getattr(self.daemon, "preview_bus", None)
+        if not bus:
+            return
+        frame = bus.pop()
+        if frame:
+            data_url, source = frame
+            await self.connection_manager.broadcast({"type": "preview", "data": data_url, "source": source})
+
     async def broadcast_log(self, log_entry: dict):
         """Broadcast log entry to all connected clients."""
         await self.connection_manager.broadcast({"type": "log", "data": log_entry})

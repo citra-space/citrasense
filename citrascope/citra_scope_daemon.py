@@ -21,6 +21,7 @@ from citrascope.hardware.filter_sync import sync_filters_to_backend
 from citrascope.location import LocationService
 from citrascope.logging import CITRASCOPE_LOGGER
 from citrascope.logging._citrascope_logger import setup_file_logging
+from citrascope.preview_bus import PreviewBus
 from citrascope.processors.processor_registry import ProcessorRegistry
 from citrascope.settings.citrascope_settings import CitraScopeSettings
 from citrascope.tasks.runner import TaskManager
@@ -63,6 +64,7 @@ class CitraScopeDaemon:
         self.safety_monitor = None
         self.configuration_error: str | None = None
         self.latest_annotated_image_path: str | None = None
+        self.preview_bus = PreviewBus()
         self.calibration_library: CalibrationLibrary | None = None
         self._stop_requested = False
         self._shutdown_done = False
@@ -80,6 +82,14 @@ class CitraScopeDaemon:
 
         # Create web server instance (always enabled)
         self.web_server = CitraScopeWebServer(daemon=self, host="0.0.0.0", port=self.settings.web_port)
+
+    def _on_annotated_image(self, path: str) -> None:
+        """Handle a new annotated task image: store path and push to preview bus."""
+        self.latest_annotated_image_path = path
+        try:
+            self.preview_bus.push_file(path, "task")
+        except Exception as e:
+            CITRASCOPE_LOGGER.warning("Failed to publish annotated image preview for %s: %s", path, e)
 
     def _refresh_elset_cache_with_retry(self, max_attempts: int = 3) -> None:
         """Force-refresh the elset cache at startup, retrying on failure."""
@@ -391,7 +401,8 @@ class CitraScopeDaemon:
                 location_service=self.location_service,
                 telescope_record=self.telescope_record,
                 ground_station=self.ground_station,
-                on_annotated_image=lambda path: setattr(self, "latest_annotated_image_path", path),
+                on_annotated_image=self._on_annotated_image,
+                preview_bus=self.preview_bus,
             )
 
             # Wire self-tasking session managers

@@ -19,6 +19,8 @@ import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from citrascope.preview_bus import PreviewBus
+
 if TYPE_CHECKING:
     from citrascope.hardware.abstract_astro_hardware_adapter import AbstractAstroHardwareAdapter
     from citrascope.hardware.devices.mount.altaz_pointing_model import AltAzPointingModel
@@ -44,6 +46,7 @@ class AlignmentManager:
         imaging_queue: BaseWorkQueue | None = None,
         safety_monitor=None,
         location_service=None,
+        preview_bus: PreviewBus | None = None,
     ):
         self.logger = logger
         self.hardware_adapter = hardware_adapter
@@ -51,6 +54,7 @@ class AlignmentManager:
         self.imaging_queue = imaging_queue
         self.safety_monitor = safety_monitor
         self.location_service = location_service
+        self._preview_bus = preview_bus
 
         # Quick-align state
         self._requested = False
@@ -190,6 +194,11 @@ class AlignmentManager:
                 self.logger.error(f"Alignment exposure failed: {exc}")
                 return
 
+            if self._preview_bus:
+                try:
+                    self._preview_bus.push_file(image_path, "alignment")
+                except Exception as e:
+                    self.logger.debug(f"Failed to push alignment preview: {e}")
             self._set_progress("Plate solving...")
             self.logger.info(f"Alignment: plate solving {image_path}...")
             result = PlateSolverProcessor.solve(
@@ -696,6 +705,11 @@ class AlignmentManager:
                 self.logger.warning("Calibration exposure failed (%.0fs): %s", exposure_s, exc)
                 continue
 
+            if self._preview_bus:
+                try:
+                    self._preview_bus.push_file(image_path, "calibration")
+                except Exception as e:
+                    self.logger.debug(f"Failed to push calibration preview: {e}")
             result = PlateSolverProcessor.solve(
                 Path(image_path), telescope_record, location_service=self.location_service
             )

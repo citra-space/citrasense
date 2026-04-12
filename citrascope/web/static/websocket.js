@@ -11,6 +11,7 @@ const connectionTimeout = 5000; // 5 second timeout for connection attempts
 let onStatusUpdate = null;
 let onLogMessage = null;
 let onTasksUpdate = null;
+let onPreviewImage = null;
 let onConnectionChange = null;
 
 /**
@@ -21,6 +22,7 @@ export function connectWebSocket(handlers = {}) {
     onStatusUpdate = handlers.onStatus || null;
     onLogMessage = handlers.onLog || null;
     onTasksUpdate = handlers.onTasks || null;
+    onPreviewImage = handlers.onPreview || null;
     onConnectionChange = handlers.onConnectionChange || null;
 
     connect();
@@ -79,6 +81,8 @@ function connect() {
                 onLogMessage(message.data);
             } else if (message.type === 'tasks' && onTasksUpdate) {
                 onTasksUpdate(message.data);
+            } else if (message.type === 'preview' && onPreviewImage) {
+                onPreviewImage(message.data, message.source);
             }
         };
 

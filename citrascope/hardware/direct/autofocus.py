@@ -319,6 +319,7 @@ def _sweep_positions(
     report: Callable[[str], None],
     cancel_event: threading.Event | None,
     on_point: Callable[[int, float], None] | None,
+    on_image: Callable[[np.ndarray], None] | None = None,
 ) -> list[tuple[int, float]]:
     """Sweep through a list of focuser positions and measure HFR at each.
 
@@ -360,6 +361,12 @@ def _sweep_positions(
             log.warning(f"Exposure failed at position {pos}: {e}")
             continue
 
+        if on_image:
+            try:
+                on_image(image_data)
+            except Exception as e:
+                log.debug(f"on_image callback error (non-critical): {e}")
+
         hfr = compute_hfr(image_data, crop_ratio)
         if hfr is None:
             log.warning(f"HFR detection failed at position {pos} (too few stars), skipping")
@@ -387,6 +394,7 @@ def run_autofocus(
     logger: logging.Logger | None = None,
     cancel_event: threading.Event | None = None,
     on_point: Callable[[int, float], None] | None = None,
+    on_image: Callable[[np.ndarray], None] | None = None,
 ) -> int:
     """Run two-pass V-curve autofocus and return the best focuser position.
 
@@ -409,6 +417,8 @@ def run_autofocus(
         logger: Optional logger.
         cancel_event: If set, abort the sweep at the next step boundary.
         on_point: Optional callback(position, hfr) fired after each sample.
+        on_image: Optional callback(ndarray) fired after each sweep exposure
+            with the 2-D image data, before HFR computation.
 
     Returns:
         Optimal focuser position (integer steps).
@@ -444,6 +454,7 @@ def run_autofocus(
         report=report,
         cancel_event=cancel_event,
         on_point=on_point,
+        on_image=on_image,
     )
 
     if len(measurements) < 3:
@@ -499,6 +510,7 @@ def run_autofocus(
                 report=report,
                 cancel_event=cancel_event,
                 on_point=on_point,
+                on_image=on_image,
             )
 
             if fine_measurements:

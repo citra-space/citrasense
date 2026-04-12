@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING
 from dateutil import parser as dtparser
 
 from citrascope.hardware.abstract_astro_hardware_adapter import AbstractAstroHardwareAdapter
+from citrascope.preview_bus import PreviewBus
 from citrascope.safety.safety_monitor import SafetyAction
 from citrascope.tasks.alignment_manager import AlignmentManager
 from citrascope.tasks.autofocus_manager import AutofocusManager
@@ -41,6 +42,7 @@ class TaskManager:
         telescope_record: dict | None = None,
         ground_station: dict | None = None,
         on_annotated_image=None,
+        preview_bus: PreviewBus | None = None,
     ):
         self.api_client = api_client
         self.logger = logger
@@ -54,6 +56,7 @@ class TaskManager:
         self.telescope_record = telescope_record
         self.ground_station = ground_station
         self._on_annotated_image = on_annotated_image
+        self._preview_bus = preview_bus
 
         # Initialize work queues (TaskManager now owns these)
         from citrascope.tasks.imaging_queue import ImagingQueue
@@ -100,6 +103,7 @@ class TaskManager:
             self.settings,
             imaging_queue=self.imaging_queue,
             location_service=self.location_service,
+            preview_bus=self._preview_bus,
         )
         self.alignment_manager = AlignmentManager(
             self.logger,
@@ -108,6 +112,7 @@ class TaskManager:
             imaging_queue=self.imaging_queue,
             safety_monitor=self.safety_monitor,
             location_service=self.location_service,
+            preview_bus=self._preview_bus,
         )
         self.homing_manager = HomingManager(
             self.logger,

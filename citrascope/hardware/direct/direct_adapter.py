@@ -1,11 +1,16 @@
 """Direct hardware adapter using composable device adapters."""
 
+from __future__ import annotations
+
 import logging
 import threading
 import time
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
+
+if TYPE_CHECKING:
+    import numpy as np
 
 from citrascope.hardware.abstract_astro_hardware_adapter import (
     AbstractAstroHardwareAdapter,
@@ -818,7 +823,7 @@ class DirectHardwareAdapter(AbstractAstroHardwareAdapter):
             raise RuntimeError("Preview capture already in progress")
 
         try:
-            from citrascope.web.preview import array_to_jpeg_data_url
+            from citrascope.preview_bus import array_to_jpeg_data_url
 
             data = self._camera.capture_array(
                 duration=exposure_time,
@@ -989,6 +994,7 @@ class DirectHardwareAdapter(AbstractAstroHardwareAdapter):
         cancel_event: threading.Event | None = None,
         on_point: Callable[[int, float], None] | None = None,
         on_filter_start: Callable[[str], None] | None = None,
+        on_image: Callable[[np.ndarray], None] | None = None,
     ) -> None:
         """Run V-curve autofocus for each enabled filter.
 
@@ -1029,6 +1035,7 @@ class DirectHardwareAdapter(AbstractAstroHardwareAdapter):
                 logger=self.logger,
                 cancel_event=cancel_event,
                 on_point=on_point,
+                on_image=on_image,
             )
             self.logger.info(f"Autofocus result: position {best}")
             return
@@ -1071,6 +1078,7 @@ class DirectHardwareAdapter(AbstractAstroHardwareAdapter):
                 logger=self.logger,
                 cancel_event=cancel_event,
                 on_point=on_point,
+                on_image=on_image,
             )
 
             self.filter_map[fid]["focus_position"] = best

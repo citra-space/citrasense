@@ -57,6 +57,13 @@ function appendLogToStore(log) {
     store.latestLog = log;
 }
 
+function updatePreviewFromPush(dataUrl, source) {
+    const store = Alpine.store('citrascope');
+    if (store.isLooping) return;
+    store.previewDataUrl = dataUrl;
+    store.previewSource = source || '';
+}
+
 function updateStoreFromConnection(connected, reconnectInfo = '') {
     const store = Alpine.store('citrascope');
     store.wsConnected = connected;
@@ -152,6 +159,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         onStatus: updateStoreFromStatus,
         onLog: appendLogToStore,
         onTasks: updateStoreFromTasks,
+        onPreview: updatePreviewFromPush,
         onConnectionChange: updateStoreFromConnection
     });
 

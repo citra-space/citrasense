@@ -1006,28 +1006,3 @@ class TestAdaptiveSlewRate:
                 ct.point_to_lead_position({"most_recent_elset": {"tle": ["a", "b"]}})
 
         assert ct.hardware_adapter.observed_slew_rate_deg_per_s == 4.0
-
-
-class TestVerifyPointing:
-    """Tests for verify_pointing helper."""
-
-    def _make_concrete(self):
-        from citrascope.tasks.scope.base_telescope_task import AbstractBaseTelescopeTask
-
-        class ConcreteTask(AbstractBaseTelescopeTask):
-            def execute(self):
-                pass
-
-        daemon = _make_daemon()
-        adapter = _make_hardware_adapter()
-        return ConcreteTask(MagicMock(), adapter, MagicMock(), _make_task_dict(), **_daemon_kwargs(daemon))
-
-    def test_returns_true_on_success(self):
-        ct = self._make_concrete()
-        ct.hardware_adapter.perform_alignment.return_value = True
-        assert ct.verify_pointing(180.0, 45.0) is True
-
-    def test_returns_false_on_failure(self):
-        ct = self._make_concrete()
-        ct.hardware_adapter.perform_alignment.return_value = False
-        assert ct.verify_pointing(180.0, 45.0) is False

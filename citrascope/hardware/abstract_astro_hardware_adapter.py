@@ -13,6 +13,8 @@ from citrascope.location.gps_fix import GPSFix
 if TYPE_CHECKING:
     import threading
 
+    import numpy as np
+
     from citrascope.hardware.devices.camera.abstract_camera import AbstractCamera
     from citrascope.hardware.devices.focuser.abstract_focuser import AbstractFocuser
     from citrascope.hardware.devices.mount.abstract_mount import AbstractMount
@@ -630,6 +632,7 @@ class AbstractAstroHardwareAdapter(ABC):
         cancel_event: threading.Event | None = None,
         on_point: Callable[[int, float], None] | None = None,
         on_filter_start: Callable[[str], None] | None = None,
+        on_image: Callable[[np.ndarray], None] | None = None,
     ) -> None:
         """Perform autofocus routine for all filters.
 
@@ -646,6 +649,8 @@ class AbstractAstroHardwareAdapter(ABC):
             on_filter_start: Optional callback(filter_name) fired at the start of each
                 per-filter autofocus run. Used by AutofocusManager to clear V-curve
                 points and tag subsequent samples with the active filter.
+            on_image: Optional callback(ndarray) fired after each sweep exposure
+                with the 2-D image data. Used by PreviewBus to push frames to the UI.
 
         Raises:
             NotImplementedError: If the adapter doesn't support autofocus

@@ -16,8 +16,11 @@ from typing import TYPE_CHECKING
 
 from citrascope.constants import AUTOFOCUS_TARGET_PRESETS
 from citrascope.hardware.abstract_astro_hardware_adapter import AbstractAstroHardwareAdapter
+from citrascope.preview_bus import PreviewBus
 
 if TYPE_CHECKING:
+    import numpy as np
+
     from citrascope.location.location_service import LocationService
     from citrascope.settings.citrascope_settings import CitraScopeSettings
     from citrascope.tasks.base_work_queue import BaseWorkQueue
@@ -38,12 +41,14 @@ class AutofocusManager:
         settings: CitraScopeSettings,
         imaging_queue: BaseWorkQueue | None = None,
         location_service: LocationService | None = None,
+        preview_bus: PreviewBus | None = None,
     ):
         self.logger = logger
         self.hardware_adapter = hardware_adapter
         self.settings = settings
         self.imaging_queue = imaging_queue
         self.location_service = location_service
+        self._preview_bus = preview_bus
         self._requested = False
         self._running = False
         self._progress = ""
@@ -424,6 +429,18 @@ class AutofocusManager:
         self.logger.info(f"Autofocus target: {preset['name']} ({preset['designation']})")
         return preset["ra"], preset["dec"]
 
+    def _on_af_image(self, image: np.ndarray) -> None:
+        """Convert an autofocus sweep frame to JPEG and push to the preview bus."""
+        if not self._preview_bus:
+            return
+        try:
+            from citrascope.preview_bus import array_to_jpeg_data_url
+
+            data_url = array_to_jpeg_data_url(image)
+            self._preview_bus.push(data_url, "autofocus")
+        except Exception as e:
+            self.logger.debug(f"Failed to push AF preview frame: {e}")
+
     def _execute(self) -> None:
         """Execute autofocus routine and update timestamp on both success and failure."""
         self._cancel_event.clear()
@@ -444,6 +461,7 @@ class AutofocusManager:
                 cancel_event=self._cancel_event,
                 on_point=self._add_point,
                 on_filter_start=self._on_filter_start,
+                on_image=self._on_af_image,
             )
 
             with self._lock:
