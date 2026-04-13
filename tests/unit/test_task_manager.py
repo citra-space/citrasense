@@ -10,6 +10,7 @@ from unittest.mock import MagicMock
 import pytest
 from dateutil import parser as dtparser
 
+from citrascope.safety.safety_monitor import SafetyAction
 from citrascope.tasks.runner import TaskManager
 from citrascope.tasks.task import Task
 
@@ -319,3 +320,70 @@ def test_poll_tasks_does_not_remove_current_task(task_manager, mock_api_client):
     assert len(task_manager.task_heap) == 1
     assert "task-001" in task_manager.task_ids
     assert task_manager.task_heap[0][2] == "task-001"
+
+
+# ------------------------------------------------------------------
+# _evaluate_safety — cable wrap soft-lock regression (issue #239)
+# ------------------------------------------------------------------
+
+
+class TestEvaluateSafetyQueueStop:
+    """Verify QUEUE_STOP always attempts corrective action when the imaging
+    queue is idle, even if the state transition already happened on a
+    previous tick (regression for issue #239 soft-lock)."""
+
+    def _call(self, task_manager, *, queue_idle: bool, action: SafetyAction, triggered_check=None):
+        """Helper: configure mocks and call ``_evaluate_safety`` once."""
+        mock_monitor = MagicMock()
+        mock_monitor.evaluate.return_value = (action, triggered_check)
+        task_manager.safety_monitor = mock_monitor
+        task_manager.imaging_queue = MagicMock()
+        task_manager.imaging_queue.is_idle.return_value = queue_idle
+        return task_manager._evaluate_safety()
+
+    def test_unwind_fires_after_queue_drains(self, task_manager):
+        """Soft-lock scenario: QUEUE_STOP arrives while imaging is busy,
+        then the queue drains on the next tick.  The unwind must still fire."""
+        check = MagicMock()
+        check.name = "cable_wrap"
+
+        # Tick 1: QUEUE_STOP but queue is busy — no unwind.
+        result = self._call(task_manager, queue_idle=False, action=SafetyAction.QUEUE_STOP, triggered_check=check)
+        assert result is True
+        check.execute_action.assert_not_called()
+
+        # Tick 2: still QUEUE_STOP, queue now idle — unwind MUST fire.
+        result = self._call(task_manager, queue_idle=True, action=SafetyAction.QUEUE_STOP, triggered_check=check)
+        assert result is True
+        check.execute_action.assert_called_once()
+
+    def test_unwind_retried_after_failure(self, task_manager):
+        """After a failed unwind, the next idle tick should retry."""
+        check = MagicMock()
+        check.name = "cable_wrap"
+
+        # Tick 1: first QUEUE_STOP with idle queue — unwind fires.
+        self._call(task_manager, queue_idle=True, action=SafetyAction.QUEUE_STOP, triggered_check=check)
+        assert check.execute_action.call_count == 1
+
+        # Tick 2: still QUEUE_STOP, still idle — should call again (retry).
+        self._call(task_manager, queue_idle=True, action=SafetyAction.QUEUE_STOP, triggered_check=check)
+        assert check.execute_action.call_count == 2
+
+    def test_no_action_when_queue_busy(self, task_manager):
+        """While imaging is in-flight, no corrective action is attempted."""
+        check = MagicMock()
+        check.name = "cable_wrap"
+
+        self._call(task_manager, queue_idle=False, action=SafetyAction.QUEUE_STOP, triggered_check=check)
+        check.execute_action.assert_not_called()
+
+    def test_queue_stop_yields_task_loop(self, task_manager):
+        """QUEUE_STOP must return True so the task loop yields."""
+        result = self._call(task_manager, queue_idle=False, action=SafetyAction.QUEUE_STOP)
+        assert result is True
+
+    def test_safe_does_not_yield(self, task_manager):
+        """SAFE action should not block the task loop."""
+        result = self._call(task_manager, queue_idle=True, action=SafetyAction.SAFE)
+        assert result is False

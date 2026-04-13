@@ -222,4 +222,57 @@
                           return issues.join('\n');
                       })()"><i class="bi bi-exclamation-triangle-fill"></i></span>
             </div>
+
+            <!-- Safety alerts — shown when any check is non-safe -->
+            <div class="w-100"
+                 x-data="{ get alerts() {
+                     return ($store.citrascope.status?.safety_status?.checks || []).filter(c => c.action && c.action !== 'safe');
+                 }}"
+                 x-show="alerts.length > 0">
+                <div class="d-flex flex-column gap-2 mt-2">
+                    <template x-for="alert in alerts" :key="alert.name">
+                        <div class="alert mb-0 d-flex align-items-center py-2"
+                             :class="alert.action === 'emergency' ? 'alert-danger' : 'alert-warning'" role="alert">
+                            <i class="bi me-2"
+                               :class="alert.action === 'emergency' ? 'bi-exclamation-triangle-fill' : 'bi-exclamation-circle-fill'"></i>
+                            <span>
+                                <strong x-text="alert.action === 'emergency' ? 'EMERGENCY' : (alert.action === 'stop' ? 'Safety Hold' : 'Warning')"></strong>
+                                &mdash;
+                                <template x-if="alert.name === 'operator_stop'">
+                                    <span>Operator stop active &mdash; all motion blocked.
+                                        <button class="btn btn-sm btn-outline-light ms-2"
+                                                @click="clearOperatorStop()">Clear Stop</button>
+                                    </span>
+                                </template>
+                                <template x-if="alert.name === 'cable_wrap'">
+                                    <span>Cable wrap at <span x-text="Math.abs(alert.cumulative_deg ?? 0)"></span>&deg;
+                                        (<span x-text="alert.action === 'emergency' ? 'hard limit' : 'soft limit'"></span> reached).
+                                        <template x-if="alert.unwinding">
+                                            <span class="fw-semibold">Unwinding in progress...</span>
+                                        </template>
+                                    </span>
+                                </template>
+                                <template x-if="alert.name === 'disk_space'">
+                                    <span>Low disk space
+                                        <template x-if="alert.free_mb != null">
+                                            (<span x-text="alert.free_mb >= 1000 ? (alert.free_mb / 1000).toFixed(1) + ' GB' : alert.free_mb + ' MB'"></span> free)
+                                        </template>
+                                        &mdash; <span x-text="alert.action === 'stop' ? 'imaging paused' : 'approaching limit'"></span>.
+                                    </span>
+                                </template>
+                                <template x-if="alert.name === 'time_health'">
+                                    <span>System clock drift is critical &mdash; observations may be inaccurate.</span>
+                                </template>
+                                <template x-if="alert.name === 'hardware_safety'">
+                                    <span>External safety monitor reports conditions are <strong>unsafe</strong>.
+                                        Telescope operations suspended until conditions improve.</span>
+                                </template>
+                                <template x-if="!['operator_stop','cable_wrap','disk_space','time_health','hardware_safety'].includes(alert.name)">
+                                    <span>Safety check "<span x-text="alert.name"></span>" triggered.</span>
+                                </template>
+                            </span>
+                        </div>
+                    </template>
+                </div>
+            </div>
         </div>

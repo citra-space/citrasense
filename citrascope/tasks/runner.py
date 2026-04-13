@@ -498,15 +498,13 @@ class TaskManager:
             return True
 
         if action == SafetyAction.QUEUE_STOP:
-            if self.imaging_queue.is_idle():
-                if triggered_check:
-                    is_new = self._last_safety_action != SafetyAction.QUEUE_STOP
-                    if is_new:
-                        self.logger.warning("Executing safety action from %r (queue idle)", triggered_check.name)
-                        try:
-                            triggered_check.execute_action()
-                        except Exception:
-                            self.logger.error("Safety corrective action failed", exc_info=True)
+            if self.imaging_queue.is_idle() and triggered_check:
+                if self._last_safety_action != SafetyAction.QUEUE_STOP:
+                    self.logger.warning("Executing safety action from %r (queue idle)", triggered_check.name)
+                try:
+                    triggered_check.execute_action()
+                except Exception:
+                    self.logger.error("Safety corrective action failed", exc_info=True)
             self._last_safety_action = action
             return True
 
