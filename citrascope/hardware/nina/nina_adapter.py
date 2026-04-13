@@ -257,7 +257,8 @@ class NinaAdvancedHttpAdapter(AbstractAstroHardwareAdapter):
                 )
             self.logger.info(f"Filter changed to ID {filter_id}")
 
-        assert self._focuser is not None
+        if self._focuser is None:
+            raise RuntimeError("Focuser not available — cannot perform autofocus")
         self.logger.info("Moving focus to autofocus starting position ...")
         starting_focus_position = (
             existing_focus_position if existing_focus_position is not None else self.DEFAULT_FOCUS_POSITION
@@ -403,21 +404,18 @@ class NinaAdvancedHttpAdapter(AbstractAstroHardwareAdapter):
                 self.logger.info("Filterwheel Connected!")
 
             self.logger.info("Connecting focuser ...")
-            focuser_status = requests.get(
-                self.nina_api_path + self.FOCUSER_URL + "connect", timeout=self.CONNECT_TIMEOUT
-            ).json()
-            if not focuser_status["Success"]:
-                self.logger.warning(f"Failed to connect focuser: {focuser_status.get('Error')}")
-            else:
-                self._focuser = NinaFocuser(
-                    logger=self.logger,
-                    nina_api_path=self.nina_api_path,
-                    info_timeout=self.INFO_QUERY_TIMEOUT,
-                    command_timeout=self.COMMAND_TIMEOUT,
-                    connect_timeout=self.CONNECT_TIMEOUT,
-                )
-                self._focuser._connected = True
+            focuser = NinaFocuser(
+                logger=self.logger,
+                nina_api_path=self.nina_api_path,
+                info_timeout=self.INFO_QUERY_TIMEOUT,
+                command_timeout=self.COMMAND_TIMEOUT,
+                connect_timeout=self.CONNECT_TIMEOUT,
+            )
+            if focuser.connect():
+                self._focuser = focuser
                 self.logger.info("Focuser Connected!")
+            else:
+                self.logger.warning("Failed to connect focuser")
 
             self.logger.info("Connecting safety monitor ...")
             try:
@@ -564,7 +562,9 @@ class NinaAdvancedHttpAdapter(AbstractAstroHardwareAdapter):
             focus_pos = self.filter_map[filter_position].get("focus_position")
             if focus_pos is not None:
                 self.logger.info(f"Adjusting focus to {focus_pos} for filter {filter_position}")
-                self._focuser.move_absolute(focus_pos)
+                if not self._focuser.move_absolute(focus_pos):
+                    self.logger.error(f"Focus adjustment to {focus_pos} for filter {filter_position} failed")
+                    return False
 
         return True
 
@@ -701,7 +701,7 @@ class NinaAdvancedHttpAdapter(AbstractAstroHardwareAdapter):
         return self.is_camera_connected()
 
     def capture_preview(self, exposure_time: float, flip_horizontal: bool = False) -> str:
-        """Take a preview exposure via NINA and return a JPEG data URL.
+        """Take a preview exposure via NINA and return a JPEG or PNG data URL.
 
         Uses NINA's streaming capture endpoint to avoid base64-in-JSON overhead.
         A threading lock prevents concurrent captures (mirrors DirectAdapter).
@@ -722,7 +722,7 @@ class NinaAdvancedHttpAdapter(AbstractAstroHardwareAdapter):
             )
             resp.raise_for_status()
 
-            content_type = resp.headers.get("Content-Type", "image/jpeg")
+            content_type = resp.headers.get("Content-Type", "image/jpeg").lower()
             image_bytes = resp.content
 
             if flip_horizontal:
