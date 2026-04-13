@@ -9,7 +9,7 @@ from typing import Any
 
 from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
@@ -1875,6 +1875,37 @@ class CitraScopeWebApp:
             if not artifact.is_file():
                 return JSONResponse({"error": "Artifact not found or expired"}, status_code=404)
             return FileResponse(str(artifact))
+
+        @self.app.get("/api/analysis/tasks/{task_id}/bundle")
+        async def analysis_task_bundle(task_id: str):
+            """Stream a tar.gz bundle of a task's processing directory."""
+            import io
+            import tarfile
+
+            if not self.daemon:
+                return JSONResponse({"error": "Not available"}, status_code=503)
+            safe_id = Path(task_id).name
+            task_dir = self.daemon.settings.directories.processing_dir / safe_id
+            if not task_dir.is_dir():
+                return JSONResponse({"error": "Task artifacts not found or expired"}, status_code=404)
+
+            def _generate():
+                buf = io.BytesIO()
+                with tarfile.open(fileobj=buf, mode="w:gz") as tar:
+                    for file_path in sorted(task_dir.rglob("*")):
+                        if not file_path.is_file():
+                            continue
+                        arcname = f"{safe_id}/{file_path.relative_to(task_dir)}"
+                        tar.add(str(file_path), arcname=arcname)
+                buf.seek(0)
+                yield from iter(lambda: buf.read(65536), b"")
+
+            filename = f"{safe_id}.tar.gz"
+            return StreamingResponse(
+                _generate(),
+                media_type="application/gzip",
+                headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+            )
 
         @self.app.get("/api/analysis/stats")
         async def analysis_stats(hours: int = 24):

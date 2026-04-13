@@ -446,10 +446,16 @@
                                                     </div>
                                                 </div>
 
-                                                <div>
+                                                <div class="d-flex gap-2 align-items-center">
                                                     <template x-if="detail.artifacts_available">
                                                         <a :href="'/api/analysis/tasks/' + detail.task_id + '/artifacts/report.html'"
                                                            target="_blank" class="btn btn-sm btn-outline-secondary">View full report</a>
+                                                    </template>
+                                                    <template x-if="detail.artifacts_available">
+                                                        <a :href="'/api/analysis/tasks/' + detail.task_id + '/bundle'"
+                                                           class="btn btn-sm btn-outline-secondary">
+                                                            <i class="bi bi-download"></i> Download bundle
+                                                        </a>
                                                     </template>
                                                     <template x-if="!detail.artifacts_available">
                                                         <span class="badge bg-secondary">Artifacts expired</span>
