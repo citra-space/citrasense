@@ -123,6 +123,7 @@ class TaskIndex:
         self._db_path = db_path
         self._lock = threading.Lock()
         self._conn = sqlite3.connect(str(db_path), check_same_thread=False)
+        self._conn.row_factory = sqlite3.Row
         self._conn.execute("PRAGMA journal_mode=WAL")
         self._conn.execute("PRAGMA busy_timeout=5000")
         self._conn.executescript(_SCHEMA)
@@ -435,38 +436,44 @@ class TaskIndex:
                 (cutoff_iso,),
             ).fetchone()
 
-        if not row or row[0] == 0:
-            return _empty_stats()
+        if not row or row["task_count"] == 0:
+            return empty_stats()
 
-        tc = row[0] or 1
-        sat_tc = row[23] or 0
+        tc = row["task_count"] or 1
+        sat_tc = row["satellite_task_count"] or 0
+        missed = row["missed_window_count"] or 0
+        on_time = row["on_time_count"] or 0
 
         elapsed_hours = hours or 1
         return {
             "task_count": tc,
             "tasks_per_hour": round(tc / elapsed_hours, 2),
-            "plate_solve_rate": _pct(row[1], tc),
-            "convergence_rate": _pct(row[2], tc),
-            "avg_convergence_attempts": _rnd(row[3]),
-            "avg_slew_time_s": _rnd(row[4]),
-            "avg_pointing_error_deg": _rnd(row[5], 4),
-            "target_match_rate": _pct(row[6], sat_tc) if sat_tc else None,
-            "total_incidental_detections": row[7] or 0,
-            "upload_success_rate": _pct(row[8], row[9]) if row[9] else None,
-            "avg_zero_point": _rnd(row[10]),
-            "stddev_zero_point": _rnd(row[11]),
-            "window_compliance_rate": _pct(row[13], row[12] + row[13]) if (row[12] or 0) + (row[13] or 0) > 0 else None,
-            "missed_window_count": row[12] or 0,
-            "avg_window_start_delay_s": _rnd(row[14]),
-            "avg_queue_wait_s": _rnd(row[15]),
-            "avg_total_processing_s": _rnd(row[16]),
+            "plate_solve_rate": _pct(row["plate_solved_count"], tc),
+            "convergence_rate": _pct(row["converged_count"], tc),
+            "avg_convergence_attempts": _rnd(row["avg_convergence_attempts"]),
+            "avg_slew_time_s": _rnd(row["avg_slew_time_s"]),
+            "avg_pointing_error_deg": _rnd(row["avg_pointing_error_deg"], 4),
+            "target_match_rate": _pct(row["target_matched_count"], sat_tc) if sat_tc else None,
+            "total_incidental_detections": row["total_incidental"] or 0,
+            "upload_success_rate": (
+                _pct(row["upload_success_count"], row["upload_attempted_count"])
+                if row["upload_attempted_count"]
+                else None
+            ),
+            "avg_zero_point": _rnd(row["avg_zero_point"]),
+            "stddev_zero_point": _rnd(row["stddev_zero_point"]),
+            "window_compliance_rate": _pct(on_time, missed + on_time) if (missed + on_time) > 0 else None,
+            "missed_window_count": missed,
+            "avg_window_start_delay_s": _rnd(row["avg_window_start_delay_s"]),
+            "avg_queue_wait_s": _rnd(row["avg_queue_wait_s"]),
+            "avg_total_processing_s": _rnd(row["avg_total_processing_s"]),
             "per_processor_timing": {
-                "calibration_s": _rnd(row[17]),
-                "plate_solve_s": _rnd(row[18]),
-                "source_extractor_s": _rnd(row[19]),
-                "photometry_s": _rnd(row[20]),
-                "satellite_matcher_s": _rnd(row[21]),
-                "annotated_image_s": _rnd(row[22]),
+                "calibration_s": _rnd(row["avg_calibration_s"]),
+                "plate_solve_s": _rnd(row["avg_plate_solve_s"]),
+                "source_extractor_s": _rnd(row["avg_source_extractor_s"]),
+                "photometry_s": _rnd(row["avg_photometry_s"]),
+                "satellite_matcher_s": _rnd(row["avg_matcher_s"]),
+                "annotated_image_s": _rnd(row["avg_annotated_image_s"]),
             },
             "hours": hours,
         }
@@ -475,7 +482,7 @@ class TaskIndex:
 # ── Helpers ────────────────────────────────────────────────────────────
 
 
-def _empty_stats() -> dict:
+def empty_stats() -> dict:
     return {
         "task_count": 0,
         "tasks_per_hour": 0,
@@ -506,7 +513,10 @@ def _empty_stats() -> dict:
     }
 
 
-def _row_to_dict(description: Any, row: tuple) -> dict:
+def _row_to_dict(description: Any, row: Any) -> dict:
+    """Convert a sqlite3.Row (or plain tuple with cursor description) to a dict."""
+    if isinstance(row, sqlite3.Row):
+        return dict(row)
     return {col[0]: val for col, val in zip(description, row, strict=False)}
 
 

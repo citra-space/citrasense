@@ -1942,9 +1942,9 @@ class CitraScopeWebApp:
         async def analysis_stats(hours: int = 24):
             """Aggregate statistics over the given time window."""
             if not self.daemon or not self.daemon.task_index:
-                from citrascope.analysis.task_index import _empty_stats
+                from citrascope.analysis.task_index import empty_stats
 
-                return _empty_stats()
+                return empty_stats()
             return self.daemon.task_index.get_stats(hours=max(1, min(hours, 8760)))
 
         @self.app.websocket("/ws")
