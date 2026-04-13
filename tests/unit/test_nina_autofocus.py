@@ -26,6 +26,12 @@ def adapter():
     el.on_af_point = None
     el.last_af_point_time = 0.0
     a._event_listener = el
+
+    focuser = MagicMock()
+    focuser.move_absolute.return_value = True
+    focuser.get_position.return_value = 9000
+    focuser.is_moving.return_value = False
+    a._focuser = focuser
     return a
 
 
@@ -225,30 +231,29 @@ class TestAutoFocusSilentFailure:
         Instead, the WS event fires and the normal success path is taken."""
         adapter.AF_ACTIVITY_TIMEOUT = 0
         fw_info = _mock_response({"Success": True, "Response": {"SelectedFilter": {"Name": "Clear", "Id": 0}}})
-        focuser_move = _mock_response({"Success": True, "Response": "Focuser move started"})
-        focuser_info_moving = _mock_response({"Success": True, "Response": {"Position": 9000, "IsMoving": True}})
         af_trigger = _mock_response({"Success": True, "Response": "Autofocus started"})
         last_af = _mock_response(
             {"Success": True, "Response": {"CalculatedFocusPoint": {"Position": 8500, "Value": 1.75}}}
         )
 
-        info_call_count = 0
+        is_moving_call_count = 0
+
+        def _is_moving_side_effect():
+            nonlocal is_moving_call_count
+            is_moving_call_count += 1
+            if is_moving_call_count >= 2:
+                adapter._event_listener.autofocus_finished.set()
+            return True
+
+        adapter._focuser.is_moving.side_effect = _is_moving_side_effect
 
         def route_get(url, **kwargs):
-            nonlocal info_call_count
             if "filterwheel/info" in url:
                 return fw_info
-            if "focuser/move" in url:
-                return focuser_move
             if "focuser/auto-focus" in url:
                 return af_trigger
             if "focuser/last-af" in url:
                 return last_af
-            if "focuser/info" in url:
-                info_call_count += 1
-                if info_call_count >= 2:
-                    adapter._event_listener.autofocus_finished.set()
-                return focuser_info_moving
             return _mock_response({"Success": True})
 
         mock_get.side_effect = route_get

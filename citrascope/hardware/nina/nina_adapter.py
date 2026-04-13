@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import base64
 import json
 import logging
@@ -6,8 +8,12 @@ import threading
 import time
 from collections.abc import Callable
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import requests
+
+if TYPE_CHECKING:
+    from citrascope.hardware.devices.focuser import AbstractFocuser
 
 from citrascope.hardware.abstract_astro_hardware_adapter import (
     AbstractAstroHardwareAdapter,
@@ -15,6 +21,7 @@ from citrascope.hardware.abstract_astro_hardware_adapter import (
     SettingSchemaEntry,
 )
 from citrascope.hardware.nina.nina_event_listener import NinaEventListener, derive_ws_url
+from citrascope.hardware.nina.nina_focuser import NinaFocuser
 
 
 class NinaAdvancedHttpAdapter(AbstractAstroHardwareAdapter):
@@ -63,6 +70,8 @@ class NinaAdvancedHttpAdapter(AbstractAstroHardwareAdapter):
         self.binning_x = kwargs.get("binning_x", 1)
         self.binning_y = kwargs.get("binning_y", 1)
         self._event_listener: NinaEventListener | None = None
+        self._focuser: NinaFocuser | None = None
+        self._preview_lock = threading.Lock()
 
     @classmethod
     def get_settings_schema(cls, **kwargs) -> list[SettingSchemaEntry]:
@@ -214,17 +223,13 @@ class NinaAdvancedHttpAdapter(AbstractAstroHardwareAdapter):
 
     def _is_focuser_idle(self) -> bool:
         """Return True if the focuser reports IsMoving=false; return False when state is unknown."""
+        if self._focuser is None:
+            return False
         try:
-            resp = requests.get(
-                self.nina_api_path + self.FOCUSER_URL + "info",
-                timeout=self.INFO_QUERY_TIMEOUT,
-            ).json()
-            if resp.get("Success"):
-                return not resp["Response"].get("IsMoving", False)
-            self.logger.debug("Focuser idle check: NINA API returned Success=false")
+            return not self._focuser.is_moving()
         except Exception as e:
             self.logger.debug(f"Focuser idle check failed: {e}")
-        return False
+            return False
 
     def _auto_focus_one_filter(
         self,
@@ -252,24 +257,18 @@ class NinaAdvancedHttpAdapter(AbstractAstroHardwareAdapter):
                 )
             self.logger.info(f"Filter changed to ID {filter_id}")
 
+        if self._focuser is None:
+            raise RuntimeError("Focuser not available — cannot perform autofocus")
         self.logger.info("Moving focus to autofocus starting position ...")
         starting_focus_position = (
             existing_focus_position if existing_focus_position is not None else self.DEFAULT_FOCUS_POSITION
         )
-        move_resp = requests.get(
-            self.nina_api_path + self.FOCUSER_URL + "move?position=" + str(starting_focus_position),
-            timeout=self.COMMAND_TIMEOUT,
-        ).json()
-        if not move_resp.get("Success"):
-            raise RuntimeError(f"Focuser move rejected by NINA: {move_resp.get('Error')}")
+        if not self._focuser.move_absolute(starting_focus_position):
+            raise RuntimeError(f"Focuser move to {starting_focus_position} rejected by NINA")
         deadline = time.time() + self.HARDWARE_MOVE_TIMEOUT
         while True:
-            focuser_status = requests.get(
-                self.nina_api_path + self.FOCUSER_URL + "info", timeout=self.INFO_QUERY_TIMEOUT
-            ).json()
-            if not focuser_status.get("Success"):
-                raise RuntimeError(f"Focuser info query failed: {focuser_status.get('Error')}")
-            if int(focuser_status["Response"]["Position"]) == starting_focus_position:
+            pos = self._focuser.get_position()
+            if pos is not None and pos == starting_focus_position:
                 break
             if time.time() > deadline:
                 raise RuntimeError(
@@ -405,13 +404,18 @@ class NinaAdvancedHttpAdapter(AbstractAstroHardwareAdapter):
                 self.logger.info("Filterwheel Connected!")
 
             self.logger.info("Connecting focuser ...")
-            focuser_status = requests.get(
-                self.nina_api_path + self.FOCUSER_URL + "connect", timeout=self.CONNECT_TIMEOUT
-            ).json()
-            if not focuser_status["Success"]:
-                self.logger.warning(f"Failed to connect focuser: {focuser_status.get('Error')}")
-            else:
+            focuser = NinaFocuser(
+                logger=self.logger,
+                nina_api_path=self.nina_api_path,
+                info_timeout=self.INFO_QUERY_TIMEOUT,
+                command_timeout=self.COMMAND_TIMEOUT,
+                connect_timeout=self.CONNECT_TIMEOUT,
+            )
+            if focuser.connect():
+                self._focuser = focuser
                 self.logger.info("Focuser Connected!")
+            else:
+                self.logger.warning("Failed to connect focuser")
 
             self.logger.info("Connecting safety monitor ...")
             try:
@@ -508,6 +512,7 @@ class NinaAdvancedHttpAdapter(AbstractAstroHardwareAdapter):
             self.filter_map[filter_id] = {"name": filter_name, "focus_position": focus_position, "enabled": enabled}
 
     def disconnect(self):
+        self._focuser = None
         if self._event_listener:
             try:
                 self._event_listener.stop()
@@ -518,6 +523,51 @@ class NinaAdvancedHttpAdapter(AbstractAstroHardwareAdapter):
         """Get the current filter wheel position from NINA."""
         return self._get_current_filter_id()
 
+    def set_filter(self, filter_position: int) -> bool:
+        """Change to specified filter via NINA, with optional focus offset.
+
+        Sends a filter-change command over REST, waits for the
+        FILTERWHEEL-CHANGED WebSocket event, then moves the focuser
+        to the stored focus position for this filter (if available).
+        """
+        if self._event_listener is None:
+            self.logger.error("Cannot change filter: event listener not connected")
+            return False
+
+        current = self._get_current_filter_id()
+        if current == filter_position:
+            return True
+
+        self._event_listener.filter_changed.clear()
+        try:
+            resp = requests.get(
+                f"{self.nina_api_path}{self.FILTERWHEEL_URL}change-filter?filterId={filter_position}",
+                timeout=self.COMMAND_TIMEOUT,
+            ).json()
+        except Exception as e:
+            self.logger.error(f"Filter change request failed: {e}")
+            return False
+
+        if not resp.get("Success"):
+            self.logger.error(f"Filter change to {filter_position} rejected by NINA: {resp.get('Error')}")
+            return False
+
+        if not self._event_listener.filter_changed.wait(timeout=self.HARDWARE_MOVE_TIMEOUT):
+            self.logger.error(f"Filterwheel failed to reach position {filter_position} within timeout")
+            return False
+
+        self.logger.info(f"Filter changed to position {filter_position}")
+
+        if self._focuser and filter_position in self.filter_map:
+            focus_pos = self.filter_map[filter_position].get("focus_position")
+            if focus_pos is not None:
+                self.logger.info(f"Adjusting focus to {focus_pos} for filter {filter_position}")
+                if not self._focuser.move_absolute(focus_pos):
+                    self.logger.error(f"Focus adjustment to {focus_pos} for filter {filter_position} failed")
+                    return False
+
+        return True
+
     def supports_autofocus(self) -> bool:
         """Indicates that NINA adapter supports autofocus."""
         return True
@@ -525,6 +575,10 @@ class NinaAdvancedHttpAdapter(AbstractAstroHardwareAdapter):
     def supports_filter_management(self) -> bool:
         """Indicates that NINA adapter supports filter/focus management."""
         return True
+
+    @property
+    def focuser(self) -> AbstractFocuser | None:
+        return self._focuser
 
     @property
     def supports_hardware_safety_monitor(self) -> bool:
@@ -642,6 +696,57 @@ class NinaAdvancedHttpAdapter(AbstractAstroHardwareAdapter):
 
     def select_camera(self, device_name: str) -> bool:
         return True
+
+    def supports_direct_camera_control(self) -> bool:
+        return self.is_camera_connected()
+
+    def capture_preview(self, exposure_time: float, flip_horizontal: bool = False) -> str:
+        """Take a preview exposure via NINA and return a JPEG or PNG data URL.
+
+        Uses NINA's streaming capture endpoint to avoid base64-in-JSON overhead.
+        A threading lock prevents concurrent captures (mirrors DirectAdapter).
+        """
+        if not self._preview_lock.acquire(blocking=False):
+            raise RuntimeError("Preview capture already in progress")
+
+        try:
+            capture_timeout = max(self.COMMAND_TIMEOUT, exposure_time + 30)
+            resp = requests.get(
+                f"{self.nina_api_path}{self.CAM_URL}capture",
+                params={
+                    "duration": str(exposure_time),
+                    "stream": "true",
+                    "waitForResult": "true",
+                },
+                timeout=capture_timeout,
+            )
+            resp.raise_for_status()
+
+            content_type = resp.headers.get("Content-Type", "image/jpeg").lower()
+            image_bytes = resp.content
+
+            if flip_horizontal:
+                image_bytes = self._flip_image_horizontal(image_bytes)
+
+            mime = "image/jpeg" if "jpeg" in content_type or "jpg" in content_type else "image/png"
+            encoded = base64.b64encode(image_bytes).decode("ascii")
+            return f"data:{mime};base64,{encoded}"
+        finally:
+            self._preview_lock.release()
+
+    @staticmethod
+    def _flip_image_horizontal(image_bytes: bytes) -> bytes:
+        """Flip raw JPEG/PNG bytes left-to-right."""
+        import io
+
+        from PIL import Image, ImageOps
+
+        img = Image.open(io.BytesIO(image_bytes))
+        flipped = ImageOps.mirror(img)
+        buf = io.BytesIO()
+        fmt = img.format or "JPEG"
+        flipped.save(buf, format=fmt)
+        return buf.getvalue()
 
     def take_image(self, task_id: str, exposure_duration_seconds=1) -> str:
         raise NotImplementedError
