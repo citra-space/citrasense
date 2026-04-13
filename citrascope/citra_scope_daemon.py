@@ -362,6 +362,7 @@ class CitraScopeDaemon:
 
             self.hardware_adapter.scope_slew_rate_degrees_per_second = citra_telescope_record["maxSlewRate"]
             self.hardware_adapter.telescope_record = citra_telescope_record
+            self.hardware_adapter.elset_cache = self.elset_cache
             CITRASCOPE_LOGGER.info(
                 f"Hardware connected. Slew rate: {self.hardware_adapter.scope_slew_rate_degrees_per_second} deg/sec"
             )

@@ -9,7 +9,7 @@ import threading
 import time
 from collections.abc import Callable
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
@@ -452,6 +452,12 @@ _DUMMY_FILTER_FOCUS_OFFSETS: dict[str, int] = {
 }
 
 
+_DUMMY_SAT_STD_MAG = 4.0  # Standard visual magnitude at 1000 km range (bright comms satellite)
+_DUMMY_SAT_MAG_LIMIT = (
+    16.0  # Render satellites up to this magnitude (higher than star limit — we always want target sats)
+)
+_DUMMY_SAT_N_SAMPLES = 20  # Number of position samples across the exposure for streak rendering
+
 _MAG_PREFERENCE = [
     ("Johnson_V (V)", 0.0),
     ("Sloan_r (SR)", 0.16),
@@ -459,6 +465,18 @@ _MAG_PREFERENCE = [
     ("Sloan_i (SI)", 0.37),
     ("Johnson_B (B)", -0.36),
 ]
+
+
+def _satellite_apparent_mag(range_km: float, phase_angle_deg: float) -> float:
+    """Compute apparent visual magnitude for a satellite.
+
+    Uses a standard magnitude at 1000 km with inverse-square range scaling
+    and a simplified Lambertian phase correction.
+    """
+    range_term = 5.0 * math.log10(max(range_km, 1.0) / 1000.0)
+    phi_rad = math.radians(phase_angle_deg)
+    phase_term = -2.5 * math.log10(max(math.cos(phi_rad / 2.0), 0.01))
+    return _DUMMY_SAT_STD_MAG + range_term + phase_term
 
 
 def _best_mag(df: pd.DataFrame) -> np.ndarray:
@@ -720,6 +738,7 @@ class DummyAdapter(AbstractAstroHardwareAdapter):
     def take_image(self, task_id: str, exposure_duration_seconds=1.0) -> str:
         """Simulate image capture, producing a synthetic starfield FITS."""
         self.logger.info(f"DummyAdapter: Starting {exposure_duration_seconds}s exposure for task {task_id}")
+        date_obs_str = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3]
         self._simulate_delay(exposure_duration_seconds)
 
         timestamp = time.time_ns()
@@ -735,15 +754,13 @@ class DummyAdapter(AbstractAstroHardwareAdapter):
             exposure_duration_seconds,
             seed=timestamp % (2**31),
             psf_sigma=sigma,
+            date_obs_str=date_obs_str,
         )
 
         hdu = fits.PrimaryHDU(image_data, header=wcs.to_header())
         hdu.header["INSTRUME"] = ("DummyCamera", "Simulated camera")
         hdu.header["EXPTIME"] = (exposure_duration_seconds, "Exposure time (seconds)")
-        hdu.header["DATE-OBS"] = (
-            datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3],
-            "UTC start of exposure",
-        )
+        hdu.header["DATE-OBS"] = (date_obs_str, "UTC start of exposure")
         hdu.header["TASKID"] = task_id
         hdu.writeto(filepath, overwrite=True)
 
@@ -757,12 +774,15 @@ class DummyAdapter(AbstractAstroHardwareAdapter):
         exptime: float,
         seed: int,
         psf_sigma: float | None = None,
+        date_obs_str: str | None = None,
     ) -> tuple[np.ndarray, WCS]:
         """Generate a synthetic starfield with a TAN WCS.
 
         Queries the local APASS catalog (or falls back to synthetic stars)
         for the current FOV, projects them onto the pixel grid, and renders
-        each as a Gaussian PSF.
+        each as a Gaussian PSF.  When ``self.elset_cache`` and
+        ``self.location_service`` are available, also renders satellite
+        streaks for every in-FOV satellite from the cache.
 
         Args:
             ra_center_deg: RA of the field centre in degrees.
@@ -770,6 +790,8 @@ class DummyAdapter(AbstractAstroHardwareAdapter):
             exptime:       Exposure duration in seconds (scales star brightness).
             seed:          RNG seed for the noise model (use Unix timestamp).
             psf_sigma:     Override PSF sigma in pixels (None uses default seeing).
+            date_obs_str:  ISO-8601 UTC start of exposure (needed for satellite
+                           propagation; satellites are skipped when None).
 
         Returns:
             Tuple of (image array uint16, WCS object).
@@ -818,48 +840,53 @@ class DummyAdapter(AbstractAstroHardwareAdapter):
         image += rng.normal(0.0, _DUMMY_READ_NOISE / _DUMMY_GAIN, image.shape)
         image += _DUMMY_BIAS
 
-        # --- Render each catalog star as a Gaussian PSF ----------------------
-        if len(star_ras) == 0:
-            self.logger.debug("DummyAdapter: No catalog stars in FOV — returning noise-only image")
-            return np.clip(image, 0, 65535).astype(np.uint16), wcs
-
+        # --- PSF stamp (shared by stars and satellites) -------------------------
         effective_psf_sigma = psf_sigma if psf_sigma is not None else _DUMMY_PSF_SIGMA_PX
         stamp_r = math.ceil(5 * effective_psf_sigma)
 
-        # Pre-compute a unit-flux PSF stamp once — just scale by each star's ADU
         psf_stamp = np.zeros((2 * stamp_r + 1, 2 * stamp_r + 1))
         psf_stamp[stamp_r, stamp_r] = 1.0
         psf_stamp = gaussian_filter(psf_stamp, sigma=effective_psf_sigma)
         psf_stamp /= psf_stamp.sum()
 
-        pixel_coords = wcs.all_world2pix(np.column_stack([star_ras, star_decs]), 0)
+        # --- Render each catalog star as a Gaussian PSF ----------------------
+        if len(star_ras) > 0:
+            pixel_coords = wcs.all_world2pix(np.column_stack([star_ras, star_decs]), 0)
 
-        valid = np.all(np.isfinite(pixel_coords), axis=1)
-        pixel_coords = pixel_coords[valid]
-        star_mags = star_mags[valid]
+            valid = np.all(np.isfinite(pixel_coords), axis=1)
+            pixel_coords = pixel_coords[valid]
+            star_mags = star_mags[valid]
 
-        n_rendered = 0
-        for (xp, yp), mag in zip(pixel_coords, star_mags, strict=False):
-            flux_e = 10.0 ** ((_DUMMY_MAG_ZERO - mag) / 2.5) * exptime
-            total_adu = flux_e / _DUMMY_GAIN
+            n_rendered = 0
+            for (xp, yp), mag in zip(pixel_coords, star_mags, strict=False):
+                flux_e = 10.0 ** ((_DUMMY_MAG_ZERO - mag) / 2.5) * exptime
+                total_adu = flux_e / _DUMMY_GAIN
 
-            xi, yi = round(xp), round(yp)
+                xi, yi = round(xp), round(yp)
 
-            x0, y0 = xi - stamp_r, yi - stamp_r
-            ix0 = max(0, x0)
-            iy0 = max(0, y0)
-            ix1 = min(size_x, x0 + psf_stamp.shape[1])
-            iy1 = min(size_y, y0 + psf_stamp.shape[0])
-            sx0 = ix0 - x0
-            sy0 = iy0 - y0
-            sx1 = sx0 + (ix1 - ix0)
-            sy1 = sy0 + (iy1 - iy0)
+                x0, y0 = xi - stamp_r, yi - stamp_r
+                ix0 = max(0, x0)
+                iy0 = max(0, y0)
+                ix1 = min(size_x, x0 + psf_stamp.shape[1])
+                iy1 = min(size_y, y0 + psf_stamp.shape[0])
+                sx0 = ix0 - x0
+                sy0 = iy0 - y0
+                sx1 = sx0 + (ix1 - ix0)
+                sy1 = sy0 + (iy1 - iy0)
 
-            if ix1 > ix0 and iy1 > iy0:
-                image[iy0:iy1, ix0:ix1] += psf_stamp[sy0:sy1, sx0:sx1] * total_adu
-                n_rendered += 1
+                if ix1 > ix0 and iy1 > iy0:
+                    image[iy0:iy1, ix0:ix1] += psf_stamp[sy0:sy1, sx0:sx1] * total_adu
+                    n_rendered += 1
 
-        self.logger.debug(f"DummyAdapter: Rendered {n_rendered}/{len(star_mags)} catalog stars")
+            self.logger.debug(f"DummyAdapter: Rendered {n_rendered}/{len(star_mags)} catalog stars")
+        else:
+            self.logger.debug("DummyAdapter: No catalog stars in FOV")
+
+        # --- Render satellite streaks from elset cache -----------------------
+        if date_obs_str and exptime > 0:
+            n_sats = self._render_satellites(image, wcs, psf_stamp, stamp_r, size_x, size_y, exptime, date_obs_str)
+            if n_sats > 0:
+                self.logger.debug(f"DummyAdapter: Rendered {n_sats} satellite(s) in FOV")
 
         image = np.clip(image, 0, 65535).astype(np.uint16)
         return image, wcs
@@ -900,6 +927,254 @@ class DummyAdapter(AbstractAstroHardwareAdapter):
 
         self.logger.debug(f"DummyAdapter: No catalog stars around RA={ra:.3f}, Dec={dec:.3f}")
         return np.array([]), np.array([]), np.array([])
+
+    def _propagate_satellite_arc(
+        self,
+        elset: dict,
+        obs: Any,
+        t_start: Any,
+        t_end: Any,
+        wcs: WCS,
+        size_x: int,
+        size_y: int,
+        sun_pos_km: np.ndarray,
+        n_samples: int = _DUMMY_SAT_N_SAMPLES,
+    ) -> tuple[dict | None, str]:
+        """Propagate one satellite TLE across the exposure and project to pixels.
+
+        Returns (result_dict, "") on success or (None, reason) on rejection.
+        """
+        from keplemon import time as ktime
+        from keplemon.bodies import Satellite
+        from keplemon.elements import TLE
+        from keplemon.enums import ReferenceFrame
+
+        tle = elset.get("tle") or []
+        if len(tle) < 2:
+            return None, "no_tle"
+
+        sat_id = elset.get("satellite_id") or "unknown"
+        name = elset.get("name") or sat_id
+
+        try:
+            kep_tle = TLE.from_lines(tle[0], tle[1])
+            satellite = Satellite.from_tle(kep_tle)
+        except Exception as e:
+            return None, f"tle_parse({e})"
+
+        dt_start = t_start.to_datetime()
+        dt_end = t_end.to_datetime()
+        duration_s = (dt_end - dt_start).total_seconds()
+        if duration_s <= 0:
+            n_samples = 1
+
+        from datetime import timezone
+
+        ras: list[float] = []
+        decs: list[float] = []
+        ranges_km: list[float] = []
+        for i in range(n_samples):
+            frac = i / max(n_samples - 1, 1) if n_samples > 1 else 0.5
+            dt = dt_start + (dt_end - dt_start) * frac
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+            epoch = ktime.Epoch.from_datetime(dt)
+            try:
+                topo = obs.get_topocentric_to_satellite(epoch, satellite, ReferenceFrame.J2000)
+                ras.append(topo.right_ascension)
+                decs.append(topo.declination)
+                ranges_km.append(topo.range)
+            except Exception as e:
+                return None, f"propagation({name}: {e})"
+
+        if not ras:
+            return None, "no_positions"
+
+        pixel_coords: np.ndarray = np.asarray(wcs.all_world2pix(np.column_stack([ras, decs]), 0))
+        if not np.all(np.isfinite(pixel_coords)):
+            return None, f"bad_wcs({name} RA={ras[0]:.2f} Dec={decs[0]:.2f})"
+
+        margin = 50
+        px_x = pixel_coords[:, 0]
+        px_y = pixel_coords[:, 1]
+        in_fov = np.any((px_x >= -margin) & (px_x < size_x + margin) & (px_y >= -margin) & (px_y < size_y + margin))
+        if not in_fov:
+            return None, f"out_of_fov({name} px={float(px_x[0]):.0f},{float(px_y[0]):.0f})"
+
+        mean_range = float(np.mean(ranges_km))
+
+        mid_idx = len(ras) // 2
+        dt_mid = dt_start + (dt_end - dt_start) * (mid_idx / max(n_samples - 1, 1))
+        if dt_mid.tzinfo is None:
+            dt_mid = dt_mid.replace(tzinfo=timezone.utc)
+        epoch_mid = ktime.Epoch.from_datetime(dt_mid)
+        try:
+            sat_state = satellite.get_state_at_epoch(epoch_mid).to_frame(ReferenceFrame.J2000)
+            sat_pos = np.array([sat_state.position.x, sat_state.position.y, sat_state.position.z])
+            obs_state = obs.get_state_at_epoch(epoch_mid).to_frame(ReferenceFrame.J2000)
+            obs_pos_vec = np.array([obs_state.position.x, obs_state.position.y, obs_state.position.z])
+
+            sat_to_sun = sun_pos_km - sat_pos
+            sat_to_obs = obs_pos_vec - sat_pos
+            dot = float(np.dot(sat_to_sun, sat_to_obs))
+            mag_a = float(np.linalg.norm(sat_to_sun))
+            mag_b = float(np.linalg.norm(sat_to_obs))
+            cos_angle = max(-1.0, min(1.0, dot / (mag_a * mag_b)))
+            phase_angle_deg = math.degrees(math.acos(cos_angle))
+        except Exception:
+            phase_angle_deg = 90.0
+
+        app_mag = _satellite_apparent_mag(mean_range, phase_angle_deg)
+        if app_mag > _DUMMY_SAT_MAG_LIMIT:
+            return None, f"too_faint({name} mag={app_mag:.1f} range={mean_range:.0f}km phase={phase_angle_deg:.0f}°)"
+
+        return {
+            "pixel_coords": pixel_coords,
+            "apparent_mag": app_mag,
+            "name": name,
+            "satellite_id": sat_id,
+            "range_km": mean_range,
+            "phase_angle_deg": phase_angle_deg,
+        }, ""
+
+    def _render_satellites(
+        self,
+        image: np.ndarray,
+        wcs: WCS,
+        psf_stamp: np.ndarray,
+        stamp_r: int,
+        size_x: int,
+        size_y: int,
+        exptime: float,
+        date_obs_str: str,
+    ) -> int:
+        """Render all in-FOV satellites from the elset cache onto the image.
+
+        Returns the number of satellites rendered.
+        """
+        if not self.elset_cache or not self.location_service:
+            self.logger.debug(
+                "DummyAdapter: Satellite rendering skipped (cache=%s, loc=%s)",
+                bool(self.elset_cache),
+                bool(self.location_service),
+            )
+            return 0
+        if exptime <= 0:
+            return 0
+
+        try:
+            location = self.location_service.get_current_location()
+            if not location:
+                self.logger.debug("DummyAdapter: Satellite rendering skipped — no observer location")
+                return 0
+        except Exception:
+            return 0
+
+        try:
+            elsets = self.elset_cache.get_elsets()
+        except Exception:
+            return 0
+
+        if not elsets:
+            self.logger.debug("DummyAdapter: Satellite rendering skipped — elset cache empty")
+            return 0
+
+        from datetime import timedelta, timezone
+
+        import astropy.units as u
+        from astropy.coordinates import get_body_barycentric_posvel
+        from astropy.time import Time as AstropyTime
+        from keplemon import time as ktime
+        from keplemon.bodies import Observatory
+
+        # Parse DATE-OBS and build exposure time span
+        try:
+            dt_obs = datetime.datetime.fromisoformat(date_obs_str.replace("Z", "+00:00"))
+            if dt_obs.tzinfo is None:
+                dt_obs = dt_obs.replace(tzinfo=timezone.utc)
+        except Exception:
+            return 0
+
+        t_start = ktime.Epoch.from_datetime(dt_obs)
+        dt_end = dt_obs + timedelta(seconds=exptime)
+        t_end = ktime.Epoch.from_datetime(dt_end)
+
+        # Observer
+        lat = location["latitude"]
+        lon = location["longitude"]
+        alt_km = location.get("altitude", 0) / 1000.0
+        obs = Observatory(lat, lon, alt_km)
+
+        # Sun position at mid-exposure (km, geocentric J2000)
+        dt_mid = dt_obs + timedelta(seconds=exptime / 2.0)
+        astro_t = AstropyTime(dt_mid)
+        sun_bary, _ = get_body_barycentric_posvel("sun", astro_t)
+        earth_bary, _ = get_body_barycentric_posvel("earth", astro_t)
+        sun_pos_km = (sun_bary.xyz - earth_bary.xyz).to(u.km).value  # type: ignore[union-attr]
+
+        n_rendered = 0
+        rejections: dict[str, int] = {}
+        for elset in elsets:
+            try:
+                result, reason = self._propagate_satellite_arc(
+                    elset, obs, t_start, t_end, wcs, size_x, size_y, sun_pos_km
+                )
+            except Exception as e:
+                reason_key = f"exception({type(e).__name__})"
+                rejections[reason_key] = rejections.get(reason_key, 0) + 1
+                continue
+
+            if result is None:
+                bucket = reason.split("(")[0] if reason else "unknown"
+                rejections[bucket] = rejections.get(bucket, 0) + 1
+                if bucket == "too_faint":
+                    self.logger.info("DummyAdapter: Satellite rejected: %s", reason)
+                else:
+                    self.logger.debug("DummyAdapter: Satellite rejected: %s", reason)
+                continue
+
+            pixel_coords = result["pixel_coords"]
+            app_mag = result["apparent_mag"]
+            n_samples = len(pixel_coords)
+
+            flux_e = 10.0 ** ((_DUMMY_MAG_ZERO - app_mag) / 2.5) * exptime
+            total_adu = flux_e / _DUMMY_GAIN
+            adu_per_sample = total_adu / n_samples
+
+            for xp, yp in pixel_coords:
+                xi, yi = round(xp), round(yp)
+                x0, y0 = xi - stamp_r, yi - stamp_r
+                ix0 = max(0, x0)
+                iy0 = max(0, y0)
+                ix1 = min(size_x, x0 + psf_stamp.shape[1])
+                iy1 = min(size_y, y0 + psf_stamp.shape[0])
+                sx0 = ix0 - x0
+                sy0 = iy0 - y0
+                sx1 = sx0 + (ix1 - ix0)
+                sy1 = sy0 + (iy1 - iy0)
+
+                if ix1 > ix0 and iy1 > iy0:
+                    image[iy0:iy1, ix0:ix1] += psf_stamp[sy0:sy1, sx0:sx1] * adu_per_sample
+
+            n_rendered += 1
+            self.logger.info(
+                "DummyAdapter: Rendered satellite %s (mag=%.1f, range=%.0f km, phase=%.0f°)",
+                result["name"],
+                app_mag,
+                result["range_km"],
+                result["phase_angle_deg"],
+            )
+
+        reject_summary = ", ".join(f"{k}={v}" for k, v in sorted(rejections.items())) if rejections else "none"
+        self.logger.info(
+            "DummyAdapter: Satellite rendering: %d rendered, %d rejected [%s] (of %d elsets)",
+            n_rendered,
+            sum(rejections.values()),
+            reject_summary,
+            len(elsets),
+        )
+
+        return n_rendered
 
     def set_custom_tracking_rate(self, ra_rate: float, dec_rate: float):
         """Simulate setting tracking rate."""

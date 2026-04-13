@@ -102,6 +102,7 @@ class AbstractAstroHardwareAdapter(ABC):
         self.filter_map = {}
         self._safety_monitor: SafetyMonitor | None = None
         self.location_service: Any | None = None
+        self.elset_cache: Any | None = None
         self._pointing_model: AltAzPointingModel | None = None
 
         # Load filter configuration from settings if available

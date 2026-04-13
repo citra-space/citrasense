@@ -22,6 +22,8 @@ from citrascope.logging import CITRASCOPE_LOGGER
 from citrascope.settings.directory_manager import DirectoryManager
 from citrascope.settings.settings_file_manager import SettingsFileManager
 
+_VALID_SEXTRACTOR_FILTERS = frozenset({"default", "gauss_1.5_3x3", "gauss_2.5_5x5", "tophat_3.0_3x3", "tophat_5.0_5x5"})
+
 
 class CitraScopeSettings(BaseModel):
     """Settings for CitraScope loaded from JSON configuration file.
@@ -375,15 +377,11 @@ class CitraScopeSettings(BaseModel):
             return clamped
         return v
 
-    _VALID_SEXTRACTOR_FILTERS = frozenset(
-        {"default", "gauss_1.5_3x3", "gauss_2.5_5x5", "tophat_3.0_3x3", "tophat_5.0_5x5"}
-    )
-
     @field_validator("sextractor_filter_name", mode="before")
     @classmethod
     def _validate_sextractor_filter_name(cls, v: Any) -> str:
         v = str(v) if v else "default"
-        if v not in cls._VALID_SEXTRACTOR_FILTERS:
+        if v not in _VALID_SEXTRACTOR_FILTERS:
             CITRASCOPE_LOGGER.warning("Unknown sextractor_filter_name (%r). Falling back to 'default'.", v)
             return "default"
         return v
