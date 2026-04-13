@@ -9,7 +9,7 @@ from typing import Any
 
 from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
@@ -223,6 +223,25 @@ class ConnectionManager:
         # Clean up disconnected clients
         for connection in disconnected:
             self.disconnect(connection)
+
+
+class _TarStreamBuffer:
+    """Write-only file-like object that accumulates bytes for streaming tar output."""
+
+    def __init__(self) -> None:
+        self._chunks: list[bytes] = []
+
+    def write(self, data: bytes) -> int:
+        self._chunks.append(data)
+        return len(data)
+
+    def flush(self) -> None:
+        pass
+
+    def drain(self) -> bytes:
+        out = b"".join(self._chunks)
+        self._chunks.clear()
+        return out
 
 
 class CitraScopeWebApp:
@@ -1811,6 +1830,122 @@ class CitraScopeWebApp:
             except Exception as e:
                 CITRASCOPE_LOGGER.error(f"Error during preview capture: {e}", exc_info=True)
                 return JSONResponse({"error": str(e)}, status_code=500)
+
+        # ── Analysis endpoints ──────────────────────────────────────────
+
+        @self.app.get("/api/analysis/tasks")
+        async def analysis_tasks(
+            limit: int = 50,
+            offset: int = 0,
+            sort: str = "completed_at",
+            order: str = "desc",
+            target_name: str | None = None,
+            plate_solved: bool | None = None,
+            target_matched: bool | None = None,
+            missed_window: bool | None = None,
+            date_from: str | None = None,
+            date_to: str | None = None,
+        ):
+            """Paginated, filterable list of completed tasks."""
+            if not self.daemon or not self.daemon.task_index:
+                return JSONResponse({"tasks": [], "total": 0})
+            return self.daemon.task_index.query_tasks(
+                limit=max(1, min(limit, 200)),
+                offset=max(0, offset),
+                sort=sort,
+                order=order,
+                target_name=target_name,
+                plate_solved=plate_solved,
+                target_matched=target_matched,
+                missed_window=missed_window,
+                date_from=date_from,
+                date_to=date_to,
+            )
+
+        @self.app.get("/api/analysis/tasks/{task_id}")
+        async def analysis_task_detail(task_id: str):
+            """Single task detail with all fields."""
+            if not self.daemon or not self.daemon.task_index:
+                return JSONResponse({"error": "Analysis not available"}, status_code=503)
+            safe_id = Path(task_id).name
+            task = self.daemon.task_index.get_task(safe_id)
+            if task is None:
+                return JSONResponse({"error": "Task not found"}, status_code=404)
+            task["artifacts_available"] = (self.daemon.settings.directories.processing_dir / safe_id).is_dir()
+            return task
+
+        @self.app.get("/api/analysis/tasks/{task_id}/image")
+        async def analysis_task_image(task_id: str):
+            """Serve annotated preview image for a task."""
+            if not self.daemon:
+                return JSONResponse({"error": "Not available"}, status_code=503)
+            safe_id = Path(task_id).name
+            preview = self.daemon.settings.directories.analysis_previews_dir / f"{safe_id}.jpg"
+            if not preview.is_file():
+                return JSONResponse({"error": "Image not available"}, status_code=404)
+            return FileResponse(str(preview), media_type="image/jpeg")
+
+        @self.app.get("/api/analysis/tasks/{task_id}/artifacts/{filename}")
+        async def analysis_task_artifact(task_id: str, filename: str):
+            """Serve an artifact file from the processing directory."""
+            if not self.daemon:
+                return JSONResponse({"error": "Not available"}, status_code=503)
+            safe_id = Path(task_id).name
+            safe_name = Path(filename).name
+            artifact = self.daemon.settings.directories.processing_dir / safe_id / safe_name
+            if not artifact.is_file():
+                return JSONResponse({"error": "Artifact not found or expired"}, status_code=404)
+            return FileResponse(str(artifact))
+
+        @self.app.get("/api/analysis/tasks/{task_id}/bundle")
+        async def analysis_task_bundle(task_id: str):
+            """Stream a tar.gz bundle of a task's processing directory."""
+            import gzip
+            import tarfile
+
+            if not self.daemon:
+                return JSONResponse({"error": "Not available"}, status_code=503)
+            safe_id = Path(task_id).name
+            task_dir = self.daemon.settings.directories.processing_dir / safe_id
+            if not task_dir.is_dir():
+                return JSONResponse({"error": "Task artifacts not found or expired"}, status_code=404)
+
+            def _generate():
+                """Yield gzipped tar bytes incrementally without buffering the whole archive."""
+                buf = _TarStreamBuffer()
+                gz = gzip.GzipFile(fileobj=buf, mode="wb")
+                tar = tarfile.open(fileobj=gz, mode="w|")
+                try:
+                    for file_path in task_dir.rglob("*"):
+                        if not file_path.is_file():
+                            continue
+                        arcname = f"{safe_id}/{file_path.relative_to(task_dir)}"
+                        tar.add(str(file_path), arcname=arcname)
+                        chunk = buf.drain()
+                        if chunk:
+                            yield chunk
+                finally:
+                    tar.close()
+                    gz.close()
+                    final = buf.drain()
+                    if final:
+                        yield final
+
+            filename = f"{safe_id}.tar.gz"
+            return StreamingResponse(
+                _generate(),
+                media_type="application/gzip",
+                headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+            )
+
+        @self.app.get("/api/analysis/stats")
+        async def analysis_stats(hours: int = 24):
+            """Aggregate statistics over the given time window."""
+            if not self.daemon or not self.daemon.task_index:
+                from citrascope.analysis.task_index import empty_stats
+
+                return empty_stats()
+            return self.daemon.task_index.get_stats(hours=max(1, min(hours, 8760)))
 
         @self.app.websocket("/ws")
         async def websocket_endpoint(websocket: WebSocket):

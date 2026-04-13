@@ -29,6 +29,7 @@ def _make_manager(observation_mode: str, supports_custom_tracking: bool) -> Task
     mgr.elset_cache = None
     mgr.apass_catalog = None
     mgr._on_annotated_image = None
+    mgr.task_index = None
     return mgr
 
 

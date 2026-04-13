@@ -3,6 +3,8 @@ import threading
 import time
 from abc import ABC, abstractmethod
 from collections.abc import Callable
+from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path
 
 from dateutil import parser as dtparser
@@ -10,6 +12,23 @@ from skyfield.api import EarthSatellite, load, wgs84
 
 from citrascope.hardware.abstract_astro_hardware_adapter import AbstractAstroHardwareAdapter
 from citrascope.tasks.fits_enrichment import enrich_fits_metadata
+
+
+@dataclass
+class TaskTimingInfo:
+    """Wall-clock timestamps captured during task execution and processing."""
+
+    slew_started_at: str | None = field(default=None)
+    imaging_started_at: str | None = field(default=None)
+    imaging_finished_at: str | None = field(default=None)
+    processing_queued_at: str | None = field(default=None)
+    processing_started_at: str | None = field(default=None)
+    processing_finished_at: str | None = field(default=None)
+
+    def stamp_now(self, attr: str) -> None:
+        """Set *attr* to the current UTC time in ISO format."""
+        setattr(self, attr, datetime.now(timezone.utc).isoformat())
+
 
 _DEFAULT_SLEW_ACCELERATION_DEG_PER_S2 = 2.0
 _DEFAULT_SETTLE_TIME_S = 0.5
@@ -66,6 +85,7 @@ class AbstractBaseTelescopeTask(ABC):
         processor_registry,
         apass_catalog=None,
         on_annotated_image: Callable[[str], None] | None = None,
+        task_index=None,
     ):
         self.api_client = api_client
         self.hardware_adapter: AbstractAstroHardwareAdapter = hardware_adapter
@@ -80,8 +100,10 @@ class AbstractBaseTelescopeTask(ABC):
         self.apass_catalog = apass_catalog
         self.processor_registry = processor_registry
         self._on_annotated_image = on_annotated_image
+        self.task_index = task_index
         self._cancelled = threading.Event()
         self.pointing_report: dict | None = None
+        self.timing_info = TaskTimingInfo()
 
         # Multi-image completion tracking (reset per upload_image_and_mark_complete call)
         self._completion_lock = threading.Lock()
@@ -185,6 +207,7 @@ class AbstractBaseTelescopeTask(ABC):
 
             # 2. Queue for background processing
             if self.settings.processors_enabled:
+                self.timing_info.stamp_now("processing_queued_at")
                 self.task_manager.processing_queue.submit(
                     task_id=self.task.id,
                     image_path=Path(image_path),
@@ -200,6 +223,7 @@ class AbstractBaseTelescopeTask(ABC):
                         "satellite_data": satellite_data,
                         "pointing_report": pointing_report,
                         "tracking_mode": self.tracking_mode,
+                        "timing_info": self.timing_info,
                     },
                     on_complete=lambda tid, result, fp=image_path: self._on_processing_complete(fp, tid, result),
                 )
@@ -213,6 +237,9 @@ class AbstractBaseTelescopeTask(ABC):
     def _on_processing_complete(self, filepath: str, task_id: str, result):
         """Called by background worker when processing finishes."""
         self.logger.info(f"Processing complete for task {task_id}")
+
+        # Persist to local analysis index (before any early returns)
+        self._record_to_analysis_index(task_id, result)
 
         # Check if processors rejected upload — count as completed image
         if result and not result.should_upload:
@@ -343,6 +370,12 @@ class AbstractBaseTelescopeTask(ABC):
             self.task_manager.record_task_failed()
             self.logger.error(f"Task {task_id} failed — all {self._completed_images} image(s) failed to upload")
 
+        if self.task_index:
+            try:
+                self.task_index.update_upload_result(task_id, self._any_upload_succeeded)
+            except Exception as e:
+                self.logger.warning(f"Failed to update analysis index upload result for {task_id}: {e}")
+
         self.task_manager.remove_task_from_all_stages(task_id)
 
     def _finalize_skipped_upload(self, task_id: str) -> None:
@@ -366,6 +399,38 @@ class AbstractBaseTelescopeTask(ABC):
                 "not marking complete on API"
             )
             self.task_manager.remove_task_from_all_stages(task_id)
+
+    def _record_to_analysis_index(self, task_id: str, result) -> None:
+        """Persist task metrics to the local analysis SQLite index."""
+        if not self.task_index:
+            return
+        try:
+            self.task_index.record_task(
+                task=self.task,
+                result=result,
+                pointing_report=self.pointing_report,
+                timing_info=self.timing_info,
+            )
+            self._copy_annotated_preview(task_id, result)
+        except Exception as e:
+            self.logger.warning(f"Failed to record task {task_id} in analysis index: {e}")
+
+    def _copy_annotated_preview(self, task_id: str, result) -> None:
+        """Copy annotated image to the long-lived previews directory."""
+        if not result or not result.extracted_data:
+            return
+        annotated = result.extracted_data.get("annotated_image.image_path")
+        if not annotated or not Path(annotated).exists():
+            return
+        try:
+            import shutil
+
+            previews_dir = self.settings.directories.analysis_previews_dir
+            previews_dir.mkdir(parents=True, exist_ok=True)
+            dest = previews_dir / f"{task_id}.jpg"
+            shutil.copy2(annotated, dest)
+        except Exception as e:
+            self.logger.debug(f"Could not copy annotated preview for {task_id}: {e}")
 
     def _mark_complete_with_retry(self, task_id: str, attempts: int = 3, delay: float = 2.0) -> bool:
         """Try to mark a task complete on the server, retrying on transient failures."""

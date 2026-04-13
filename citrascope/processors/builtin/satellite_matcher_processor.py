@@ -432,11 +432,14 @@ class SatelliteMatcherProcessor(AbstractImageProcessor):
 
             zero_point_applied = debug_info.get("zero_point", 0.0)
 
+            predictions_in_field = debug_info.get("predictions_in_field", [])
+
             result = ProcessorResult(
                 should_upload=True,
                 extracted_data={
                     "num_satellites_detected": len(satellite_observations),
                     "satellite_observations": satellite_observations,
+                    "predictions_in_field": predictions_in_field,
                     "zero_point": zero_point_applied,
                 },
                 confidence=1.0 if satellite_observations else 0.5,

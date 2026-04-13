@@ -61,6 +61,10 @@ class ProcessingQueue(BaseWorkQueue):
         """Execute image processing work."""
         task_id = item["task_id"]
         task_obj = item["context"].get("task")
+        timing_info = item["context"].get("timing_info")
+
+        if timing_info:
+            timing_info.stamp_now("processing_started_at")
 
         self.logger.info(f"[ProcessingWorker] Processing task {task_id}")
 
@@ -93,6 +97,9 @@ class ProcessingQueue(BaseWorkQueue):
                 raise ValueError(f"No processor_registry in context for task {task_id}")
             result = processor_registry.process_all(context)
 
+            if timing_info:
+                timing_info.stamp_now("processing_finished_at")
+
             # Promote final processed image back to the original file location
             # so the upload queue sends the calibrated + plate-solved version.
             # Save a copy of the raw original into the working dir first so
@@ -124,7 +131,7 @@ class ProcessingQueue(BaseWorkQueue):
             task_obj.set_status_msg("Processing complete")
 
         settings = item["context"].get("settings")
-        if not settings or not settings.keep_processing_output:
+        if not settings or settings.processing_output_retention_hours == 0:
             self._cleanup_working_dir(task_id, settings)
 
         on_complete(task_id, result)
@@ -141,7 +148,7 @@ class ProcessingQueue(BaseWorkQueue):
             task_obj.set_status_msg("Processing permanently failed (uploading raw image)")
 
         settings = item["context"].get("settings")
-        if not settings or not settings.keep_processing_output:
+        if not settings or settings.processing_output_retention_hours == 0:
             self._cleanup_working_dir(task_id, settings)
 
         # Fail-open: notify with None result (will upload raw image)

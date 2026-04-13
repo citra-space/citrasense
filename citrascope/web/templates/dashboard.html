@@ -17,6 +17,7 @@
         integrity="sha384-FKyoEForCGlyvwx9Hj09JcYn3nv7wiPVlz7YYwJrWVcXK/BmnVDxM+D2scQbITxI"
         crossorigin="anonymous"></script>
     <script type="module" src="/static/store-init.js"></script>
+    <script type="module" src="/static/analysis.js?v={{ cache_bust }}"></script>
     <script defer src="https://cdn.jsdelivr.net/npm/@alpinejs/persist@3.x.x/dist/cdn.min.js"></script>
     <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.14.3/dist/cdn.min.js"></script>
 
@@ -41,6 +42,9 @@
                 <li class="nav-item"><a href="#monitoring" class="nav-link px-2" :class="$store.citrascope.currentSection === 'monitoring' ? 'text-white' : ''"
                         :aria-current="$store.citrascope.currentSection === 'monitoring' ? 'page' : null"
                         data-section="monitoring" @click.prevent="$store.citrascope.currentSection = 'monitoring'; window.location.hash = 'monitoring'">Monitoring</a></li>
+                <li class="nav-item"><a href="#analysis" class="nav-link px-2" :class="$store.citrascope.currentSection === 'analysis' ? 'text-white' : ''"
+                        :aria-current="$store.citrascope.currentSection === 'analysis' ? 'page' : null"
+                        data-section="analysis" @click.prevent="$store.citrascope.currentSection = 'analysis'; window.location.hash = 'analysis'">Analysis</a></li>
                 <li class="nav-item"><a href="#config" class="nav-link px-2" :class="$store.citrascope.currentSection === 'config' ? 'text-white' : ''"
                         :aria-current="$store.citrascope.currentSection === 'config' ? 'page' : null"
                         data-section="config" @click.prevent="$store.citrascope.currentSection = 'config'; window.location.hash = 'config'">Config</a></li>
@@ -60,6 +64,7 @@
 
     {% include '_config.html' %}
 
+    {% include '_analysis.html' %}
 
     <!-- Setup Wizard Modal -->
     <div class="modal fade" id="setupWizard" tabindex="-1" aria-hidden="true">

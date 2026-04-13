@@ -43,6 +43,7 @@ class TaskManager:
         ground_station: dict | None = None,
         on_annotated_image=None,
         preview_bus: PreviewBus | None = None,
+        task_index=None,
     ):
         self.api_client = api_client
         self.logger = logger
@@ -57,6 +58,7 @@ class TaskManager:
         self.ground_station = ground_station
         self._on_annotated_image = on_annotated_image
         self._preview_bus = preview_bus
+        self.task_index = task_index
 
         # Initialize work queues (TaskManager now owns these)
         from citrascope.tasks.imaging_queue import ImagingQueue
@@ -548,6 +550,7 @@ class TaskManager:
             apass_catalog=self.apass_catalog,
             processor_registry=self.processor_registry,
             on_annotated_image=self._set_latest_annotated_image,
+            task_index=self.task_index,
         )
 
     @property

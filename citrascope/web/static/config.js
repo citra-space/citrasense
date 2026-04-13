@@ -145,8 +145,8 @@ async function loadConfiguration() {
             if (config.keep_images === null || config.keep_images === undefined) {
                 config.keep_images = false; // Default to false
             }
-            if (config.keep_processing_output === null || config.keep_processing_output === undefined) {
-                config.keep_processing_output = false; // Default to false
+            if (config.processing_output_retention_hours === null || config.processing_output_retention_hours === undefined) {
+                config.processing_output_retention_hours = 0;
             }
             if (config.scheduled_autofocus_enabled === null || config.scheduled_autofocus_enabled === undefined) {
                 config.scheduled_autofocus_enabled = false; // Default to false

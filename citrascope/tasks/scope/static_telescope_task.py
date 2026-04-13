@@ -32,8 +32,11 @@ class StaticTelescopeTask(AbstractBaseTelescopeTask):
                 satellite_data["ra"] = target_ra.degrees
                 satellite_data["dec"] = target_dec.degrees
 
+                self.timing_info.stamp_now("slew_started_at")
+                self.timing_info.stamp_now("imaging_started_at")
                 self.task.set_status_msg("Running observation sequence...")
                 filepaths = self.hardware_adapter.perform_observation_sequence(self.task, satellite_data)
+                self.timing_info.stamp_now("imaging_finished_at")
 
             else:
                 raise RuntimeError(f"Unsupported observation strategy: {strategy}")
@@ -89,6 +92,7 @@ class StaticTelescopeTask(AbstractBaseTelescopeTask):
 
         # -- Slew (ahead for fast movers, directly for slow movers) --
         self.task.set_status_msg("Slewing to target...")
+        self.timing_info.stamp_now("slew_started_at")
         self.pointing_report = self.point_to_lead_position(satellite_data, extra_lead_seconds=extra_lead)
         if self.is_cancelled:
             raise RuntimeError("Task cancelled")
@@ -152,12 +156,14 @@ class StaticTelescopeTask(AbstractBaseTelescopeTask):
             self.pointing_report["slew_ahead"]["satellite_timing"] = timing
 
         # -- Burst capture --
+        self.timing_info.stamp_now("imaging_started_at")
         filepaths: list[str] = []
         for i in range(num_exposures):
             if self.is_cancelled:
                 break
             self.task.set_status_msg(f"Exposing {i + 1}/{num_exposures} ({exposure}s)...")
             filepaths.append(self.hardware_adapter.take_image(self.task.id, exposure))
+        self.timing_info.stamp_now("imaging_finished_at")
 
         if self.is_cancelled and not filepaths:
             raise RuntimeError("Task cancelled before any exposures completed")

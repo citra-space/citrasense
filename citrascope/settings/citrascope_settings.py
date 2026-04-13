@@ -48,7 +48,7 @@ class CitraScopeSettings(BaseModel):
     # Runtime / UI-configurable
     log_level: str = "INFO"
     keep_images: bool = False
-    keep_processing_output: bool = False
+    processing_output_retention_hours: int = 0
 
     # Processors
     processors_enabled: bool = True
@@ -279,6 +279,24 @@ class CitraScopeSettings(BaseModel):
             return clamped
         return v
 
+    @field_validator("processing_output_retention_hours", mode="before")
+    @classmethod
+    def _validate_processing_output_retention(cls, v: Any) -> int:
+        # Migrate legacy bool: True → -1 (keep forever), False → 0 (delete immediately)
+        if v is True:
+            return -1
+        if v is False:
+            return 0
+        try:
+            v = int(v)
+        except (TypeError, ValueError):
+            CITRASCOPE_LOGGER.warning("Invalid processing_output_retention_hours (%r). Falling back to 0.", v)
+            return 0
+        if v < -1:
+            CITRASCOPE_LOGGER.warning("processing_output_retention_hours (%d) below -1. Clamped to -1.", v)
+            return -1
+        return v
+
     @field_validator("calibration_frame_count", mode="before")
     @classmethod
     def _validate_calibration_frame_count(cls, v: Any) -> int:
@@ -366,6 +384,13 @@ class CitraScopeSettings(BaseModel):
 
         all_adapter_settings: dict[str, dict[str, Any]] = config.pop("adapter_settings", {})
         config["web_port"] = web_port
+
+        # Migrate legacy keep_processing_output bool → processing_output_retention_hours
+        if "keep_processing_output" in config and "processing_output_retention_hours" not in config:
+            old_val = config.pop("keep_processing_output")
+            config["processing_output_retention_hours"] = -1 if old_val else 0
+        else:
+            config.pop("keep_processing_output", None)
 
         instance = cls.model_validate(config)
         instance._config_manager = mgr

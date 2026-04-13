@@ -38,6 +38,14 @@ class DirectoryManager:
         return self._data_dir / "processing"
 
     @property
+    def analysis_dir(self) -> Path:
+        return self._data_dir / "analysis"
+
+    @property
+    def analysis_previews_dir(self) -> Path:
+        return self._data_dir / "analysis" / "previews"
+
+    @property
     def log_dir(self) -> Path:
         return self._log_dir
 

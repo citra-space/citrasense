@@ -128,15 +128,16 @@ function navigateToSection(section) {
 function initNavigation() {
     window.addEventListener('hashchange', () => {
         const hash = window.location.hash.substring(1);
-        if (hash && (hash === 'monitoring' || hash === 'config')) {
+        if (hash && (hash === 'monitoring' || hash === 'config' || hash === 'analysis')) {
             const store = Alpine.store('citrascope');
             store.currentSection = hash;
             if (hash === 'config') initFilterConfig();
+            if (hash === 'analysis' && window.loadAnalysisData) window.loadAnalysisData();
         }
     });
 
     const hash = window.location.hash.substring(1);
-    if (hash && (hash === 'monitoring' || hash === 'config')) {
+    if (hash && (hash === 'monitoring' || hash === 'config' || hash === 'analysis')) {
         navigateToSection(hash);
     } else {
         navigateToSection('monitoring');

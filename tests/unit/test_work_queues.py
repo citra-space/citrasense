@@ -393,7 +393,7 @@ def test_processing_queue_on_success():
     on_complete = MagicMock()
     task_obj = MagicMock()
     mock_settings = MagicMock()
-    mock_settings.keep_processing_output = False
+    mock_settings.processing_output_retention_hours = 0
     item = {
         "task_id": "t1",
         "context": {"task": task_obj, "settings": mock_settings},
@@ -412,7 +412,7 @@ def test_processing_queue_on_success_keeps_output():
     pq = ProcessingQueue(num_workers=1, settings=MagicMock(), logger=MagicMock())
     on_complete = MagicMock()
     mock_settings = MagicMock()
-    mock_settings.keep_processing_output = True
+    mock_settings.processing_output_retention_hours = -1
     item = {
         "task_id": "t1",
         "context": {"task": MagicMock(), "settings": mock_settings},
@@ -431,7 +431,7 @@ def test_processing_queue_on_permanent_failure():
     on_complete = MagicMock()
     task_obj = MagicMock()
     mock_settings = MagicMock()
-    mock_settings.keep_processing_output = False
+    mock_settings.processing_output_retention_hours = 0
     item = {
         "task_id": "t1",
         "context": {"task": task_obj, "settings": mock_settings},
@@ -449,7 +449,7 @@ def test_processing_queue_on_permanent_failure_keeps_output():
     pq = ProcessingQueue(num_workers=1, settings=MagicMock(), logger=MagicMock())
     on_complete = MagicMock()
     mock_settings = MagicMock()
-    mock_settings.keep_processing_output = True
+    mock_settings.processing_output_retention_hours = -1
     item = {
         "task_id": "t1",
         "context": {"task": MagicMock(), "settings": mock_settings},

@@ -11,6 +11,8 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from citrascope.calibration.calibration_library import CalibrationLibrary
 
+from citrascope.analysis.retention import cleanup_previews, cleanup_processing_output
+from citrascope.analysis.task_index import TaskIndex
 from citrascope.api.citra_api_client import AbstractCitraApiClient, CitraApiClient
 from citrascope.api.dummy_api_client import DummyApiClient
 from citrascope.catalogs.apass_catalog import ApassCatalog
@@ -77,6 +79,11 @@ class CitraScopeDaemon:
 
         # APASS catalog for local photometry (file-backed; downloaded on first authenticated startup)
         self.apass_catalog = ApassCatalog(logger=CITRASCOPE_LOGGER)
+
+        # Local analysis index — persists pipeline metrics across restarts
+        db_path = self.settings.directories.analysis_dir / "task_index.db"
+        self.task_index = TaskIndex(db_path)
+        self._retention_timer: threading.Timer | None = None
 
         # Note: Work queues and stage tracking now managed by TaskManager
 
@@ -403,6 +410,7 @@ class CitraScopeDaemon:
                 ground_station=self.ground_station,
                 on_annotated_image=self._on_annotated_image,
                 preview_bus=self.preview_bus,
+                task_index=self.task_index,
             )
 
             # Wire backend→frontend toast notifications for autofocus
@@ -491,6 +499,7 @@ class CitraScopeDaemon:
                         break
 
             self.task_manager.start()
+            self._start_retention_timer()
 
             CITRASCOPE_LOGGER.info("Telescope initialized successfully!")
             return True, None
@@ -499,6 +508,21 @@ class CitraScopeDaemon:
             error_msg = f"Error initializing telescope: {e!s}"
             CITRASCOPE_LOGGER.error(error_msg, exc_info=True)
             return False, error_msg
+
+    def _start_retention_timer(self) -> None:
+        """Run retention cleanup once, then schedule the next run in 1 hour."""
+        try:
+            retention = self.settings.processing_output_retention_hours
+            cleanup_processing_output(self.settings.directories.processing_dir, retention)
+            cleanup_previews(self.settings.directories.analysis_previews_dir)
+        except Exception as e:
+            CITRASCOPE_LOGGER.warning("Retention cleanup error: %s", e)
+
+        if self._stop_requested:
+            return
+        self._retention_timer = threading.Timer(3600, self._start_retention_timer)
+        self._retention_timer.daemon = True
+        self._retention_timer.start()
 
     def _initialize_safety_monitor(self) -> None:
         """Create SafetyMonitor with applicable checks and wire to hardware."""
@@ -755,6 +779,11 @@ class CitraScopeDaemon:
 
         CITRASCOPE_LOGGER.info("Shutting down...")
 
+        # 0. Cancel retention timer — set _stop_requested first to prevent reschedule
+        self._stop_requested = True
+        if self._retention_timer:
+            self._retention_timer.cancel()
+
         # 1. Stop sources of new motion
         if self.task_manager:
             self.task_manager.stop()
@@ -788,9 +817,17 @@ class CitraScopeDaemon:
             except Exception as e:
                 CITRASCOPE_LOGGER.warning(f"Error disconnecting hardware: {e}")
 
+        # 5. Close analysis index
+        if self.task_index:
+            try:
+                self.task_index.close()
+            except Exception:
+                pass
+            self.task_index = None
+
         CITRASCOPE_LOGGER.info("Shutdown complete.")
 
-        # 5. Stop web server (tears down log handler — must be last)
+        # 6. Stop web server (tears down log handler — must be last)
         if self.web_server:
             if self.web_server.web_log_handler:
                 CITRASCOPE_LOGGER.removeHandler(self.web_server.web_log_handler)

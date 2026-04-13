@@ -21,6 +21,7 @@ class TrackingTelescopeTask(AbstractBaseTelescopeTask):
             return False
 
         self.task.set_status_msg("Slewing to target...")
+        self.timing_info.stamp_now("slew_started_at")
         try:
             self.pointing_report = self.point_to_lead_position(satellite_data)
         except RuntimeError as e:
@@ -47,7 +48,9 @@ class TrackingTelescopeTask(AbstractBaseTelescopeTask):
 
             exposure = self.settings.exposure_seconds
             self.task.set_status_msg(f"Exposing image ({exposure}s)...")
+            self.timing_info.stamp_now("imaging_started_at")
             filepath = self.hardware_adapter.take_image(self.task.id, exposure)
+            self.timing_info.stamp_now("imaging_finished_at")
             return self.upload_image_and_mark_complete(
                 [filepath], satellite_data=satellite_data, pointing_report=self.pointing_report
             )
