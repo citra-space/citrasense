@@ -387,7 +387,6 @@ def run_autofocus(
     *,
     step_size: int = 500,
     num_steps: int = 5,
-    fine_steps: int = 3,
     exposure_time: float = 3.0,
     crop_ratio: float = 0.5,
     on_progress: Callable[[str], None] | None = None,
@@ -396,21 +395,20 @@ def run_autofocus(
     on_point: Callable[[int, float], None] | None = None,
     on_image: Callable[[np.ndarray], None] | None = None,
 ) -> int:
-    """Run two-pass V-curve autofocus and return the best focuser position.
+    """Run V-curve autofocus and return the best focuser position.
 
-    Pass 1 (coarse): sweeps (2 * num_steps + 1) positions at step_size,
-    fits a hyperbolic curve to estimate the optimum.
+    Sweeps (2 * num_steps + 1) positions at step_size spacing, fits a
+    hyperbolic curve (with parabolic fallback) to locate the optimum,
+    then moves to that position and takes a verification exposure.
 
-    Pass 2 (fine): sweeps (2 * fine_steps + 1) positions at step_size // 4
-    centered on the coarse estimate, then fits the combined measurements
-    for sub-step-size precision.  Set fine_steps=0 to disable.
+    The hyperbolic fit yields sub-step-size precision from the curve
+    vertex, so a single sweep is sufficient.
 
     Args:
         camera: Connected camera device.
         focuser: Connected focuser device.
-        step_size: Focuser steps between coarse samples.
-        num_steps: Number of coarse samples on each side of centre.
-        fine_steps: Number of fine samples per side (0 disables refinement).
+        step_size: Focuser steps between samples.
+        num_steps: Number of samples on each side of centre.
         exposure_time: Seconds per sample exposure.
         crop_ratio: Fraction of image centre to analyse (0 < x <= 1).
         on_progress: Optional callback for progress strings.
@@ -484,51 +482,12 @@ def run_autofocus(
         report(f"Autofocus complete (one-sided): position {best_pos}, HFR {best_hfr:.1f}")
         return best_pos
 
-    coarse_vertex = _fit_measurements(pos_arr, val_arr, log)
-
-    # --- Fine sweep (refinement pass) ---
-    if coarse_vertex is not None and fine_steps > 0:
-        margin = step_size
-        if positions[0] - margin <= coarse_vertex <= positions[-1] + margin:
-            fine_step = max(step_size // 4, 1)
-            fine_center = round(coarse_vertex)
-            fine_positions = [fine_center + (i - fine_steps) * fine_step for i in range(2 * fine_steps + 1)]
-            fine_positions = [max(0, min(p, max_pos)) for p in fine_positions]
-            fine_positions = list(dict.fromkeys(fine_positions))
-
-            log.info(f"Fine sweep: {len(fine_positions)} positions around {fine_center} (step {fine_step})")
-
-            fine_measurements = _sweep_positions(
-                camera,
-                focuser,
-                fine_positions,
-                exposure_time=exposure_time,
-                crop_ratio=crop_ratio,
-                step_size=fine_step,
-                label="Fine",
-                log=log,
-                report=report,
-                cancel_event=cancel_event,
-                on_point=on_point,
-                on_image=on_image,
-            )
-
-            if fine_measurements:
-                all_measurements = measurements + fine_measurements
-                all_pos = np.array([m[0] for m in all_measurements], dtype=np.float64)
-                all_val = np.array([m[1] for m in all_measurements], dtype=np.float64)
-
-                refined_vertex = _fit_measurements(all_pos, all_val, log)
-                if refined_vertex is not None:
-                    coarse_vertex = refined_vertex
-                    log.info(f"Refined optimum: {coarse_vertex:.0f}")
-        else:
-            log.warning(f"Coarse vertex {coarse_vertex:.0f} outside sampled range, skipping refinement")
+    vertex = _fit_measurements(pos_arr, val_arr, log)
 
     # --- Determine final position ---
     best_pos: int
-    if coarse_vertex is not None:
-        best_pos = max(0, min(round(coarse_vertex), max_pos))
+    if vertex is not None:
+        best_pos = max(0, min(round(vertex), max_pos))
     else:
         best_idx = int(np.argmin(val_arr))
         best_pos = measurements[best_idx][0]

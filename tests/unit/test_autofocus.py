@@ -368,9 +368,8 @@ class TestRunAutofocus:
 
         assert isinstance(best, int)
         assert 0 <= best <= 100000
-        # At minimum, the coarse pass issues moves (1 overshoot + 7 sweep = 8).
-        # Fine pass, final reposition, and verification may be skipped.
-        assert focuser.move_absolute.call_count >= 8
+        # 1 overshoot + 7 sweep + 1 final reposition = 9 minimum moves.
+        assert focuser.move_absolute.call_count >= 9
 
     def test_too_few_measurements_raises(self):
         focuser = _make_mock_focuser(position=25000)
@@ -459,8 +458,8 @@ class TestRunAutofocus:
                 logger=logging.getLogger("test"),
             )
 
-    def test_refinement_pass_fires_on_point(self):
-        """on_point should be called for both coarse and fine sweep points."""
+    def test_on_point_called_for_each_position(self):
+        """on_point should be called for each sweep position."""
         focuser = _make_mock_focuser(position=25000)
         camera = _make_vcurve_camera(focuser, optimal_pos=25000)
         points: list[tuple[int, float]] = []
@@ -470,7 +469,6 @@ class TestRunAutofocus:
             focuser=focuser,
             step_size=500,
             num_steps=4,
-            fine_steps=3,
             exposure_time=0.1,
             crop_ratio=1.0,
             logger=logging.getLogger("test"),
@@ -478,32 +476,7 @@ class TestRunAutofocus:
         )
 
         assert isinstance(best, int)
-        coarse_positions = {25000 + (i - 4) * 500 for i in range(9)}
-        reported_positions = {p for p, _ in points}
-        fine_only = reported_positions - coarse_positions
-        assert len(points) > 9, f"Expected >9 on_point calls (coarse+fine), got {len(points)}"
-        assert fine_only, "Should have fine points beyond the coarse grid"
-
-    def test_refinement_skipped_when_disabled(self):
-        """fine_steps=0 should produce only coarse sweep points."""
-        focuser = _make_mock_focuser(position=25000)
-        camera = _make_vcurve_camera(focuser, optimal_pos=25000)
-        points: list[tuple[int, float]] = []
-
-        run_autofocus(
-            camera=camera,
-            focuser=focuser,
-            step_size=500,
-            num_steps=3,
-            fine_steps=0,
-            exposure_time=0.1,
-            crop_ratio=0.8,
-            logger=logging.getLogger("test"),
-            on_point=lambda pos, hfr: points.append((pos, hfr)),
-        )
-
-        # 7 coarse positions max
-        assert len(points) <= 7, f"Expected <= 7 points with fine_steps=0, got {len(points)}"
+        assert len(points) == 9, f"Expected 9 on_point calls (2*4+1), got {len(points)}"
 
     def test_monotonic_slope_falls_back(self):
         """When the sweep only captures one wing, fall back to the best measured point."""
@@ -522,7 +495,6 @@ class TestRunAutofocus:
                 focuser=focuser,
                 step_size=500,
                 num_steps=3,
-                fine_steps=3,
                 exposure_time=0.1,
                 crop_ratio=1.0,
                 on_progress=progress_msgs.append,
@@ -580,39 +552,22 @@ class TestVCurveFit:
 
         assert abs(best - 25000) < 1500, f"Expected ~25000, got {best}"
 
-    def test_two_pass_closer_than_single(self):
-        """Two-pass should land closer to the true optimum than single-pass."""
-        focuser_1 = _make_mock_focuser(position=25000, max_pos=50000)
-        camera_1 = _make_vcurve_camera(focuser_1, optimal_pos=25000)
-        best_1 = run_autofocus(
-            camera=camera_1,
-            focuser=focuser_1,
+    def test_fit_finds_sub_step_precision(self):
+        """Curve fit should land closer to the optimum than the nearest grid point."""
+        focuser = _make_mock_focuser(position=25000, max_pos=50000)
+        camera = _make_vcurve_camera(focuser, optimal_pos=25000)
+
+        best = run_autofocus(
+            camera=camera,
+            focuser=focuser,
             step_size=500,
             num_steps=4,
-            fine_steps=0,
             exposure_time=0.1,
             crop_ratio=1.0,
             logger=logging.getLogger("test"),
         )
 
-        focuser_2 = _make_mock_focuser(position=25000, max_pos=50000)
-        camera_2 = _make_vcurve_camera(focuser_2, optimal_pos=25000)
-        best_2 = run_autofocus(
-            camera=camera_2,
-            focuser=focuser_2,
-            step_size=500,
-            num_steps=4,
-            fine_steps=3,
-            exposure_time=0.1,
-            crop_ratio=1.0,
-            logger=logging.getLogger("test"),
-        )
-
-        err_1 = abs(best_1 - 25000)
-        err_2 = abs(best_2 - 25000)
-        assert err_2 <= err_1 + 250, (
-            f"Two-pass ({best_2}, err={err_2}) shouldn't be much worse than " f"single-pass ({best_1}, err={err_1})"
-        )
+        assert abs(best - 25000) < 500, f"Fit position {best} should be within one step of true optimum 25000"
 
 
 # ---------------------------------------------------------------------------
