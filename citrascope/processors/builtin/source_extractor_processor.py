@@ -68,7 +68,17 @@ class SourceExtractorProcessor(AbstractImageProcessor):
 
         return pd.DataFrame(sources)
 
-    def _extract_sources(self, image_path: Path, config_dir: Path, working_dir: Path, logger=None) -> pd.DataFrame:
+    def _extract_sources(
+        self,
+        image_path: Path,
+        config_dir: Path,
+        working_dir: Path,
+        logger=None,
+        *,
+        detect_thresh: float | None = None,
+        detect_minarea: int | None = None,
+        filter_name: str | None = None,
+    ) -> pd.DataFrame:
         """Run SExtractor and parse catalog.
 
         Args:
@@ -76,6 +86,11 @@ class SourceExtractorProcessor(AbstractImageProcessor):
             config_dir: Path to directory containing SExtractor config files
             working_dir: Directory for temporary files (catalog will be written here)
             logger: Logger instance (falls back to module-level citrascope logger if None)
+            detect_thresh: Override DETECT_THRESH (sigmas). None keeps default.sex value.
+            detect_minarea: Override DETECT_MINAREA (pixels). None keeps default.sex value.
+            filter_name: Convolution kernel name (without .conv extension).
+                ``"default"`` or ``None`` uses ``default.conv``; other values
+                select the corresponding ``<name>.conv`` file from config_dir.
 
         Returns:
             DataFrame with columns: ra, dec, mag, magerr, fwhm
@@ -97,6 +112,16 @@ class SourceExtractorProcessor(AbstractImageProcessor):
         catalog_name = "output.cat"
         catalog_path = working_dir / catalog_name
 
+        # Determine which config files need to be copied
+        config_files_to_copy = ["default.sex", "default.param", "default.conv", "default.nnw"]
+        if filter_name and filter_name != "default":
+            conv_file = f"{filter_name}.conv"
+            if (config_dir / conv_file).exists():
+                config_files_to_copy.append(conv_file)
+            else:
+                logger.warning("Convolution kernel %s not found in %s, using default.conv", conv_file, config_dir)
+                filter_name = None
+
         try:
             # Create symlink to avoid passing image path with spaces to SExtractor
             if image_symlink.exists():
@@ -104,7 +129,7 @@ class SourceExtractorProcessor(AbstractImageProcessor):
             image_symlink.symlink_to(image_path)
 
             # Copy config files to working_dir so relative paths work
-            for config_file in ["default.sex", "default.param", "default.conv", "default.nnw"]:
+            for config_file in config_files_to_copy:
                 src = config_dir / config_file
                 dst = working_dir / config_file
                 if not dst.exists():
@@ -113,19 +138,23 @@ class SourceExtractorProcessor(AbstractImageProcessor):
             # Build SExtractor command - all files in working_dir now
             cmd = [
                 "sex",
-                "input.fits",  # Symlink in working_dir
+                "input.fits",
                 "-c",
-                "default.sex",  # Local copy in working_dir
+                "default.sex",
                 "-CATALOG_NAME",
-                "output.cat",  # Output in working_dir
+                "output.cat",
             ]
 
-            # Debug logging to diagnose path issues
-            logger.info(f"Running SExtractor from cwd: {working_dir}")
-            logger.info("Config files copied to working_dir (default.sex, default.param, default.conv, default.nnw)")
-            logger.info(f"SExtractor command: {' '.join(cmd)}")
-            logger.info(f"Image symlink: {image_symlink} -> {image_path}")
-            logger.info(f"Catalog path: {catalog_path}")
+            # Apply user-configurable overrides via CLI flags (override default.sex values)
+            if detect_thresh is not None:
+                cmd.extend(["-DETECT_THRESH", str(detect_thresh), "-ANALYSIS_THRESH", str(detect_thresh)])
+            if detect_minarea is not None:
+                cmd.extend(["-DETECT_MINAREA", str(detect_minarea)])
+            if filter_name and filter_name != "default":
+                cmd.extend(["-FILTER_NAME", f"{filter_name}.conv"])
+
+            logger.info("Running SExtractor from cwd: %s", working_dir)
+            logger.info("SExtractor command: %s", " ".join(cmd))
 
             # Try 'sex' command first (most common)
             try:
@@ -150,7 +179,7 @@ class SourceExtractorProcessor(AbstractImageProcessor):
             # Clean up symlink and any config files copied into working_dir
             if image_symlink.exists():
                 image_symlink.unlink()
-            for config_file in ["default.sex", "default.param", "default.conv", "default.nnw"]:
+            for config_file in config_files_to_copy:
                 cfg = working_dir / config_file
                 if cfg.exists():
                     cfg.unlink()
@@ -207,8 +236,23 @@ class SourceExtractorProcessor(AbstractImageProcessor):
 
         try:
             config_dir = Path(__file__).parent / "sextractor_configs"
+
+            detect_thresh: float | None = None
+            detect_minarea: int | None = None
+            filter_name: str | None = None
+            if context.settings is not None:
+                detect_thresh = getattr(context.settings, "sextractor_detect_thresh", None)
+                detect_minarea = getattr(context.settings, "sextractor_detect_minarea", None)
+                filter_name = getattr(context.settings, "sextractor_filter_name", None)
+
             sources_df = self._extract_sources(
-                context.working_image_path, config_dir, context.working_dir, logger=context.logger
+                context.working_image_path,
+                config_dir,
+                context.working_dir,
+                logger=context.logger,
+                detect_thresh=detect_thresh,
+                detect_minarea=detect_minarea,
+                filter_name=filter_name,
             )
             context.detected_sources = sources_df
 

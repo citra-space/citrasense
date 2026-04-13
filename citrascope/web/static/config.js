@@ -307,6 +307,9 @@ async function saveConfiguration(event) {
         gps_update_interval_minutes: parseInt(store.config.gps_update_interval_minutes || 5, 10),
         plate_solve_timeout: parseInt(store.config.plate_solve_timeout || 60, 10),
         astrometry_index_path: store.config.astrometry_index_path || '',
+        sextractor_detect_thresh: parseFloat(store.config.sextractor_detect_thresh || 5.0),
+        sextractor_detect_minarea: parseInt(store.config.sextractor_detect_minarea || 3, 10),
+        sextractor_filter_name: store.config.sextractor_filter_name || 'default',
     };
 
     COMPUTED_FIELDS.forEach(f => delete config[f]);

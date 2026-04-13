@@ -697,6 +697,45 @@
                                     </div>
                                 </div>
                             </div>
+
+                            <!-- Source Extraction Settings -->
+                            <hr class="border-secondary" />
+                            <div class="col-12">
+                                <h6 class="text-muted mb-2"><i class="bi bi-search me-2"></i>Source Extraction</h6>
+                                <small class="text-muted d-block mb-3">
+                                    <a href="https://sextractor.readthedocs.io" target="_blank" class="text-muted">SExtractor</a>
+                                    detection parameters. Lower thresholds find fainter objects but increase false positives from noise and hot pixels.
+                                </small>
+                                <div class="row g-2">
+                                    <div class="col-6 col-md-3">
+                                        <label class="form-label small text-muted mb-1" for="sextractor_detect_thresh">Detection threshold (&sigma;)</label>
+                                        <input type="number" class="form-control form-control-sm bg-dark text-light border-secondary"
+                                               id="sextractor_detect_thresh" step="0.5" min="1" max="20"
+                                               x-model.number="$store.citrascope.config.sextractor_detect_thresh">
+                                        <small class="text-muted">Sigmas above background (1&ndash;20)</small>
+                                    </div>
+                                    <div class="col-6 col-md-3">
+                                        <label class="form-label small text-muted mb-1" for="sextractor_detect_minarea">Min pixel area</label>
+                                        <input type="number" class="form-control form-control-sm bg-dark text-light border-secondary"
+                                               id="sextractor_detect_minarea" step="1" min="1" max="50"
+                                               x-model.number="$store.citrascope.config.sextractor_detect_minarea">
+                                        <small class="text-muted">Connected pixels required (1&ndash;50)</small>
+                                    </div>
+                                    <div class="col-12 col-md-6">
+                                        <label class="form-label small text-muted mb-1" for="sextractor_filter_name">Convolution kernel</label>
+                                        <select class="form-select form-select-sm bg-dark text-light border-secondary"
+                                                id="sextractor_filter_name"
+                                                x-model="$store.citrascope.config.sextractor_filter_name">
+                                            <option value="gauss_1.5_3x3">Gaussian 3&times;3 (FWHM 1.5px)</option>
+                                            <option value="gauss_2.5_5x5">Gaussian 5&times;5 (FWHM 2.5px)</option>
+                                            <option value="default">Gaussian 9&times;9 (FWHM 5.0px)</option>
+                                            <option value="tophat_3.0_3x3">Top-hat 3&times;3</option>
+                                            <option value="tophat_5.0_5x5">Top-hat 5&times;5</option>
+                                        </select>
+                                        <small class="text-muted">Smaller kernels suit sharp PSFs; top-hat suppresses hot-pixel triggers</small>
+                                    </div>
+                                </div>
+                            </div>
                         </div>
                     </div>
 

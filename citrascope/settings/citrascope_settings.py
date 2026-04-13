@@ -60,6 +60,11 @@ class CitraScopeSettings(BaseModel):
     plate_solve_timeout: int = 60
     astrometry_index_path: str = ""
 
+    # Source extraction (SExtractor)
+    sextractor_detect_thresh: float = 5.0
+    sextractor_detect_minarea: int = 3
+    sextractor_filter_name: str = "default"
+
     # Task retry
     max_task_retries: int = 3
     initial_retry_delay_seconds: int = 30
@@ -338,6 +343,49 @@ class CitraScopeSettings(BaseModel):
             clamped = max(10, min(300, v))
             CITRASCOPE_LOGGER.warning("plate_solve_timeout %d out of range [10, 300]. Clamped to %d.", v, clamped)
             return clamped
+        return v
+
+    @field_validator("sextractor_detect_thresh", mode="before")
+    @classmethod
+    def _validate_sextractor_detect_thresh(cls, v: Any) -> float:
+        try:
+            v = float(v)
+        except (TypeError, ValueError):
+            CITRASCOPE_LOGGER.warning("Invalid sextractor_detect_thresh (%r). Falling back to 5.0.", v)
+            return 5.0
+        if v < 1.0 or v > 20.0:
+            clamped = max(1.0, min(20.0, v))
+            CITRASCOPE_LOGGER.warning(
+                "sextractor_detect_thresh %.1f out of range [1.0, 20.0]. Clamped to %.1f.", v, clamped
+            )
+            return clamped
+        return v
+
+    @field_validator("sextractor_detect_minarea", mode="before")
+    @classmethod
+    def _validate_sextractor_detect_minarea(cls, v: Any) -> int:
+        try:
+            v = int(v)
+        except (TypeError, ValueError):
+            CITRASCOPE_LOGGER.warning("Invalid sextractor_detect_minarea (%r). Falling back to 3.", v)
+            return 3
+        if v < 1 or v > 50:
+            clamped = max(1, min(50, v))
+            CITRASCOPE_LOGGER.warning("sextractor_detect_minarea %d out of range [1, 50]. Clamped to %d.", v, clamped)
+            return clamped
+        return v
+
+    _VALID_SEXTRACTOR_FILTERS = frozenset(
+        {"default", "gauss_1.5_3x3", "gauss_2.5_5x5", "tophat_3.0_3x3", "tophat_5.0_5x5"}
+    )
+
+    @field_validator("sextractor_filter_name", mode="before")
+    @classmethod
+    def _validate_sextractor_filter_name(cls, v: Any) -> str:
+        v = str(v) if v else "default"
+        if v not in cls._VALID_SEXTRACTOR_FILTERS:
+            CITRASCOPE_LOGGER.warning("Unknown sextractor_filter_name (%r). Falling back to 'default'.", v)
+            return "default"
         return v
 
     @field_validator("observing_session_sun_altitude_threshold", mode="before")

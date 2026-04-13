@@ -1,0 +1,5 @@
+CONV NORM
+# 3x3 top-hat filter (radius = 3.0 pixels, all weights equal).
+1.000000 1.000000 1.000000
+1.000000 1.000000 1.000000
+1.000000 1.000000 1.000000
