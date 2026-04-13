@@ -157,7 +157,7 @@ class TestPlateSolverProcessor:
         mock_check.return_value = True
 
         new_file = tmp_path / "test_image_wcs.fits"
-        mock_solve.return_value = new_file
+        mock_solve.return_value = (new_file, {"log_odds": 42.0, "n_match": 15, "n_conflict": 0})
 
         mock_primary = MagicMock(spec=fits.PrimaryHDU)
         mock_header = {

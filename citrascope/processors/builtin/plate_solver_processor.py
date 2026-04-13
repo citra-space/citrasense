@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import re
 import subprocess
 import time
 from pathlib import Path
@@ -33,6 +34,51 @@ def _compute_plate_scale(telescope_record: dict, x_binning: int = 1, y_binning: 
         return None
     binning = max(x_binning, y_binning)
     return 206265.0 * (float(pixel_size) * binning / 1000.0) / float(focal_length)
+
+
+def _parse_solve_quality(stdout: str) -> dict[str, Any]:
+    """Extract solve quality metrics from solve-field stdout.
+
+    Parses the log-odds ratio, match/conflict/distractor counts, pixel scale,
+    solving index, number of sources extracted, and field geometry from
+    astrometry.net's text output.
+    """
+    quality: dict[str, Any] = {}
+
+    m = re.search(
+        r"log-odds ratio ([\d.e+\-]+) \(([^)]+)\),\s*"
+        r"(\d+) match,\s*(\d+) conflict,\s*(\d+) distractors?,\s*(\d+) index",
+        stdout,
+    )
+    if m:
+        quality["log_odds"] = float(m.group(1))
+        quality["log_odds_scientific"] = m.group(2)
+        quality["n_match"] = int(m.group(3))
+        quality["n_conflict"] = int(m.group(4))
+        quality["n_distractor"] = int(m.group(5))
+        quality["n_index"] = int(m.group(6))
+
+    m = re.search(r"pixel scale ([\d.]+) arcsec/pix", stdout)
+    if m:
+        quality["solved_pixel_scale"] = float(m.group(1))
+
+    m = re.search(r"solved with index (\S+)", stdout)
+    if m:
+        quality["solved_index"] = m.group(1)
+
+    m = re.search(r"simplexy: found (\d+) sources", stdout)
+    if m:
+        quality["n_sources_extracted"] = int(m.group(1))
+
+    m = re.search(r"Field rotation angle: up is ([\d.+-]+) degrees", stdout)
+    if m:
+        quality["field_rotation_deg"] = float(m.group(1))
+
+    m = re.search(r"Field parity: (\w+)", stdout)
+    if m:
+        quality["field_parity"] = m.group(1)
+
+    return quality
 
 
 class PlateSolverProcessor(AbstractImageProcessor):
@@ -87,15 +133,15 @@ class PlateSolverProcessor(AbstractImageProcessor):
         self,
         image_path: Path,
         context: ProcessingContext,
-    ) -> Path:
-        """Run astrometry.net solve-field and return the path to the solved FITS.
+    ) -> tuple[Path, dict[str, Any]]:
+        """Run astrometry.net solve-field and return the solved FITS path + quality metrics.
 
         Passes RA/Dec and plate scale hints from context when available for
         faster, more reliable solves. Falls back to a blind solve if hints
         are unavailable.
 
         Returns:
-            Path to the solved FITS file (with WCS headers).
+            (solved_fits_path, solve_quality_dict).
 
         Raises:
             RuntimeError: If solve-field is not found, fails, or times out.
@@ -200,7 +246,18 @@ class PlateSolverProcessor(AbstractImageProcessor):
         if not solved_path.exists():
             raise RuntimeError("solve-field completed but solved FITS not found — image may be unsolvable")
 
-        return solved_path
+        solve_quality = _parse_solve_quality(result.stdout or "")
+        if solve_quality:
+            parts = []
+            if "log_odds" in solve_quality:
+                parts.append(f"log-odds={solve_quality['log_odds']:.1f}")
+            if "n_match" in solve_quality:
+                parts.append(f"{solve_quality['n_match']} match / {solve_quality.get('n_conflict', '?')} conflict")
+            if "solved_index" in solve_quality:
+                parts.append(f"index={solve_quality['solved_index']}")
+            logger.info("Solve quality: %s", ", ".join(parts))
+
+        return solved_path, solve_quality
 
     @staticmethod
     def _compute_hfr_from_image(context: ProcessingContext) -> float | None:
@@ -248,7 +305,7 @@ class PlateSolverProcessor(AbstractImageProcessor):
             )
 
         try:
-            wcs_image_path = self._solve_field(context.working_image_path, context)
+            wcs_image_path, solve_quality = self._solve_field(context.working_image_path, context)
             context.working_image_path = wcs_image_path
 
             with fits.open(wcs_image_path) as hdul:
@@ -272,18 +329,22 @@ class PlateSolverProcessor(AbstractImageProcessor):
 
             hfr_median = self._compute_hfr_from_image(context)
 
+            extracted = {
+                "plate_solved": True,
+                "ra_center": ra_center,
+                "dec_center": dec_center,
+                "pixel_scale": pixel_scale,
+                "field_width_deg": field_width_deg,
+                "field_height_deg": field_height_deg,
+                "wcs_image_path": str(wcs_image_path),
+                "hfr_median": hfr_median,
+            }
+            if solve_quality:
+                extracted["solve_quality"] = solve_quality
+
             result = ProcessorResult(
                 should_upload=True,
-                extracted_data={
-                    "plate_solved": True,
-                    "ra_center": ra_center,
-                    "dec_center": dec_center,
-                    "pixel_scale": pixel_scale,
-                    "field_width_deg": field_width_deg,
-                    "field_height_deg": field_height_deg,
-                    "wcs_image_path": str(wcs_image_path),
-                    "hfr_median": hfr_median,
-                },
+                extracted_data=extracted,
                 confidence=1.0,
                 reason=f"Plate solved in {elapsed:.1f}s",
                 processing_time_seconds=elapsed,
