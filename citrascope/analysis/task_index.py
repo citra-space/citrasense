@@ -23,7 +23,7 @@ _SORTABLE_COLUMNS = frozenset(
         "completed_at",
         "target_name",
         "filter_name",
-        "pointing_error_arcsec",
+        "pointing_error_deg",
         "zero_point",
         "total_processing_time_s",
         "convergence_attempts",
@@ -46,7 +46,7 @@ CREATE TABLE IF NOT EXISTS completed_tasks (
     requested_dec               REAL,
     solved_ra                   REAL,
     solved_dec                  REAL,
-    pointing_error_arcsec       REAL,
+    pointing_error_deg          REAL,
     convergence_attempts        INTEGER,
     converged                   INTEGER,
     convergence_threshold_deg   REAL,
@@ -155,14 +155,25 @@ class TaskIndex:
         solved_ra = _float(ed.get("plate_solver.ra_center"))
         solved_dec = _float(ed.get("plate_solver.dec_center"))
 
-        # Requested position (last iteration's target)
-        requested_ra = _float(pr_dict.get("final_telescope_ra_deg"))
-        requested_dec = _float(pr_dict.get("final_telescope_dec_deg"))
+        # Intended target position — what the system was actually aiming at,
+        # before pointing model correction.  Fall back through: last iteration's
+        # computed lead target → pointing model's target → task RA/Dec.
+        pmc = pr_dict.get("pointing_model_correction") or {}
+        last_iter = iterations[-1] if iterations else {}
+        requested_ra = (
+            _float(last_iter.get("target_lead_ra_deg"))
+            or _float(pmc.get("target_ra_deg"))
+            or _float(task.ra if task else None)
+        )
+        requested_dec = (
+            _float(last_iter.get("target_lead_dec_deg"))
+            or _float(pmc.get("target_dec_deg"))
+            or _float(task.dec if task else None)
+        )
 
-        # Pointing error in arcsec (haversine, all in degrees)
         pointing_error = None
         if solved_ra is not None and requested_ra is not None and solved_dec is not None and requested_dec is not None:
-            pointing_error = _angular_distance_deg(requested_ra, requested_dec, solved_ra, solved_dec) * 3600.0
+            pointing_error = _angular_distance_deg(requested_ra, requested_dec, solved_ra, solved_dec)
 
         # Satellite matching
         observations = ed.get("satellite_matcher.satellite_observations") or []
@@ -380,9 +391,9 @@ class TaskIndex:
                 SUM(CASE WHEN converged = 1 THEN 1 ELSE 0 END)       AS converged_count,
                 AVG(convergence_attempts)                             AS avg_convergence_attempts,
                 AVG(total_slew_time_s)                                AS avg_slew_time_s,
-                AVG(pointing_error_arcsec)                            AS avg_pointing_error_arcsec,
-                AVG(CASE WHEN pointing_error_arcsec IS NOT NULL THEN pointing_error_arcsec END)
-                                                                      AS mean_pointing_error_arcsec,
+                AVG(pointing_error_deg)                                AS avg_pointing_error_deg,
+                AVG(CASE WHEN pointing_error_deg IS NOT NULL THEN pointing_error_deg END)
+                                                                      AS mean_pointing_error_deg,
                 SUM(CASE WHEN target_matched = 1 THEN 1 ELSE 0 END)  AS target_matched_count,
                 SUM(COALESCE(incidental_matches, 0))                  AS total_incidental,
                 SUM(CASE WHEN upload_success = 1 THEN 1 ELSE 0 END)  AS upload_success_count,
@@ -428,7 +439,7 @@ class TaskIndex:
             "convergence_rate": _pct(row[2], tc),
             "avg_convergence_attempts": _rnd(row[3]),
             "avg_slew_time_s": _rnd(row[4]),
-            "avg_pointing_error_arcsec": _rnd(row[6]),
+            "avg_pointing_error_deg": _rnd(row[6], 4),
             "target_match_rate": _pct(row[7], sat_tc) if sat_tc else None,
             "total_incidental_detections": row[8] or 0,
             "upload_success_rate": _pct(row[9], row[10]) if row[10] else None,
@@ -465,7 +476,7 @@ def _empty_stats() -> dict:
         "convergence_rate": None,
         "avg_convergence_attempts": None,
         "avg_slew_time_s": None,
-        "avg_pointing_error_arcsec": None,
+        "avg_pointing_error_deg": None,
         "target_match_rate": None,
         "total_incidental_detections": 0,
         "upload_success_rate": None,

@@ -371,14 +371,43 @@ body {
     vertical-align: middle;
 }
 
+.analysis-summary-row:hover {
+    background: rgba(255, 255, 255, 0.03);
+}
+.analysis-row-expanded {
+    background: rgba(255, 255, 255, 0.04) !important;
+    border-bottom: none;
+}
+.analysis-row-expanded td {
+    border-bottom-color: transparent;
+}
+.analysis-detail-row td {
+    background: transparent;
+}
 .analysis-detail-card {
     background: #1a1d23;
-    border-color: var(--bs-border-color);
-}
-.analysis-detail-card .card-body {
-    padding: 1rem;
+    border: 1px solid var(--bs-border-color);
+    border-radius: 6px;
 }
 
-.analysis-detail-timing-bar > div {
+.analysis-detail-card > .row > div {
     transition: width 0.3s ease;
+}
+
+.analysis-lightbox {
+    position: fixed;
+    inset: 0;
+    z-index: 10000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(0, 0, 0, 0.9);
+    cursor: zoom-out;
+}
+.analysis-lightbox img {
+    max-width: 95vw;
+    max-height: 95vh;
+    object-fit: contain;
+    cursor: default;
+    border-radius: 4px;
 }

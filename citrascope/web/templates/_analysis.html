@@ -1,4 +1,4 @@
-<div class="container-fluid my-4" id="analysisSection"
+<div class="container my-4" id="analysisSection"
      x-show="$store.citrascope.currentSection === 'analysis'" x-cloak
      x-data="analysisTab()"
      x-effect="if ($store.citrascope.currentSection === 'analysis' && !loaded) loadAll()">
@@ -36,7 +36,7 @@
         <div class="col-6 col-md-4 col-xl-2">
             <div class="card analysis-card h-100">
                 <div class="card-body p-2 text-center">
-                    <div class="analysis-card-value" x-text="stats.avg_pointing_error_arcsec != null ? stats.avg_pointing_error_arcsec + '″' : '—'"></div>
+                    <div class="analysis-card-value" x-text="stats.avg_pointing_error_deg != null ? stats.avg_pointing_error_deg + '°' : '—'"></div>
                     <div class="analysis-card-label">Avg Pointing Error</div>
                 </div>
             </div>
@@ -159,8 +159,8 @@
                     <th>Window</th>
                     <th>Converged</th>
                     <th>Solved</th>
-                    <th class="sortable" @click="toggleSort('pointing_error_arcsec')">
-                        Pointing <span x-text="sortIcon('pointing_error_arcsec')"></span>
+                    <th class="sortable" @click="toggleSort('pointing_error_deg')">
+                        Pointing <span x-text="sortIcon('pointing_error_deg')"></span>
                     </th>
                     <th>Target Hit</th>
                     <th>Extras</th>
@@ -172,12 +172,18 @@
                     <th></th>
                 </tr>
             </thead>
-            <tbody>
-                <template x-for="task in tasks" :key="task.task_id">
-                    <tr>
+            <template x-for="task in tasks" :key="task.task_id">
+                <tbody>
+                    <tr class="analysis-summary-row" :class="expanded === task.task_id && 'analysis-row-expanded'"
+                        @click="toggleDetail(task.task_id)" style="cursor: pointer;">
                         <td><small x-text="formatTime(task.completed_at)"></small></td>
                         <td x-text="task.target_name || '—'"></td>
-                        <td><small x-text="task.filter_name || '—'"></small></td>
+                        <td>
+                            <span x-show="task.filter_name" class="badge"
+                                  :style="'background-color:' + ($store.citrascope.filterColors[task.filter_name] || '#777') + ';color:white'"
+                                  x-text="task.filter_name"></span>
+                            <span x-show="!task.filter_name" class="text-muted">—</span>
+                        </td>
                         <td>
                             <span x-show="task.missed_window === 1" class="badge bg-danger">Missed</span>
                             <span x-show="task.missed_window === 0 && task.window_start_delay_s != null && task.window_start_delay_s > 30"
@@ -199,10 +205,10 @@
                             <span x-show="task.plate_solved == null" class="text-muted">—</span>
                         </td>
                         <td>
-                            <span x-show="task.pointing_error_arcsec != null"
-                                  :class="pointingClass(task.pointing_error_arcsec)"
-                                  x-text="task.pointing_error_arcsec?.toFixed(1) + '″'"></span>
-                            <span x-show="task.pointing_error_arcsec == null" class="text-muted">—</span>
+                            <span x-show="task.pointing_error_deg != null"
+                                  :class="pointingClass(task.pointing_error_deg)"
+                                  x-text="task.pointing_error_deg?.toFixed(4) + '°'"></span>
+                            <span x-show="task.pointing_error_deg == null" class="text-muted">—</span>
                         </td>
                         <td>
                             <span x-show="task.target_matched === 1" class="text-success">✓</span>
@@ -230,17 +236,238 @@
                             </div>
                         </td>
                         <td>
-                            <button class="btn btn-sm btn-link p-0" @click="toggleDetail(task.task_id)">
-                                <i class="bi" :class="expanded === task.task_id ? 'bi-chevron-up' : 'bi-chevron-down'"></i>
-                            </button>
+                            <i class="bi" :class="expanded === task.task_id ? 'bi-chevron-up' : 'bi-chevron-down'"></i>
                         </td>
                     </tr>
-                </template>
-                <template x-if="tasks.length === 0 && !loading">
-                    <tr><td colspan="13" class="text-center text-muted py-4">
-                        No completed tasks yet. Results appear here after the processing pipeline runs.
-                    </td></tr>
-                </template>
+                    <tr x-show="expanded === task.task_id && detail" class="analysis-detail-row">
+                        <td colspan="13" class="p-0 border-0">
+                            <div class="analysis-detail-card mx-2 my-2">
+                                <div class="row g-0">
+                                    <div class="col-md-6 p-3">
+                                        <img :src="'/api/analysis/tasks/' + task.task_id + '/image'" class="img-fluid rounded"
+                                             @error="$event.target.style.display='none'"
+                                             @click.stop="lightboxSrc = '/api/analysis/tasks/' + task.task_id + '/image'"
+                                             style="object-fit: contain; background: #111; cursor: zoom-in; width: 100%;">
+                                        <div class="text-muted small mt-1" x-show="detail && !detail.has_annotated_image">No preview available</div>
+                                    </div>
+                                    <div class="col-md-6 p-3">
+                                        <template x-if="detail">
+                                            <div>
+                                                <div class="d-flex align-items-baseline gap-2 mb-3">
+                                                    <h6 class="mb-0" x-text="detail.target_name || '—'"></h6>
+                                                    <code class="text-muted" style="font-size: 0.7rem;" x-text="detail.task_id"></code>
+                                                </div>
+
+                                                <template x-if="detail.window_start && detail.window_stop">
+                                                    <div class="mb-3">
+                                                        <small class="text-muted d-block mb-1">Task window</small>
+                                                        <div class="d-flex align-items-center gap-2">
+                                                            <small x-text="formatTime(detail.window_start)"></small>
+                                                            <div class="flex-grow-1 position-relative" style="height: 8px; background: #333; border-radius: 4px;">
+                                                                <div class="position-absolute bg-success" style="height: 100%; border-radius: 4px;"
+                                                                     :style="'left:' + windowPct(detail, 'start') + '%; width:' + windowPct(detail, 'width') + '%'"></div>
+                                                            </div>
+                                                            <small x-text="formatTime(detail.window_stop)"></small>
+                                                        </div>
+                                                        <div class="d-flex gap-3 mt-1">
+                                                            <small class="text-muted" x-show="detail.window_start_delay_s != null"
+                                                                   x-text="'Start delay: ' + detail.window_start_delay_s?.toFixed(1) + 's'"></small>
+                                                            <small class="text-muted" x-show="detail.window_time_remaining_s != null"
+                                                                   x-text="'Remaining: ' + detail.window_time_remaining_s?.toFixed(1) + 's'"></small>
+                                                        </div>
+                                                    </div>
+                                                </template>
+
+                                                <template x-if="detail.convergence_attempts != null">
+                                                    <div class="mb-3">
+                                                        <small class="text-muted d-block mb-1">Convergence</small>
+                                                        <div class="d-flex gap-3 flex-wrap">
+                                                            <span x-text="(detail.converged ? '✓ Converged' : '✗ Failed') + ' in ' + detail.convergence_attempts + ' iteration(s)'"></span>
+                                                            <span x-show="detail.total_slew_time_s" x-text="'Slew: ' + detail.total_slew_time_s?.toFixed(1) + 's'"></span>
+                                                            <span x-show="detail.observed_slew_rate_deg_per_s" class="text-muted"
+                                                                  x-text="detail.observed_slew_rate_deg_per_s?.toFixed(1) + '°/s'"></span>
+                                                            <span x-show="detail.convergence_threshold_deg" class="text-muted"
+                                                                  x-text="'threshold: ' + detail.convergence_threshold_deg?.toFixed(4) + '°'"></span>
+                                                        </div>
+                                                    </div>
+                                                </template>
+
+                                                <div class="mb-3">
+                                                    <small class="text-muted d-block mb-1">Pointing</small>
+                                                    <div class="d-flex flex-column gap-1" style="font-size: 0.85rem;">
+                                                        <div class="d-flex gap-4">
+                                                            <span><span class="text-muted">Target:</span> <span x-text="formatRA(detail.requested_ra)"></span> / <span x-text="formatDec(detail.requested_dec)"></span></span>
+                                                        </div>
+                                                        <div class="d-flex gap-4">
+                                                            <span><span class="text-muted">Solved:</span> <span x-text="formatRA(detail.solved_ra)"></span> / <span x-text="formatDec(detail.solved_dec)"></span></span>
+                                                        </div>
+                                                        <div class="d-flex gap-3">
+                                                            <span x-show="detail.pointing_error_deg != null"
+                                                                  :class="pointingClass(detail.pointing_error_deg)"
+                                                                  x-text="'Error: ' + detail.pointing_error_deg?.toFixed(4) + '°'"></span>
+                                                            <span x-show="detail.final_target_distance_deg != null" class="text-muted"
+                                                                  x-text="'Distance to satellite: ' + detail.final_target_distance_deg?.toFixed(4) + '°'"></span>
+                                                        </div>
+                                                    </div>
+                                                </div>
+
+                                                <div class="mb-3">
+                                                    <small class="text-muted d-block mb-1">Plate solve</small>
+                                                    <div class="d-flex gap-3 flex-wrap">
+                                                        <span x-text="detail.plate_solved ? '✓ Solved' : '✗ Not solved'"></span>
+                                                        <span x-show="detail.source_count" x-text="detail.source_count + ' sources'"></span>
+                                                        <span x-show="detail.pixel_scale" x-text="detail.pixel_scale?.toFixed(2) + '″/px'"></span>
+                                                        <span x-show="detail.field_width_deg" x-text="(detail.field_width_deg * 60).toFixed(1) + '′ × ' + (detail.field_height_deg * 60).toFixed(1) + '′'"></span>
+                                                        <span x-show="detail.calibration_applied" class="badge bg-info">Calibrated</span>
+                                                    </div>
+                                                    <div class="d-flex gap-3 flex-wrap mt-1" x-show="hfr || solveQuality">
+                                                        <span x-show="hfr" x-text="'HFR: ' + hfr + ' px'" class="text-info"></span>
+                                                        <template x-if="solveQuality">
+                                                            <span class="d-flex gap-2 flex-wrap">
+                                                                <span x-text="'log-odds: ' + solveQuality.log_odds?.toFixed(1)"></span>
+                                                                <span class="text-muted" x-text="solveQuality.n_match + ' match / ' + solveQuality.n_conflict + ' conflict'"></span>
+                                                                <span class="text-muted" x-text="'rotation: ' + solveQuality.field_rotation_deg?.toFixed(3) + '°'"></span>
+                                                                <span class="text-muted" x-text="'parity: ' + solveQuality.field_parity"></span>
+                                                            </span>
+                                                        </template>
+                                                    </div>
+                                                </div>
+
+                                                <div class="mb-3">
+                                                    <small class="text-muted d-block mb-1">Photometry</small>
+                                                    <div class="d-flex gap-3">
+                                                        <span x-show="detail.zero_point != null" x-text="'ZP ' + detail.zero_point?.toFixed(3)"></span>
+                                                        <span x-show="detail.calibration_star_count" x-text="detail.calibration_star_count + ' cal stars'"></span>
+                                                        <span x-show="detail.filter_name" class="badge"
+                                                              :style="'background-color:' + ($store.citrascope.filterColors[detail.filter_name] || '#777') + ';color:white'"
+                                                              x-text="detail.filter_name"></span>
+                                                    </div>
+                                                </div>
+
+                                                <div class="mb-3">
+                                                    <small class="text-muted d-block mb-1">Satellite matching</small>
+                                                    <div class="d-flex gap-3 flex-wrap">
+                                                        <span x-show="detail.target_satellite_name"
+                                                              x-text="'Target: ' + detail.target_satellite_name + (detail.target_matched ? ' ✓' : ' ✗')"></span>
+                                                        <span x-show="detail.target_satellite_mag != null" x-text="'mag ' + detail.target_satellite_mag?.toFixed(2)"></span>
+                                                        <span x-text="(detail.total_satellites_detected || 0) + ' detected in frame'"></span>
+                                                        <span x-show="detail.incidental_matches" class="text-info"
+                                                              x-text="detail.incidental_matches + ' incidental'"></span>
+                                                    </div>
+                                                    <template x-if="predictionsInField.length > 0 || _satObs.length > 0">
+                                                        <table class="table table-sm table-borderless mt-2 mb-0" style="font-size: 0.8rem;">
+                                                            <thead>
+                                                                <tr class="text-muted">
+                                                                    <th class="py-0">Name</th>
+                                                                    <th class="py-0">NORAD</th>
+                                                                    <th class="py-0">Status</th>
+                                                                    <th class="py-0">Mag</th>
+                                                                    <th class="py-0">RA</th>
+                                                                    <th class="py-0">Dec</th>
+                                                                    <th class="py-0">Phase</th>
+                                                                </tr>
+                                                            </thead>
+                                                            <tbody>
+                                                                <template x-for="pred in predictionsInField" :key="pred.satellite_id">
+                                                                    <tr>
+                                                                        <td class="py-0" :class="detail.target_satellite_id && String(pred.satellite_id) === String(detail.target_satellite_id).replace('sat-','')
+                                                                            ? (_satObs.some(s => String(s.norad_id) === String(pred.satellite_id)) ? 'text-success fw-bold' : 'text-warning fw-bold')
+                                                                            : ''"
+                                                                            x-text="pred.name"></td>
+                                                                        <td class="py-0 text-muted" x-text="pred.satellite_id"></td>
+                                                                        <td class="py-0">
+                                                                            <span x-show="_satObs.some(s => String(s.norad_id) === String(pred.satellite_id))"
+                                                                                  class="badge bg-success" style="font-size: 0.7rem;">Matched</span>
+                                                                            <span x-show="!_satObs.some(s => String(s.norad_id) === String(pred.satellite_id))"
+                                                                                  class="badge bg-secondary" style="font-size: 0.7rem;">Predicted</span>
+                                                                        </td>
+                                                                        <td class="py-0" x-text="(() => { const m = _satObs.find(s => String(s.norad_id) === String(pred.satellite_id)); return m?.mag?.toFixed(2) || '—'; })()"></td>
+                                                                        <td class="py-0" x-text="(pred.predicted_ra_deg || pred.ra)?.toFixed(4) + '°'"></td>
+                                                                        <td class="py-0" x-text="(pred.predicted_dec_deg || pred.dec)?.toFixed(4) + '°'"></td>
+                                                                        <td class="py-0 text-muted" x-text="pred.phase_angle != null ? pred.phase_angle + '°' : '—'"></td>
+                                                                    </tr>
+                                                                </template>
+                                                            </tbody>
+                                                        </table>
+                                                    </template>
+                                                    <div x-show="predictionsInField.length === 0 && _satObs.length === 0" class="text-muted mt-1" style="font-size: 0.8rem;">
+                                                        No satellites predicted in this frame
+                                                    </div>
+                                                </div>
+
+                                                <div class="mb-3">
+                                                    <small class="text-muted d-block mb-1">Upload</small>
+                                                    <div class="d-flex gap-3">
+                                                        <span x-text="formatUploadType(detail)"></span>
+                                                        <span x-show="detail.upload_success === 1" class="text-success">✓ Uploaded</span>
+                                                        <span x-show="detail.upload_success === 0" class="text-danger">✗ Failed</span>
+                                                        <span x-show="detail.upload_success == null && detail.should_upload" class="text-warning">Pending</span>
+                                                        <span x-show="detail.skip_reason" class="text-muted" x-text="detail.skip_reason"></span>
+                                                    </div>
+                                                </div>
+
+                                                <div class="mb-3">
+                                                    <small class="text-muted d-block mb-1">Task phases</small>
+                                                    <div class="d-flex" style="height: 20px; border-radius: 4px; overflow: hidden;">
+                                                        <div :style="'background:#0d6efd; width:' + phasePct(detail, 'slew') + '%'"
+                                                             :title="'Slew: ' + (detail.total_slew_time_s || 0).toFixed(1) + 's'"></div>
+                                                        <div :style="'background:#00cec9; width:' + phasePct(detail, 'imaging') + '%'"
+                                                             :title="'Imaging: ' + imagingDuration(detail).toFixed(1) + 's'"></div>
+                                                        <div :style="'background:#6c5ce7; width:' + phasePct(detail, 'queue') + '%'"
+                                                             :title="'Queue wait: ' + (detail.processing_queue_wait_s || 0).toFixed(2) + 's'"></div>
+                                                        <div :style="'background:#fdcb6e; width:' + phasePct(detail, 'processing') + '%'"
+                                                             :title="'Processing: ' + (detail.total_processing_time_s || 0).toFixed(2) + 's'"></div>
+                                                    </div>
+                                                    <div class="d-flex flex-wrap gap-3 mt-1" style="font-size: 0.75rem;">
+                                                        <span><span class="analysis-legend-dot bg-primary"></span> Slew <span class="text-muted" x-text="(detail.total_slew_time_s || 0).toFixed(1) + 's'"></span></span>
+                                                        <span><span class="analysis-legend-dot" style="background:#00cec9"></span> Imaging <span class="text-muted" x-text="imagingDuration(detail).toFixed(1) + 's'"></span></span>
+                                                        <span><span class="analysis-legend-dot" style="background:#6c5ce7"></span> Queue <span class="text-muted" x-text="(detail.processing_queue_wait_s || 0).toFixed(2) + 's'"></span></span>
+                                                        <span><span class="analysis-legend-dot" style="background:#fdcb6e"></span> Processing <span class="text-muted" x-text="(detail.total_processing_time_s || 0).toFixed(2) + 's'"></span></span>
+                                                    </div>
+                                                </div>
+
+                                                <div class="mb-3">
+                                                    <small class="text-muted d-block mb-1">Processing breakdown</small>
+                                                    <div class="d-flex" style="height: 20px; border-radius: 4px; overflow: hidden;">
+                                                        <div :style="'background:#00b894; width:' + procPct(detail, 'calibration_time_s') + '%'"></div>
+                                                        <div :style="'background:#fdcb6e; width:' + procPct(detail, 'plate_solve_time_s') + '%'"></div>
+                                                        <div :style="'background:#e17055; width:' + procPct(detail, 'source_extractor_time_s') + '%'"></div>
+                                                        <div :style="'background:#74b9ff; width:' + procPct(detail, 'photometry_time_s') + '%'"></div>
+                                                        <div :style="'background:#a29bfe; width:' + procPct(detail, 'matcher_time_s') + '%'"></div>
+                                                        <div :style="'background:#636e72; width:' + procPct(detail, 'annotated_image_time_s') + '%'"></div>
+                                                    </div>
+                                                    <div class="d-flex flex-wrap gap-3 mt-1" style="font-size: 0.75rem;">
+                                                        <span><span class="analysis-legend-dot" style="background:#00b894"></span> Cal <span class="text-muted" x-text="(detail.calibration_time_s || 0).toFixed(3) + 's'"></span></span>
+                                                        <span><span class="analysis-legend-dot" style="background:#fdcb6e"></span> Solve <span class="text-muted" x-text="(detail.plate_solve_time_s || 0).toFixed(2) + 's'"></span></span>
+                                                        <span><span class="analysis-legend-dot" style="background:#e17055"></span> SExtract <span class="text-muted" x-text="(detail.source_extractor_time_s || 0).toFixed(3) + 's'"></span></span>
+                                                        <span><span class="analysis-legend-dot" style="background:#74b9ff"></span> Phot <span class="text-muted" x-text="(detail.photometry_time_s || 0).toFixed(3) + 's'"></span></span>
+                                                        <span><span class="analysis-legend-dot" style="background:#a29bfe"></span> Match <span class="text-muted" x-text="(detail.matcher_time_s || 0).toFixed(3) + 's'"></span></span>
+                                                        <span><span class="analysis-legend-dot" style="background:#636e72"></span> Annotate <span class="text-muted" x-text="(detail.annotated_image_time_s || 0).toFixed(3) + 's'"></span></span>
+                                                    </div>
+                                                </div>
+
+                                                <div>
+                                                    <template x-if="detail.artifacts_available">
+                                                        <a :href="'/api/analysis/tasks/' + detail.task_id + '/artifacts/report.html'"
+                                                           target="_blank" class="btn btn-sm btn-outline-secondary">View full report</a>
+                                                    </template>
+                                                    <template x-if="!detail.artifacts_available">
+                                                        <span class="badge bg-secondary">Artifacts expired</span>
+                                                    </template>
+                                                </div>
+                                            </div>
+                                        </template>
+                                    </div>
+                                </div>
+                            </div>
+                        </td>
+                    </tr>
+                </tbody>
+            </template>
+            <tbody x-show="tasks.length === 0 && !loading">
+                <tr><td colspan="13" class="text-center text-muted py-4">
+                    No completed tasks yet. Results appear here after the processing pipeline runs.
+                </td></tr>
             </tbody>
         </table>
     </div>
@@ -254,137 +481,9 @@
         </div>
     </div>
 
-    <!-- Expanded detail panel -->
-    <template x-if="expanded && detail">
-        <div class="card analysis-detail-card mb-4">
-            <div class="card-body">
-                <div class="row">
-                    <!-- Left: image preview -->
-                    <div class="col-md-4 mb-3 mb-md-0">
-                        <img :src="'/api/analysis/tasks/' + detail.task_id + '/image'" class="img-fluid rounded"
-                             @error="$event.target.style.display='none'"
-                             style="max-height: 300px; object-fit: contain; background: #111;">
-                        <div class="text-muted small mt-1" x-show="!detail.has_annotated_image">No preview available</div>
-                    </div>
-                    <!-- Right: details -->
-                    <div class="col-md-8">
-                        <h6 x-text="detail.target_name || detail.task_id"></h6>
-
-                        <!-- Task window timeline -->
-                        <template x-if="detail.window_start && detail.window_stop">
-                            <div class="mb-3">
-                                <small class="text-muted">Task window</small>
-                                <div class="d-flex align-items-center gap-2">
-                                    <small x-text="formatTime(detail.window_start)"></small>
-                                    <div class="flex-grow-1 position-relative" style="height: 8px; background: #333; border-radius: 4px;">
-                                        <div class="position-absolute bg-success" style="height: 100%; border-radius: 4px;"
-                                             :style="'left:' + windowPct(detail, 'start') + '%; width:' + windowPct(detail, 'width') + '%'"></div>
-                                    </div>
-                                    <small x-text="formatTime(detail.window_stop)"></small>
-                                </div>
-                                <div class="d-flex gap-3 mt-1">
-                                    <small class="text-muted" x-show="detail.window_start_delay_s != null"
-                                           x-text="'Start delay: ' + detail.window_start_delay_s?.toFixed(1) + 's'"></small>
-                                    <small class="text-muted" x-show="detail.window_time_remaining_s != null"
-                                           x-text="'Remaining: ' + detail.window_time_remaining_s?.toFixed(1) + 's'"></small>
-                                </div>
-                            </div>
-                        </template>
-
-                        <!-- Convergence -->
-                        <template x-if="detail.convergence_attempts != null">
-                            <div class="mb-3">
-                                <small class="text-muted">Convergence</small>
-                                <div class="d-flex gap-3">
-                                    <span x-text="(detail.converged ? '✓ Converged' : '✗ Failed') + ' in ' + detail.convergence_attempts + ' iteration(s)'"></span>
-                                    <span x-show="detail.total_slew_time_s" x-text="'Slew: ' + detail.total_slew_time_s?.toFixed(1) + 's'"></span>
-                                    <span x-show="detail.convergence_threshold_deg" class="text-muted"
-                                          x-text="'threshold: ' + (detail.convergence_threshold_deg * 3600).toFixed(0) + '″'"></span>
-                                </div>
-                            </div>
-                        </template>
-
-                        <!-- Plate solve -->
-                        <div class="mb-3">
-                            <small class="text-muted">Plate solve</small>
-                            <div class="d-flex gap-3 flex-wrap">
-                                <span x-text="detail.plate_solved ? '✓ Solved' : '✗ Not solved'"></span>
-                                <span x-show="detail.source_count" x-text="detail.source_count + ' sources'"></span>
-                                <span x-show="detail.pixel_scale" x-text="detail.pixel_scale?.toFixed(2) + '″/px'"></span>
-                                <span x-show="detail.field_width_deg" x-text="(detail.field_width_deg * 60).toFixed(1) + '′ × ' + (detail.field_height_deg * 60).toFixed(1) + '′'"></span>
-                                <span x-show="detail.calibration_applied" class="badge bg-info">Calibrated</span>
-                            </div>
-                        </div>
-
-                        <!-- Photometry -->
-                        <div class="mb-3">
-                            <small class="text-muted">Photometry</small>
-                            <div class="d-flex gap-3">
-                                <span x-show="detail.zero_point != null" x-text="'ZP ' + detail.zero_point?.toFixed(3)"></span>
-                                <span x-show="detail.calibration_star_count" x-text="detail.calibration_star_count + ' cal stars'"></span>
-                                <span x-show="detail.filter_name" x-text="'Filter: ' + detail.filter_name"></span>
-                            </div>
-                        </div>
-
-                        <!-- Satellite matching -->
-                        <div class="mb-3">
-                            <small class="text-muted">Satellite matching</small>
-                            <div class="d-flex gap-3 flex-wrap">
-                                <span x-show="detail.target_satellite_name"
-                                      x-text="'Target: ' + detail.target_satellite_name + (detail.target_matched ? ' ✓' : ' ✗')"></span>
-                                <span x-show="detail.target_satellite_mag != null" x-text="'mag ' + detail.target_satellite_mag?.toFixed(2)"></span>
-                                <span x-text="(detail.total_satellites_detected || 0) + ' total detected'"></span>
-                                <span x-show="detail.incidental_matches" class="text-info"
-                                      x-text="detail.incidental_matches + ' incidental'"></span>
-                            </div>
-                        </div>
-
-                        <!-- Timing breakdown -->
-                        <div class="mb-3">
-                            <small class="text-muted">Timing breakdown</small>
-                            <div class="analysis-detail-timing-bar d-flex" style="height: 20px; border-radius: 4px; overflow: hidden;">
-                                <div class="bg-primary" :style="'width:' + detailTimingPct(detail, 'total_slew_time_s') + '%'"
-                                     :title="'Slew: ' + (detail.total_slew_time_s || 0).toFixed(1) + 's'"></div>
-                                <div style="background: #6c5ce7" :style="'width:' + detailTimingPct(detail, 'processing_queue_wait_s') + '%'"
-                                     :title="'Queue wait: ' + (detail.processing_queue_wait_s || 0).toFixed(1) + 's'"></div>
-                                <div style="background: #00b894" :style="'width:' + detailTimingPct(detail, 'calibration_time_s') + '%'"
-                                     :title="'Calibration: ' + (detail.calibration_time_s || 0).toFixed(2) + 's'"></div>
-                                <div style="background: #fdcb6e" :style="'width:' + detailTimingPct(detail, 'plate_solve_time_s') + '%'"
-                                     :title="'Plate solve: ' + (detail.plate_solve_time_s || 0).toFixed(2) + 's'"></div>
-                                <div style="background: #e17055" :style="'width:' + detailTimingPct(detail, 'source_extractor_time_s') + '%'"
-                                     :title="'Source extraction: ' + (detail.source_extractor_time_s || 0).toFixed(2) + 's'"></div>
-                                <div style="background: #74b9ff" :style="'width:' + detailTimingPct(detail, 'photometry_time_s') + '%'"
-                                     :title="'Photometry: ' + (detail.photometry_time_s || 0).toFixed(2) + 's'"></div>
-                                <div style="background: #a29bfe" :style="'width:' + detailTimingPct(detail, 'matcher_time_s') + '%'"
-                                     :title="'Matcher: ' + (detail.matcher_time_s || 0).toFixed(2) + 's'"></div>
-                                <div style="background: #636e72" :style="'width:' + detailTimingPct(detail, 'annotated_image_time_s') + '%'"
-                                     :title="'Annotated image: ' + (detail.annotated_image_time_s || 0).toFixed(2) + 's'"></div>
-                            </div>
-                            <div class="d-flex flex-wrap gap-2 mt-1" style="font-size: 0.75rem;">
-                                <span><span class="analysis-legend-dot bg-primary"></span> Slew</span>
-                                <span><span class="analysis-legend-dot" style="background:#6c5ce7"></span> Queue</span>
-                                <span><span class="analysis-legend-dot" style="background:#00b894"></span> Cal</span>
-                                <span><span class="analysis-legend-dot" style="background:#fdcb6e"></span> Solve</span>
-                                <span><span class="analysis-legend-dot" style="background:#e17055"></span> SExtract</span>
-                                <span><span class="analysis-legend-dot" style="background:#74b9ff"></span> Phot</span>
-                                <span><span class="analysis-legend-dot" style="background:#a29bfe"></span> Match</span>
-                                <span><span class="analysis-legend-dot" style="background:#636e72"></span> Annotate</span>
-                            </div>
-                        </div>
-
-                        <!-- Artifacts -->
-                        <div>
-                            <template x-if="detail.artifacts_available">
-                                <a :href="'/api/analysis/tasks/' + detail.task_id + '/artifacts/processing_summary.json'"
-                                   target="_blank" class="btn btn-sm btn-outline-secondary">View full report</a>
-                            </template>
-                            <template x-if="!detail.artifacts_available">
-                                <span class="badge bg-secondary">Artifacts expired</span>
-                            </template>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        </div>
-    </template>
+    <!-- Image lightbox -->
+    <div class="analysis-lightbox" x-show="lightboxSrc" x-transition.opacity @click="lightboxSrc = null"
+         @keydown.escape.window="lightboxSrc = null">
+        <img :src="lightboxSrc" @click.stop>
+    </div>
 </div>

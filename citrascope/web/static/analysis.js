@@ -37,6 +37,19 @@ document.addEventListener('alpine:init', () => {
         loaded: false,
         expanded: null,
         detail: null,
+        _extractedData: {},
+        _satObs: [],
+        lightboxSrc: null,
+        _refreshTimer: null,
+
+        init() {
+            this._refreshTimer = setInterval(() => {
+                const store = Alpine.store('citrascope');
+                if (store && store.currentSection === 'analysis' && this.loaded && !this.loading) {
+                    this.loadAll();
+                }
+            }, 15_000);
+        },
 
         async loadAll() {
             this.loading = true;
@@ -96,11 +109,19 @@ document.addEventListener('alpine:init', () => {
             if (this.expanded === taskId) {
                 this.expanded = null;
                 this.detail = null;
+                this._extractedData = {};
+                this._satObs = [];
                 return;
             }
             try {
                 const resp = await fetch('/api/analysis/tasks/' + taskId);
                 this.detail = await resp.json();
+                try {
+                    this._extractedData = JSON.parse(this.detail.extracted_data_json || '{}');
+                } catch { this._extractedData = {}; }
+                try {
+                    this._satObs = JSON.parse(this.detail.satellite_observations_json || '[]');
+                } catch { this._satObs = []; }
                 this.expanded = taskId;
             } catch (e) {
                 console.error('Failed to load task detail', e);
@@ -116,10 +137,10 @@ document.addEventListener('alpine:init', () => {
             } catch { return iso; }
         },
 
-        pointingClass(arcsec) {
-            if (arcsec == null) return 'text-muted';
-            if (arcsec < 30) return 'text-success';
-            if (arcsec < 120) return 'text-warning';
+        pointingClass(deg) {
+            if (deg == null) return 'text-muted';
+            if (deg < 0.05) return 'text-success';
+            if (deg < 0.2) return 'text-warning';
             return 'text-danger';
         },
 
@@ -161,17 +182,36 @@ document.addEventListener('alpine:init', () => {
             }));
         },
 
-        // Detail timing bar — uses actual values as proportional widths
-        detailTimingPct(detail, field) {
-            if (!detail) return 0;
+        imagingDuration(d) {
+            if (!d || !d.imaging_started_at || !d.imaging_finished_at) return 0;
+            return Math.max(0, (new Date(d.imaging_finished_at) - new Date(d.imaging_started_at)) / 1000);
+        },
+
+        // Phase bar: slew, imaging, queue wait, processing
+        phasePct(d, phase) {
+            if (!d) return 0;
+            const vals = {
+                slew: d.total_slew_time_s || 0,
+                imaging: this.imagingDuration(d),
+                queue: d.processing_queue_wait_s || 0,
+                processing: d.total_processing_time_s || 0,
+            };
+            const total = Object.values(vals).reduce((a, b) => a + b, 0);
+            if (total <= 0) return 0;
+            return Math.max(vals[phase] > 0 ? 1 : 0, Math.round((vals[phase] / total) * 100));
+        },
+
+        // Processing breakdown bar: only per-processor times
+        procPct(d, field) {
+            if (!d) return 0;
             const fields = [
-                'total_slew_time_s', 'processing_queue_wait_s',
                 'calibration_time_s', 'plate_solve_time_s', 'source_extractor_time_s',
                 'photometry_time_s', 'matcher_time_s', 'annotated_image_time_s'
             ];
-            const total = fields.reduce((s, f) => s + (detail[f] || 0), 0);
+            const total = fields.reduce((s, f) => s + (d[f] || 0), 0);
             if (total <= 0) return 0;
-            return Math.round(((detail[field] || 0) / total) * 100);
+            const val = d[field] || 0;
+            return Math.max(val > 0 ? 1 : 0, Math.round((val / total) * 100));
         },
 
         // Window timeline proportional positioning
@@ -188,6 +228,51 @@ document.addEventListener('alpine:init', () => {
                 if (part === 'width') return Math.max(1, Math.min(100, ((ie - is) / span) * 100));
             } catch { return 0; }
             return 0;
+        },
+
+        ed(key) { return this._extractedData[key]; },
+
+        get predictionsInField() {
+            return this._extractedData['satellite_matcher.predictions_in_field'] || [];
+        },
+
+        get solveQuality() {
+            return this._extractedData['plate_solver.solve_quality'] || null;
+        },
+
+        get hfr() {
+            const v = this._extractedData['plate_solver.hfr_median'];
+            return v != null ? v.toFixed(2) : null;
+        },
+
+        formatUploadType(d) {
+            if (!d) return '—';
+            if (d.should_upload === 0) return d.skip_reason || 'Skipped';
+            const types = { fits_image: 'FITS image', observation_record: 'Observation only', csv_observations: 'CSV' };
+            return types[d.upload_type] || d.upload_type || '—';
+        },
+
+        formatDeg(v, digits = 4) {
+            return v != null ? v.toFixed(digits) + '°' : '—';
+        },
+
+        formatRA(deg) {
+            if (deg == null) return '—';
+            const h = deg / 15;
+            const hh = Math.floor(h);
+            const mm = Math.floor((h - hh) * 60);
+            const ss = ((h - hh) * 60 - mm) * 60;
+            return `${hh}h ${mm}m ${ss.toFixed(1)}s (${deg.toFixed(4)}°)`;
+        },
+
+        formatDec(deg) {
+            if (deg == null) return '—';
+            const sign = deg < 0 ? '-' : '+';
+            const abs = Math.abs(deg);
+            const dd = Math.floor(abs);
+            const mm = Math.floor((abs - dd) * 60);
+            const ss = ((abs - dd) * 60 - mm) * 60;
+            return `${sign}${dd}° ${mm}′ ${ss.toFixed(1)}″ (${deg.toFixed(4)}°)`;
         },
     }));
 });
