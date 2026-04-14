@@ -107,9 +107,14 @@ class CitraApiClient(AbstractCitraApiClient):
             return None
         return result[0]
 
-    def get_telescope_tasks(self, telescope_id):
-        """Fetch tasks for a given telescope."""
-        return self._request("GET", f"/telescopes/{telescope_id}/tasks")
+    def get_telescope_tasks(self, telescope_id, statuses=None, task_stop_after=None):
+        """Fetch tasks for a given telescope, with optional server-side filters."""
+        params: dict = {}
+        if statuses:
+            params["statuses"] = statuses
+        if task_stop_after:
+            params["task_stop_after"] = task_stop_after
+        return self._request("GET", f"/telescopes/{telescope_id}/tasks", params=params)
 
     def get_ground_station(self, ground_station_id):
         """Fetch ground station details from /ground-stations/{ground_station_id}"""

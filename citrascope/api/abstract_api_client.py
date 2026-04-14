@@ -25,7 +25,7 @@ class AbstractCitraApiClient(ABC):
         pass
 
     @abstractmethod
-    def get_telescope_tasks(self, telescope_id):
+    def get_telescope_tasks(self, telescope_id, statuses=None, task_stop_after=None):
         pass
 
     @abstractmethod

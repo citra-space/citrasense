@@ -74,7 +74,7 @@ class MockCitraApiClient(AbstractCitraApiClient):
             "creationEpoch": "2025-01-01T00:00:00Z",
         }
 
-    def get_telescope_tasks(self, telescope_id):
+    def get_telescope_tasks(self, telescope_id, statuses=None, task_stop_after=None):
         """Simulate fetching tasks for a telescope."""
         return [{"task_id": 1, "description": "Mock Task"}]
 

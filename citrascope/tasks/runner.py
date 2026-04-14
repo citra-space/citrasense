@@ -281,7 +281,12 @@ class TaskManager:
                     interval_hours = self.settings.elset_refresh_interval_hours
                     self.elset_cache.refresh_if_stale(self.api_client, self.logger, interval_hours=interval_hours)
                 self._report_online()
-                tasks = self.api_client.get_telescope_tasks(self.telescope_record["id"])
+                now_iso = datetime.now(timezone.utc).isoformat()
+                tasks = self.api_client.get_telescope_tasks(
+                    self.telescope_record["id"],
+                    statuses=["Pending", "Scheduled"],
+                    task_stop_after=now_iso,
+                )
 
                 # If API call failed (timeout, network error, etc.), wait before retrying
                 if tasks is None:

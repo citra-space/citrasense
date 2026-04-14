@@ -314,7 +314,7 @@ class DummyApiClient(AbstractCitraApiClient):
                 return None
             return elsets[0]
 
-    def get_telescope_tasks(self, telescope_id):
+    def get_telescope_tasks(self, telescope_id, statuses=None, task_stop_after=None):
         """Fetch tasks for telescope (returns only Pending/Scheduled).
 
         Automatically maintains ~10 upcoming tasks at all times for easy testing.
