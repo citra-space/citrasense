@@ -7,7 +7,7 @@ import shutil
 import time
 from pathlib import Path
 
-logger = logging.getLogger("citrascope")
+logger = logging.getLogger("citrascope.Retention")
 
 _PREVIEW_RETENTION_DAYS = 30
 

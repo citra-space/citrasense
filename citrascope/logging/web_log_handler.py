@@ -40,11 +40,14 @@ class WebLogHandler(logging.Handler):
 
             level = re.sub(r"\x1b\[\d+m", "", level)
 
+            _prefix = "citrascope."
+            short_name = record.name[len(_prefix) :] if record.name.startswith(_prefix) else record.name
+
             log_entry = {
                 "timestamp": self.format_time(record),
                 "level": level,
-                "message": record.getMessage(),  # Use raw message, not formatted
-                "module": record.module,
+                "message": record.getMessage(),
+                "module": short_name,
             }
             self.log_buffer.append(log_entry)
 

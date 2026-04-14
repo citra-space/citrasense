@@ -18,7 +18,7 @@ import multiprocessing.connection
 from collections.abc import Callable
 from typing import TypeVar
 
-logger = logging.getLogger("citrascope")
+logger = logging.getLogger("citrascope.ProbeRunner")
 
 T = TypeVar("T")
 

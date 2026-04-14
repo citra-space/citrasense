@@ -19,7 +19,7 @@ from citrascope.calibration import FilterSlot
 from citrascope.calibration.calibration_library import CalibrationLibrary
 from citrascope.hardware.devices.camera.abstract_camera import AbstractCamera, CalibrationProfile
 
-logger = logging.getLogger("citrascope")
+logger = logging.getLogger("citrascope.MasterBuilder")
 
 ProgressCallback = Callable[[int, int, str, str], None]
 

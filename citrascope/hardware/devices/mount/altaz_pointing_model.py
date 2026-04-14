@@ -57,7 +57,7 @@ from typing import Any
 
 import numpy as np
 
-_logger = logging.getLogger(__name__)
+_logger = logging.getLogger("citrascope.AltAzPointingModel")
 
 _TS: Any = None
 

@@ -17,7 +17,7 @@ import time
 from abc import ABC, abstractmethod
 from typing import Any
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("citrascope.ZwoAmTransport")
 
 DEFAULT_BAUD_RATE = 9600
 DEFAULT_TIMEOUT_S = 2.0

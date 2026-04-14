@@ -53,9 +53,9 @@ class ProcessingQueue(BaseWorkQueue):
             working_dir = self._get_working_dir(task_id, settings)
             if working_dir.exists():
                 shutil.rmtree(working_dir)
-                self.logger.debug(f"[ProcessingWorker] Cleaned up working directory: {working_dir}")
+                self.logger.debug(f"Cleaned up working directory: {working_dir}")
         except Exception as e:
-            self.logger.warning(f"[ProcessingWorker] Failed to clean up working directory for {task_id}: {e}")
+            self.logger.warning(f"Failed to clean up working directory for {task_id}: {e}")
 
     def _execute_work(self, item):
         """Execute image processing work."""
@@ -66,14 +66,14 @@ class ProcessingQueue(BaseWorkQueue):
         if timing_info:
             timing_info.stamp_now("processing_started_at")
 
-        self.logger.info(f"[ProcessingWorker] Processing task {task_id}")
+        self.logger.info(f"Processing task {task_id}")
 
         try:
             # Create task-specific working directory
             settings = item["context"].get("settings")
             working_dir = self._get_working_dir(task_id, settings)
             working_dir.mkdir(parents=True, exist_ok=True)
-            self.logger.debug(f"[ProcessingWorker] Created working directory: {working_dir}")
+            self.logger.debug(f"Created working directory: {working_dir}")
 
             context = ProcessingContext(
                 image_path=item["image_path"],
@@ -109,16 +109,16 @@ class ProcessingQueue(BaseWorkQueue):
                 shutil.copy2(context.image_path, raw_backup)
                 shutil.copy2(context.working_image_path, context.image_path)
                 self.logger.info(
-                    "[ProcessingWorker] Promoted processed image to %s (raw backup in working dir)",
+                    "Promoted processed image to %s (raw backup in working dir)",
                     context.image_path.name,
                 )
 
             # Success
-            self.logger.info(f"[ProcessingWorker] Task {task_id} processed in {result.total_time:.2f}s")
+            self.logger.info(f"Task {task_id} processed in {result.total_time:.2f}s")
             return (True, result)
 
         except Exception as e:
-            self.logger.error(f"[ProcessingWorker] Processing failed for {task_id}: {e}", exc_info=True)
+            self.logger.error(f"Processing failed for {task_id}: {e}", exc_info=True)
             return (False, None)
 
     def _on_success(self, item, result):
@@ -142,7 +142,7 @@ class ProcessingQueue(BaseWorkQueue):
         task_obj = item["context"].get("task")
         on_complete = item["on_complete"]
 
-        self.logger.error(f"[ProcessingWorker] Task {task_id} processing permanently failed, uploading raw image")
+        self.logger.error(f"Task {task_id} processing permanently failed, uploading raw image")
 
         if task_obj:
             task_obj.set_status_msg("Processing permanently failed (uploading raw image)")

@@ -21,7 +21,7 @@ from skyfield.api import EarthSatellite, load, wgs84
 
 from .abstract_api_client import AbstractCitraApiClient
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("citrascope.DummyApiClient")
 
 _APP_NAME = "citrascope"
 _APP_AUTHOR = "citrascope"
@@ -157,7 +157,7 @@ class DummyApiClient(AbstractCitraApiClient):
 
     def __init__(self, logger=None):
         """Initialize dummy API client with in-memory data."""
-        self.logger = logger
+        self.logger = logger.getChild(type(self).__name__) if logger else None
 
         # Thread-safe data access
         self._data_lock = threading.Lock()

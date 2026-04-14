@@ -16,7 +16,7 @@ from typing import Any
 
 from citrascope.processors.processor_result import AggregatedResult
 
-logger = logging.getLogger("citrascope")
+logger = logging.getLogger("citrascope.TaskIndex")
 
 # Columns that are safe to sort/filter on (prevents SQL injection via user input).
 _SORTABLE_COLUMNS = frozenset(

@@ -18,7 +18,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from citrascope.hardware.devices.mount.abstract_mount import AbstractMount
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("citrascope.MountStateCache")
 
 _DEFAULT_POLL_INTERVAL_S = 0.5  # 2 Hz
 

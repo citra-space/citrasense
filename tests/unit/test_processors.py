@@ -178,7 +178,7 @@ class TestProcessorRegistry:
         """Test registry initialization."""
         registry = ProcessorRegistry(mock_settings, mock_logger)
         assert registry.settings == mock_settings
-        assert registry.logger == mock_logger
+        assert registry.logger == mock_logger.getChild("ProcessorRegistry")
         assert isinstance(registry.processors, list)
 
     def test_process_all_with_pass_processor(self, mock_settings, mock_logger, processing_context):

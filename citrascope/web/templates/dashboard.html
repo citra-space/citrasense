@@ -141,6 +141,7 @@
                                 <div x-data="logEntry(log)" class="log-entry">
                                     <span class="log-timestamp" x-text="timestamp"></span>
                                     <span class="log-level" :class="levelClass" x-text="log.level"></span>
+                                    <span class="log-module" x-show="log.module && log.module !== 'citrascope'" x-text="'[' + log.module + ']'"></span>
                                     <span class="log-message" x-text="strippedMessage"></span>
                                 </div>
                             </template>

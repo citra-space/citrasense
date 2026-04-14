@@ -36,7 +36,7 @@ class CalibrationManager:
         library: CalibrationLibrary,
         imaging_queue: BaseWorkQueue | None = None,
     ) -> None:
-        self.logger = logger
+        self.logger = logger.getChild(type(self).__name__)
         self.hardware_adapter = hardware_adapter
         self.library = library
         self.imaging_queue = imaging_queue

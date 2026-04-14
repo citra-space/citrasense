@@ -22,6 +22,8 @@ from .processor_dependencies import check_astrometry
 if TYPE_CHECKING:
     pass
 
+_logger = logging.getLogger("citrascope.PlateSolver")
+
 
 def _compute_plate_scale(telescope_record: dict, x_binning: int = 1, y_binning: int = 1) -> float | None:
     """Compute plate scale in arcsec/pixel from telescope_record and binning.
@@ -106,7 +108,6 @@ class PlateSolverProcessor(AbstractImageProcessor):
         """
         import tempfile
 
-        logger = logging.getLogger("citrascope.plate_solver")
         with tempfile.TemporaryDirectory(prefix="alignment_") as tmp:
             working_dir = Path(tmp)
             context = ProcessingContext(
@@ -119,7 +120,7 @@ class PlateSolverProcessor(AbstractImageProcessor):
                 ground_station_record=None,
                 settings=None,
                 location_service=location_service,
-                logger=logger,
+                logger=_logger,
             )
             result = cls().process(context)
             if result.extracted_data.get("plate_solved"):
@@ -224,7 +225,7 @@ class PlateSolverProcessor(AbstractImageProcessor):
         if naxis1 > 4000 or naxis2 > 4000:
             cmd.extend(["--downsample", "2"])
 
-        logger = context.logger or logging.getLogger("citrascope")
+        logger = context.logger or _logger
         logger.info(f"Running solve-field: {' '.join(cmd)}")
 
         try:
@@ -276,18 +277,18 @@ class PlateSolverProcessor(AbstractImageProcessor):
                     assert isinstance(primary, fits.PrimaryHDU)
                     img = primary.data
             if img is None:
-                logging.getLogger("citrascope").debug("HFR: image_data is None, skipping")
+                _logger.debug("HFR: image_data is None, skipping")
                 return None
             hfr = compute_hfr(img, crop_ratio=0.5)
             if hfr is None:
                 hfr = compute_hfr(img, crop_ratio=1.0)
             if hfr is not None:
-                logging.getLogger("citrascope").debug(f"HFR computation: {hfr:.2f}")
+                _logger.debug(f"HFR computation: {hfr:.2f}")
             else:
-                logging.getLogger("citrascope").debug("HFR: too few stars even at full frame")
+                _logger.debug("HFR: too few stars even at full frame")
             return hfr
         except Exception as e:
-            logging.getLogger("citrascope").warning(f"HFR computation failed: {e}")
+            _logger.warning(f"HFR computation failed: {e}")
             return None
 
     def process(self, context: ProcessingContext) -> ProcessorResult:

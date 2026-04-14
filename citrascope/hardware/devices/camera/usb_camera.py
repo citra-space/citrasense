@@ -28,7 +28,7 @@ def _probe_usb_cameras() -> list[dict[str, str | int]]:
             from cv2_enumerate_cameras import enumerate_cameras  # type: ignore[reportMissingImports]
 
             camera_infos = list(enumerate_cameras())
-            _logging.getLogger("citrascope").debug(f"cv2_enumerate_cameras found {len(camera_infos)} cameras")
+            _logging.getLogger("citrascope.UsbCamera").debug(f"cv2_enumerate_cameras found {len(camera_infos)} cameras")
 
             for camera_info in camera_infos:
                 name = camera_info.name or f"Camera {camera_info.index}"

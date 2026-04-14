@@ -89,7 +89,7 @@ class AbstractBaseTelescopeTask(ABC):
     ):
         self.api_client = api_client
         self.hardware_adapter: AbstractAstroHardwareAdapter = hardware_adapter
-        self.logger = logger
+        self.logger = logger.getChild(type(self).__name__)
         self.task = task
         self.settings = settings
         self.task_manager = task_manager

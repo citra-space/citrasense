@@ -19,7 +19,7 @@ from astropy.io import fits  # type: ignore[attr-defined]
 _APP_NAME = "citrascope"
 _APP_AUTHOR = "citra-space"
 
-logger = logging.getLogger("citrascope")
+logger = logging.getLogger("citrascope.CalibrationLibrary")
 
 
 def _default_calibration_root() -> Path:

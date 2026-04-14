@@ -30,7 +30,7 @@ class AbstractHardwareDevice(ABC):
             logger: Logger instance for this device
             **kwargs: Device-specific configuration parameters
         """
-        self.logger = logger
+        self.logger = logger.getChild(type(self).__name__)
 
     @classmethod
     @abstractmethod
