@@ -54,7 +54,7 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
       - name: Install project prerequisites
-        run: sudo apt-get update && sudo apt-get install -y libglib2.0-dev libdbus-1-dev libjpeg-dev zlib1g-dev
+        run: sudo apt-get update && sudo apt-get install -y libglib2.0-dev libdbus-1-dev libjpeg-dev zlib1g-dev swig libindi-dev
       - name: Install dependencies
         run: uv sync --extra dev --extra test --extra indi --extra all
       - name: Run pytest with coverage
