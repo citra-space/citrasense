@@ -122,6 +122,12 @@ class CitraScopeSettings(BaseModel):
     # Number of images to capture per observation task (burst count).
     num_exposures: int = 3
 
+    # Adaptive exposure (auto-compute exposure from satellite angular rate + plate scale)
+    adaptive_exposure: bool = False
+    adaptive_exposure_max_trail_pixels: float = 3.0
+    adaptive_exposure_min_seconds: float = 0.1
+    adaptive_exposure_max_seconds: float = 30.0
+
     # MSI / elset cache
     elset_refresh_interval_hours: float = 6
 
@@ -283,6 +289,54 @@ class CitraScopeSettings(BaseModel):
         if v < 0.01 or v > 300:
             clamped = max(0.01, min(300.0, v))
             CITRASCOPE_LOGGER.warning("exposure_seconds %.3f out of range [0.01, 300]. Clamped to %.3f.", v, clamped)
+            return clamped
+        return v
+
+    @field_validator("adaptive_exposure_max_trail_pixels", mode="before")
+    @classmethod
+    def _validate_adaptive_max_trail(cls, v: Any) -> float:
+        try:
+            v = float(v)
+        except (TypeError, ValueError):
+            CITRASCOPE_LOGGER.warning("Invalid adaptive_exposure_max_trail_pixels (%r). Falling back to 3.0.", v)
+            return 3.0
+        if v < 0.5 or v > 50.0:
+            clamped = max(0.5, min(50.0, v))
+            CITRASCOPE_LOGGER.warning(
+                "adaptive_exposure_max_trail_pixels %.1f out of range [0.5, 50]. Clamped to %.1f.", v, clamped
+            )
+            return clamped
+        return v
+
+    @field_validator("adaptive_exposure_min_seconds", mode="before")
+    @classmethod
+    def _validate_adaptive_min(cls, v: Any) -> float:
+        try:
+            v = float(v)
+        except (TypeError, ValueError):
+            CITRASCOPE_LOGGER.warning("Invalid adaptive_exposure_min_seconds (%r). Falling back to 0.1.", v)
+            return 0.1
+        if v < 0.01 or v > 10.0:
+            clamped = max(0.01, min(10.0, v))
+            CITRASCOPE_LOGGER.warning(
+                "adaptive_exposure_min_seconds %.3f out of range [0.01, 10]. Clamped to %.3f.", v, clamped
+            )
+            return clamped
+        return v
+
+    @field_validator("adaptive_exposure_max_seconds", mode="before")
+    @classmethod
+    def _validate_adaptive_max(cls, v: Any) -> float:
+        try:
+            v = float(v)
+        except (TypeError, ValueError):
+            CITRASCOPE_LOGGER.warning("Invalid adaptive_exposure_max_seconds (%r). Falling back to 30.0.", v)
+            return 30.0
+        if v < 1.0 or v > 300.0:
+            clamped = max(1.0, min(300.0, v))
+            CITRASCOPE_LOGGER.warning(
+                "adaptive_exposure_max_seconds %.1f out of range [1, 300]. Clamped to %.1f.", v, clamped
+            )
             return clamped
         return v
 

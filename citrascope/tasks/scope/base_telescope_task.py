@@ -822,6 +822,30 @@ class AbstractBaseTelescopeTask(ABC):
         dec_deg_s = dec_arcsec_s / 3600
         return math.sqrt(ra_deg_s**2 + dec_deg_s**2)
 
+    def compute_adaptive_exposure(self, angular_rate_deg_s: float) -> float | None:
+        """Compute exposure time that limits satellite trail to max_trail_pixels.
+
+        Returns the computed exposure in seconds, or None if plate scale
+        cannot be determined (caller should fall back to fixed exposure).
+        """
+        tr = self.hardware_adapter.telescope_record
+        if not tr:
+            return None
+        try:
+            pixel_scale_arcsec = float(tr["pixelSize"]) / float(tr["focalLength"]) * 206.265
+        except (KeyError, TypeError, ValueError, ZeroDivisionError):
+            return None
+
+        if angular_rate_deg_s <= 0:
+            return None
+
+        max_trail_arcsec = self.settings.adaptive_exposure_max_trail_pixels * pixel_scale_arcsec
+        angular_rate_arcsec_s = angular_rate_deg_s * 3600
+        exposure = max_trail_arcsec / angular_rate_arcsec_s
+        return max(
+            self.settings.adaptive_exposure_min_seconds, min(exposure, self.settings.adaptive_exposure_max_seconds)
+        )
+
     def compute_satellite_timing(self, satellite_data: dict) -> dict:
         """Compute real-time timing for satellite FOV crossing.
 

@@ -56,19 +56,35 @@ class StaticTelescopeTask(AbstractBaseTelescopeTask):
         Fast movers (LEO): slew ahead, plate-solve, wait for the satellite
         to enter the FOV, then burst-capture.
         """
-        exposure = self.settings.exposure_seconds
         num_exposures = self.settings.num_exposures
+        angular_rate = self.compute_angular_rate(satellite_data)
+
+        if self.settings.adaptive_exposure:
+            adaptive = self.compute_adaptive_exposure(angular_rate)
+            if adaptive is not None:
+                exposure = adaptive
+                self.logger.info(
+                    "Adaptive exposure: %.3fs (angular rate %.6f\u00b0/s, max trail %.1f px)",
+                    exposure,
+                    angular_rate,
+                    self.settings.adaptive_exposure_max_trail_pixels,
+                )
+            else:
+                exposure = self.settings.exposure_seconds
+                self.logger.info("Adaptive exposure: plate scale unavailable, falling back to fixed %.3fs", exposure)
+        else:
+            exposure = self.settings.exposure_seconds
+
         imaging_window = num_exposures * exposure
 
         # -- Slow-mover detection --
-        angular_rate = self.compute_angular_rate(satellite_data)
         fov_radius = self._get_fov_radius_deg()
         satellite_travel = angular_rate * imaging_window
         is_slow_mover = satellite_travel < fov_radius
 
         if is_slow_mover:
             self.logger.info(
-                "Slow mover (%.4f\u00b0/s, travels %.3f\u00b0 in %.1fs window vs %.2f\u00b0 FOV radius) "
+                "Slow mover (%.6f\u00b0/s, travels %.3f\u00b0 in %.1fs window vs %.2f\u00b0 FOV radius) "
                 "\u2014 pointing directly at target",
                 angular_rate,
                 satellite_travel,
@@ -79,7 +95,7 @@ class StaticTelescopeTask(AbstractBaseTelescopeTask):
         else:
             extra_lead = imaging_window / 2.0
             self.logger.info(
-                "Fast mover (%.4f\u00b0/s, travels %.3f\u00b0 in %.1fs window) " "\u2014 leading by %.1fs extra",
+                "Fast mover (%.6f\u00b0/s, travels %.3f\u00b0 in %.1fs window) " "\u2014 leading by %.1fs extra",
                 angular_rate,
                 satellite_travel,
                 imaging_window,
@@ -107,6 +123,7 @@ class StaticTelescopeTask(AbstractBaseTelescopeTask):
             "extra_lead_seconds": round(extra_lead, 2),
             "num_exposures": num_exposures,
             "exposure_seconds": exposure,
+            "adaptive_exposure_active": self.settings.adaptive_exposure,
         }
 
         # -- Real-time timing gate (fast movers only) --

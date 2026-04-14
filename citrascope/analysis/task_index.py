@@ -115,6 +115,31 @@ CREATE TABLE IF NOT EXISTS completed_tasks (
 """
 
 
+# Ordered migration scripts.  Index 0 → v1, index 1 → v2, etc.
+# Each entry is a (description, [sql_statements]) tuple.
+# To add a migration: append a new tuple and you're done —
+# _SCHEMA_VERSION derives from len() automatically.
+_MIGRATIONS: list[tuple[str, list[str]]] = [
+    # v1: imaging parameter columns for adaptive exposure
+    (
+        "add imaging parameter columns (exposure_seconds, num_exposures)",
+        [
+            "ALTER TABLE completed_tasks ADD COLUMN exposure_seconds REAL",
+            "ALTER TABLE completed_tasks ADD COLUMN num_exposures INTEGER",
+        ],
+    ),
+    # v2: track whether adaptive exposure was active
+    (
+        "add adaptive_exposure_active flag",
+        [
+            "ALTER TABLE completed_tasks ADD COLUMN adaptive_exposure_active INTEGER",
+        ],
+    ),
+]
+
+_SCHEMA_VERSION = len(_MIGRATIONS)
+
+
 class TaskIndex:
     """Persistent index of completed-task pipeline metrics in a local SQLite DB."""
 
@@ -127,7 +152,31 @@ class TaskIndex:
         self._conn.execute("PRAGMA journal_mode=WAL")
         self._conn.execute("PRAGMA busy_timeout=5000")
         self._conn.executescript(_SCHEMA)
+        self._migrate()
         self._conn.commit()
+
+    def _migrate(self) -> None:
+        """Run incremental schema migrations tracked by ``PRAGMA user_version``.
+
+        ``_SCHEMA`` is the v0 baseline (the original CREATE TABLE).
+        All subsequent changes live in ``_MIGRATIONS`` — the single source
+        of truth for schema evolution.  On startup, any pending migrations
+        are applied in order and ``user_version`` is stamped.
+        """
+        version: int = self._conn.execute("PRAGMA user_version").fetchone()[0]
+        if version >= _SCHEMA_VERSION:
+            logger.debug("Analysis DB schema is current (v%d)", version)
+            return
+
+        logger.info("Analysis DB schema v%d → v%d: running migrations", version, _SCHEMA_VERSION)
+
+        for i in range(version, _SCHEMA_VERSION):
+            desc, statements = _MIGRATIONS[i]
+            for sql in statements:
+                self._conn.execute(sql)
+            logger.info("  v%d: %s", i + 1, desc)
+
+        self._conn.execute(f"PRAGMA user_version = {_SCHEMA_VERSION}")
 
     def close(self) -> None:
         """Close the database connection."""
@@ -157,6 +206,7 @@ class TaskIndex:
         # Pointing / convergence
         pr_dict = pointing_report or {}
         iterations = pr_dict.get("iterations", [])
+        slew_ahead = pr_dict.get("slew_ahead", {})
         total_slew = sum(it.get("actual_slew_time_s", 0) for it in iterations)
 
         # Solved position from plate solver
@@ -230,81 +280,78 @@ class TaskIndex:
         annotated_path = ed.get("annotated_image.image_path")
         has_annotated = bool(annotated_path and Path(str(annotated_path)).exists())
 
+        row = {
+            "task_id": task.id if task else "unknown",
+            "target_name": task.satelliteName if task else None,
+            "completed_at": now,
+            "filter_name": _str(ed.get("photometry.filter")) or (task.assigned_filter_name if task else None),
+            "calibration_applied": _bool_int(calibration_applied),
+            "requested_ra": requested_ra,
+            "requested_dec": requested_dec,
+            "solved_ra": solved_ra,
+            "solved_dec": solved_dec,
+            "pointing_error_deg": pointing_error,
+            "convergence_attempts": pr_dict.get("attempts"),
+            "converged": _bool_int(pr_dict.get("converged")),
+            "convergence_threshold_deg": _float(pr_dict.get("convergence_threshold_deg")),
+            "total_slew_time_s": total_slew if total_slew else None,
+            "final_target_distance_deg": _float(pr_dict.get("final_angular_distance_deg")),
+            "observed_slew_rate_deg_per_s": (
+                _float(iterations[-1].get("observed_slew_rate_deg_per_s")) if iterations else None
+            ),
+            "pointing_report_json": json.dumps(pr_dict) if pr_dict else None,
+            "exposure_seconds": _float(slew_ahead.get("exposure_seconds")),
+            "num_exposures": _int(slew_ahead.get("num_exposures")),
+            "adaptive_exposure_active": _bool_int(slew_ahead.get("adaptive_exposure_active")),
+            "window_start": window_start,
+            "window_stop": window_stop,
+            "slew_started_at": slew_started_at,
+            "imaging_started_at": imaging_started_at,
+            "imaging_finished_at": imaging_finished_at,
+            "window_start_delay_s": window_start_delay_s,
+            "window_time_remaining_s": window_time_remaining_s,
+            "missed_window": _bool_int(missed_window),
+            "plate_solved": _bool_int(ed.get("plate_solver.plate_solved")),
+            "source_count": _int(ed.get("source_extractor.num_sources")),
+            "pixel_scale": _float(ed.get("plate_solver.pixel_scale")),
+            "field_width_deg": _float(ed.get("plate_solver.field_width_deg")),
+            "field_height_deg": _float(ed.get("plate_solver.field_height_deg")),
+            "zero_point": _float(ed.get("photometry.zero_point")),
+            "calibration_star_count": _int(ed.get("photometry.num_calibration_stars")),
+            "target_satellite_id": target_sat_id,
+            "target_satellite_name": task.satelliteName if task else None,
+            "target_matched": _bool_int(target_matched),
+            "target_satellite_mag": target_mag,
+            "incidental_matches": incidental,
+            "total_satellites_detected": _int(ed.get("satellite_matcher.num_satellites_detected")),
+            "satellite_observations_json": json.dumps(observations) if observations else None,
+            "should_upload": _bool_int(result.should_upload) if result else None,
+            "skip_reason": result.skip_reason if result else None,
+            "upload_type": upload_type,
+            "upload_success": None,
+            "processing_queued_at": processing_queued_at,
+            "processing_started_at": processing_started_at,
+            "processing_finished_at": processing_finished_at,
+            "processing_queue_wait_s": queue_wait_s,
+            "total_processing_time_s": result.total_time if result else None,
+            "calibration_time_s": proc_times.get("calibration"),
+            "plate_solve_time_s": proc_times.get("plate_solver"),
+            "source_extractor_time_s": proc_times.get("source_extractor"),
+            "photometry_time_s": proc_times.get("photometry"),
+            "matcher_time_s": proc_times.get("satellite_matcher"),
+            "annotated_image_time_s": proc_times.get("annotated_image"),
+            "has_annotated_image": _bool_int(has_annotated),
+            "annotated_image_path": str(annotated_path) if annotated_path else None,
+            "extracted_data_json": json.dumps(ed) if ed else None,
+        }
+
+        columns = ", ".join(row.keys())
+        placeholders = ", ".join(":" + k for k in row.keys())
+
         with self._lock:
             self._conn.execute(
-                """INSERT OR REPLACE INTO completed_tasks VALUES (
-                ?,?,?,?,?,  ?,?,?,?,?,  ?,?,?,?,?,  ?,?,  ?,?,?,?,?,  ?,?,?,
-                ?,?,?,?,?,  ?,?,  ?,?,?,?,?,?,?,  ?,?,?,?,  ?,?,?,?,  ?,?,?,?,?,
-                ?,?,  ?,?,  ?
-            )""",
-                (
-                    task.id if task else "unknown",
-                    task.satelliteName if task else None,
-                    now,
-                    _str(ed.get("photometry.filter")) or (task.assigned_filter_name if task else None),
-                    _bool_int(calibration_applied),
-                    # Pointing
-                    requested_ra,
-                    requested_dec,
-                    solved_ra,
-                    solved_dec,
-                    pointing_error,
-                    pr_dict.get("attempts"),
-                    _bool_int(pr_dict.get("converged")),
-                    _float(pr_dict.get("convergence_threshold_deg")),
-                    total_slew if total_slew else None,
-                    _float(pr_dict.get("final_angular_distance_deg")),
-                    _float(iterations[-1].get("observed_slew_rate_deg_per_s")) if iterations else None,
-                    json.dumps(pr_dict) if pr_dict else None,
-                    # Window
-                    window_start,
-                    window_stop,
-                    slew_started_at,
-                    imaging_started_at,
-                    imaging_finished_at,
-                    window_start_delay_s,
-                    window_time_remaining_s,
-                    _bool_int(missed_window),
-                    # Plate solve
-                    _bool_int(ed.get("plate_solver.plate_solved")),
-                    _int(ed.get("source_extractor.num_sources")),
-                    _float(ed.get("plate_solver.pixel_scale")),
-                    _float(ed.get("plate_solver.field_width_deg")),
-                    _float(ed.get("plate_solver.field_height_deg")),
-                    # Photometry
-                    _float(ed.get("photometry.zero_point")),
-                    _int(ed.get("photometry.num_calibration_stars")),
-                    # Satellite matching
-                    target_sat_id,
-                    task.satelliteName if task else None,
-                    _bool_int(target_matched),
-                    target_mag,
-                    incidental,
-                    _int(ed.get("satellite_matcher.num_satellites_detected")),
-                    json.dumps(observations) if observations else None,
-                    # Pipeline decision
-                    _bool_int(result.should_upload) if result else None,
-                    result.skip_reason if result else None,
-                    upload_type,
-                    None,  # upload_success — updated later
-                    # Processing timing
-                    processing_queued_at,
-                    processing_started_at,
-                    processing_finished_at,
-                    queue_wait_s,
-                    result.total_time if result else None,
-                    proc_times.get("calibration"),
-                    proc_times.get("plate_solver"),
-                    proc_times.get("source_extractor"),
-                    proc_times.get("photometry"),
-                    proc_times.get("satellite_matcher"),
-                    proc_times.get("annotated_image"),
-                    # Artifacts
-                    _bool_int(has_annotated),
-                    str(annotated_path) if annotated_path else None,
-                    # Overflow
-                    json.dumps(ed) if ed else None,
-                ),
+                f"INSERT OR REPLACE INTO completed_tasks ({columns}) VALUES ({placeholders})",
+                row,
             )
             self._conn.commit()
 

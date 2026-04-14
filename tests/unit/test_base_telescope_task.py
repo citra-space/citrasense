@@ -1006,3 +1006,107 @@ class TestAdaptiveSlewRate:
                 ct.point_to_lead_position({"most_recent_elset": {"tle": ["a", "b"]}})
 
         assert ct.hardware_adapter.observed_slew_rate_deg_per_s == 4.0
+
+
+class TestAdaptiveExposure:
+    """Tests for compute_adaptive_exposure."""
+
+    def _make_concrete(self, telescope_record=None, **settings_overrides):
+        from citrascope.tasks.scope.base_telescope_task import AbstractBaseTelescopeTask
+
+        class ConcreteTask(AbstractBaseTelescopeTask):
+            def execute(self):
+                pass
+
+        api = MagicMock()
+        adapter = _make_hardware_adapter(telescope_record=telescope_record)
+        daemon = _make_daemon()
+
+        daemon.settings.adaptive_exposure = True
+        daemon.settings.adaptive_exposure_max_trail_pixels = 3.0
+        daemon.settings.adaptive_exposure_min_seconds = 0.1
+        daemon.settings.adaptive_exposure_max_seconds = 30.0
+        for k, v in settings_overrides.items():
+            setattr(daemon.settings, k, v)
+
+        return ConcreteTask(api, adapter, MagicMock(), _make_task_dict(), **_daemon_kwargs(daemon))
+
+    def _telescope_record(self):
+        return {
+            "id": "tel-1",
+            "pixelSize": 3.76,
+            "focalLength": 500.0,
+            "horizontalPixelCount": 4096,
+            "verticalPixelCount": 3072,
+        }
+
+    def test_leo_fast_mover_short_exposure(self):
+        """A LEO satellite at ~0.5 deg/s should produce a sub-second exposure."""
+        ct = self._make_concrete(telescope_record=self._telescope_record())
+        # plate_scale = 3.76 / 500 * 206.265 = ~1.551 arcsec/px
+        # max_trail = 3.0 * 1.551 = 4.653 arcsec
+        # angular_rate = 0.5 deg/s = 1800 arcsec/s
+        # exposure = 4.653 / 1800 = ~0.00258s → clamped to min 0.1s
+        result = ct.compute_adaptive_exposure(0.5)
+        assert result is not None
+        assert result == pytest.approx(0.1, abs=0.001)
+
+    def test_geo_slow_mover_long_exposure(self):
+        """A GEO satellite at ~0.004 deg/s should produce a long exposure (clamped to max)."""
+        ct = self._make_concrete(telescope_record=self._telescope_record())
+        # angular_rate = 0.004 deg/s = 14.4 arcsec/s
+        # exposure = 4.653 / 14.4 = ~0.323s
+        result = ct.compute_adaptive_exposure(0.004)
+        assert result is not None
+        assert 0.3 < result < 0.4
+
+    def test_very_slow_mover_clamped_to_max(self):
+        """Near-stationary object should be clamped to max exposure."""
+        ct = self._make_concrete(telescope_record=self._telescope_record())
+        # angular_rate = 0.0001 deg/s = 0.36 arcsec/s
+        # exposure = 4.653 / 0.36 = ~12.9s → within max
+        # angular_rate = 0.00001 deg/s = 0.036 arcsec/s
+        # exposure = 4.653 / 0.036 = ~129.25s → clamped to 30s
+        result = ct.compute_adaptive_exposure(0.00001)
+        assert result is not None
+        assert result == pytest.approx(30.0, abs=0.001)
+
+    def test_zero_angular_rate_returns_none(self):
+        ct = self._make_concrete(telescope_record=self._telescope_record())
+        assert ct.compute_adaptive_exposure(0.0) is None
+
+    def test_negative_angular_rate_returns_none(self):
+        ct = self._make_concrete(telescope_record=self._telescope_record())
+        assert ct.compute_adaptive_exposure(-1.0) is None
+
+    def test_no_telescope_record_returns_none(self):
+        ct = self._make_concrete(telescope_record=None)
+        assert ct.compute_adaptive_exposure(0.5) is None
+
+    def test_missing_focal_length_returns_none(self):
+        tr = self._telescope_record()
+        del tr["focalLength"]
+        ct = self._make_concrete(telescope_record=tr)
+        assert ct.compute_adaptive_exposure(0.5) is None
+
+    def test_custom_trail_limit(self):
+        """Larger trail limit should allow proportionally longer exposures."""
+        ct = self._make_concrete(
+            telescope_record=self._telescope_record(),
+            adaptive_exposure_max_trail_pixels=10.0,
+        )
+        result = ct.compute_adaptive_exposure(0.5)
+        assert result is not None
+        # 10 px trail → 3.33x longer than 3 px trail, but both get clamped to min
+        # plate_scale = 1.551 arcsec/px, max_trail = 10 * 1.551 = 15.51 arcsec
+        # exposure = 15.51 / 1800 = ~0.00862s → clamped to 0.1s
+        assert result == pytest.approx(0.1, abs=0.001)
+
+    def test_moderate_rate_produces_unclamped_exposure(self):
+        """A medium angular rate should produce an exposure between min and max."""
+        ct = self._make_concrete(telescope_record=self._telescope_record())
+        # angular_rate = 0.01 deg/s = 36 arcsec/s
+        # exposure = 4.653 / 36 = ~0.129s
+        result = ct.compute_adaptive_exposure(0.01)
+        assert result is not None
+        assert 0.1 < result < 30.0

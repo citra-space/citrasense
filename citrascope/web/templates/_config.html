@@ -549,8 +549,41 @@
                                     Number of images captured per observation. Multiple frames improve satellite detection.
                                 </small>
                             </div>
-                            <div class="col-12 col-md-6">
+                            <div class="col-12">
+                                <div class="form-check form-switch mt-2">
+                                    <input type="checkbox" id="adaptive_exposure" class="form-check-input"
+                                           x-model="$store.citrascope.config.adaptive_exposure">
+                                    <label for="adaptive_exposure" class="form-check-label">Adaptive Exposure</label>
+                                </div>
+                                <small class="text-muted d-block mt-1">
+                                    Automatically compute exposure time from satellite angular rate and telescope plate scale.
+                                    Keeps satellite trail within the pixel limit below. Only applies to static/sidereal mode.
+                                </small>
                             </div>
+                            <template x-if="$store.citrascope.config.adaptive_exposure">
+                                <div class="col-12">
+                                    <div class="row g-3 mt-1">
+                                        <div class="col-12 col-md-4">
+                                            <label for="adaptive_exposure_max_trail_pixels" class="form-label">Max Trail (pixels)</label>
+                                            <input type="number" id="adaptive_exposure_max_trail_pixels" class="form-control"
+                                                   min="0.5" max="50" step="0.5"
+                                                   x-model.number="$store.citrascope.config.adaptive_exposure_max_trail_pixels">
+                                        </div>
+                                        <div class="col-12 col-md-4">
+                                            <label for="adaptive_exposure_min_seconds" class="form-label">Min Exposure (s)</label>
+                                            <input type="number" id="adaptive_exposure_min_seconds" class="form-control"
+                                                   min="0.01" max="10" step="0.01"
+                                                   x-model.number="$store.citrascope.config.adaptive_exposure_min_seconds">
+                                        </div>
+                                        <div class="col-12 col-md-4">
+                                            <label for="adaptive_exposure_max_seconds" class="form-label">Max Exposure (s)</label>
+                                            <input type="number" id="adaptive_exposure_max_seconds" class="form-control"
+                                                   min="1" max="300" step="1"
+                                                   x-model.number="$store.citrascope.config.adaptive_exposure_max_seconds">
+                                        </div>
+                                    </div>
+                                </div>
+                            </template>
                         </div>
                     </div>
 

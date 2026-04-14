@@ -280,6 +280,17 @@
                                                     </div>
                                                 </template>
 
+                                                <template x-if="detail.exposure_seconds != null">
+                                                    <div class="mb-3">
+                                                        <small class="text-muted d-block mb-1">Imaging</small>
+                                                        <div class="d-flex gap-3 flex-wrap align-items-center">
+                                                            <span x-text="detail.exposure_seconds.toFixed(3) + 's exposure'"></span>
+                                                            <span x-show="detail.num_exposures" x-text="'× ' + detail.num_exposures + ' frames'"></span>
+                                                            <span x-show="detail.adaptive_exposure_active" class="badge bg-info">Adaptive</span>
+                                                        </div>
+                                                    </div>
+                                                </template>
+
                                                 <template x-if="detail.convergence_attempts != null">
                                                     <div class="mb-3">
                                                         <small class="text-muted d-block mb-1">Convergence</small>
