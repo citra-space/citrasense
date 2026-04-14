@@ -403,3 +403,169 @@ def test_custom_log_dir_relative_path_rejected():
     from pathlib import Path
 
     assert s.custom_log_dir == "" or Path(s.custom_log_dir).is_absolute()
+
+
+# ---------------------------------------------------------------------------
+# SExtractor settings validators
+# ---------------------------------------------------------------------------
+
+
+def test_sextractor_detect_thresh_default():
+    with patch("citrascope.settings.citrascope_settings.SettingsFileManager") as MockSFM:
+        MockSFM.return_value.load_config.return_value = {}
+        from citrascope.settings.citrascope_settings import CitraScopeSettings
+
+        s = CitraScopeSettings.load()
+
+    assert s.sextractor_detect_thresh == 5.0
+
+
+def test_sextractor_detect_thresh_valid():
+    with patch("citrascope.settings.citrascope_settings.SettingsFileManager") as MockSFM:
+        MockSFM.return_value.load_config.return_value = {"sextractor_detect_thresh": 3.0}
+        from citrascope.settings.citrascope_settings import CitraScopeSettings
+
+        s = CitraScopeSettings.load()
+
+    assert s.sextractor_detect_thresh == 3.0
+
+
+def test_sextractor_detect_thresh_string_coercion():
+    with patch("citrascope.settings.citrascope_settings.SettingsFileManager") as MockSFM:
+        MockSFM.return_value.load_config.return_value = {"sextractor_detect_thresh": "8.5"}
+        from citrascope.settings.citrascope_settings import CitraScopeSettings
+
+        s = CitraScopeSettings.load()
+
+    assert s.sextractor_detect_thresh == 8.5
+
+
+def test_sextractor_detect_thresh_clamps_low():
+    with patch("citrascope.settings.citrascope_settings.SettingsFileManager") as MockSFM:
+        MockSFM.return_value.load_config.return_value = {"sextractor_detect_thresh": 0.1}
+        from citrascope.settings.citrascope_settings import CitraScopeSettings
+
+        s = CitraScopeSettings.load()
+
+    assert s.sextractor_detect_thresh == 1.0
+
+
+def test_sextractor_detect_thresh_clamps_high():
+    with patch("citrascope.settings.citrascope_settings.SettingsFileManager") as MockSFM:
+        MockSFM.return_value.load_config.return_value = {"sextractor_detect_thresh": 99.0}
+        from citrascope.settings.citrascope_settings import CitraScopeSettings
+
+        s = CitraScopeSettings.load()
+
+    assert s.sextractor_detect_thresh == 20.0
+
+
+def test_sextractor_detect_thresh_invalid_fallback():
+    with patch("citrascope.settings.citrascope_settings.SettingsFileManager") as MockSFM:
+        MockSFM.return_value.load_config.return_value = {"sextractor_detect_thresh": "not_a_number"}
+        from citrascope.settings.citrascope_settings import CitraScopeSettings
+
+        s = CitraScopeSettings.load()
+
+    assert s.sextractor_detect_thresh == 5.0
+
+
+def test_sextractor_detect_minarea_default():
+    with patch("citrascope.settings.citrascope_settings.SettingsFileManager") as MockSFM:
+        MockSFM.return_value.load_config.return_value = {}
+        from citrascope.settings.citrascope_settings import CitraScopeSettings
+
+        s = CitraScopeSettings.load()
+
+    assert s.sextractor_detect_minarea == 3
+
+
+def test_sextractor_detect_minarea_valid():
+    with patch("citrascope.settings.citrascope_settings.SettingsFileManager") as MockSFM:
+        MockSFM.return_value.load_config.return_value = {"sextractor_detect_minarea": 10}
+        from citrascope.settings.citrascope_settings import CitraScopeSettings
+
+        s = CitraScopeSettings.load()
+
+    assert s.sextractor_detect_minarea == 10
+
+
+def test_sextractor_detect_minarea_float_coercion():
+    with patch("citrascope.settings.citrascope_settings.SettingsFileManager") as MockSFM:
+        MockSFM.return_value.load_config.return_value = {"sextractor_detect_minarea": 7.9}
+        from citrascope.settings.citrascope_settings import CitraScopeSettings
+
+        s = CitraScopeSettings.load()
+
+    assert s.sextractor_detect_minarea == 7
+
+
+def test_sextractor_detect_minarea_clamps_low():
+    with patch("citrascope.settings.citrascope_settings.SettingsFileManager") as MockSFM:
+        MockSFM.return_value.load_config.return_value = {"sextractor_detect_minarea": 0}
+        from citrascope.settings.citrascope_settings import CitraScopeSettings
+
+        s = CitraScopeSettings.load()
+
+    assert s.sextractor_detect_minarea == 1
+
+
+def test_sextractor_detect_minarea_clamps_high():
+    with patch("citrascope.settings.citrascope_settings.SettingsFileManager") as MockSFM:
+        MockSFM.return_value.load_config.return_value = {"sextractor_detect_minarea": 100}
+        from citrascope.settings.citrascope_settings import CitraScopeSettings
+
+        s = CitraScopeSettings.load()
+
+    assert s.sextractor_detect_minarea == 50
+
+
+def test_sextractor_detect_minarea_invalid_fallback():
+    with patch("citrascope.settings.citrascope_settings.SettingsFileManager") as MockSFM:
+        MockSFM.return_value.load_config.return_value = {"sextractor_detect_minarea": "garbage"}
+        from citrascope.settings.citrascope_settings import CitraScopeSettings
+
+        s = CitraScopeSettings.load()
+
+    assert s.sextractor_detect_minarea == 3
+
+
+def test_sextractor_filter_name_default():
+    with patch("citrascope.settings.citrascope_settings.SettingsFileManager") as MockSFM:
+        MockSFM.return_value.load_config.return_value = {}
+        from citrascope.settings.citrascope_settings import CitraScopeSettings
+
+        s = CitraScopeSettings.load()
+
+    assert s.sextractor_filter_name == "default"
+
+
+@pytest.mark.parametrize("name", ["default", "gauss_1.5_3x3", "gauss_2.5_5x5", "tophat_3.0_3x3", "tophat_5.0_5x5"])
+def test_sextractor_filter_name_accepts_valid(name):
+    with patch("citrascope.settings.citrascope_settings.SettingsFileManager") as MockSFM:
+        MockSFM.return_value.load_config.return_value = {"sextractor_filter_name": name}
+        from citrascope.settings.citrascope_settings import CitraScopeSettings
+
+        s = CitraScopeSettings.load()
+
+    assert s.sextractor_filter_name == name
+
+
+def test_sextractor_filter_name_unknown_fallback():
+    with patch("citrascope.settings.citrascope_settings.SettingsFileManager") as MockSFM:
+        MockSFM.return_value.load_config.return_value = {"sextractor_filter_name": "nonexistent_kernel"}
+        from citrascope.settings.citrascope_settings import CitraScopeSettings
+
+        s = CitraScopeSettings.load()
+
+    assert s.sextractor_filter_name == "default"
+
+
+def test_sextractor_filter_name_non_string_fallback():
+    with patch("citrascope.settings.citrascope_settings.SettingsFileManager") as MockSFM:
+        MockSFM.return_value.load_config.return_value = {"sextractor_filter_name": 12345}
+        from citrascope.settings.citrascope_settings import CitraScopeSettings
+
+        s = CitraScopeSettings.load()
+
+    assert s.sextractor_filter_name == "default"

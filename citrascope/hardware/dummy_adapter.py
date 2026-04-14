@@ -1112,9 +1112,50 @@ class DummyAdapter(AbstractAstroHardwareAdapter):
         earth_bary, _ = get_body_barycentric_posvel("earth", astro_t)
         sun_pos_km = (sun_bary.xyz - earth_bary.xyz).to(u.km).value  # type: ignore[union-attr]
 
+        # --- Cheap single-epoch prefilter: skip satellites far from FOV ------
+        from keplemon.bodies import Satellite as _PrefilterSat
+        from keplemon.elements import TLE as _PrefilterTLE
+        from keplemon.enums import ReferenceFrame as _PrefilterRF
+
+        ra_center = float(wcs.wcs.crval[0])
+        dec_center = float(wcs.wcs.crval[1])
+        fov_w_deg = size_x * abs(float(wcs.wcs.cdelt[0]))
+        fov_h_deg = size_y * abs(float(wcs.wcs.cdelt[1]))
+        field_radius_deg = math.sqrt(fov_w_deg**2 + fov_h_deg**2) / 2.0 + 1.0
+
+        dt_mid_prefilter = dt_obs + timedelta(seconds=exptime / 2.0)
+        if dt_mid_prefilter.tzinfo is None:
+            dt_mid_prefilter = dt_mid_prefilter.replace(tzinfo=timezone.utc)
+        epoch_mid = ktime.Epoch.from_datetime(dt_mid_prefilter)
+
+        near_fov_elsets: list[dict] = []
+        n_prefiltered = 0
+        for elset in elsets:
+            tle = elset.get("tle") or []
+            if len(tle) < 2:
+                n_prefiltered += 1
+                continue
+            try:
+                kep_tle = _PrefilterTLE.from_lines(tle[0], tle[1])
+                satellite = _PrefilterSat.from_tle(kep_tle)
+                topo = obs.get_topocentric_to_satellite(epoch_mid, satellite, _PrefilterRF.J2000)
+                delta_ra = abs(ra_center - topo.right_ascension)
+                if delta_ra > 180.0:
+                    delta_ra = 360.0 - delta_ra
+                delta_dec = abs(dec_center - topo.declination)
+                if delta_ra < field_radius_deg and delta_dec < field_radius_deg:
+                    near_fov_elsets.append(elset)
+                else:
+                    n_prefiltered += 1
+            except Exception:
+                n_prefiltered += 1
+
+        # --- Dense propagation only for near-FOV candidates ------------------
         n_rendered = 0
         rejections: dict[str, int] = {}
-        for elset in elsets:
+        if n_prefiltered > 0:
+            rejections["prefiltered"] = n_prefiltered
+        for elset in near_fov_elsets:
             try:
                 result, reason = self._propagate_satellite_arc(
                     elset, obs, t_start, t_end, wcs, size_x, size_y, sun_pos_km
@@ -1127,10 +1168,7 @@ class DummyAdapter(AbstractAstroHardwareAdapter):
             if result is None:
                 bucket = reason.split("(")[0] if reason else "unknown"
                 rejections[bucket] = rejections.get(bucket, 0) + 1
-                if bucket == "too_faint":
-                    self.logger.info("DummyAdapter: Satellite rejected: %s", reason)
-                else:
-                    self.logger.debug("DummyAdapter: Satellite rejected: %s", reason)
+                self.logger.debug("DummyAdapter: Satellite rejected: %s", reason)
                 continue
 
             pixel_coords = result["pixel_coords"]
@@ -1167,11 +1205,12 @@ class DummyAdapter(AbstractAstroHardwareAdapter):
 
         reject_summary = ", ".join(f"{k}={v}" for k, v in sorted(rejections.items())) if rejections else "none"
         self.logger.info(
-            "DummyAdapter: Satellite rendering: %d rendered, %d rejected [%s] (of %d elsets)",
+            "DummyAdapter: Satellite rendering: %d rendered, %d rejected [%s] (of %d elsets, %d near FOV)",
             n_rendered,
             sum(rejections.values()),
             reject_summary,
             len(elsets),
+            len(near_fov_elsets),
         )
 
         return n_rendered

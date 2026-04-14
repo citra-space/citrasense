@@ -92,7 +92,7 @@
                             <div class="col-12 col-md-6">
                                 <label for="personal_access_token" class="form-label">Personal Access Token <span class="text-danger">*</span></label>
                                 <input type="password" id="personal_access_token" class="form-control" placeholder="Enter your Citra API token" required x-model="$store.citrascope.config.personal_access_token">
-                                <small class="text-muted">Get your token and telescope ID from <a :href="$store.citrascope.config.app_url || ''" target="_blank" x-text="($store.citrascope.config.app_url || '').replace('https://', '')"></a></small>
+                                <small class="text-muted">Get your token and telescope ID from <a :href="$store.citrascope.config.app_url || ''" target="_blank" rel="noopener noreferrer" x-text="($store.citrascope.config.app_url || '').replace('https://', '')"></a></small>
                             </div>
                             <div class="col-12 col-md-6">
                                 <label for="telescopeId" class="form-label">Telescope ID <span class="text-danger">*</span></label>
@@ -678,7 +678,7 @@
                             <div class="col-12">
                                 <h6 class="text-muted mb-2"><i class="bi bi-stars me-2"></i>Plate Solving</h6>
                                 <small class="text-muted d-block mb-3">
-                                    <a href="https://astrometry.net" target="_blank" class="text-muted">Astrometry.net</a> plate solving settings. The solver uses telescope pointing and plate scale hints from the task context for fast solves.
+                                    <a href="https://astrometry.net" target="_blank" rel="noopener noreferrer" class="text-muted">Astrometry.net</a> plate solving settings. The solver uses telescope pointing and plate scale hints from the task context for fast solves.
                                 </small>
                                 <div class="row g-2">
                                     <div class="col-6 col-md-4">
@@ -703,7 +703,7 @@
                             <div class="col-12">
                                 <h6 class="text-muted mb-2"><i class="bi bi-search me-2"></i>Source Extraction</h6>
                                 <small class="text-muted d-block mb-3">
-                                    <a href="https://sextractor.readthedocs.io" target="_blank" class="text-muted">SExtractor</a>
+                                    <a href="https://sextractor.readthedocs.io" target="_blank" rel="noopener noreferrer" class="text-muted">SExtractor</a>
                                     detection parameters. Lower thresholds find fainter objects but increase false positives from noise and hot pixels.
                                 </small>
                                 <div class="row g-2">
