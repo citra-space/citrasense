@@ -45,7 +45,7 @@ __main__.py (CLI via Click)
        │    ├─ runner.py (TaskManager — orchestrates the main loop)
        │    ├─ autofocus_manager.py (dedicated autofocus scheduling/execution)
        │    ├─ base_work_queue.py → imaging_queue.py, processing_queue.py, upload_queue.py
-       │    └─ scope/ (base_telescope_task.py, static/tracking variants)
+       │    └─ scope/ (base_telescope_task.py, sidereal/tracking variants)
        ├─ processors/ (pipeline: plate_solver[astrometry.net] → source_extractor[SExtractor] → photometry → satellite_matcher)
        ├─ settings/ (CitraScopeSettings — Pydantic BaseModel, persisted to JSON)
        └─ web/ (FastAPI app, Alpine.js frontend, WebSocket log streaming)

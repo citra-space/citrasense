@@ -523,12 +523,12 @@
                                     x-model="$store.citrascope.config.observation_mode">
                                     <option value="auto">Auto (tracking if mount supports it)</option>
                                     <option value="tracking">Tracking (custom rates, long exposure)</option>
-                                    <option value="static">Static (point-ahead, short exposure)</option>
+                                    <option value="sidereal">Sidereal (point-ahead, streak images)</option>
                                 </select>
                                 <small class="text-muted d-block mt-2">
-                                    <strong>Auto</strong> uses tracking on capable mounts, static otherwise.
+                                    <strong>Auto</strong> uses tracking on capable mounts, sidereal otherwise.
                                     <strong>Tracking</strong> matches satellite motion for point-source images.
-                                    <strong>Static</strong> holds position for streak images.
+                                    <strong>Sidereal</strong> tracks stars; satellites streak across the frame.
                                 </small>
                             </div>
                             <div class="col-12 col-md-6">
@@ -537,7 +537,7 @@
                                        min="0.01" max="300" step="0.01"
                                        x-model.number="$store.citrascope.config.exposure_seconds">
                                 <small class="text-muted d-block mt-2">
-                                    Shorter exposures (1-3s) for static/streak. Longer (10-20s) for tracking.
+                                    Shorter exposures (1-3s) for sidereal/streak. Longer (10-20s) for tracking.
                                 </small>
                             </div>
                             <div class="col-12 col-md-6">
@@ -557,7 +557,7 @@
                                 </div>
                                 <small class="text-muted d-block mt-1">
                                     Automatically compute exposure time from satellite angular rate and telescope plate scale.
-                                    Keeps satellite trail within the pixel limit below. Only applies to static/sidereal mode.
+                                    Keeps satellite trail within the pixel limit below. Only applies to sidereal mode.
                                 </small>
                             </div>
                             <template x-if="$store.citrascope.config.adaptive_exposure">

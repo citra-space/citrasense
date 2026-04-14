@@ -113,10 +113,10 @@ class CitraScopeSettings(BaseModel):
     # Task processing
     task_processing_paused: bool = False
 
-    # Observation mode: "auto", "tracking", or "static"
+    # Observation mode: "auto", "tracking", or "sidereal"
     observation_mode: str = "auto"
 
-    # Exposure duration for take_image calls (seconds), used by both static and tracking modes.
+    # Exposure duration for take_image calls (seconds), used by both sidereal and tracking modes.
     exposure_seconds: float = 2.0
 
     # Number of images to capture per observation task (burst count).
@@ -259,7 +259,9 @@ class CitraScopeSettings(BaseModel):
     @field_validator("observation_mode", mode="before")
     @classmethod
     def _validate_observation_mode(cls, v: Any) -> str:
-        if v not in ("auto", "tracking", "static"):
+        if v == "static":
+            return "sidereal"
+        if v not in ("auto", "tracking", "sidereal"):
             CITRASCOPE_LOGGER.warning("Invalid observation_mode (%r). Falling back to 'auto'.", v)
             return "auto"
         return v

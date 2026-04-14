@@ -1,4 +1,4 @@
-"""Tests for AbstractBaseTelescopeTask and StaticTelescopeTask."""
+"""Tests for AbstractBaseTelescopeTask and SiderealTelescopeTask."""
 
 import math
 from unittest.mock import MagicMock, create_autospec, patch
@@ -744,6 +744,26 @@ class TestComputeAngularRate:
         with patch.object(ct, "get_target_radec_and_rates", return_value=(None, dec_mock, ra_rate, dec_rate)):
             rate = ct.compute_angular_rate({})
         assert abs(rate - math.sqrt(2)) < 0.001
+
+    def test_celestial_parameter_forwarded(self):
+        """compute_angular_rate passes celestial kwarg to get_target_radec_and_rates."""
+        ct = self._make_concrete()
+        dec_mock = MagicMock(degrees=0.0)
+        ra_rate = self._make_rate_mock(3600.0)
+        dec_rate = self._make_rate_mock(0.0)
+        with patch.object(ct, "get_target_radec_and_rates", return_value=(None, dec_mock, ra_rate, dec_rate)) as mock:
+            ct.compute_angular_rate({}, celestial=True)
+        mock.assert_called_once_with({}, celestial=True)
+
+    def test_celestial_false_by_default(self):
+        """compute_angular_rate defaults to celestial=False."""
+        ct = self._make_concrete()
+        dec_mock = MagicMock(degrees=0.0)
+        ra_rate = self._make_rate_mock(3600.0)
+        dec_rate = self._make_rate_mock(0.0)
+        with patch.object(ct, "get_target_radec_and_rates", return_value=(None, dec_mock, ra_rate, dec_rate)) as mock:
+            ct.compute_angular_rate({})
+        mock.assert_called_once_with({}, celestial=False)
 
 
 class TestComputeSatelliteTiming:

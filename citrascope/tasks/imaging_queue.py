@@ -34,7 +34,7 @@ class ImagingQueue(BaseWorkQueue):
         Args:
             task_id: Task identifier
             task: Task object
-            telescope_task_instance: Instance of StaticTelescopeTask or TrackingTelescopeTask
+            telescope_task_instance: Instance of SiderealTelescopeTask or TrackingTelescopeTask
             on_complete: Callback(task_id, success) when imaging finishes
         """
         self.logger.info(f"Queuing task {task_id} for imaging")

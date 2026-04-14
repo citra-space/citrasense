@@ -4,7 +4,7 @@ from citrascope.hardware.abstract_astro_hardware_adapter import ObservationStrat
 from citrascope.tasks.scope.base_telescope_task import AbstractBaseTelescopeTask
 
 
-class StaticTelescopeTask(AbstractBaseTelescopeTask):
+class SiderealTelescopeTask(AbstractBaseTelescopeTask):
     @property
     def tracking_mode(self) -> str:
         if (
@@ -57,7 +57,7 @@ class StaticTelescopeTask(AbstractBaseTelescopeTask):
         to enter the FOV, then burst-capture.
         """
         num_exposures = self.settings.num_exposures
-        angular_rate = self.compute_angular_rate(satellite_data)
+        angular_rate = self.compute_angular_rate(satellite_data, celestial=True)
 
         if self.settings.adaptive_exposure:
             adaptive = self.compute_adaptive_exposure(angular_rate)

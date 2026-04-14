@@ -300,7 +300,7 @@ def test_observation_mode_defaults_to_auto():
     assert s.observation_mode == "auto"
 
 
-@pytest.mark.parametrize("mode", ["auto", "tracking", "static"])
+@pytest.mark.parametrize("mode", ["auto", "tracking", "sidereal"])
 def test_observation_mode_accepts_valid_values(mode):
     with patch("citrascope.settings.citrascope_settings.SettingsFileManager") as MockSFM:
         MockSFM.return_value.load_config.return_value = {"observation_mode": mode}
@@ -309,6 +309,16 @@ def test_observation_mode_accepts_valid_values(mode):
         s = CitraScopeSettings.load()
 
     assert s.observation_mode == mode
+
+
+def test_observation_mode_migrates_static_to_sidereal():
+    with patch("citrascope.settings.citrascope_settings.SettingsFileManager") as MockSFM:
+        MockSFM.return_value.load_config.return_value = {"observation_mode": "static"}
+        from citrascope.settings.citrascope_settings import CitraScopeSettings
+
+        s = CitraScopeSettings.load()
+
+    assert s.observation_mode == "sidereal"
 
 
 def test_observation_mode_rejects_invalid_value():

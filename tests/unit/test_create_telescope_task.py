@@ -5,7 +5,7 @@ from unittest.mock import MagicMock, PropertyMock
 import pytest
 
 from citrascope.tasks.runner import TaskManager
-from citrascope.tasks.scope.static_telescope_task import StaticTelescopeTask
+from citrascope.tasks.scope.sidereal_telescope_task import SiderealTelescopeTask
 from citrascope.tasks.scope.tracking_telescope_task import TrackingTelescopeTask
 
 
@@ -34,11 +34,11 @@ def _make_manager(observation_mode: str, supports_custom_tracking: bool) -> Task
 
 
 class TestCreateTelescopeTask:
-    def test_static_mode_always_returns_static(self):
-        mgr = _make_manager("static", supports_custom_tracking=True)
+    def test_sidereal_mode_always_returns_sidereal(self):
+        mgr = _make_manager("sidereal", supports_custom_tracking=True)
         task = MagicMock()
         result = mgr._create_telescope_task(task)
-        assert isinstance(result, StaticTelescopeTask)
+        assert isinstance(result, SiderealTelescopeTask)
 
     def test_tracking_mode_always_returns_tracking(self):
         mgr = _make_manager("tracking", supports_custom_tracking=False)
@@ -52,13 +52,13 @@ class TestCreateTelescopeTask:
         result = mgr._create_telescope_task(task)
         assert isinstance(result, TrackingTelescopeTask)
 
-    def test_auto_mode_returns_static_when_unsupported(self):
+    def test_auto_mode_returns_sidereal_when_unsupported(self):
         mgr = _make_manager("auto", supports_custom_tracking=False)
         task = MagicMock()
         result = mgr._create_telescope_task(task)
-        assert isinstance(result, StaticTelescopeTask)
+        assert isinstance(result, SiderealTelescopeTask)
 
-    @pytest.mark.parametrize("mode", ["auto", "static", "tracking"])
+    @pytest.mark.parametrize("mode", ["auto", "sidereal", "tracking"])
     def test_all_modes_log_selection(self, mode):
         mgr = _make_manager(mode, supports_custom_tracking=True)
         task = MagicMock()

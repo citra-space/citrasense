@@ -15,7 +15,7 @@ from citrascope.tasks.alignment_manager import AlignmentManager
 from citrascope.tasks.autofocus_manager import AutofocusManager
 from citrascope.tasks.calibration_manager import CalibrationManager
 from citrascope.tasks.homing_manager import HomingManager
-from citrascope.tasks.scope.static_telescope_task import StaticTelescopeTask
+from citrascope.tasks.scope.sidereal_telescope_task import SiderealTelescopeTask
 from citrascope.tasks.scope.tracking_telescope_task import TrackingTelescopeTask
 from citrascope.tasks.task import Task
 
@@ -523,9 +523,9 @@ class TaskManager:
 
         Selection depends on the ``observation_mode`` setting:
         - "auto": use TrackingTelescopeTask if the adapter reports
-          ``supports_custom_tracking``, otherwise StaticTelescopeTask.
+          ``supports_custom_tracking``, otherwise SiderealTelescopeTask.
         - "tracking": always TrackingTelescopeTask.
-        - "static": always StaticTelescopeTask.
+        - "sidereal": always SiderealTelescopeTask.
         """
         mode = self.settings.observation_mode
 
@@ -538,9 +538,9 @@ class TaskManager:
         if use_tracking:
             self.logger.info("Using TrackingTelescopeTask (mode=%s)", mode)
         else:
-            self.logger.info("Using StaticTelescopeTask (mode=%s)", mode)
+            self.logger.info("Using SiderealTelescopeTask (mode=%s)", mode)
 
-        cls = TrackingTelescopeTask if use_tracking else StaticTelescopeTask
+        cls = TrackingTelescopeTask if use_tracking else SiderealTelescopeTask
         return cls(
             self.api_client,
             self.hardware_adapter,

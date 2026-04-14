@@ -1,9 +1,9 @@
-"""Tests for StaticTelescopeTask.tracking_mode and sequence_provides_tracking."""
+"""Tests for SiderealTelescopeTask.tracking_mode and sequence_provides_tracking."""
 
 from unittest.mock import MagicMock
 
 from citrascope.hardware.abstract_astro_hardware_adapter import ObservationStrategy
-from citrascope.tasks.scope.static_telescope_task import StaticTelescopeTask
+from citrascope.tasks.scope.sidereal_telescope_task import SiderealTelescopeTask
 from citrascope.tasks.scope.tracking_telescope_task import TrackingTelescopeTask
 from citrascope.tasks.task import Task
 
@@ -22,17 +22,17 @@ def _make_task_dict(**overrides):
     return Task.from_dict(base)
 
 
-def _make_static_task(
+def _make_sidereal_task(
     observation_strategy: ObservationStrategy = ObservationStrategy.MANUAL,
     sequence_provides_tracking: bool = False,
-) -> StaticTelescopeTask:
+) -> SiderealTelescopeTask:
     adapter = MagicMock()
     adapter.get_observation_strategy.return_value = observation_strategy
     adapter.sequence_provides_tracking = sequence_provides_tracking
     adapter.filter_map = {}
 
     task_obj = _make_task_dict()
-    return StaticTelescopeTask(
+    return SiderealTelescopeTask(
         MagicMock(),
         adapter,
         MagicMock(),
@@ -47,21 +47,21 @@ def _make_static_task(
     )
 
 
-class TestStaticTelescopeTaskTrackingMode:
+class TestSiderealTelescopeTaskTrackingMode:
     def test_manual_strategy_returns_sidereal(self):
-        task = _make_static_task(ObservationStrategy.MANUAL, sequence_provides_tracking=False)
+        task = _make_sidereal_task(ObservationStrategy.MANUAL, sequence_provides_tracking=False)
         assert task.tracking_mode == "sidereal"
 
     def test_manual_strategy_returns_sidereal_even_if_sequence_provides_tracking(self):
-        task = _make_static_task(ObservationStrategy.MANUAL, sequence_provides_tracking=True)
+        task = _make_sidereal_task(ObservationStrategy.MANUAL, sequence_provides_tracking=True)
         assert task.tracking_mode == "sidereal"
 
     def test_sequence_to_controller_without_tracking_returns_sidereal(self):
-        task = _make_static_task(ObservationStrategy.SEQUENCE_TO_CONTROLLER, sequence_provides_tracking=False)
+        task = _make_sidereal_task(ObservationStrategy.SEQUENCE_TO_CONTROLLER, sequence_provides_tracking=False)
         assert task.tracking_mode == "sidereal"
 
     def test_sequence_to_controller_with_tracking_returns_rate(self):
-        task = _make_static_task(ObservationStrategy.SEQUENCE_TO_CONTROLLER, sequence_provides_tracking=True)
+        task = _make_sidereal_task(ObservationStrategy.SEQUENCE_TO_CONTROLLER, sequence_provides_tracking=True)
         assert task.tracking_mode == "rate"
 
 

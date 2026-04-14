@@ -9,6 +9,7 @@ from pathlib import Path
 
 from dateutil import parser as dtparser
 from skyfield.api import EarthSatellite, load, wgs84
+from skyfield.framelib import ICRS as _ICRS_FRAME
 
 from citrascope.hardware.abstract_astro_hardware_adapter import AbstractAstroHardwareAdapter
 from citrascope.tasks.fits_enrichment import enrich_fits_metadata
@@ -534,17 +535,23 @@ class AbstractBaseTelescopeTask(ABC):
         satellite = EarthSatellite(most_recent_elset["tle"][0], most_recent_elset["tle"][1], satellite_data["name"], ts)
         return ground_station, satellite, ts
 
-    def get_target_radec_and_rates(self, satellite_data, seconds_from_now: float = 0.0):
+    def get_target_radec_and_rates(self, satellite_data, seconds_from_now: float = 0.0, *, celestial: bool = False):
+        """Return (RA, Dec, RA_rate, Dec_rate) for the target satellite.
+
+        Args:
+            celestial: When ``True``, rates are in the ICRS frame (motion
+                relative to the star field — for sidereal-tracking trail
+                calculations).  When ``False`` (default), rates are in the
+                observer's Earth-fixed frame (for mount tracking commands).
+        """
         ground_station, satellite, ts = self._get_skyfield_ground_station_and_satellite(satellite_data)
         difference = satellite - ground_station
         days_to_add = seconds_from_now / (24 * 60 * 60)  # Skyfield uses days
         topocentric = difference.at(ts.now() + days_to_add)
         target_ra, target_dec, _ = topocentric.radec()
 
-        # determine ra/dec travel rates
-        rates = topocentric.frame_latlon_and_rates(
-            ground_station
-        )  # TODO can this be collapsed with .radec() call above?
+        frame = _ICRS_FRAME if celestial else ground_station
+        rates = topocentric.frame_latlon_and_rates(frame)
         target_dec_rate = rates[4]
         target_ra_rate = rates[3]
 
@@ -808,14 +815,19 @@ class AbstractBaseTelescopeTask(ABC):
 
         return 0.5
 
-    def compute_angular_rate(self, satellite_data: dict) -> float:
+    def compute_angular_rate(self, satellite_data: dict, *, celestial: bool = False) -> float:
         """Total angular rate of the satellite on the sky (deg/s).
 
         Combines RA and Dec rates with cos(dec) correction for RA projection.
         Uses ``.arcseconds.per_second`` (the same accessor the tracking task uses)
         to avoid ambiguity about what ``.degrees`` returns for Rate objects.
+
+        Args:
+            celestial: When ``True``, compute rate relative to the star field
+                (ICRS frame).  When ``False``, compute rate in the observer's
+                Earth-fixed frame.
         """
-        _, dec, ra_rate, dec_rate = self.get_target_radec_and_rates(satellite_data)
+        _, dec, ra_rate, dec_rate = self.get_target_radec_and_rates(satellite_data, celestial=celestial)
         ra_arcsec_s: float = ra_rate.arcseconds.per_second  # type: ignore[union-attr]
         dec_arcsec_s: float = dec_rate.arcseconds.per_second  # type: ignore[union-attr]
         ra_deg_s = (ra_arcsec_s / 3600) * math.cos(math.radians(dec.degrees))  # type: ignore[union-attr]
@@ -842,9 +854,10 @@ class AbstractBaseTelescopeTask(ABC):
         max_trail_arcsec = self.settings.adaptive_exposure_max_trail_pixels * pixel_scale_arcsec
         angular_rate_arcsec_s = angular_rate_deg_s * 3600
         exposure = max_trail_arcsec / angular_rate_arcsec_s
-        return max(
+        exposure = max(
             self.settings.adaptive_exposure_min_seconds, min(exposure, self.settings.adaptive_exposure_max_seconds)
         )
+        return round(exposure, 3)
 
     def compute_satellite_timing(self, satellite_data: dict) -> dict:
         """Compute real-time timing for satellite FOV crossing.
