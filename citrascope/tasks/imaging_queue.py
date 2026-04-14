@@ -58,7 +58,7 @@ class ImagingQueue(BaseWorkQueue):
         task = item["task"]
         telescope_task = item["telescope_task_instance"]
 
-        self.logger.info(f"[ImagingWorker] Imaging task {task_id}")
+        self.logger.info(f"Imaging task {task_id}")
 
         self.task_manager.update_task_stage(task_id, "imaging")
 
@@ -73,7 +73,7 @@ class ImagingQueue(BaseWorkQueue):
         task_id = item["task_id"]
         on_complete = item["on_complete"]
 
-        self.logger.info(f"[ImagingWorker] Task {task_id} imaging completed successfully")
+        self.logger.info(f"Task {task_id} imaging completed successfully")
 
         # Don't update status message here - telescope task already set it to "Queued for processing..."
         # during upload_image_and_mark_complete()
@@ -91,7 +91,7 @@ class ImagingQueue(BaseWorkQueue):
         task = item["task"]
         on_complete = item["on_complete"]
 
-        self.logger.info(f"[ImagingWorker] Task {task_id} imaging cancelled (queue cleared)")
+        self.logger.info(f"Task {task_id} imaging cancelled (queue cleared)")
 
         if task:
             task.set_status_msg("Imaging cancelled (emergency stop)")
@@ -105,7 +105,7 @@ class ImagingQueue(BaseWorkQueue):
         task = item["task"]
         on_complete = item["on_complete"]
 
-        self.logger.error(f"[ImagingWorker] Task {task_id} imaging permanently failed")
+        self.logger.error(f"Task {task_id} imaging permanently failed")
 
         if task:
             task.set_status_msg("Imaging permanently failed")

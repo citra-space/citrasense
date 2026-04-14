@@ -204,6 +204,11 @@ body {
 .log-level-ERROR { color: #f56565; }
 .log-level-CRITICAL { color: #c53030; }
 
+.log-module {
+    color: #718096;
+    margin-right: 4px;
+}
+
 .log-message {
     color: #e2e8f0;
 }

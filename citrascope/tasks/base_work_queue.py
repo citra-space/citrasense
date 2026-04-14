@@ -22,7 +22,7 @@ class BaseWorkQueue(ABC):
         self.work_queue = queue.Queue()
         self.num_workers = num_workers
         self.settings = settings
-        self.logger = logger
+        self.logger = logger.getChild(type(self).__name__)
         self.workers = []
         self.running = False
 

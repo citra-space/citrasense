@@ -16,7 +16,7 @@ from citrascope.settings.citrascope_settings import APP_AUTHOR, APP_NAME
 
 _LOW_COUNT_THRESHOLD = 25_000
 
-_logger = logging.getLogger(__name__)
+_logger = logging.getLogger("citrascope.ElsetCache")
 
 
 def _normalize_api_response(raw_list: list[Any]) -> list[dict]:

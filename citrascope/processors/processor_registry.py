@@ -31,7 +31,7 @@ class ProcessorRegistry:
             logger: Logger instance for diagnostics
         """
         self.settings = settings
-        self.logger = logger
+        self.logger = logger.getChild(type(self).__name__)
 
         self.processors: list[AbstractImageProcessor] = [
             CalibrationProcessor(),  # Step 0: apply bias/dark/flat calibration

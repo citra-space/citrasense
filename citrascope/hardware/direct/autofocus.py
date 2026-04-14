@@ -425,7 +425,7 @@ def run_autofocus(
         RuntimeError: If autofocus cannot determine a valid position
             (including cancellation).
     """
-    log = logger or logging.getLogger(__name__)
+    log = logger or logging.getLogger("citrascope.Autofocus")
     report = on_progress or (lambda _msg: None)
 
     center = focuser.get_position()

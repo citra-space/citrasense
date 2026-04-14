@@ -18,7 +18,7 @@ import platformdirs
 from citrascope.api.abstract_api_client import AbstractCitraApiClient
 from citrascope.settings.citrascope_settings import APP_AUTHOR, APP_NAME
 
-_logger = logging.getLogger(__name__)
+_logger = logging.getLogger("citrascope.ApassCatalog")
 
 # HEALPix parameters matching build_apass_catalog.py
 _HEALPIX_NSIDE = 64
@@ -54,7 +54,7 @@ class ApassCatalog:
     def __init__(self, db_path: Path | str | None = None, logger: logging.Logger | None = None):
         self._db_path = Path(db_path) if db_path is not None else _default_db_path()
         self._download_thread: threading.Thread | None = None
-        self.logger = logger or _logger
+        self.logger = (logger or _logger).getChild(type(self).__name__)
 
     @property
     def db_path(self) -> Path:

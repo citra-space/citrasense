@@ -48,7 +48,7 @@ class AlignmentManager:
         location_service=None,
         preview_bus: PreviewBus | None = None,
     ):
-        self.logger = logger
+        self.logger = logger.getChild(type(self).__name__)
         self.hardware_adapter = hardware_adapter
         self.settings = settings
         self.imaging_queue = imaging_queue

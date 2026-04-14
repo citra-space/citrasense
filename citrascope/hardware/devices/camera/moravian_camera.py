@@ -750,7 +750,7 @@ class MoravianIntegratedFilterWheel(AbstractFilterWheel):
 
     def __init__(self, gxccd_camera: GxccdCamera, num_filters: int, logger: logging.Logger):
         # Skip AbstractHardwareDevice.__init__ kwargs since we're not registry-created
-        self.logger = logger
+        self.logger = logger.getChild(type(self).__name__)
         self._cam = gxccd_camera
         self._num_filters = num_filters
         self._filter_names: list[str] = []

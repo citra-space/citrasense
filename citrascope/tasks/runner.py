@@ -46,7 +46,7 @@ class TaskManager:
         task_index=None,
     ):
         self.api_client = api_client
-        self.logger = logger
+        self.logger = logger.getChild(type(self).__name__)
         self.hardware_adapter = hardware_adapter
         self.settings = settings
         self.processor_registry = processor_registry

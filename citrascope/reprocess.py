@@ -63,7 +63,7 @@ from citrascope.settings.citrascope_settings import CitraScopeSettings
 
 def _setup_logging() -> logging.Logger:
     """Configure console logging for the reprocessing tool."""
-    log = logging.getLogger("citrascope")
+    log = logging.getLogger("citrascope.Reprocess")
     log.setLevel(logging.INFO)
     if not log.handlers:
         handler = logging.StreamHandler(sys.stdout)

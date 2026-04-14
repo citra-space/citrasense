@@ -36,7 +36,7 @@ class HomingManager:
         hardware_adapter: AbstractAstroHardwareAdapter,
         imaging_queue: BaseWorkQueue | None = None,
     ):
-        self.logger = logger
+        self.logger = logger.getChild(type(self).__name__)
         self.hardware_adapter = hardware_adapter
         self.imaging_queue = imaging_queue
         self._requested = False

@@ -154,7 +154,7 @@ from astropy.io import fits
 if TYPE_CHECKING:
     from citrascope.processors.processor_result import AggregatedResult, ProcessingContext
 
-logger = logging.getLogger("citrascope.artifact_writer")
+logger = logging.getLogger("citrascope.ArtifactWriter")
 
 _FITS_HEADER_KEYS = (
     "DATE-OBS",

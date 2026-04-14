@@ -18,7 +18,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-logger = logging.getLogger("citrascope.report_generator")
+logger = logging.getLogger("citrascope.ReportGenerator")
 
 
 # ---------------------------------------------------------------------------

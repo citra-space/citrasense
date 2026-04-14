@@ -24,7 +24,23 @@ class ExcludeWebLogsFilter(logging.Filter):
         return True
 
 
-class ColoredFormatter(logging.Formatter):
+class _ShortNameFormatter(logging.Formatter):
+    """Base formatter that strips the 'citrascope.' prefix from logger names."""
+
+    _PREFIX = "citrascope."
+
+    def format(self, record):
+        original_name = record.name
+        if record.name.startswith(self._PREFIX):
+            record.name = record.name[len(self._PREFIX) :]
+        elif record.name == "citrascope":
+            record.name = "citrascope"
+        result = super().format(record)
+        record.name = original_name
+        return result
+
+
+class ColoredFormatter(_ShortNameFormatter):
     COLORS = {  # noqa: RUF012
         "DEBUG": "\033[94m",  # Blue
         "INFO": "\033[92m",  # Green
@@ -35,19 +51,11 @@ class ColoredFormatter(logging.Formatter):
     RESET = "\033[0m"
 
     def format(self, record):
-        # Save original levelname
         original_levelname = record.levelname
-
-        # Temporarily add color codes
         color = self.COLORS.get(record.levelname, self.RESET)
         record.levelname = f"{color}{record.levelname}{self.RESET}"
-
-        # Format the record
         result = super().format(record)
-
-        # Restore original levelname so other handlers don't get colored version
         record.levelname = original_levelname
-
         return result
 
 
@@ -59,7 +67,7 @@ CITRASCOPE_LOGGER.propagate = False
 # Console handler with colors
 handler = logging.StreamHandler()
 handler.addFilter(ExcludeHttpRequestFilter())
-log_format = "%(asctime)s %(levelname)s %(message)s"
+log_format = "%(asctime)s %(levelname)s [%(name)s] %(message)s"
 date_format = "%Y-%m-%d %H:%M:%S"
 formatter = ColoredFormatter(fmt=log_format, datefmt=date_format)
 handler.setFormatter(formatter)
@@ -105,8 +113,7 @@ def setup_file_logging(log_file_path: Path, backup_count: int = 30) -> None:
     # Add filter to exclude web logs
     _file_handler.addFilter(ExcludeWebLogsFilter())
 
-    # Use plain formatter (no ANSI colors for files)
-    plain_formatter = logging.Formatter(fmt=log_format, datefmt=date_format)
+    plain_formatter = _ShortNameFormatter(fmt=log_format, datefmt=date_format)
     _file_handler.setFormatter(plain_formatter)
     _file_handler.setLevel(logging.INFO)
 

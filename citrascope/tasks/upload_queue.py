@@ -96,7 +96,7 @@ class UploadQueue(BaseWorkQueue):
         task_id = item["task_id"]
         task_obj = item.get("task")
 
-        self.logger.info(f"[UploadWorker] Uploading task {task_id}")
+        self.logger.info(f"Uploading task {task_id}")
 
         # Decide which upload path to take
         sat_obs = []
@@ -110,7 +110,7 @@ class UploadQueue(BaseWorkQueue):
         can_upload_obs = bool(sat_obs and telescope_record and sensor_location)
 
         self.logger.info(
-            f"[UploadWorker] Upload path decision for task {task_id}: "
+            f"Upload path decision for task {task_id}: "
             f"sat_obs={len(sat_obs)}, telescope_record={'yes' if telescope_record else 'NO'}, "
             f"sensor_location={'yes' if sensor_location else 'NO'} -> "
             f"{'observations' if can_upload_obs else 'FITS image'}"
@@ -120,7 +120,7 @@ class UploadQueue(BaseWorkQueue):
             # Observations-only path: post structured data, no FITS needed
             if task_obj:
                 task_obj.set_status_msg("Uploading observations...")
-            self.logger.info(f"[UploadWorker] Uploading {len(sat_obs)} satellite observation(s) for task {task_id}")
+            self.logger.info(f"Uploading {len(sat_obs)} satellite observation(s) for task {task_id}")
             upload_ok = item["api_client"].upload_optical_observations(
                 sat_obs, telescope_record, sensor_location, task_id=task_id
             )
@@ -128,7 +128,7 @@ class UploadQueue(BaseWorkQueue):
             # Standard FITS upload path
             if sat_obs and not (telescope_record and sensor_location):
                 self.logger.warning(
-                    f"[UploadWorker] Have {len(sat_obs)} sat obs but missing telescope_record "
+                    f"Have {len(sat_obs)} sat obs but missing telescope_record "
                     f"or sensor_location — falling back to FITS upload for task {task_id}"
                 )
             if task_obj:
@@ -136,10 +136,10 @@ class UploadQueue(BaseWorkQueue):
             upload_ok = item["api_client"].upload_image(task_id, telescope_id, item["image_path"])
 
         if not upload_ok:
-            self.logger.error(f"[UploadWorker] Upload failed for {task_id}")
+            self.logger.error(f"Upload failed for {task_id}")
             return (False, None)
 
-        self.logger.info(f"[UploadWorker] Upload succeeded for task {task_id}")
+        self.logger.info(f"Upload succeeded for task {task_id}")
         return (True, {"obs_path": can_upload_obs})
 
     def _on_success(self, item, result):
@@ -182,7 +182,7 @@ class UploadQueue(BaseWorkQueue):
         task_obj = item.get("task")
         on_complete = item["on_complete"]
 
-        self.logger.error(f"[UploadWorker] Task {task_id} upload permanently failed")
+        self.logger.error(f"Task {task_id} upload permanently failed")
 
         if task_obj:
             task_obj.set_status_msg("Upload permanently failed")

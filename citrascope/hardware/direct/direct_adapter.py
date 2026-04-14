@@ -64,7 +64,7 @@ class DirectHardwareAdapter(AbstractAstroHardwareAdapter):
                 - focuser_*: Focuser-specific settings
         """
         super().__init__(images_dir, **kwargs)
-        self.logger = logger
+        self.logger = logger.getChild(type(self).__name__)
         self._mount_cache: MountStateCache | None = None
         self._preview_lock = threading.Lock()
 

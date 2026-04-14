@@ -515,7 +515,7 @@ class DummyAdapter(AbstractAstroHardwareAdapter):
             **kwargs: Additional settings including 'simulate_slow_operations'
         """
         super().__init__(images_dir, **kwargs)
-        self.logger = logger
+        self.logger = logger.getChild(type(self).__name__)
         self.simulate_slow = kwargs.get("simulate_slow_operations", False)
         self.slow_delay = kwargs.get("slow_delay_seconds", 2.0)
 

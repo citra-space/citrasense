@@ -45,7 +45,7 @@ class AutofocusManager:
         preview_bus: PreviewBus | None = None,
         on_toast: Callable[[str, str, str | None], None] | None = None,
     ):
-        self.logger = logger
+        self.logger = logger.getChild(type(self).__name__)
         self.hardware_adapter = hardware_adapter
         self.settings = settings
         self.imaging_queue = imaging_queue

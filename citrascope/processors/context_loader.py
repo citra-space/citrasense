@@ -45,7 +45,7 @@ from citrascope.elset_cache import ElsetCache
 from citrascope.processors.processor_result import ProcessingContext
 from citrascope.tasks.task import Task
 
-logger = logging.getLogger("citrascope.context_loader")
+logger = logging.getLogger("citrascope.ContextLoader")
 
 
 class FixedLocationService:
