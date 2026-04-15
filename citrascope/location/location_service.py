@@ -58,6 +58,7 @@ class LocationService:
             api_client: API client for updating ground station location
             settings: Settings object for configuration
         """
+        self.logger = CITRASCOPE_LOGGER.getChild(type(self).__name__)
         self.api_client = api_client
         self.settings = settings
         self._ground_station_ref: dict | None = None
@@ -97,7 +98,7 @@ class LocationService:
         if self.gps_monitor.is_available():
             self.gps_monitor.start()
             self._gps_started = True
-            CITRASCOPE_LOGGER.info("GPS monitoring started by location service")
+            self.logger.info("GPS monitoring started by location service")
             return True
 
         return False
@@ -114,7 +115,7 @@ class LocationService:
             if self._try_start_gps():
                 return
         if not self._gps_started:
-            CITRASCOPE_LOGGER.info("GPS not available after retries — location service using API-only mode")
+            self.logger.info("GPS not available after retries — location service using API-only mode")
 
     def get_gpsd_fix(self, allow_blocking: bool = True) -> GPSFix | None:
         """Get GPS fix from the gpsd daemon, never blocking on availability probes.
@@ -161,7 +162,7 @@ class LocationService:
         has a built-in GPS receiver.
         """
         self._hardware_adapter_gps_provider = provider
-        CITRASCOPE_LOGGER.info("Hardware adapter GPS provider registered as fallback location source")
+        self.logger.info("Hardware adapter GPS provider registered as fallback location source")
 
     def _query_hardware_adapter_gps(self) -> GPSFix | None:
         """Try the hardware adapter's GPS, returning cached GPSFix or None.
@@ -190,17 +191,35 @@ class LocationService:
             self._hardware_adapter_gps_cache_time = now
             return None
 
-    def on_gps_fix_changed(self, fix: GPSFix) -> None:
+    def on_gps_fix_changed(self, fix: GPSFix | None) -> None:
         """
-        Callback invoked when GPS fix is checked by background thread (every 10 seconds).
+        Callback invoked on every GPS poll cycle (every 10 seconds).
 
-        Updates ground station location on Citra API when strong fix is available,
-        but rate-limited to gps_update_interval_minutes to avoid API spam.
+        Performs two jobs:
+        1. Location health monitoring — warns only when NO source has a location.
+        2. API updates — pushes location to Citra API when a strong fix is available.
 
         Args:
-            fix: Current GPS fix information
+            fix: Current GPS fix information, or None if gpsd returned nothing.
         """
+        gpsd_has_position = fix is not None and fix.latitude is not None and fix.longitude is not None
+
+        if not gpsd_has_position:
+            adapter_fix = self._query_hardware_adapter_gps()
+            has_adapter = (
+                adapter_fix is not None and adapter_fix.latitude is not None and adapter_fix.longitude is not None
+            )
+            with self._lock:
+                has_ground_station = self._ground_station_ref is not None
+            if has_adapter or has_ground_station:
+                self.logger.debug("gpsd has no position (system located via other source)")
+            else:
+                self.logger.warning("No location available from any source (gpsd, hardware GPS, or ground station)")
+
         if not self.settings or not self.settings.gps_location_updates_enabled:
+            return
+
+        if fix is None:
             return
 
         lat: float | None = None
@@ -239,7 +258,7 @@ class LocationService:
                     self._ground_station_ref["altitude"] = alt
                     self._last_server_update = current_time
 
-                    CITRASCOPE_LOGGER.info(
+                    self.logger.info(
                         "Updated ground station location from %s: lat=%.6f, lon=%.6f, alt=%.1fm",
                         source,
                         lat,
@@ -267,7 +286,7 @@ class LocationService:
                         "source": "gps",
                     }
                 else:
-                    CITRASCOPE_LOGGER.warning(f"GPS fix is stale ({age_seconds:.0f}s old), falling back")
+                    self.logger.warning(f"GPS fix is stale ({age_seconds:.0f}s old), falling back")
 
         adapter_fix = self._query_hardware_adapter_gps()
         if adapter_fix and adapter_fix.latitude is not None and adapter_fix.longitude is not None:

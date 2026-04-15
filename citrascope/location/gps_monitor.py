@@ -31,7 +31,7 @@ class GPSMonitor:
     def __init__(
         self,
         check_interval_minutes: float = 5,
-        fix_callback: Callable[[GPSFix], None] | None = None,
+        fix_callback: Callable[[GPSFix | None], None] | None = None,
     ):
         """
         Initialize GPS monitor.
@@ -40,6 +40,7 @@ class GPSMonitor:
             check_interval_minutes: Minutes between GPS checks
             fix_callback: Optional callback function called with GPSFix when fix quality changes
         """
+        self.logger = CITRASCOPE_LOGGER.getChild(type(self).__name__)
         self.check_interval_minutes = check_interval_minutes
         self.fix_callback = fix_callback
 
@@ -83,7 +84,7 @@ class GPSMonitor:
     def start(self) -> None:
         """Start the GPS monitoring thread."""
         if self._thread is not None and self._thread.is_alive():
-            CITRASCOPE_LOGGER.warning("GPS monitor already running")
+            self.logger.warning("GPS monitor already running")
             return
 
         self._stop_event.clear()
@@ -93,20 +94,20 @@ class GPSMonitor:
         # Log interval in human-readable format
         if self.check_interval_minutes < 1:
             interval_seconds = int(self.check_interval_minutes * 60)
-            CITRASCOPE_LOGGER.info(f"GPS monitor started (check interval: {interval_seconds} seconds)")
+            self.logger.info(f"GPS monitor started (check interval: {interval_seconds} seconds)")
         else:
-            CITRASCOPE_LOGGER.info(f"GPS monitor started (check interval: {self.check_interval_minutes} minutes)")
+            self.logger.info(f"GPS monitor started (check interval: {self.check_interval_minutes} minutes)")
 
     def stop(self) -> None:
         """Stop the GPS monitoring thread."""
         if self._thread is None:
             return
 
-        CITRASCOPE_LOGGER.info("Stopping GPS monitor...")
+        self.logger.info("Stopping GPS monitor...")
         self._stop_event.set()
         self._thread.join(timeout=5.0)
         self._thread = None
-        CITRASCOPE_LOGGER.info("GPS monitor stopped")
+        self.logger.info("GPS monitor stopped")
 
     def get_current_fix(self, allow_blocking: bool = True) -> GPSFix | None:
         """
@@ -172,28 +173,23 @@ class GPSMonitor:
                     self._cached_fix = fix
                     self._cache_timestamp = time.time()
 
-            # Log based on fix quality
             if fix:
-                # Check if fix mode changed for logging purposes
                 fix_mode_changed = fix.fix_mode != self._last_fix_mode
                 self._log_fix_status(fix, fix_mode_changed)
-
-                # Track fix mode for logging changes
                 if fix_mode_changed:
                     self._last_fix_mode = fix.fix_mode
-
-                # Always notify callback (rate limiting happens in callback)
-                if self.fix_callback:
-                    try:
-                        self.fix_callback(fix)
-                    except Exception as e:
-                        CITRASCOPE_LOGGER.error(f"GPS fix callback failed: {e}", exc_info=True)
             else:
-                CITRASCOPE_LOGGER.warning("GPS fix unavailable")
+                self.logger.debug("gpsd fix unavailable")
                 self._last_fix_mode = 0
 
+            if self.fix_callback:
+                try:
+                    self.fix_callback(fix)
+                except Exception as e:
+                    self.logger.error(f"GPS fix callback failed: {e}", exc_info=True)
+
         except Exception as e:
-            CITRASCOPE_LOGGER.error(f"GPS check failed: {e}", exc_info=True)
+            self.logger.error(f"GPS check failed: {e}", exc_info=True)
             with self._lock:
                 self._current_fix = None
 
@@ -234,7 +230,7 @@ class GPSMonitor:
         except (FileNotFoundError, OSError):
             return None
         except Exception as e:
-            CITRASCOPE_LOGGER.debug(f"Could not query gpsd: {e}")
+            self.logger.debug(f"Could not query gpsd: {e}")
             return None
 
     def _parse_gpsd_output(self, output: str) -> GPSFix | None:
@@ -301,7 +297,7 @@ class GPSMonitor:
             fix_mode_changed: True if fix mode changed since last check (logs at INFO)
         """
         if fix.latitude is None or fix.longitude is None:
-            CITRASCOPE_LOGGER.warning("GPS position unavailable")
+            self.logger.debug("gpsd: connected but no position fix")
             return
 
         fix_type = ["no fix", "no fix", "2D", "3D"][min(fix.fix_mode, 3)]
@@ -312,15 +308,14 @@ class GPSMonitor:
         if fix.is_strong_fix:
             # Log at INFO only when fix mode changes, otherwise DEBUG for routine checks
             if fix_mode_changed:
-                CITRASCOPE_LOGGER.info(f"GPS strong fix: {location_str} ({fix.satellites} sats, {fix_type})")
+                self.logger.info(f"GPS strong fix: {location_str} ({fix.satellites} sats, {fix_type})")
             else:
-                CITRASCOPE_LOGGER.debug(f"GPS strong fix: {location_str} ({fix.satellites} sats, {fix_type})")
+                self.logger.debug(f"GPS strong fix: {location_str} ({fix.satellites} sats, {fix_type})")
         elif fix.fix_mode >= 2:
             # Weak fix: log at INFO only when fix mode changes
             if fix_mode_changed:
-                CITRASCOPE_LOGGER.info(f"GPS weak fix: {location_str} ({fix.satellites} sats, {fix_type})")
+                self.logger.info(f"GPS weak fix: {location_str} ({fix.satellites} sats, {fix_type})")
             else:
-                CITRASCOPE_LOGGER.debug(f"GPS weak fix: {location_str} ({fix.satellites} sats, {fix_type})")
+                self.logger.debug(f"GPS weak fix: {location_str} ({fix.satellites} sats, {fix_type})")
         else:
-            # No fix is always a problem - keep at WARNING level
-            CITRASCOPE_LOGGER.warning(f"GPS no fix: {fix.satellites} sats")
+            self.logger.debug(f"gpsd: no fix ({fix.satellites} sats)")
