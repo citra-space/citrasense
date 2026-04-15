@@ -107,12 +107,21 @@ class UploadQueue(BaseWorkQueue):
         telescope_record = item.get("telescope_record")
         telescope_id = telescope_record["id"] if telescope_record else None
         sensor_location = item.get("sensor_location")
-        can_upload_obs = bool(sat_obs and telescope_record and sensor_location)
+        has_calibrated_mag = any(obs.get("mag") is not None for obs in sat_obs)
+        can_upload_obs = bool(sat_obs and telescope_record and sensor_location and has_calibrated_mag)
+
+        if sat_obs and not has_calibrated_mag:
+            self.logger.warning(
+                "Skipping optical observation upload for task %s: photometry failed — "
+                "no calibrated magnitudes available. Falling back to FITS upload.",
+                task_id,
+            )
 
         self.logger.info(
             f"Upload path decision for task {task_id}: "
             f"sat_obs={len(sat_obs)}, telescope_record={'yes' if telescope_record else 'NO'}, "
-            f"sensor_location={'yes' if sensor_location else 'NO'} -> "
+            f"sensor_location={'yes' if sensor_location else 'NO'}, "
+            f"calibrated_mag={'yes' if has_calibrated_mag else 'NO'} -> "
             f"{'observations' if can_upload_obs else 'FITS image'}"
         )
 

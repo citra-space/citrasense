@@ -212,10 +212,13 @@ class TestObservationMagnitudeCalibration:
     def _build_observations(
         potential_sats: pd.DataFrame,
         predictions: list[dict[str, Any]],
-        zero_point: float,
+        zero_point: float | None,
     ) -> list[dict[str, Any]]:
         """Replicate the reverse-match observation builder from _match_satellites."""
         from scipy.spatial import KDTree
+
+        calibrated = zero_point is not None
+        zp = zero_point if calibrated else 0.0
 
         source_coords = potential_sats[["ra", "dec"]].values
         pred_coords = np.array([[p["ra"], p["dec"]] for p in predictions])
@@ -239,7 +242,7 @@ class TestObservationMagnitudeCalibration:
                     "name": p["name"],
                     "ra": float(row["ra"]),
                     "dec": float(row["dec"]),
-                    "mag": inst_mag + zero_point,
+                    "mag": inst_mag + zp if calibrated else None,
                     "mag_instrumental": inst_mag,
                     "filter": "r",
                     "phase_angle": round(p["phase_angle"], 1),
@@ -264,20 +267,18 @@ class TestObservationMagnitudeCalibration:
         assert abs(obs[0]["mag"] - (inst_mag + zero_point)) < 1e-9
         assert abs(obs[0]["mag"] - 15.09) < 1e-6
 
-    def test_zero_point_none_falls_back_to_instrumental(self):
-        """When photometry didn't run (zero_point=None), mag equals instrumental."""
+    def test_zero_point_none_produces_null_mag(self):
+        """When photometry failed (zero_point=None), mag is None but instrumental is preserved."""
         inst_mag = -7.2
-        zp_from_ctx: float | None = None
-        zero_point = zp_from_ctx if zp_from_ctx is not None else 0.0
 
         sources = _make_sources([(180.0, 45.0)])
         sources["mag"] = inst_mag
         predictions = [{"ra": 180.0, "dec": 45.0, "satellite_id": "SAT-2", "name": "GOES 16", "phase_angle": 10.0}]
 
-        obs = self._build_observations(sources, predictions, zero_point)
+        obs = self._build_observations(sources, predictions, zero_point=None)
 
         assert len(obs) == 1
-        assert obs[0]["mag"] == inst_mag
+        assert obs[0]["mag"] is None
         assert obs[0]["mag_instrumental"] == inst_mag
 
     def test_multiple_satellites_each_calibrated(self):
@@ -338,15 +339,15 @@ class TestZeroPointFromContext:
         calibrated = inst_mag + zero_point
         assert abs(calibrated - 15.09) < 1e-6
 
-    def test_none_zero_point_falls_back_to_zero(self):
-        """When zero_point is None, the fallback is 0.0 (instrumental = calibrated)."""
+    def test_none_zero_point_means_uncalibrated(self):
+        """When zero_point is None, calibrated flag is False and mag should be None."""
         zp_from_ctx: float | None = None
-        zero_point = zp_from_ctx if zp_from_ctx is not None else 0.0
-        assert zero_point == 0.0
+        calibrated = zp_from_ctx is not None
+        assert calibrated is False
 
     def test_zero_valued_zero_point_is_not_none(self):
         """A legitimate zero_point of 0.0 must not be confused with None."""
         zp_from_ctx: float | None = 0.0
-        zero_point = zp_from_ctx if zp_from_ctx is not None else 0.0
-        assert zero_point == 0.0
-        assert zp_from_ctx is not None
+        calibrated = zp_from_ctx is not None
+        assert calibrated is True
+        assert zp_from_ctx == 0.0

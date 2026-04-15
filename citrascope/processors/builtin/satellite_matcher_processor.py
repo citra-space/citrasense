@@ -185,9 +185,10 @@ class SatelliteMatcherProcessor(AbstractImageProcessor):
         debug["exptime"] = exptime
         debug["mid_exposure_offset_s"] = exptime / 2.0 if exptime > 0 else 0.0
 
-        zero_point = context.zero_point if context.zero_point is not None else 0.0
+        calibrated = context.zero_point is not None
+        zero_point: float = context.zero_point if context.zero_point is not None else 0.0
         debug["zero_point"] = zero_point
-        debug["zero_point_available"] = context.zero_point is not None
+        debug["zero_point_available"] = calibrated
 
         # Sun position (km, J2000/ECI) via astropy ERFA — no external ephemeris file required
         _t = AstropyTime(epoch.to_datetime())
@@ -383,7 +384,7 @@ class SatelliteMatcherProcessor(AbstractImageProcessor):
                     "name": p["name"],
                     "ra": float(row["ra"]),
                     "dec": float(row["dec"]),
-                    "mag": inst_mag + zero_point,
+                    "mag": (inst_mag + zero_point) if calibrated else None,
                     "mag_instrumental": inst_mag,
                     "filter": filter_name,
                     "timestamp": timestamp_str,
