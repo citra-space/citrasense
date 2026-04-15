@@ -1313,13 +1313,13 @@ class DirectHardwareAdapter(AbstractAstroHardwareAdapter):
             if location:
                 lat, lon = location["latitude"], location["longitude"]
                 cmd_az, cmd_alt = radec_to_altaz(expected_ra_deg, expected_dec_deg, lat, lon)
+                self._pointing_model.record_verification_residual(residual_deg)
                 if not self._pointing_model.has_nearby_point(cmd_az, cmd_alt):
                     self._pointing_model.add_point(
                         expected_ra_deg, expected_dec_deg, solved_ra_deg, solved_dec_deg, lat, lon
                     )
                     self.logger.info("Pipeline fed pointing model (residual %.4f°)", residual_deg)
                 else:
-                    self._pointing_model.record_verification_residual(residual_deg)
                     self.logger.debug("Pipeline skip: nearby point exists (residual %.4f°)", residual_deg)
                 return
 
