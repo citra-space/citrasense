@@ -1,5 +1,6 @@
 """Unit tests for GPSMonitor and LocationService."""
 
+import logging
 import subprocess
 import time
 from unittest.mock import MagicMock, patch
@@ -162,6 +163,15 @@ def test_gps_monitor_check_gps_no_fix():
     with patch.object(gm, "_query_gpsd", return_value=None):
         gm._check_gps()
     assert gm._current_fix is None
+
+
+def test_gps_monitor_check_gps_calls_callback_with_none():
+    """Callback is called with None when gpsd returns nothing."""
+    callback = MagicMock()
+    gm = GPSMonitor(fix_callback=callback)
+    with patch.object(gm, "_query_gpsd", return_value=None):
+        gm._check_gps()
+    callback.assert_called_once_with(None)
 
 
 def test_gps_monitor_log_fix_strong(caplog):
@@ -557,6 +567,146 @@ def test_location_service_on_gps_fix_falls_back_to_hardware_adapter():
     ls.on_gps_fix_changed(weak_fix)
 
     mock_api.update_ground_station_location.assert_called_once_with("gs1", 38.82, -104.87, 1660.0)
+
+
+# ---------------------------------------------------------------------------
+# Location health monitoring (on_gps_fix_changed with None)
+# ---------------------------------------------------------------------------
+
+
+class _LogCapture(logging.Handler):
+    """Lightweight log handler that captures records from non-propagating loggers."""
+
+    def __init__(self) -> None:
+        super().__init__(level=logging.DEBUG)
+        self.records: list[logging.LogRecord] = []
+
+    def emit(self, record: logging.LogRecord) -> None:
+        self.records.append(record)
+
+
+@pytest.fixture
+def location_log_capture():
+    """Temporarily attach a DEBUG-level handler to citrascope.LocationService."""
+    logger = logging.getLogger("citrascope.LocationService")
+    original_level = logger.level
+    logger.setLevel(logging.DEBUG)
+    handler = _LogCapture()
+    logger.addHandler(handler)
+    yield handler.records
+    logger.removeHandler(handler)
+    logger.setLevel(original_level)
+
+
+def test_location_service_on_gps_fix_none_with_adapter_logs_debug(location_log_capture):
+    """When gpsd returns None but hardware adapter has a fix, log DEBUG not WARNING."""
+    with (
+        patch.object(GPSMonitor, "is_available", return_value=False),
+        patch.object(LocationService, "GPS_RETRY_TIMEOUT_SECONDS", 0),
+    ):
+        ls = LocationService()
+
+    adapter_fix = GPSFix(
+        latitude=38.82, longitude=-104.87, altitude=1660.0, fix_mode=3, satellites=5, timestamp=time.time()
+    )
+    ls.set_hardware_adapter_gps_provider(lambda: adapter_fix)
+    ls.on_gps_fix_changed(None)
+
+    assert any("gpsd has no position" in r.message and r.levelno == logging.DEBUG for r in location_log_capture)
+    assert not any(r.levelno >= logging.WARNING for r in location_log_capture)
+
+
+def test_location_service_on_gps_fix_none_with_ground_station_logs_debug(location_log_capture):
+    """When gpsd returns None but ground station exists, log DEBUG not WARNING."""
+    with (
+        patch.object(GPSMonitor, "is_available", return_value=False),
+        patch.object(LocationService, "GPS_RETRY_TIMEOUT_SECONDS", 0),
+    ):
+        ls = LocationService()
+
+    ls.set_ground_station({"id": "gs1", "latitude": 40.0, "longitude": -74.0, "altitude": 100.0})
+    ls.on_gps_fix_changed(None)
+
+    assert any("gpsd has no position" in r.message and r.levelno == logging.DEBUG for r in location_log_capture)
+    assert not any(r.levelno >= logging.WARNING for r in location_log_capture)
+
+
+def test_location_service_on_gps_fix_none_no_source_logs_warning(location_log_capture):
+    """When gpsd returns None and no other source exists, log WARNING."""
+    with (
+        patch.object(GPSMonitor, "is_available", return_value=False),
+        patch.object(LocationService, "GPS_RETRY_TIMEOUT_SECONDS", 0),
+    ):
+        ls = LocationService()
+
+    ls.on_gps_fix_changed(None)
+
+    assert any(
+        "No location available from any source" in r.message and r.levelno == logging.WARNING
+        for r in location_log_capture
+    )
+
+
+def test_location_service_on_gps_fix_no_position_with_adapter_logs_debug(location_log_capture):
+    """gpsd returns a fix without lat/lon but adapter has position — should be DEBUG."""
+    with (
+        patch.object(GPSMonitor, "is_available", return_value=False),
+        patch.object(LocationService, "GPS_RETRY_TIMEOUT_SECONDS", 0),
+    ):
+        ls = LocationService()
+
+    adapter_fix = GPSFix(
+        latitude=38.82, longitude=-104.87, altitude=1660.0, fix_mode=3, satellites=5, timestamp=time.time()
+    )
+    ls.set_hardware_adapter_gps_provider(lambda: adapter_fix)
+
+    metadata_fix = GPSFix(gpsd_version="3.25", device_path="/dev/ttyACM0")
+    ls.on_gps_fix_changed(metadata_fix)
+
+    assert any("gpsd has no position" in r.message and r.levelno == logging.DEBUG for r in location_log_capture)
+    assert not any(r.levelno >= logging.WARNING for r in location_log_capture)
+
+
+def test_location_service_on_gps_fix_strong_no_health_warning(location_log_capture):
+    """When gpsd has a strong fix, no health warning or debug message is emitted."""
+    with (
+        patch.object(GPSMonitor, "is_available", return_value=False),
+        patch.object(LocationService, "GPS_RETRY_TIMEOUT_SECONDS", 0),
+    ):
+        ls = LocationService()
+
+    strong_fix = GPSFix(latitude=40.0, longitude=-74.0, altitude=100.0, fix_mode=3, satellites=8)
+    ls.on_gps_fix_changed(strong_fix)
+
+    assert not any("gpsd has no position" in r.message for r in location_log_capture)
+    assert not any("No location available" in r.message for r in location_log_capture)
+
+
+def test_location_service_gps_monitoring_disabled_skips_gpsd():
+    """When gps_monitoring_enabled=False, gpsd probing and retry loop are skipped."""
+    mock_settings = MagicMock()
+    mock_settings.gps_monitoring_enabled = False
+
+    with patch.object(GPSMonitor, "is_available") as mock_avail, patch.object(GPSMonitor, "start") as mock_start:
+        ls = LocationService(settings=mock_settings)
+
+    mock_avail.assert_not_called()
+    mock_start.assert_not_called()
+    assert ls._gps_started is False
+    assert not hasattr(ls, "_retry_thread") or not ls._retry_thread.is_alive() if hasattr(ls, "_retry_thread") else True
+
+
+def test_location_service_gps_monitoring_disabled_health_silent(location_log_capture):
+    """When gps_monitoring_enabled=False, health check produces no warning."""
+    mock_settings = MagicMock()
+    mock_settings.gps_monitoring_enabled = False
+
+    with patch.object(GPSMonitor, "is_available", return_value=False):
+        ls = LocationService(settings=mock_settings)
+
+    ls.on_gps_fix_changed(None)
+
+    assert not any(r.levelno >= logging.WARNING for r in location_log_capture)
 
 
 def test_location_service_hardware_adapter_gps_cached():

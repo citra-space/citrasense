@@ -23,6 +23,7 @@ from citrascope.constants import (
 from citrascope.hardware.adapter_registry import get_adapter_schema as get_schema
 from citrascope.hardware.adapter_registry import list_adapters
 from citrascope.hardware.devices.abstract_hardware_device import AbstractHardwareDevice
+from citrascope.location.gps_fix import GPSFix
 from citrascope.location.twilight import compute_twilight
 from citrascope.logging import CITRASCOPE_LOGGER
 from citrascope.settings.directory_manager import DirectoryManager
@@ -36,6 +37,23 @@ FILTER_NAME_OPTIONS = [
     {"group": "Sloan", "names": ["sloan_u", "sloan_g", "sloan_r", "sloan_i", "sloan_z"]},
     {"group": "Narrowband", "names": ["Ha", "Hb", "OIII", "SII"]},
 ]
+
+
+def _gps_fix_to_dict(fix: GPSFix) -> dict[str, Any]:
+    """Convert a GPSFix into the dict shape broadcast to the web UI."""
+    return {
+        "latitude": fix.latitude,
+        "longitude": fix.longitude,
+        "altitude": fix.altitude,
+        "fix_mode": fix.fix_mode,
+        "satellites": fix.satellites,
+        "is_strong": fix.is_strong_fix,
+        "eph": fix.eph,
+        "sep": fix.sep,
+        "gpsd_version": fix.gpsd_version,
+        "device_path": fix.device_path,
+        "device_driver": fix.device_driver,
+    }
 
 
 def _task_to_dict(task: Any) -> dict:
@@ -112,7 +130,8 @@ class SystemStatus(BaseModel):
     hfr_refocus_enabled: bool = False
     hfr_sample_window: int = 5
     time_health: dict[str, Any] | None = None
-    gps_location: dict[str, Any] | None = None
+    gpsd_fix: dict[str, Any] | None = None
+    adapter_gps: dict[str, Any] | None = None
     last_update: str = ""
     missing_dependencies: list[dict[str, str]] = []  # List of {device, packages, install_cmd}
     active_processors: list[str] = []  # Names of enabled image processors
@@ -2280,28 +2299,17 @@ class CitraScopeWebApp:
                 # Time monitoring not initialized yet
                 self.status.time_health = None
 
-            # Get GPS location status from location service (gpsd or camera GPS)
+            # Get GPS status from both sources separately
             # Use allow_blocking=False to prevent blocking the async event loop
             if hasattr(self.daemon, "location_service") and self.daemon.location_service:
-                gps_fix = self.daemon.location_service.get_best_gps_fix(allow_blocking=False)
-                if gps_fix:
-                    self.status.gps_location = {
-                        "latitude": gps_fix.latitude,
-                        "longitude": gps_fix.longitude,
-                        "altitude": gps_fix.altitude,
-                        "fix_mode": gps_fix.fix_mode,
-                        "satellites": gps_fix.satellites,
-                        "is_strong": gps_fix.is_strong_fix,
-                        "eph": gps_fix.eph,
-                        "sep": gps_fix.sep,
-                        "gpsd_version": gps_fix.gpsd_version,
-                        "device_path": gps_fix.device_path,
-                        "device_driver": gps_fix.device_driver,
-                    }
-                else:
-                    self.status.gps_location = None
+                gpsd_fix = self.daemon.location_service.get_gpsd_fix(allow_blocking=False)
+                self.status.gpsd_fix = _gps_fix_to_dict(gpsd_fix) if gpsd_fix else None
+
+                adapter_fix = self.daemon.location_service.get_equipment_gps()
+                self.status.adapter_gps = _gps_fix_to_dict(adapter_fix) if adapter_fix else None
             else:
-                self.status.gps_location = None
+                self.status.gpsd_fix = None
+                self.status.adapter_gps = None
 
             # Get ground station information from daemon (available after API validation)
             if hasattr(self.daemon, "ground_station") and self.daemon.ground_station:
@@ -2322,8 +2330,11 @@ class CitraScopeWebApp:
 
             # Resolve active operating location from data already fetched above
             # (avoids calling get_current_location() which can block on subprocess)
-            gps = self.status.gps_location
-            if gps and gps.get("is_strong") and gps.get("latitude") is not None and gps.get("longitude") is not None:
+            best_gps = self.status.gpsd_fix if self.status.gpsd_fix and self.status.gpsd_fix.get("is_strong") else None
+            if not best_gps and self.status.adapter_gps and self.status.adapter_gps.get("is_strong"):
+                best_gps = self.status.adapter_gps
+            gps = best_gps
+            if gps and gps.get("latitude") is not None and gps.get("longitude") is not None:
                 self.status.location_source = "gps"
                 self.status.location_latitude = gps["latitude"]
                 self.status.location_longitude = gps["longitude"]

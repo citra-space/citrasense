@@ -107,6 +107,7 @@ class CitraScopeSettings(BaseModel):
     hardware_safety_check_enabled: bool = False
 
     # GPS
+    gps_monitoring_enabled: bool = True
     gps_location_updates_enabled: bool = True
     gps_update_interval_minutes: int = 5
 

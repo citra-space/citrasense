@@ -5,6 +5,7 @@ from __future__ import annotations
 import datetime
 import logging
 import math
+import random
 import threading
 import time
 from collections.abc import Callable
@@ -28,6 +29,7 @@ from citrascope.hardware.devices.camera.abstract_camera import AbstractCamera
 from citrascope.hardware.devices.focuser.abstract_focuser import AbstractFocuser
 from citrascope.hardware.devices.mount.abstract_mount import AbstractMount
 from citrascope.hardware.devices.mount.mount_state_cache import MountStateCache
+from citrascope.location.gps_fix import GPSFix
 
 # Default observer location — Pikes Peak, matches DummyApiClient.
 _OBSERVER_LAT_DEG = 38.8409
@@ -633,6 +635,19 @@ class DummyAdapter(AbstractAstroHardwareAdapter):
     def get_observation_strategy(self) -> ObservationStrategy:
         """Dummy adapter uses manual strategy."""
         return ObservationStrategy.MANUAL
+
+    def get_gps_location(self) -> GPSFix | None:
+        """Return a simulated hardware GPS fix at the Pikes Peak Observatory."""
+        return GPSFix(
+            latitude=38.8409 + random.gauss(0, 0.00001),
+            longitude=-105.0423 + random.gauss(0, 0.00001),
+            altitude=4302.0 + random.gauss(0, 1.0),
+            fix_mode=3,
+            satellites=random.randint(5, 9),
+            timestamp=time.time(),
+            device_path="camera",
+            device_driver="dummy",
+        )
 
     def perform_observation_sequence(self, task, satellite_data) -> list[str]:
         """Not used for manual strategy."""
