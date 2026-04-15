@@ -203,7 +203,12 @@ document.addEventListener('alpine:init', () => {
                 this.reprocessFilter = origF ?? 'default';
 
                 if (this.detail.reprocessed_result) {
-                    this.reprocessResult = this.detail.reprocessed_result;
+                    const rr = this.detail.reprocessed_result;
+                    const ed = rr.extracted_data || {};
+                    rr._usedThresh = ed['source_extractor.detect_thresh'] ?? null;
+                    rr._usedMinarea = ed['source_extractor.detect_minarea'] ?? null;
+                    rr._usedFilter = ed['source_extractor.filter_name'] ?? null;
+                    this.reprocessResult = rr;
                 }
 
                 this.expanded = taskId;
