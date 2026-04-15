@@ -67,6 +67,7 @@ class LocationService:
         self._hardware_adapter_gps_provider: Callable[[], GPSFix | None] | None = None
         self._hardware_adapter_gps_cache: GPSFix | None = None
         self._hardware_adapter_gps_cache_time: float = 0.0
+        self._equipment_poll_started = False
 
         # Initialize GPS monitor with frequent polling (for UI freshness)
         # Server updates are rate-limited in the callback to gps_update_interval_minutes
@@ -86,6 +87,11 @@ class LocationService:
                 self._retry_thread.start()
         else:
             self.logger.info("Computer GPS (gpsd) monitoring disabled by configuration")
+
+    @property
+    def gps_monitor_started(self) -> bool:
+        """Whether the gpsd monitor is actively running."""
+        return self._gps_started
 
     def _try_start_gps(self) -> bool:
         """Attempt to start GPS monitoring if gpsd is available.
@@ -168,6 +174,14 @@ class LocationService:
         self._hardware_adapter_gps_provider = provider
         self.logger.info("Hardware adapter GPS provider registered as fallback location source")
 
+        if not self._gps_started and not self._equipment_poll_started:
+            self._equipment_poll_started = True
+            threading.Thread(target=self._equipment_gps_poll_loop, daemon=True).start()
+
+    def get_equipment_gps(self) -> GPSFix | None:
+        """Return cached equipment GPS fix, or None. Never blocks on hardware I/O."""
+        return self._hardware_adapter_gps_cache
+
     def _query_hardware_adapter_gps(self) -> GPSFix | None:
         """Try the hardware adapter's GPS, returning cached GPSFix or None.
 
@@ -241,7 +255,20 @@ class LocationService:
                 lat, lon, alt = adapter_fix.latitude, adapter_fix.longitude, adapter_fix.altitude
                 source = "hardware_adapter_gps"
 
-        if lat is None or lon is None:
+        if lat is not None and lon is not None:
+            self._push_location_update(lat, lon, alt, source)
+
+    def _equipment_gps_poll_loop(self) -> None:
+        """Poll equipment GPS for server updates when gpsd is disabled."""
+        while True:
+            time.sleep(self.GPS_CHECK_INTERVAL_SECONDS)
+            fix = self._query_hardware_adapter_gps()
+            if fix and fix.latitude is not None and fix.longitude is not None:
+                self._push_location_update(fix.latitude, fix.longitude, fix.altitude, "hardware_adapter_gps")
+
+    def _push_location_update(self, lat: float, lon: float, alt: float | None, source: str) -> None:
+        """Rate-limited push of a location update to the Citra API."""
+        if not self.settings or not self.settings.gps_location_updates_enabled:
             return
 
         current_time = time.time()

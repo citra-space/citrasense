@@ -600,7 +600,10 @@ def location_log_capture():
 
 def test_location_service_on_gps_fix_none_with_adapter_logs_debug(location_log_capture):
     """When gpsd returns None but hardware adapter has a fix, log DEBUG not WARNING."""
-    with patch.object(GPSMonitor, "is_available", return_value=False):
+    with (
+        patch.object(GPSMonitor, "is_available", return_value=False),
+        patch.object(LocationService, "GPS_RETRY_TIMEOUT_SECONDS", 0),
+    ):
         ls = LocationService()
 
     adapter_fix = GPSFix(
@@ -615,7 +618,10 @@ def test_location_service_on_gps_fix_none_with_adapter_logs_debug(location_log_c
 
 def test_location_service_on_gps_fix_none_with_ground_station_logs_debug(location_log_capture):
     """When gpsd returns None but ground station exists, log DEBUG not WARNING."""
-    with patch.object(GPSMonitor, "is_available", return_value=False):
+    with (
+        patch.object(GPSMonitor, "is_available", return_value=False),
+        patch.object(LocationService, "GPS_RETRY_TIMEOUT_SECONDS", 0),
+    ):
         ls = LocationService()
 
     ls.set_ground_station({"id": "gs1", "latitude": 40.0, "longitude": -74.0, "altitude": 100.0})
@@ -627,7 +633,10 @@ def test_location_service_on_gps_fix_none_with_ground_station_logs_debug(locatio
 
 def test_location_service_on_gps_fix_none_no_source_logs_warning(location_log_capture):
     """When gpsd returns None and no other source exists, log WARNING."""
-    with patch.object(GPSMonitor, "is_available", return_value=False):
+    with (
+        patch.object(GPSMonitor, "is_available", return_value=False),
+        patch.object(LocationService, "GPS_RETRY_TIMEOUT_SECONDS", 0),
+    ):
         ls = LocationService()
 
     ls.on_gps_fix_changed(None)
@@ -640,7 +649,10 @@ def test_location_service_on_gps_fix_none_no_source_logs_warning(location_log_ca
 
 def test_location_service_on_gps_fix_no_position_with_adapter_logs_debug(location_log_capture):
     """gpsd returns a fix without lat/lon but adapter has position — should be DEBUG."""
-    with patch.object(GPSMonitor, "is_available", return_value=False):
+    with (
+        patch.object(GPSMonitor, "is_available", return_value=False),
+        patch.object(LocationService, "GPS_RETRY_TIMEOUT_SECONDS", 0),
+    ):
         ls = LocationService()
 
     adapter_fix = GPSFix(
@@ -657,7 +669,10 @@ def test_location_service_on_gps_fix_no_position_with_adapter_logs_debug(locatio
 
 def test_location_service_on_gps_fix_strong_no_health_warning(location_log_capture):
     """When gpsd has a strong fix, no health warning or debug message is emitted."""
-    with patch.object(GPSMonitor, "is_available", return_value=False):
+    with (
+        patch.object(GPSMonitor, "is_available", return_value=False),
+        patch.object(LocationService, "GPS_RETRY_TIMEOUT_SECONDS", 0),
+    ):
         ls = LocationService()
 
     strong_fix = GPSFix(latitude=40.0, longitude=-74.0, altitude=100.0, fix_mode=3, satellites=8)

@@ -2305,7 +2305,7 @@ class CitraScopeWebApp:
                 gpsd_fix = self.daemon.location_service.get_gpsd_fix(allow_blocking=False)
                 self.status.gpsd_fix = _gps_fix_to_dict(gpsd_fix) if gpsd_fix else None
 
-                adapter_fix = self.daemon.location_service._query_hardware_adapter_gps()
+                adapter_fix = self.daemon.location_service.get_equipment_gps()
                 self.status.adapter_gps = _gps_fix_to_dict(adapter_fix) if adapter_fix else None
             else:
                 self.status.gpsd_fix = None

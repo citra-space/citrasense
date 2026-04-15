@@ -262,7 +262,7 @@ class CitraScopeDaemon:
                 pause_threshold_ms=self.settings.time_offset_pause_ms,
                 gps_monitor=(
                     self.location_service.gps_monitor
-                    if self.location_service and self.location_service._gps_started
+                    if self.location_service and self.location_service.gps_monitor_started
                     else None
                 ),
             )
