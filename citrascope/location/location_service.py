@@ -77,11 +77,15 @@ class LocationService:
 
         self._gps_started = False
 
-        if not self._try_start_gps():
-            # gpsd wasn't ready at init — retry in background so we never
-            # block the async web event loop with subprocess calls later.
-            self._retry_thread = threading.Thread(target=self._gps_retry_loop, daemon=True)
-            self._retry_thread.start()
+        gps_enabled = settings.gps_monitoring_enabled if settings else True
+        if gps_enabled:
+            if not self._try_start_gps():
+                # gpsd wasn't ready at init — retry in background so we never
+                # block the async web event loop with subprocess calls later.
+                self._retry_thread = threading.Thread(target=self._gps_retry_loop, daemon=True)
+                self._retry_thread.start()
+        else:
+            self.logger.info("Computer GPS (gpsd) monitoring disabled by configuration")
 
     def _try_start_gps(self) -> bool:
         """Attempt to start GPS monitoring if gpsd is available.
@@ -205,6 +209,8 @@ class LocationService:
         gpsd_has_position = fix is not None and fix.latitude is not None and fix.longitude is not None
 
         if not gpsd_has_position:
+            if self.settings and not self.settings.gps_monitoring_enabled:
+                return
             adapter_fix = self._query_hardware_adapter_gps()
             has_adapter = (
                 adapter_fix is not None and adapter_fix.latitude is not None and adapter_fix.longitude is not None

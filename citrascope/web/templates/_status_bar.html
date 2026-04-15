@@ -123,31 +123,34 @@
                   data-bs-toggle="tooltip" data-bs-theme="dark"
                   :data-bs-title="(() => {
                       const s = $store.citrascope.status;
-                      const gpsOn = $store.citrascope.config?.gps_location_updates_enabled !== false;
-                      const gps = s?.gps_location;
+                      const gps = s?.gpsd_fix?.is_strong ? s.gpsd_fix
+                                : s?.adapter_gps?.is_strong ? s.adapter_gps
+                                : s?.gpsd_fix || s?.adapter_gps;
                       const loc = s?.location_latitude != null;
-                      if (gpsOn && gps?.is_strong) return 'GPS fix \u00b7 ' + $store.citrascope.formatCompactLocation(s);
-                      if (gpsOn && gps) return 'GPS ' + $store.citrascope.formatGPSLocation(gps) + ' \u00b7 using ' + (s?.ground_station_name || 'ground station');
-                      if (gpsOn) return 'GPS not detected \u00b7 using ' + (s?.ground_station_name || 'ground station');
+                      if (gps?.is_strong) return 'GPS fix \u00b7 ' + $store.citrascope.formatCompactLocation(s);
+                      if (gps) return 'GPS ' + $store.citrascope.formatGPSLocation(gps) + ' \u00b7 using ' + (s?.ground_station_name || 'ground station');
                       if (loc) return (s?.ground_station_name || 'Ground Station') + ' \u00b7 ' + $store.citrascope.formatCompactLocation(s);
                       return 'No location available';
                   })()"
                   :class="(() => {
-                      const gpsOn = $store.citrascope.config?.gps_location_updates_enabled !== false;
-                      const gps = $store.citrascope.status?.gps_location;
-                      if (gpsOn && gps?.is_strong) return 'bg-success';
-                      if (gpsOn && gps) return 'bg-warning text-dark';
+                      const s = $store.citrascope.status;
+                      const gps = s?.gpsd_fix?.is_strong ? s.gpsd_fix
+                                : s?.adapter_gps?.is_strong ? s.adapter_gps
+                                : s?.gpsd_fix || s?.adapter_gps;
+                      if (gps?.is_strong) return 'bg-success';
+                      if (gps) return 'bg-warning text-dark';
                       return 'bg-secondary';
                   })()"
                   x-text="(() => {
-                      const gpsOn = $store.citrascope.config?.gps_location_updates_enabled !== false;
-                      const gps = $store.citrascope.status?.gps_location;
-                      if (gpsOn && gps?.latitude != null) return 'GPS: ' + $store.citrascope.formatGPSLocation(gps);
-                      if (gpsOn && gps) return 'GPS: ' + $store.citrascope.formatGPSLocation(gps);
-                      if (gpsOn) return 'GPS: Not detected';
-                      const name = $store.citrascope.status?.ground_station_name;
+                      const s = $store.citrascope.status;
+                      const gps = s?.gpsd_fix?.is_strong ? s.gpsd_fix
+                                : s?.adapter_gps?.is_strong ? s.adapter_gps
+                                : s?.gpsd_fix || s?.adapter_gps;
+                      if (gps?.latitude != null) return 'GPS: ' + $store.citrascope.formatGPSLocation(gps);
+                      if (gps) return 'GPS: ' + $store.citrascope.formatGPSLocation(gps);
+                      const name = s?.ground_station_name;
                       if (name) return 'Loc: ' + name;
-                      if ($store.citrascope.status?.location_latitude != null) return 'Loc: set';
+                      if (s?.location_latitude != null) return 'Loc: set';
                       return 'Loc: unknown';
                   })()"></span>
 

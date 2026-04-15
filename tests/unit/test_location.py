@@ -667,6 +667,33 @@ def test_location_service_on_gps_fix_strong_no_health_warning(location_log_captu
     assert not any("No location available" in r.message for r in location_log_capture)
 
 
+def test_location_service_gps_monitoring_disabled_skips_gpsd():
+    """When gps_monitoring_enabled=False, gpsd probing and retry loop are skipped."""
+    mock_settings = MagicMock()
+    mock_settings.gps_monitoring_enabled = False
+
+    with patch.object(GPSMonitor, "is_available") as mock_avail, patch.object(GPSMonitor, "start") as mock_start:
+        ls = LocationService(settings=mock_settings)
+
+    mock_avail.assert_not_called()
+    mock_start.assert_not_called()
+    assert ls._gps_started is False
+    assert not hasattr(ls, "_retry_thread") or not ls._retry_thread.is_alive() if hasattr(ls, "_retry_thread") else True
+
+
+def test_location_service_gps_monitoring_disabled_health_silent(location_log_capture):
+    """When gps_monitoring_enabled=False, health check produces no warning."""
+    mock_settings = MagicMock()
+    mock_settings.gps_monitoring_enabled = False
+
+    with patch.object(GPSMonitor, "is_available", return_value=False):
+        ls = LocationService(settings=mock_settings)
+
+    ls.on_gps_fix_changed(None)
+
+    assert not any(r.levelno >= logging.WARNING for r in location_log_capture)
+
+
 def test_location_service_hardware_adapter_gps_cached():
     """Repeated calls within 30s return cached fix without re-querying the provider."""
     with patch.object(GPSMonitor, "is_available", return_value=False):

@@ -260,7 +260,11 @@ class CitraScopeDaemon:
             self.time_monitor = TimeMonitor(
                 check_interval_minutes=self.settings.time_check_interval_minutes,
                 pause_threshold_ms=self.settings.time_offset_pause_ms,
-                gps_monitor=self.location_service.gps_monitor if self.location_service else None,
+                gps_monitor=(
+                    self.location_service.gps_monitor
+                    if self.location_service and self.location_service._gps_started
+                    else None
+                ),
             )
             self.time_monitor.start()
             CITRASCOPE_LOGGER.info("Time synchronization monitoring started")

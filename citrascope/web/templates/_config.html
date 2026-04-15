@@ -800,7 +800,23 @@
                             <div class="col-md-6">
                                 <h6 class="text-muted mb-3"><i class="bi bi-geo-alt me-2"></i>GPS & Location</h6>
 
+                                <!-- Computer GPS (gpsd) toggle -->
                                 <div class="mb-3">
+                                    <div class="form-check">
+                                        <input class="form-check-input" type="checkbox" id="gps_monitoring_enabled"
+                                               x-model="$store.citrascope.config.gps_monitoring_enabled">
+                                        <label class="form-check-label" for="gps_monitoring_enabled">
+                                            Enable computer GPS receiver
+                                        </label>
+                                    </div>
+                                    <small class="text-muted d-block mt-2">
+                                        Monitor for a GPS receiver connected to this computer via gpsd.
+                                        Equipment GPS (e.g. camera built-in) works independently.
+                                    </small>
+                                </div>
+
+                                <!-- Server location updates -->
+                                <div class="mb-3" x-show="$store.citrascope.config.gps_monitoring_enabled !== false || $store.citrascope.status?.adapter_gps">
                                     <div class="form-check">
                                         <input class="form-check-input" type="checkbox" id="gps_location_updates_enabled" x-model="$store.citrascope.config.gps_location_updates_enabled">
                                         <label class="form-check-label" for="gps_location_updates_enabled">
@@ -812,7 +828,7 @@
                                         When disabled, server-provided location will be used for all operations.
                                     </small>
                                 </div>
-                                <div class="mb-3" x-show="$store.citrascope.config.gps_location_updates_enabled !== false">
+                                <div class="mb-3" x-show="$store.citrascope.config.gps_location_updates_enabled !== false && ($store.citrascope.config.gps_monitoring_enabled !== false || $store.citrascope.status?.adapter_gps)">
                                     <label for="gps_update_interval_minutes" class="form-label">GPS Update Interval (minutes)</label>
                                     <input type="number" class="form-control" id="gps_update_interval_minutes"
                                         x-model.number="$store.citrascope.config.gps_update_interval_minutes"
@@ -824,52 +840,90 @@
                                 </div>
 
                                 <!-- GPS Hardware Diagnostics -->
-                                <div class="pt-3 border-top border-secondary" x-show="$store.citrascope.config.gps_location_updates_enabled !== false">
-                                    <h6 class="text-muted mb-3">GPS Hardware</h6>
-                                    <div class="mb-2 d-flex justify-content-between">
-                                        <span class="text-muted small">Source</span>
-                                        <span class="font-monospace small" x-text="(() => {
-                                            const gps = $store.citrascope.status?.gps_location;
-                                            if (!gps) return 'No GPS available';
-                                            if (gps.gpsd_version) return 'gpsd v' + gps.gpsd_version + (gps.device_path ? ' · ' + gps.device_path : '');
-                                            if (gps.device_driver && gps.device_path) return gps.device_driver + ' (' + gps.device_path + ')';
-                                            if (gps.device_driver) return gps.device_driver;
-                                            return 'Unknown';
-                                        })()"></span>
-                                    </div>
-                                    <div class="mb-2 d-flex justify-content-between">
-                                        <span class="text-muted small">Fix</span>
-                                        <span class="font-monospace small" x-text="$store.citrascope.formatGPSLocation($store.citrascope.status?.gps_location)"></span>
-                                    </div>
-                                    <div class="mb-2 d-flex justify-content-between" x-show="$store.citrascope.status?.gps_location">
-                                        <span class="text-muted small">Satellites</span>
-                                        <span class="font-monospace small" x-text="($store.citrascope.status?.gps_location?.satellites || 0) + ' used'"></span>
-                                    </div>
-                                    <template x-if="$store.citrascope.status?.gps_location?.latitude != null">
-                                        <div>
-                                            <div class="mb-2 d-flex justify-content-between">
-                                                <span class="text-muted small">Position</span>
-                                                <span class="font-monospace small" x-text="$store.citrascope.status.gps_location.latitude.toFixed(6) + '\u00b0, ' + $store.citrascope.status.gps_location.longitude.toFixed(6) + '\u00b0'"></span>
+                                <div class="pt-3 border-top border-secondary"
+                                     x-show="$store.citrascope.config.gps_monitoring_enabled !== false || $store.citrascope.status?.adapter_gps">
+                                    <h6 class="text-muted mb-3">GPS Sources</h6>
+
+                                    <!-- Computer GPS (gpsd) -->
+                                    <template x-if="$store.citrascope.config.gps_monitoring_enabled !== false">
+                                        <div class="mb-3">
+                                            <div class="d-flex align-items-center mb-1">
+                                                <i class="bi bi-broadcast me-2 text-muted"></i>
+                                                <span class="small fw-bold">Computer GPS (gpsd)</span>
+                                                <span class="ms-auto badge"
+                                                      :class="$store.citrascope.status?.gpsd_fix?.is_strong ? 'bg-success' : ($store.citrascope.status?.gpsd_fix ? 'bg-warning text-dark' : 'bg-secondary')"
+                                                      x-text="$store.citrascope.status?.gpsd_fix?.is_strong ? 'Fix' : ($store.citrascope.status?.gpsd_fix ? 'Acquiring' : 'No signal')"></span>
                                             </div>
-                                            <div class="mb-2 d-flex justify-content-between">
-                                                <span class="text-muted small">Altitude</span>
-                                                <span class="font-monospace small" x-text="$store.citrascope.status.gps_location.altitude != null
-                                                    ? Math.round($store.citrascope.status.gps_location.altitude) + 'm (' + Math.round($store.citrascope.status.gps_location.altitude * 3.28084) + 'ft)'
-                                                    : '-'"></span>
+                                            <div class="ps-4 small">
+                                                <template x-if="$store.citrascope.status?.gpsd_fix">
+                                                    <div>
+                                                        <span class="text-muted" x-text="(() => {
+                                                            const g = $store.citrascope.status.gpsd_fix;
+                                                            let src = '';
+                                                            if (g.gpsd_version) src += 'gpsd v' + g.gpsd_version;
+                                                            if (g.device_path) src += (src ? ' · ' : '') + g.device_path;
+                                                            return src || 'Connected';
+                                                        })()"></span>
+                                                        <span class="ms-2 font-monospace" x-text="($store.citrascope.status.gpsd_fix.satellites || 0) + ' sats'"></span>
+                                                        <template x-if="$store.citrascope.status.gpsd_fix.latitude != null">
+                                                            <div class="font-monospace mt-1" x-text="$store.citrascope.status.gpsd_fix.latitude.toFixed(6) + '\u00b0, ' + $store.citrascope.status.gpsd_fix.longitude.toFixed(6) + '\u00b0' + ($store.citrascope.status.gpsd_fix.altitude != null ? ' · ' + Math.round($store.citrascope.status.gpsd_fix.altitude) + 'm' : '')"></div>
+                                                        </template>
+                                                    </div>
+                                                </template>
+                                                <template x-if="!$store.citrascope.status?.gpsd_fix">
+                                                    <span class="text-muted">Waiting for gpsd&hellip;</span>
+                                                </template>
                                             </div>
                                         </div>
                                     </template>
+
+                                    <!-- Equipment GPS -->
+                                    <template x-if="$store.citrascope.status?.adapter_gps">
+                                        <div class="mb-3">
+                                            <div class="d-flex align-items-center mb-1">
+                                                <i class="bi bi-pin-map me-2 text-muted"></i>
+                                                <span class="small fw-bold">Equipment GPS</span>
+                                                <span class="ms-auto badge"
+                                                      :class="$store.citrascope.status?.adapter_gps?.is_strong ? 'bg-success' : 'bg-warning text-dark'"
+                                                      x-text="$store.citrascope.status?.adapter_gps?.is_strong ? 'Fix' : 'Acquiring'"></span>
+                                            </div>
+                                            <div class="ps-4 small">
+                                                <span class="text-muted" x-text="(() => {
+                                                    const g = $store.citrascope.status.adapter_gps;
+                                                    if (g.device_driver && g.device_path) return g.device_driver + ' (' + g.device_path + ')';
+                                                    if (g.device_driver) return g.device_driver;
+                                                    return 'Equipment GPS';
+                                                })()"></span>
+                                                <span class="ms-2 font-monospace" x-text="($store.citrascope.status.adapter_gps.satellites || 0) + ' sats'"></span>
+                                                <template x-if="$store.citrascope.status.adapter_gps.latitude != null">
+                                                    <div class="font-monospace mt-1" x-text="$store.citrascope.status.adapter_gps.latitude.toFixed(6) + '\u00b0, ' + $store.citrascope.status.adapter_gps.longitude.toFixed(6) + '\u00b0' + ($store.citrascope.status.adapter_gps.altitude != null ? ' · ' + Math.round($store.citrascope.status.adapter_gps.altitude) + 'm' : '')"></div>
+                                                </template>
+                                            </div>
+                                        </div>
+                                    </template>
+
+                                    <!-- No GPS sources -->
+                                    <div x-show="$store.citrascope.config.gps_monitoring_enabled === false && !$store.citrascope.status?.adapter_gps">
+                                        <span class="text-muted small">No GPS hardware detected</span>
+                                    </div>
                                 </div>
 
                                 <!-- Current Operating Location -->
                                 <div class="pt-3 mt-3 border-top border-secondary"
                                      x-data="{
+                                         get bestGps() {
+                                             const s = $store.citrascope.status;
+                                             if (s?.gpsd_fix?.is_strong) return s.gpsd_fix;
+                                             if (s?.adapter_gps?.is_strong) return s.adapter_gps;
+                                             return s?.gpsd_fix || s?.adapter_gps;
+                                         },
                                          get divergenceKm() {
                                              const s = $store.citrascope.status;
-                                             if (s?.gps_location?.latitude == null || s?.gps_location?.longitude == null
+                                             const gps = this.bestGps;
+                                             if (gps?.latitude == null || gps?.longitude == null
                                                  || s?.ground_station_latitude == null || s?.ground_station_longitude == null) return 0;
-                                             const dLat = (s.gps_location.latitude - s.ground_station_latitude) * 111.32;
-                                             const dLon = (s.gps_location.longitude - s.ground_station_longitude) * 111.32 * Math.cos(s.ground_station_latitude * Math.PI / 180);
+                                             const dLat = (gps.latitude - s.ground_station_latitude) * 111.32;
+                                             const dLon = (gps.longitude - s.ground_station_longitude) * 111.32 * Math.cos(s.ground_station_latitude * Math.PI / 180);
                                              return Math.sqrt(dLat * dLat + dLon * dLon);
                                          }
                                      }">
@@ -879,7 +933,10 @@
                                         <template x-if="$store.citrascope.status?.location_source === 'gps'">
                                             <span class="badge bg-success">
                                                 <i class="bi bi-broadcast me-1"></i>GPS
-                                                <span x-text="$store.citrascope.status?.gps_location ? '(' + ($store.citrascope.status.gps_location.satellites || 0) + ' sats)' : ''"></span>
+                                                <span x-text="(() => {
+                                                    const gps = bestGps;
+                                                    return gps ? '(' + (gps.satellites || 0) + ' sats)' : '';
+                                                })()"></span>
                                             </span>
                                         </template>
                                         <template x-if="$store.citrascope.status?.location_source === 'ground_station'">
