@@ -48,6 +48,7 @@ so the original debug capture is never modified.
 
 from __future__ import annotations
 
+import copy
 import logging
 import sys
 import time
@@ -58,6 +59,7 @@ import click
 
 from citrascope.processors.context_loader import load_context_from_debug_dir
 from citrascope.processors.processor_registry import ProcessorRegistry
+from citrascope.processors.processor_result import AggregatedResult
 from citrascope.settings.citrascope_settings import CitraScopeSettings
 
 
@@ -76,6 +78,60 @@ def _default_output_dir(debug_dir: Path) -> Path:
     """Generate a timestamped output directory path next to the debug directory."""
     stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     return debug_dir.parent / f"{debug_dir.name}_reprocessed_{stamp}"
+
+
+def reprocess_bundle(
+    debug_dir: Path,
+    output_dir: Path | None = None,
+    settings_overrides: dict | None = None,
+    image_override: Path | None = None,
+    logger: logging.Logger | None = None,
+) -> tuple[AggregatedResult, Path]:
+    """Run the processing pipeline against a saved debug bundle.
+
+    Args:
+        debug_dir: Path to the saved ``processing/<task_id>/`` directory.
+        output_dir: Where to write reprocessed output.  Defaults to
+            ``<debug_dir>_reprocessed_<timestamp>``.
+        settings_overrides: Dict of setting field names to values
+            (e.g. ``{"sextractor_detect_thresh": 3.0}``).  Applied to a
+            *copy* of the current settings so live config is never mutated.
+        image_override: Use this FITS path instead of auto-discovering one.
+        logger: Logger instance.  Falls back to a console logger.
+
+    Returns:
+        ``(aggregated_result, output_dir)`` tuple.
+    """
+    log = logger or _setup_logging()
+
+    if output_dir is None:
+        output_dir = _default_output_dir(debug_dir)
+
+    settings = CitraScopeSettings.load()
+
+    if settings_overrides:
+        settings = copy.deepcopy(settings)
+        for key, value in settings_overrides.items():
+            if key in settings.model_fields:
+                setattr(settings, key, value)
+            else:
+                log.warning("Unknown settings override ignored: %s", key)
+
+    registry = ProcessorRegistry(settings=settings, logger=log)
+
+    context = load_context_from_debug_dir(
+        debug_dir=debug_dir,
+        output_dir=output_dir,
+        settings=settings,
+        log=log,
+        image_override=image_override,
+    )
+
+    start = time.time()
+    result = registry.process_all(context)
+    result.total_time = time.time() - start
+
+    return result, output_dir
 
 
 @click.command()
@@ -103,29 +159,15 @@ def cli(debug_dir: Path, output_dir: Path | None, image: Path | None) -> None:
     click.echo(f"Output directory: {output_dir}")
     click.echo()
 
-    # Load current settings (for enabled_processors, etc.)
-    settings = CitraScopeSettings.load()
-
-    # Build the processor pipeline with current code
-    registry = ProcessorRegistry(settings=settings, logger=log)
-
-    # Reconstruct context from saved artifacts
-    context = load_context_from_debug_dir(
-        debug_dir=debug_dir,
-        output_dir=output_dir,
-        settings=settings,
-        log=log,
-        image_override=image,
-    )
-
-    # Run the pipeline
     click.echo("Running pipeline...")
     click.echo()
-    start = time.time()
-    result = registry.process_all(context)
-    elapsed = time.time() - start
+    result, output_dir = reprocess_bundle(
+        debug_dir=debug_dir,
+        output_dir=output_dir,
+        image_override=image,
+        logger=log,
+    )
 
-    # Print summary
     report_path = output_dir / "report.html"
     click.echo()
     click.echo("=" * 60)
@@ -135,7 +177,7 @@ def cli(debug_dir: Path, output_dir: Path | None, image: Path | None) -> None:
         status = "OK" if r.should_upload and r.confidence > 0 else "FAIL"
         click.echo(f"  [{status:>4}] {r.processor_name:<25} {r.processing_time_seconds:.2f}s  {r.reason}")
     click.echo("-" * 60)
-    click.echo(f"  Total time   : {elapsed:.2f}s")
+    click.echo(f"  Total time   : {result.total_time:.2f}s")
     click.echo(f"  Should upload: {result.should_upload}")
     if result.skip_reason:
         click.echo(f"  Skip reason  : {result.skip_reason}")

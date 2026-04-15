@@ -207,6 +207,104 @@ class TestQueryTasks:
         result = index.query_tasks(sort="DROP TABLE; --")
         assert result["total"] == 2  # no SQL injection
 
+    def test_filter_by_filter_name(self, index):
+        t1 = _make_task(id="t-r", assigned_filter_name="r")
+        t2 = _make_task(id="t-v", assigned_filter_name="V")
+        r1 = _make_result(extracted_data={"photometry.filter": "r"})
+        r2 = _make_result(extracted_data={"photometry.filter": "V"})
+        index.record_task(task=t1, result=r1, pointing_report=None, timing_info=None)
+        index.record_task(task=t2, result=r2, pointing_report=None, timing_info=None)
+        result = index.query_tasks(filter_name="r")
+        assert result["total"] == 1
+        assert result["tasks"][0]["task_id"] == "t-r"
+
+    def test_match_detail_matched(self, index):
+        t = _make_task(id="t-matched", satelliteId="25544")
+        obs = [{"norad_id": "25544", "apparent_magnitude": 3.5}]
+        r = _make_result(
+            extracted_data={
+                "satellite_matcher.num_satellites_detected": 1,
+                "satellite_matcher.satellite_observations": obs,
+            }
+        )
+        index.record_task(task=t, result=r, pointing_report=None, timing_info=None)
+        result = index.query_tasks(match_detail="matched")
+        assert result["total"] == 1
+
+    def test_match_detail_not_matched(self, index):
+        t = _make_task(id="t-miss", satelliteId="25544")
+        r = _make_result(
+            extracted_data={
+                "satellite_matcher.num_satellites_detected": 0,
+                "satellite_matcher.satellite_observations": [],
+            }
+        )
+        index.record_task(task=t, result=r, pointing_report=None, timing_info=None)
+        result = index.query_tasks(match_detail="not_matched")
+        assert result["total"] == 1
+
+    def test_match_detail_has_extras(self, index):
+        t = _make_task(id="t-extra", satelliteId="25544")
+        obs = [
+            {"norad_id": "25544", "apparent_magnitude": 3.5},
+            {"norad_id": "99999", "apparent_magnitude": 8.0},
+        ]
+        r = _make_result(
+            extracted_data={
+                "satellite_matcher.num_satellites_detected": 2,
+                "satellite_matcher.satellite_observations": obs,
+            }
+        )
+        index.record_task(task=t, result=r, pointing_report=None, timing_info=None)
+        result = index.query_tasks(match_detail="has_extras")
+        assert result["total"] == 1
+
+    def test_match_detail_no_detections(self, index):
+        t = _make_task(id="t-empty", satelliteId="25544")
+        r = _make_result(
+            extracted_data={
+                "satellite_matcher.num_satellites_detected": 0,
+                "satellite_matcher.satellite_observations": [],
+            }
+        )
+        index.record_task(task=t, result=r, pointing_report=None, timing_info=None)
+        result = index.query_tasks(match_detail="no_detections")
+        assert result["total"] == 1
+
+    def test_upload_status_uploaded(self, index):
+        t = _make_task(id="t-up")
+        index.record_task(task=t, result=_make_result(), pointing_report=None, timing_info=None)
+        index.update_upload_result("t-up", True)
+        assert index.query_tasks(upload_status="uploaded")["total"] == 1
+        assert index.query_tasks(upload_status="failed")["total"] == 0
+
+    def test_upload_status_failed(self, index):
+        t = _make_task(id="t-fail")
+        index.record_task(task=t, result=_make_result(), pointing_report=None, timing_info=None)
+        index.update_upload_result("t-fail", False)
+        assert index.query_tasks(upload_status="failed")["total"] == 1
+        assert index.query_tasks(upload_status="uploaded")["total"] == 0
+
+    def test_upload_status_skipped(self, index):
+        t = _make_task(id="t-skip")
+        r = _make_result(should_upload=False, skip_reason="No satellite match")
+        index.record_task(task=t, result=r, pointing_report=None, timing_info=None)
+        assert index.query_tasks(upload_status="skipped")["total"] == 1
+
+
+class TestDistinctFilterNames:
+    def test_returns_sorted_non_null(self, index):
+        for name, filt in [("t-v", "V"), ("t-r", "r"), ("t-b", "B"), ("t-none", None)]:
+            t = _make_task(id=name, assigned_filter_name=filt)
+            ed = {"photometry.filter": filt} if filt else {}
+            r = _make_result(extracted_data=ed)
+            index.record_task(task=t, result=r, pointing_report=None, timing_info=None)
+        names = index.get_distinct_filter_names()
+        assert names == ["B", "V", "r"]
+
+    def test_empty_db_returns_empty_list(self, index):
+        assert index.get_distinct_filter_names() == []
+
 
 class TestGetStats:
     def test_empty_stats(self, index):

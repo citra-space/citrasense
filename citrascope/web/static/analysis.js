@@ -30,9 +30,13 @@ document.addEventListener('alpine:init', () => {
         sortCol: 'completed_at',
         sortOrder: 'desc',
         filterTarget: '',
+        filterDateFrom: '',
+        filterDateTo: '',
+        filterFilterName: '',
         filterSolved: '',
-        filterMatched: '',
+        filterMatchDetail: '',
         filterWindow: '',
+        filterUploadStatus: '',
         loading: false,
         loaded: false,
         expanded: null,
@@ -41,6 +45,40 @@ document.addEventListener('alpine:init', () => {
         _satObs: [],
         lightboxSrc: null,
         _refreshTimer: null,
+
+        // Reprocess (single) — form values and original-run values
+        reprocessThresh: 5.0,
+        reprocessMinarea: 3,
+        reprocessFilter: 'default',
+        origThresh: null,
+        origMinarea: null,
+        origFilter: null,
+        reprocessing: false,
+        reprocessResult: null,
+        reprocessError: null,
+        uploadingReprocessed: false,
+        uploadReprocessedOk: false,
+        uploadReprocessedError: null,
+
+        // Multi-select
+        selectedTasks: {},
+        batchThresh: 5.0,
+        batchMinarea: 3,
+        batchFilter: 'default',
+        batchJobId: null,
+        batchProgress: 0,
+        batchTotal: 0,
+        batchResult: null,
+        _batchPollTimer: null,
+
+        // Auto-tune
+        autotuneOpen: false,
+        autotuneJobId: null,
+        autotuneProgress: 0,
+        autotuneTotal: 0,
+        autotuneResult: null,
+        autotuneRunning: false,
+        _autotunePollTimer: null,
 
         init() {
             this._refreshTimer = setInterval(() => {
@@ -72,6 +110,7 @@ document.addEventListener('alpine:init', () => {
         },
 
         async loadTasks() {
+            this.selectedTasks = {};
             try {
                 const params = new URLSearchParams({
                     limit: this.pageSize,
@@ -80,9 +119,13 @@ document.addEventListener('alpine:init', () => {
                     order: this.sortOrder,
                 });
                 if (this.filterTarget) params.set('target_name', this.filterTarget);
+                if (this.filterDateFrom) params.set('date_from', this.filterDateFrom + 'T00:00:00+00:00');
+                if (this.filterDateTo) params.set('date_to', this.filterDateTo + 'T23:59:59+00:00');
+                if (this.filterFilterName) params.set('filter_name', this.filterFilterName);
                 if (this.filterSolved) params.set('plate_solved', this.filterSolved);
-                if (this.filterMatched) params.set('target_matched', this.filterMatched);
+                if (this.filterMatchDetail) params.set('match_detail', this.filterMatchDetail);
                 if (this.filterWindow) params.set('missed_window', this.filterWindow);
+                if (this.filterUploadStatus) params.set('upload_status', this.filterUploadStatus);
 
                 const resp = await fetch('/api/analysis/tasks?' + params.toString());
                 const data = await resp.json();
@@ -109,14 +152,36 @@ document.addEventListener('alpine:init', () => {
             return this.sortOrder === 'desc' ? '▾' : '▴';
         },
 
+        _resetReprocessState() {
+            this.reprocessResult = null;
+            this.reprocessError = null;
+            this.origThresh = null;
+            this.origMinarea = null;
+            this.origFilter = null;
+            this.reprocessThresh = 5.0;
+            this.reprocessMinarea = 3;
+            this.reprocessFilter = 'default';
+            this.uploadingReprocessed = false;
+            this.uploadReprocessedOk = false;
+            this.uploadReprocessedError = null;
+        },
+
         async toggleDetail(taskId) {
             if (this.expanded === taskId) {
                 this.expanded = null;
                 this.detail = null;
                 this._extractedData = {};
                 this._satObs = [];
+                this._resetReprocessState();
                 return;
             }
+
+            // Immediately clear stale detail so the old result isn't
+            // shown under the newly-clicked row while the fetch runs.
+            this.expanded = null;
+            this.detail = null;
+            this._resetReprocessState();
+
             try {
                 const resp = await fetch('/api/analysis/tasks/' + taskId);
                 this.detail = await resp.json();
@@ -126,6 +191,27 @@ document.addEventListener('alpine:init', () => {
                 try {
                     this._satObs = JSON.parse(this.detail.satellite_observations_json || '[]');
                 } catch { this._satObs = []; }
+
+                // Pre-populate reprocess form from the original run's settings
+                const origT = this._extractedData['source_extractor.detect_thresh'];
+                const origM = this._extractedData['source_extractor.detect_minarea'];
+                const origF = this._extractedData['source_extractor.filter_name'];
+                this.origThresh = origT ?? null;
+                this.origMinarea = origM ?? null;
+                this.origFilter = origF ?? null;
+                this.reprocessThresh = origT ?? 5.0;
+                this.reprocessMinarea = origM ?? 3;
+                this.reprocessFilter = origF ?? 'default';
+
+                if (this.detail.reprocessed_result) {
+                    const rr = this.detail.reprocessed_result;
+                    const ed = rr.extracted_data || {};
+                    rr._usedThresh = ed['source_extractor.detect_thresh'] ?? null;
+                    rr._usedMinarea = ed['source_extractor.detect_minarea'] ?? null;
+                    rr._usedFilter = ed['source_extractor.filter_name'] ?? null;
+                    this.reprocessResult = rr;
+                }
+
                 this.expanded = taskId;
             } catch (e) {
                 console.error('Failed to load task detail', e);
@@ -305,6 +391,214 @@ document.addEventListener('alpine:init', () => {
             const mm = Math.floor((abs - dd) * 60);
             const ss = ((abs - dd) * 60 - mm) * 60;
             return `${sign}${dd}° ${mm}′ ${ss.toFixed(1)}″ (${deg.toFixed(4)}°)`;
+        },
+
+        // ── Reprocess (single) ──────────────────────────────────────
+
+        async doReprocess(taskId) {
+            this.reprocessing = true;
+            this.reprocessResult = null;
+            this.reprocessError = null;
+            try {
+                const resp = await fetch('/api/analysis/tasks/' + taskId + '/reprocess', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        settings_overrides: {
+                            sextractor_detect_thresh: this.reprocessThresh,
+                            sextractor_detect_minarea: this.reprocessMinarea,
+                            sextractor_filter_name: this.reprocessFilter,
+                        },
+                    }),
+                });
+                if (!resp.ok) {
+                    const err = await resp.json();
+                    this.reprocessError = err.error || 'Reprocess failed';
+                    return;
+                }
+                const result = await resp.json();
+                result._usedThresh = this.reprocessThresh;
+                result._usedMinarea = this.reprocessMinarea;
+                result._usedFilter = this.reprocessFilter;
+                this.reprocessResult = result;
+            } catch (e) {
+                this.reprocessError = 'Request failed: ' + e.message;
+            } finally {
+                this.reprocessing = false;
+            }
+        },
+
+        async doUploadReprocessed(taskId) {
+            this.uploadingReprocessed = true;
+            this.uploadReprocessedOk = false;
+            this.uploadReprocessedError = null;
+            try {
+                const resp = await fetch('/api/analysis/tasks/' + taskId + '/reprocess/upload', {
+                    method: 'POST',
+                });
+                if (!resp.ok) {
+                    const err = await resp.json();
+                    this.uploadReprocessedError = err.error || 'Upload failed';
+                    return;
+                }
+                this.uploadReprocessedOk = true;
+            } catch (e) {
+                this.uploadReprocessedError = 'Request failed: ' + e.message;
+            } finally {
+                this.uploadingReprocessed = false;
+            }
+        },
+
+        // ── Multi-select ────────────────────────────────────────────
+
+        get selectedCount() {
+            return Object.values(this.selectedTasks).filter(Boolean).length;
+        },
+
+        toggleSelect(taskId, checked) {
+            this.selectedTasks[taskId] = checked;
+        },
+
+        toggleSelectAll(checked) {
+            for (const task of this.tasks) {
+                this.selectedTasks[task.task_id] = checked;
+            }
+        },
+
+        async doBatchReprocess() {
+            const ids = Object.entries(this.selectedTasks).filter(([, v]) => v).map(([k]) => k);
+            if (!ids.length) return;
+            this.batchResult = null;
+            try {
+                const resp = await fetch('/api/analysis/reprocess-batch', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        task_ids: ids,
+                        settings_overrides: {
+                            sextractor_detect_thresh: this.batchThresh,
+                            sextractor_detect_minarea: this.batchMinarea,
+                            sextractor_filter_name: this.batchFilter,
+                        },
+                    }),
+                });
+                const data = await resp.json();
+                if (!resp.ok || !data.job_id) {
+                    const { showToast } = await import('./config.js');
+                    showToast(data.error || 'Batch reprocess failed', 'danger');
+                    return;
+                }
+                this.batchJobId = data.job_id;
+                this.batchProgress = 0;
+                this.batchTotal = ids.length;
+                this._pollBatchJob();
+            } catch (e) {
+                console.error('Batch reprocess failed', e);
+            }
+        },
+
+        _pollBatchJob() {
+            if (this._batchPollTimer) clearTimeout(this._batchPollTimer);
+            this._batchPollTimer = setTimeout(async () => {
+                if (!this.batchJobId) return;
+                try {
+                    const resp = await fetch('/api/jobs/' + this.batchJobId);
+                    const job = await resp.json();
+                    this.batchProgress = job.progress || 0;
+                    this.batchTotal = job.total || this.batchTotal;
+                    if (job.state === 'completed' || job.state === 'failed') {
+                        this.batchResult = job.result || { succeeded: 0, failed: 0 };
+                        this.batchJobId = null;
+                        this.loadTasks();
+                        return;
+                    }
+                    this._pollBatchJob();
+                } catch (e) {
+                    console.error('Poll batch job failed', e);
+                    this._pollBatchJob();
+                }
+            }, 1000);
+        },
+
+        // ── Auto-tune ───────────────────────────────────────────────
+
+        async doAutotune() {
+            const ids = Object.entries(this.selectedTasks).filter(([, v]) => v).map(([k]) => k);
+            this.autotuneResult = null;
+            this.autotuneRunning = true;
+            try {
+                const resp = await fetch('/api/analysis/autotune', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ task_ids: ids.length ? ids : undefined }),
+                });
+                const data = await resp.json();
+                if (data.error) {
+                    this.autotuneResult = { error: data.error };
+                    this.autotuneRunning = false;
+                    return;
+                }
+                this.autotuneJobId = data.job_id;
+                this.autotuneProgress = 0;
+                this.autotuneTotal = data.total || 0;
+                this._pollAutotuneJob();
+            } catch (e) {
+                console.error('Auto-tune failed', e);
+                this.autotuneRunning = false;
+            }
+        },
+
+        async cancelAutotune() {
+            if (!this.autotuneJobId) return;
+            try {
+                await fetch('/api/jobs/' + this.autotuneJobId + '/cancel', { method: 'POST' });
+            } catch (e) {
+                console.error('Cancel autotune failed', e);
+            }
+        },
+
+        _pollAutotuneJob() {
+            if (this._autotunePollTimer) clearTimeout(this._autotunePollTimer);
+            this._autotunePollTimer = setTimeout(async () => {
+                if (!this.autotuneJobId) return;
+                try {
+                    const resp = await fetch('/api/jobs/' + this.autotuneJobId);
+                    const job = await resp.json();
+                    this.autotuneProgress = job.progress || 0;
+                    this.autotuneTotal = job.total || this.autotuneTotal;
+                    if (job.state === 'completed' || job.state === 'failed' || job.state === 'cancelled') {
+                        this.autotuneResult = job.result;
+                        this.autotuneJobId = null;
+                        this.autotuneRunning = false;
+                        this.autotuneOpen = true;
+                        const { showToast } = await import('./config.js');
+                        if (job.state === 'completed') {
+                            const n = (job.result && job.result.configs) ? job.result.configs.length : 0;
+                            showToast(`Auto-tune complete — ${n} configurations ranked`, 'success');
+                        } else if (job.state === 'cancelled') {
+                            showToast('Auto-tune cancelled — showing partial results', 'warning');
+                        } else {
+                            showToast('Auto-tune failed: ' + (job.error || 'unknown error'), 'danger');
+                        }
+                        return;
+                    }
+                    this._pollAutotuneJob();
+                } catch (e) {
+                    console.error('Poll autotune job failed', e);
+                    this._pollAutotuneJob();
+                }
+            }, 2000);
+        },
+
+        async applyAutotuneSettings(config) {
+            const store = Alpine.store('citrascope');
+            if (!store || !store.config) return;
+
+            store.config.sextractor_detect_thresh = config.detect_thresh;
+            store.config.sextractor_detect_minarea = config.detect_minarea;
+            store.config.sextractor_filter_name = config.filter_name;
+
+            await window.saveConfiguration({ preventDefault() {} });
         },
     }));
 });

@@ -23,6 +23,37 @@ if TYPE_CHECKING:
     from citrascope.catalogs.apass_catalog import ApassCatalog
 
 
+def cross_match_catalogs(sources: pd.DataFrame, catalog: pd.DataFrame, max_separation: float) -> pd.DataFrame:
+    """Cross-match two catalogs using KDTree.
+
+    Args:
+        sources: DataFrame with detected sources (columns: ra, dec)
+        catalog: DataFrame with catalog stars (columns: radeg, decdeg)
+        max_separation: Maximum separation in degrees
+
+    Returns:
+        DataFrame with matched sources and catalog data concatenated
+    """
+    coords_catalog = catalog[["radeg", "decdeg"]].values
+    tree = KDTree(coords_catalog)
+
+    coords_sources = sources[["ra", "dec"]].values
+    distances, indices = tree.query(coords_sources, distance_upper_bound=max_separation)
+
+    valid = distances < max_separation
+
+    if not valid.any():
+        return pd.DataFrame()
+
+    matched_indices = np.asarray(indices)[valid]
+    matched = pd.concat(
+        [sources.iloc[valid].reset_index(drop=True), catalog.iloc[matched_indices].reset_index(drop=True)],
+        axis=1,
+    )
+
+    return matched
+
+
 class PhotometryProcessor(AbstractImageProcessor):
     """
     Photometric calibration processor using APASS catalog.
@@ -38,38 +69,6 @@ class PhotometryProcessor(AbstractImageProcessor):
     name = "photometry"
     friendly_name = "Photometry Calibrator"
     description = "Photometric calibration via APASS catalog (requires source extraction)"
-
-    def _cross_match_catalogs(
-        self, sources: pd.DataFrame, catalog: pd.DataFrame, max_separation: float
-    ) -> pd.DataFrame:
-        """Cross-match two catalogs using KDTree.
-
-        Args:
-            sources: DataFrame with detected sources (columns: ra, dec)
-            catalog: DataFrame with catalog stars (columns: radeg, decdeg)
-            max_separation: Maximum separation in degrees
-
-        Returns:
-            DataFrame with matched sources and catalog data concatenated
-        """
-        coords_catalog = catalog[["radeg", "decdeg"]].values
-        tree = KDTree(coords_catalog)
-
-        coords_sources = sources[["ra", "dec"]].values
-        distances, indices = tree.query(coords_sources, distance_upper_bound=max_separation)
-
-        valid = distances < max_separation
-
-        if not valid.any():
-            return pd.DataFrame()
-
-        matched_indices = np.asarray(indices)[valid]
-        matched = pd.concat(
-            [sources.iloc[valid].reset_index(drop=True), catalog.iloc[matched_indices].reset_index(drop=True)],
-            axis=1,
-        )
-
-        return matched
 
     def _calibrate_photometry(
         self, sources: pd.DataFrame, image_path: Path, filter_name: str, apass_catalog: ApassCatalog | None = None
@@ -112,7 +111,7 @@ class PhotometryProcessor(AbstractImageProcessor):
             raise RuntimeError("No APASS stars found in field")
 
         # Cross-match detected sources with APASS
-        matched = self._cross_match_catalogs(sources, apass_stars, max_separation=1.0 / 60.0)
+        matched = cross_match_catalogs(sources, apass_stars, max_separation=1.0 / 60.0)
 
         if matched.empty or len(matched) < 3:
             raise RuntimeError(f"Insufficient matched stars for calibration: {len(matched)}")

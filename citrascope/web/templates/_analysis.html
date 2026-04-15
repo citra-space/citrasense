@@ -117,6 +117,22 @@
                    x-model.debounce.300ms="filterTarget" @input="loadTasks()">
         </div>
         <div class="col-auto">
+            <input type="date" class="form-control form-control-sm" x-model="filterDateFrom" @change="loadTasks()"
+                   title="From date" style="max-width: 140px;">
+        </div>
+        <div class="col-auto">
+            <input type="date" class="form-control form-control-sm" x-model="filterDateTo" @change="loadTasks()"
+                   title="To date" style="max-width: 140px;">
+        </div>
+        <div class="col-auto">
+            <select class="form-select form-select-sm" x-model="filterFilterName" @change="loadTasks()">
+                <option value="">Filter: any</option>
+                <template x-for="fn in (stats.filter_names || [])" :key="fn">
+                    <option :value="fn" x-text="fn"></option>
+                </template>
+            </select>
+        </div>
+        <div class="col-auto">
             <select class="form-select form-select-sm" x-model="filterSolved" @change="loadTasks()">
                 <option value="">Solve: any</option>
                 <option value="true">Solved</option>
@@ -124,10 +140,12 @@
             </select>
         </div>
         <div class="col-auto">
-            <select class="form-select form-select-sm" x-model="filterMatched" @change="loadTasks()">
+            <select class="form-select form-select-sm" x-model="filterMatchDetail" @change="loadTasks()">
                 <option value="">Match: any</option>
-                <option value="true">Target matched</option>
-                <option value="false">Not matched</option>
+                <option value="matched">Target matched</option>
+                <option value="not_matched">Target not matched</option>
+                <option value="has_extras">Has extra detections</option>
+                <option value="no_detections">No detections</option>
             </select>
         </div>
         <div class="col-auto">
@@ -137,10 +155,180 @@
                 <option value="false">On time</option>
             </select>
         </div>
-        <div class="col-auto ms-auto">
+        <div class="col-auto">
+            <select class="form-select form-select-sm" x-model="filterUploadStatus" @change="loadTasks()">
+                <option value="">Upload: any</option>
+                <option value="uploaded">Uploaded</option>
+                <option value="failed">Failed</option>
+                <option value="skipped">Skipped</option>
+            </select>
+        </div>
+        <div class="col-auto ms-auto d-flex gap-2">
+            <button class="btn btn-sm" :class="autotuneOpen ? 'btn-primary' : 'btn-outline-primary'"
+                    @click="autotuneOpen = !autotuneOpen">
+                <i class="bi bi-lightning"></i> Auto-Tune
+                <span class="badge bg-secondary ms-1" style="font-size: 0.6rem; vertical-align: middle;">BETA</span>
+                <span x-show="autotuneRunning" class="badge bg-warning text-dark ms-1"
+                      style="font-size: 0.6rem; vertical-align: middle;">running</span>
+                <template x-if="selectedCount > 0 && !autotuneRunning">
+                    <span class="badge bg-info ms-1"
+                          style="font-size: 0.6rem; vertical-align: middle;"
+                          x-text="selectedCount"></span>
+                </template>
+            </button>
             <button class="btn btn-sm btn-outline-secondary" @click="loadAll()" :disabled="loading">
                 <i class="bi bi-arrow-clockwise" :class="loading && 'spin'"></i> Refresh
             </button>
+        </div>
+    </div>
+
+    <!-- Auto-Tune panel (expands below filters) -->
+    <div x-show="autotuneOpen" x-transition class="mb-3">
+        <div class="card">
+            <div class="card-body p-3">
+                <div class="d-flex justify-content-between align-items-center mb-2">
+                    <h6 class="mb-0"><i class="bi bi-sliders"></i> SExtractor Auto-Tune <span class="badge bg-secondary" style="font-size: 0.6rem; vertical-align: middle;">BETA</span></h6>
+                    <div class="btn-group btn-group-sm">
+                        <button class="btn btn-primary" @click="doAutotune()" :disabled="autotuneRunning">
+                            <span x-show="!autotuneRunning"><i class="bi bi-lightning"></i> Run</span>
+                            <span x-show="autotuneRunning">
+                                <span class="spinner-border spinner-border-sm"></span>
+                                <span x-text="autotuneProgress + '/' + autotuneTotal"></span>
+                            </span>
+                        </button>
+                        <button class="btn btn-outline-danger" x-show="autotuneRunning"
+                                @click="cancelAutotune()" title="Cancel auto-tune">
+                            <i class="bi bi-x-lg"></i>
+                        </button>
+                    </div>
+                </div>
+                <small class="text-muted d-block mb-2">
+                    Sweeps parameter combinations across retained debug bundles to find the best
+                    extraction settings for your telescope.
+                    Requires <strong>Keep Processing Output</strong> enabled in Settings.
+                </small>
+                <small class="text-muted d-block mb-2">
+                    <template x-if="selectedCount > 0">
+                        <span>
+                            <i class="bi bi-check2-square"></i>
+                            Tuning against <strong x-text="selectedCount"></strong> selected tasks.
+                            For best results, pick tasks where plate solving succeeded and the target was in the field.
+                        </span>
+                    </template>
+                    <template x-if="selectedCount === 0">
+                        <span>
+                            Tuning against the most recent plate-solved bundles.
+                            Select tasks below to hand-pick specific ones instead.
+                        </span>
+                    </template>
+                </small>
+
+                <template x-if="autotuneRunning">
+                    <div class="progress mb-2" style="height: 6px;">
+                        <div class="progress-bar" :style="'width:' + (autotuneTotal > 0 ? (autotuneProgress / autotuneTotal * 100) : 0) + '%'"></div>
+                    </div>
+                </template>
+
+                <template x-if="autotuneResult && autotuneResult.error">
+                    <div class="text-danger small" x-text="autotuneResult.error"></div>
+                </template>
+
+                <template x-if="autotuneResult && autotuneResult.configs">
+                    <div>
+                        <small class="text-muted d-block mb-1">
+                            Top configurations
+                            (<span x-text="autotuneResult.bundles_used"></span>
+                            <template x-if="autotuneResult.bundles_requested && autotuneResult.bundles_requested > autotuneResult.bundles_used">
+                                <span> of <span x-text="autotuneResult.bundles_requested"></span></span>
+                            </template>
+                            bundles, <span x-text="autotuneResult.total_evaluated"></span> evaluations)
+                        </small>
+                        <div class="table-responsive">
+                            <table class="table table-sm mb-0" style="font-size: 0.8rem;">
+                                <thead>
+                                    <tr class="text-muted">
+                                        <th class="py-1">#</th>
+                                        <th class="py-1">Score</th>
+                                        <th class="py-1">Thresh</th>
+                                        <th class="py-1">MinArea</th>
+                                        <th class="py-1">Filter</th>
+                                        <th class="py-1">Sources</th>
+                                        <th class="py-1">Sat Det %</th>
+                                        <th class="py-1">Cal Stars</th>
+                                        <th class="py-1">Purity</th>
+                                        <th class="py-1">FP Risk</th>
+                                        <th class="py-1"></th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <template x-for="(cfg, idx) in autotuneResult.configs.slice(0, 10)" :key="idx">
+                                        <tr :class="idx === 0 && 'table-success'">
+                                            <td class="py-1" x-text="idx + 1"></td>
+                                            <td class="py-1 fw-bold" x-text="cfg.avg_score.toFixed(4)"></td>
+                                            <td class="py-1" x-text="cfg.detect_thresh"></td>
+                                            <td class="py-1" x-text="cfg.detect_minarea"></td>
+                                            <td class="py-1" x-text="cfg.filter_name"></td>
+                                            <td class="py-1" x-text="cfg.avg_sources.toFixed(0)"></td>
+                                            <td class="py-1" x-text="(cfg.satellite_detection_rate * 100).toFixed(0) + '%'"></td>
+                                            <td class="py-1" x-text="cfg.avg_calibration_stars.toFixed(0)"></td>
+                                            <td class="py-1" x-text="(cfg.avg_purity * 100).toFixed(0) + '%'"></td>
+                                            <td class="py-1" :class="cfg.avg_fp_rate > 0.5 ? 'text-danger' : cfg.avg_fp_rate > 0.2 ? 'text-warning' : 'text-success'"
+                                                x-text="(cfg.avg_fp_rate * 100).toFixed(0) + '%'"></td>
+                                            <td class="py-1">
+                                                <button class="btn btn-outline-success btn-sm py-0 px-1" style="font-size: 0.7rem;"
+                                                        @click="applyAutotuneSettings(cfg)"
+                                                        x-text="idx === 0 ? 'Apply Best' : 'Apply'"></button>
+                                            </td>
+                                        </tr>
+                                    </template>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </template>
+            </div>
+        </div>
+    </div>
+
+    <!-- Batch action bar -->
+    <div x-show="selectedCount > 0" x-transition
+         class="card mb-3 border-warning" style="background: rgba(255,193,7,0.08);">
+        <div class="card-body p-2">
+            <div class="d-flex flex-wrap gap-2 align-items-end">
+                <strong class="me-2" x-text="selectedCount + ' selected'"></strong>
+                <div>
+                    <label class="form-label mb-0" style="font-size: 0.7rem;">Detect Thresh</label>
+                    <input type="number" class="form-control form-control-sm" style="width: 80px;"
+                           x-model.number="batchThresh" min="1" max="20" step="0.5">
+                </div>
+                <div>
+                    <label class="form-label mb-0" style="font-size: 0.7rem;">Min Area</label>
+                    <input type="number" class="form-control form-control-sm" style="width: 70px;"
+                           x-model.number="batchMinarea" min="1" max="50" step="1">
+                </div>
+                <div>
+                    <label class="form-label mb-0" style="font-size: 0.7rem;">Filter</label>
+                    <select class="form-select form-select-sm" style="width: 140px;"
+                            x-model="batchFilter">
+                        <option value="default">default</option>
+                        <option value="gauss_2.5_5x5">gauss_2.5_5x5</option>
+                        <option value="gauss_3.0_7x7">gauss_3.0_7x7</option>
+                        <option value="gauss_4.0_7x7">gauss_4.0_7x7</option>
+                        <option value="tophat_3.0_3x3">tophat_3.0_3x3</option>
+                    </select>
+                </div>
+                <button class="btn btn-sm btn-primary" @click="doBatchReprocess()" :disabled="batchJobId">
+                    <span x-show="!batchJobId"><i class="bi bi-arrow-repeat"></i> Reprocess Selected</span>
+                    <span x-show="batchJobId"><span class="spinner-border spinner-border-sm"></span>
+                        <span x-text="batchProgress + '/' + batchTotal"></span></span>
+                </button>
+            </div>
+            <template x-if="batchResult">
+                <div class="mt-2 small">
+                    <span class="text-success" x-text="batchResult.succeeded + ' succeeded'"></span>,
+                    <span class="text-danger" x-text="batchResult.failed + ' failed'"></span>
+                </div>
+            </template>
         </div>
     </div>
 
@@ -149,6 +337,10 @@
         <table class="table table-sm table-hover analysis-table">
             <thead>
                 <tr>
+                    <th style="width: 30px;">
+                        <input type="checkbox" class="form-check-input" @change="toggleSelectAll($event.target.checked)"
+                               :checked="tasks.length > 0 && tasks.every(t => selectedTasks[t.task_id])">
+                    </th>
                     <th class="sortable" @click="toggleSort('completed_at')">
                         Time <span x-text="sortIcon('completed_at')"></span>
                     </th>
@@ -176,6 +368,11 @@
                 <tbody>
                     <tr class="analysis-summary-row" :class="expanded === task.task_id && 'analysis-row-expanded'"
                         @click="toggleDetail(task.task_id)" style="cursor: pointer;">
+                        <td @click.stop>
+                            <input type="checkbox" class="form-check-input"
+                                   :checked="selectedTasks[task.task_id]"
+                                   @change="toggleSelect(task.task_id, $event.target.checked)">
+                        </td>
                         <td><small x-text="formatTime(task.completed_at)"></small></td>
                         <td x-text="task.target_name || '—'"></td>
                         <td>
@@ -242,7 +439,7 @@
                         </td>
                     </tr>
                     <tr x-show="expanded === task.task_id && detail" class="analysis-detail-row">
-                        <td colspan="13" class="p-0 border-0">
+                        <td colspan="14" class="p-0 border-0">
                             <div class="analysis-detail-card mx-2 my-2">
                                 <div class="row g-0">
                                     <div class="col-md-6 p-3">
@@ -461,7 +658,7 @@
                                                     </div>
                                                 </div>
 
-                                                <div class="d-flex gap-2 align-items-center">
+                                                <div class="d-flex gap-2 align-items-center mb-3">
                                                     <template x-if="detail.artifacts_available">
                                                         <a :href="'/api/analysis/tasks/' + detail.task_id + '/artifacts/report.html'"
                                                            target="_blank" class="btn btn-sm btn-outline-secondary">View full report</a>
@@ -476,6 +673,126 @@
                                                         <span class="badge bg-secondary">Artifacts expired</span>
                                                     </template>
                                                 </div>
+
+                                                <!-- Reprocess panel -->
+                                                <template x-if="detail.artifacts_available">
+                                                    <div class="border-top pt-3">
+                                                        <small class="text-muted d-block mb-2">Reprocess with different settings</small>
+                                                        <div class="d-flex gap-2 flex-wrap align-items-end mb-2">
+                                                            <div>
+                                                                <label class="form-label mb-0" style="font-size: 0.75rem;">
+                                                                    Detect Thresh
+                                                                    <span class="text-muted" x-show="origThresh != null"
+                                                                          x-text="'(was ' + origThresh + ')'"></span>
+                                                                </label>
+                                                                <input type="number" class="form-control form-control-sm" style="width: 100px;"
+                                                                       x-model.number="reprocessThresh" min="1" max="20" step="0.5"
+                                                                       :class="origThresh != null && reprocessThresh != origThresh && 'border-warning'">
+                                                            </div>
+                                                            <div>
+                                                                <label class="form-label mb-0" style="font-size: 0.75rem;">
+                                                                    Min Area
+                                                                    <span class="text-muted" x-show="origMinarea != null"
+                                                                          x-text="'(was ' + origMinarea + ')'"></span>
+                                                                </label>
+                                                                <input type="number" class="form-control form-control-sm" style="width: 90px;"
+                                                                       x-model.number="reprocessMinarea" min="1" max="50" step="1"
+                                                                       :class="origMinarea != null && reprocessMinarea != origMinarea && 'border-warning'">
+                                                            </div>
+                                                            <div>
+                                                                <label class="form-label mb-0" style="font-size: 0.75rem;">
+                                                                    Filter Kernel
+                                                                    <span class="text-muted" x-show="origFilter != null"
+                                                                          x-text="'(was ' + origFilter + ')'"></span>
+                                                                </label>
+                                                                <select class="form-select form-select-sm" style="width: 160px;"
+                                                                        x-model="reprocessFilter"
+                                                                        :class="origFilter != null && reprocessFilter !== origFilter && 'border-warning'">
+                                                                    <option value="default">default</option>
+                                                                    <option value="gauss_2.5_5x5">gauss_2.5_5x5</option>
+                                                                    <option value="gauss_3.0_7x7">gauss_3.0_7x7</option>
+                                                                    <option value="gauss_4.0_7x7">gauss_4.0_7x7</option>
+                                                                    <option value="tophat_3.0_3x3">tophat_3.0_3x3</option>
+                                                                </select>
+                                                            </div>
+                                                            <button class="btn btn-sm btn-primary" @click.stop="doReprocess(detail.task_id)"
+                                                                    :disabled="reprocessing">
+                                                                <span x-show="!reprocessing"><i class="bi bi-arrow-repeat"></i> Reprocess</span>
+                                                                <span x-show="reprocessing"><span class="spinner-border spinner-border-sm"></span> Running...</span>
+                                                            </button>
+                                                        </div>
+                                                        <template x-if="reprocessResult">
+                                                            <div class="mt-2">
+                                                                <!-- Settings diff -->
+                                                                <small class="text-muted d-block mb-1">Settings changes</small>
+                                                                <div class="d-flex gap-3 flex-wrap mb-2" style="font-size: 0.8rem;">
+                                                                    <span :class="reprocessResult._usedThresh != origThresh ? 'text-warning' : 'text-muted'">
+                                                                        Thresh: <span x-text="origThresh ?? '—'"></span>
+                                                                        → <strong x-text="reprocessResult._usedThresh ?? '—'"></strong>
+                                                                    </span>
+                                                                    <span :class="reprocessResult._usedMinarea != origMinarea ? 'text-warning' : 'text-muted'">
+                                                                        MinArea: <span x-text="origMinarea ?? '—'"></span>
+                                                                        → <strong x-text="reprocessResult._usedMinarea ?? '—'"></strong>
+                                                                    </span>
+                                                                    <span :class="reprocessResult._usedFilter !== origFilter ? 'text-warning' : 'text-muted'">
+                                                                        Filter: <span x-text="origFilter ?? '—'"></span>
+                                                                        → <strong x-text="reprocessResult._usedFilter ?? '—'"></strong>
+                                                                    </span>
+                                                                </div>
+
+                                                                <!-- Results diff -->
+                                                                <small class="text-muted d-block mb-1">Results comparison</small>
+                                                                <div class="d-flex gap-3 flex-wrap" style="font-size: 0.85rem;">
+                                                                    <span>Sources:
+                                                                        <span class="text-muted" x-text="detail.source_count ?? '—'"></span> →
+                                                                        <strong x-text="reprocessResult.extracted_data?.['source_extractor.num_sources'] ?? '—'"></strong>
+                                                                    </span>
+                                                                    <span>ZP:
+                                                                        <span class="text-muted" x-text="detail.zero_point?.toFixed(3) ?? '—'"></span> →
+                                                                        <strong x-text="reprocessResult.extracted_data?.['photometry.zero_point']?.toFixed(3) ?? '—'"></strong>
+                                                                    </span>
+                                                                    <span>Sats:
+                                                                        <span class="text-muted" x-text="detail.total_satellites_detected ?? '0'"></span> →
+                                                                        <strong x-text="reprocessResult.extracted_data?.['satellite_matcher.num_satellites_detected'] ?? '0'"></strong>
+                                                                    </span>
+                                                                    <span>Time:
+                                                                        <strong x-text="reprocessResult.total_time?.toFixed(2) + 's'"></strong>
+                                                                    </span>
+                                                                </div>
+                                                                <div class="d-flex gap-1 flex-wrap mt-1" style="font-size: 0.8rem;">
+                                                                    <template x-for="p in reprocessResult.processors" :key="p.name">
+                                                                        <span class="badge" :class="p.ok ? 'bg-success' : 'bg-danger'"
+                                                                              x-text="p.name + ' ' + p.time_s + 's'"></span>
+                                                                    </template>
+                                                                </div>
+                                                                <div class="mt-2 d-flex gap-2 align-items-center">
+                                                                    <a :href="'/api/analysis/tasks/' + detail.task_id + '/artifacts/reprocessed/report.html'"
+                                                                       target="_blank" class="btn btn-sm btn-outline-secondary">
+                                                                        View reprocessed report
+                                                                    </a>
+                                                                    <template x-if="reprocessResult.should_upload && (reprocessResult.extracted_data?.['satellite_matcher.num_satellites_detected'] || 0) > 0">
+                                                                        <button class="btn btn-sm btn-success"
+                                                                                @click.stop="doUploadReprocessed(detail.task_id)"
+                                                                                :disabled="uploadingReprocessed">
+                                                                            <span x-show="!uploadingReprocessed">
+                                                                                <i class="bi bi-cloud-upload"></i> Upload Observation
+                                                                            </span>
+                                                                            <span x-show="uploadingReprocessed">
+                                                                                <span class="spinner-border spinner-border-sm"></span> Uploading...
+                                                                            </span>
+                                                                        </button>
+                                                                    </template>
+                                                                    <span x-show="uploadReprocessedOk" class="text-success small">
+                                                                        <i class="bi bi-check-circle"></i> Uploaded
+                                                                    </span>
+                                                                    <span x-show="uploadReprocessedError" class="text-danger small"
+                                                                          x-text="uploadReprocessedError"></span>
+                                                                </div>
+                                                            </div>
+                                                        </template>
+                                                        <div x-show="reprocessError" class="text-danger mt-2 small" x-text="reprocessError"></div>
+                                                    </div>
+                                                </template>
                                             </div>
                                         </template>
                                     </div>
@@ -486,7 +803,7 @@
                 </tbody>
             </template>
             <tbody x-show="tasks.length === 0 && !loading">
-                <tr><td colspan="13" class="text-center text-muted py-4">
+                <tr><td colspan="14" class="text-center text-muted py-4">
                     No completed tasks yet. Results appear here after the processing pipeline runs.
                 </td></tr>
             </tbody>

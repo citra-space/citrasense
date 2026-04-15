@@ -285,6 +285,10 @@ class CitraScopeWebApp:
         self.status = SystemStatus()
         self.web_log_handler = web_log_handler
 
+        from citrascope.jobs import BackgroundJobRunner
+
+        self.job_runner = BackgroundJobRunner()
+
         # Configure CORS
         self.app.add_middleware(
             CORSMiddleware,
@@ -1876,6 +1880,9 @@ class CitraScopeWebApp:
             missed_window: bool | None = None,
             date_from: str | None = None,
             date_to: str | None = None,
+            filter_name: str | None = None,
+            match_detail: str | None = None,
+            upload_status: str | None = None,
         ):
             """Paginated, filterable list of completed tasks."""
             if not self.daemon or not self.daemon.task_index:
@@ -1891,6 +1898,9 @@ class CitraScopeWebApp:
                 missed_window=missed_window,
                 date_from=date_from,
                 date_to=date_to,
+                filter_name=filter_name,
+                match_detail=match_detail,
+                upload_status=upload_status,
             )
 
         @self.app.get("/api/analysis/tasks/{task_id}")
@@ -1902,7 +1912,34 @@ class CitraScopeWebApp:
             task = self.daemon.task_index.get_task(safe_id)
             if task is None:
                 return JSONResponse({"error": "Task not found"}, status_code=404)
-            task["artifacts_available"] = (self.daemon.settings.directories.processing_dir / safe_id).is_dir()
+            bundle_dir = self.daemon.settings.directories.processing_dir / safe_id
+            task["artifacts_available"] = bundle_dir.is_dir()
+
+            reprocessed_summary = bundle_dir / "reprocessed" / "processing_summary.json"
+            if reprocessed_summary.is_file():
+                import json as _json
+
+                try:
+                    summary = _json.loads(reprocessed_summary.read_text())
+                    task["reprocessed_result"] = {
+                        "should_upload": summary.get("should_upload"),
+                        "skip_reason": summary.get("skip_reason"),
+                        "total_time": summary.get("total_time"),
+                        "processors": [
+                            {
+                                "name": p.get("processor_name", p.get("name", "")),
+                                "confidence": p.get("confidence"),
+                                "reason": p.get("reason"),
+                                "time_s": round(p.get("processing_time_seconds", p.get("time_s", 0)), 3),
+                                "ok": p.get("should_upload", False) and (p.get("confidence", 0) or 0) > 0,
+                            }
+                            for p in summary.get("processors", [])
+                        ],
+                        "extracted_data": summary.get("extracted_data", {}),
+                    }
+                except Exception:
+                    pass
+
             return task
 
         @self.app.get("/api/analysis/tasks/{task_id}/image")
@@ -1931,14 +1968,22 @@ class CitraScopeWebApp:
                 headers={"Cache-Control": "public, max-age=604800, immutable"},
             )
 
-        @self.app.get("/api/analysis/tasks/{task_id}/artifacts/{filename}")
-        async def analysis_task_artifact(task_id: str, filename: str):
-            """Serve an artifact file from the processing directory."""
+        @self.app.get("/api/analysis/tasks/{task_id}/artifacts/{filepath:path}")
+        async def analysis_task_artifact(task_id: str, filepath: str):
+            """Serve an artifact file from the processing directory.
+
+            Supports nested paths (e.g. ``reprocessed/report.html``) so
+            reprocessed output is accessible without a separate route.
+            """
             if not self.daemon:
                 return JSONResponse({"error": "Not available"}, status_code=503)
             safe_id = Path(task_id).name
-            safe_name = Path(filename).name
-            artifact = self.daemon.settings.directories.processing_dir / safe_id / safe_name
+            task_dir = self.daemon.settings.directories.processing_dir / safe_id
+            resolved_task_dir = task_dir.resolve()
+            artifact = (task_dir / filepath).resolve()
+            # Ensure resolved path is still under the task directory (no traversal)
+            if not artifact.is_relative_to(resolved_task_dir):
+                return JSONResponse({"error": "Invalid path"}, status_code=400)
             if not artifact.is_file():
                 return JSONResponse({"error": "Artifact not found or expired"}, status_code=404)
             return FileResponse(str(artifact))
@@ -1990,8 +2035,264 @@ class CitraScopeWebApp:
             if not self.daemon or not self.daemon.task_index:
                 from citrascope.analysis.task_index import empty_stats
 
-                return empty_stats()
-            return self.daemon.task_index.get_stats(hours=max(1, min(hours, 8760)))
+                return {**empty_stats(), "filter_names": []}
+            stats = self.daemon.task_index.get_stats(hours=max(1, min(hours, 8760)))
+            stats["filter_names"] = self.daemon.task_index.get_distinct_filter_names()
+            return stats
+
+        # ── Reprocess & auto-tune endpoints ─────────────────────────
+
+        @self.app.post("/api/analysis/tasks/{task_id}/reprocess")
+        async def reprocess_task(task_id: str, request: Request):
+            """Reprocess a single task's debug bundle with optional settings overrides."""
+            if not self.daemon:
+                return JSONResponse({"error": "Daemon not available"}, status_code=503)
+
+            safe_id = Path(task_id).name
+            debug_dir = self.daemon.settings.directories.processing_dir / safe_id
+            if not debug_dir.is_dir():
+                return JSONResponse({"error": "Debug bundle not found (artifacts expired?)"}, status_code=404)
+
+            body = await request.json() if await request.body() else {}
+            settings_overrides = body.get("settings_overrides")
+
+            from citrascope.reprocess import reprocess_bundle
+
+            try:
+                output_dir = debug_dir / "reprocessed"
+                if output_dir.exists():
+                    import shutil
+
+                    shutil.rmtree(output_dir)
+
+                result, _out_path = await asyncio.get_event_loop().run_in_executor(
+                    None,
+                    lambda: reprocess_bundle(
+                        debug_dir=debug_dir,
+                        output_dir=output_dir,
+                        settings_overrides=settings_overrides,
+                    ),
+                )
+                summary = {
+                    "should_upload": result.should_upload,
+                    "skip_reason": result.skip_reason,
+                    "total_time": round(result.total_time, 3),
+                    "processors": [
+                        {
+                            "name": r.processor_name,
+                            "confidence": r.confidence,
+                            "reason": r.reason,
+                            "time_s": round(r.processing_time_seconds, 3),
+                            "ok": r.should_upload and r.confidence > 0,
+                        }
+                        for r in result.all_results
+                    ],
+                    "extracted_data": result.extracted_data,
+                }
+                return summary
+            except (FileNotFoundError, ValueError) as exc:
+                return JSONResponse({"error": str(exc)}, status_code=400)
+            except Exception as exc:
+                CITRASCOPE_LOGGER.exception("Reprocessing failed for task %s", safe_id)
+                return JSONResponse({"error": f"Reprocessing failed: {exc}"}, status_code=500)
+
+        @self.app.post("/api/analysis/reprocess-batch")
+        async def reprocess_batch(request: Request):
+            """Submit a batch reprocess job for multiple tasks."""
+            if not self.daemon:
+                return JSONResponse({"error": "Daemon not available"}, status_code=503)
+
+            body = await request.json()
+            task_ids: list[str] = body.get("task_ids", [])
+            settings_overrides = body.get("settings_overrides")
+
+            if not task_ids:
+                return JSONResponse({"error": "task_ids required"}, status_code=400)
+
+            processing_dir = self.daemon.settings.directories.processing_dir
+
+            def _batch_worker(status):
+                from citrascope.reprocess import reprocess_bundle
+
+                for i, tid in enumerate(task_ids):
+                    safe_id = Path(tid).name
+                    debug_dir = processing_dir / safe_id
+                    item_result = {"task_id": safe_id, "ok": False, "error": None}
+                    try:
+                        if not debug_dir.is_dir():
+                            item_result["error"] = "Bundle not found"
+                        else:
+                            import shutil
+
+                            output_dir = debug_dir / "reprocessed"
+                            if output_dir.exists():
+                                shutil.rmtree(output_dir)
+                            result, _ = reprocess_bundle(
+                                debug_dir=debug_dir,
+                                output_dir=output_dir,
+                                settings_overrides=settings_overrides,
+                            )
+                            item_result["ok"] = True
+                            item_result["should_upload"] = result.should_upload
+                            item_result["total_time"] = round(result.total_time, 3)
+                    except Exception as exc:
+                        item_result["error"] = str(exc)
+                    status.append_item_result(item_result)
+                    status.progress = i + 1
+
+                ok_count = sum(1 for r in status.per_item_results if r["ok"])
+                status.result = {"succeeded": ok_count, "failed": len(task_ids) - ok_count}
+
+            job = self.job_runner.submit(_batch_worker, total=len(task_ids))
+            return {"job_id": job.job_id}
+
+        @self.app.post("/api/analysis/tasks/{task_id}/reprocess/upload")
+        async def upload_reprocessed(task_id: str):
+            """Upload reprocessed satellite observations via the Citra API."""
+            if not self.daemon:
+                return JSONResponse({"error": "Daemon not available"}, status_code=503)
+            if not self.daemon.api_client:
+                return JSONResponse({"error": "API client not available"}, status_code=503)
+
+            safe_id = Path(task_id).name
+            debug_dir = self.daemon.settings.directories.processing_dir / safe_id
+            reprocessed_dir = debug_dir / "reprocessed"
+            if not reprocessed_dir.is_dir():
+                return JSONResponse({"error": "No reprocessed output found"}, status_code=404)
+
+            summary_path = reprocessed_dir / "processing_summary.json"
+            if not summary_path.exists():
+                return JSONResponse({"error": "Reprocessed summary not found"}, status_code=404)
+
+            import json as _json
+
+            summary = _json.loads(summary_path.read_text())
+            if not summary.get("should_upload"):
+                return JSONResponse(
+                    {"error": "Reprocessed result not eligible for upload", "skip_reason": summary.get("skip_reason")},
+                    status_code=400,
+                )
+
+            extracted = summary.get("extracted_data") or {}
+            sat_obs = extracted.get("satellite_matcher.satellite_observations") or []
+            if not sat_obs:
+                return JSONResponse(
+                    {"error": "No satellite observations in reprocessed result"},
+                    status_code=400,
+                )
+
+            has_calibrated_mag = any(obs.get("mag") is not None for obs in sat_obs)
+            if not has_calibrated_mag:
+                return JSONResponse(
+                    {"error": "Photometry failed — no calibrated magnitudes available"},
+                    status_code=400,
+                )
+
+            # Load telescope record and observer location from the original debug bundle
+            telescope_path = debug_dir / "telescope_record.json"
+            location_path = debug_dir / "observer_location.json"
+            if not telescope_path.exists() or not location_path.exists():
+                return JSONResponse(
+                    {"error": "Original debug bundle missing telescope_record or observer_location"},
+                    status_code=400,
+                )
+
+            telescope_record = _json.loads(telescope_path.read_text())
+            observer_location = _json.loads(location_path.read_text())
+
+            try:
+                success = await asyncio.to_thread(
+                    self.daemon.api_client.upload_optical_observations,
+                    sat_obs,
+                    telescope_record,
+                    observer_location,
+                    task_id=safe_id,
+                )
+            except Exception as exc:
+                CITRASCOPE_LOGGER.exception("Reprocessed upload failed for task %s", safe_id)
+                return JSONResponse({"error": f"Upload failed: {exc}"}, status_code=500)
+
+            if not success:
+                return JSONResponse({"error": "Upload rejected by API"}, status_code=502)
+
+            return {
+                "status": "uploaded",
+                "task_id": safe_id,
+                "observations_count": len(sat_obs),
+            }
+
+        @self.app.post("/api/analysis/autotune")
+        async def autotune(request: Request):
+            """Run SExtractor auto-tune as a background job."""
+            if not self.daemon:
+                return JSONResponse({"error": "Daemon not available"}, status_code=503)
+
+            body = await request.json() if await request.body() else {}
+            task_ids: list[str] | None = body.get("task_ids")
+            num_bundles = body.get("num_bundles", 10)
+
+            processing_dir = self.daemon.settings.directories.processing_dir
+
+            if task_ids:
+                debug_dirs = [
+                    processing_dir / Path(tid).name for tid in task_ids if (processing_dir / Path(tid).name).is_dir()
+                ]
+            else:
+                from citrascope.autotune import _discover_bundles
+
+                debug_dirs = _discover_bundles(processing_dir, max_bundles=num_bundles)
+
+            if not debug_dirs:
+                return JSONResponse({"error": "No debug bundles found"}, status_code=404)
+
+            from citrascope.autotune import PARAM_GRID, autotune_extraction
+
+            n_thresh = len(PARAM_GRID["detect_thresh"])
+            n_area = len(PARAM_GRID["detect_minarea"])
+            n_filt = len(PARAM_GRID["filter_name"])
+            combos = n_thresh * n_area * n_filt
+            total_evals = combos * len(debug_dirs)
+
+            requested_count = len(debug_dirs)
+
+            def _autotune_worker(status):
+                def _progress(done: int, total: int) -> None:
+                    status.progress = done
+                    status.total = total
+
+                results = autotune_extraction(
+                    debug_dirs,
+                    on_progress=_progress,
+                    is_cancelled=lambda: status.cancelled,
+                )
+                if status.cancelled:
+                    status.state = "cancelled"
+                actual_used = results[0]["bundles_evaluated"] if results else 0
+                status.result = {
+                    "configs": results[:20],
+                    "total_evaluated": total_evals,
+                    "bundles_used": actual_used,
+                    "bundles_requested": requested_count,
+                }
+
+            job = self.job_runner.submit(_autotune_worker, total=total_evals)
+            return {"job_id": job.job_id, "total": total_evals, "bundles": len(debug_dirs)}
+
+        @self.app.get("/api/jobs/{job_id}")
+        async def get_job_status(job_id: str):
+            """Poll a background job's progress."""
+            status = self.job_runner.get_status(job_id)
+            if status is None:
+                return JSONResponse({"error": "Job not found"}, status_code=404)
+            return status.to_dict()
+
+        @self.app.post("/api/jobs/{job_id}/cancel")
+        async def cancel_job(job_id: str):
+            """Request cooperative cancellation of a background job."""
+            ok = self.job_runner.cancel(job_id)
+            if not ok:
+                return JSONResponse({"error": "Job not found or already finished"}, status_code=404)
+            return {"status": "cancelling", "job_id": job_id}
 
         @self.app.websocket("/ws")
         async def websocket_endpoint(websocket: WebSocket):

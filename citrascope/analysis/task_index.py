@@ -388,10 +388,30 @@ class TaskIndex:
         missed_window: bool | None = None,
         date_from: str | None = None,
         date_to: str | None = None,
+        filter_name: str | None = None,
+        match_detail: str | None = None,
+        upload_status: str | None = None,
     ) -> dict:
         """Paginated, filterable task list.
 
         Returns ``{"tasks": [...], "total": int}``.
+
+        Extra filters (beyond the originals):
+
+        ``filter_name``
+            Exact match on the optical filter used (e.g. ``"r"``).
+
+        ``match_detail``
+            Richer satellite-match filter:
+            ``"matched"``          — target satellite was detected
+            ``"not_matched"``      — target satellite was NOT detected (but one was assigned)
+            ``"has_extras"``       — incidental (non-target) detections > 0
+            ``"no_detections"``    — total_satellites_detected = 0
+
+        ``upload_status``
+            ``"uploaded"``  — upload_success = 1
+            ``"failed"``    — upload_success = 0
+            ``"skipped"``   — should_upload = 0
         """
         if sort not in _SORTABLE_COLUMNS:
             sort = "completed_at"
@@ -419,6 +439,26 @@ class TaskIndex:
         if date_to:
             where_clauses.append("completed_at <= ?")
             params.append(date_to)
+        if filter_name:
+            where_clauses.append("filter_name = ?")
+            params.append(filter_name)
+        if match_detail:
+            if match_detail == "matched":
+                where_clauses.append("target_matched = 1")
+            elif match_detail == "not_matched":
+                where_clauses.append("target_matched = 0")
+                where_clauses.append("target_satellite_id IS NOT NULL")
+            elif match_detail == "has_extras":
+                where_clauses.append("incidental_matches > 0")
+            elif match_detail == "no_detections":
+                where_clauses.append("COALESCE(total_satellites_detected, 0) = 0")
+        if upload_status:
+            if upload_status == "uploaded":
+                where_clauses.append("upload_success = 1")
+            elif upload_status == "failed":
+                where_clauses.append("upload_success = 0")
+            elif upload_status == "skipped":
+                where_clauses.append("should_upload = 0")
 
         where_sql = (" WHERE " + " AND ".join(where_clauses)) if where_clauses else ""
 
@@ -434,6 +474,14 @@ class TaskIndex:
             tasks = [_row_to_dict(rows_cur.description, row) for row in rows_cur.fetchall()]
 
         return {"tasks": tasks, "total": total}
+
+    def get_distinct_filter_names(self) -> list[str]:
+        """Return all distinct non-NULL filter names, sorted."""
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT DISTINCT filter_name FROM completed_tasks WHERE filter_name IS NOT NULL ORDER BY filter_name"
+            ).fetchall()
+        return [row[0] for row in rows]
 
     def get_stats(self, hours: int = 24) -> dict:
         """Aggregate statistics over the most recent *hours*."""

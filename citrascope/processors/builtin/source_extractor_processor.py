@@ -280,6 +280,9 @@ class SourceExtractorProcessor(AbstractImageProcessor):
                 extracted_data={
                     "num_sources": len(sources_df),
                     "sources_catalog": str(context.working_dir / "output.cat"),
+                    "detect_thresh": detect_thresh,
+                    "detect_minarea": detect_minarea,
+                    "filter_name": filter_name or "default",
                 },
                 confidence=1.0,
                 reason=f"Extracted {len(sources_df)} sources in {elapsed:.1f}s",
