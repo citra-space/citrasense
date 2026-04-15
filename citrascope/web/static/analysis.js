@@ -142,10 +142,7 @@ document.addEventListener('alpine:init', () => {
         },
 
         pointingClass(deg) {
-            if (deg == null) return 'text-muted';
-            if (deg < 0.05) return 'text-success';
-            if (deg < 0.2) return 'text-warning';
-            return 'text-danger';
+            return Alpine.store('citrascope').pointingAccuracyClass(deg, Alpine.store('citrascope').status?.fov_short_deg);
         },
 
         // Window utilization mini-bar: delay | slew | imaging | margin

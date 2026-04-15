@@ -417,7 +417,7 @@ class AbstractBaseTelescopeTask(ABC):
             self.logger.warning(f"Failed to record task {task_id} in analysis index: {e}")
 
     def _copy_annotated_preview(self, task_id: str, result) -> None:
-        """Copy annotated image to the long-lived previews directory."""
+        """Copy annotated image to the long-lived previews directory and generate a thumbnail."""
         if not result or not result.extracted_data:
             return
         annotated = result.extracted_data.get("annotated_image.image_path")
@@ -426,10 +426,18 @@ class AbstractBaseTelescopeTask(ABC):
         try:
             import shutil
 
+            from PIL import Image
+
             previews_dir = self.settings.directories.analysis_previews_dir
             previews_dir.mkdir(parents=True, exist_ok=True)
             dest = previews_dir / f"{task_id}.jpg"
             shutil.copy2(annotated, dest)
+
+            thumb_dest = previews_dir / f"{task_id}.thumb.jpg"
+            with Image.open(dest) as img:
+                thumb = img.convert("RGB")
+                thumb.thumbnail((400, 400))
+                thumb.save(thumb_dest, "JPEG", quality=70)
         except Exception as e:
             self.logger.debug(f"Could not copy annotated preview for {task_id}: {e}")
 

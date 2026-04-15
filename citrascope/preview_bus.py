@@ -75,19 +75,38 @@ class PreviewBus:
     Thread-safe: producers call :meth:`push` from any thread; the web
     server's broadcast loop calls :meth:`pop` from the asyncio event loop
     thread.
+
+    Two frame types are supported:
+
+    * **data URL** (``push`` / ``push_file``): the frame payload *is* the
+      image, base64-encoded.  Used for live camera previews where latency
+      matters and frames are small.
+    * **URL notification** (``push_url``): the frame payload is a plain
+      HTTP URL.  The client fetches the image over a normal ``<img>``
+      request, which can be cached and doesn't block the WebSocket.
+      Used for annotated task images that are already on disk.
     """
 
     def __init__(self) -> None:
         self._lock = threading.Lock()
-        self._frame: tuple[str, str] | None = None
+        self._frame: tuple[str, str, str] | None = None  # (payload, source, kind)
 
     def push(self, data_url: str, source: str = "") -> None:
-        """Store a preview frame, overwriting any previous unpopped frame."""
+        """Store a data-URL preview frame, overwriting any previous unpopped frame."""
         with self._lock:
-            self._frame = (data_url, source)
+            self._frame = (data_url, source, "data")
 
-    def pop(self) -> tuple[str, str] | None:
-        """Return and clear the current frame, or None if empty."""
+    def push_url(self, url: str, source: str = "") -> None:
+        """Store a URL notification frame (lightweight — no image payload)."""
+        with self._lock:
+            self._frame = (url, source, "url")
+
+    def pop(self) -> tuple[str, str, str] | None:
+        """Return and clear the current frame, or None if empty.
+
+        Returns:
+            ``(payload, source, kind)`` where *kind* is ``"data"`` or ``"url"``.
+        """
         with self._lock:
             frame = self._frame
             self._frame = None

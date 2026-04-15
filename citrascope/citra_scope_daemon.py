@@ -91,10 +91,16 @@ class CitraScopeDaemon:
         self.web_server = CitraScopeWebServer(daemon=self, host="0.0.0.0", port=self.settings.web_port)
 
     def _on_annotated_image(self, path: str) -> None:
-        """Handle a new annotated task image: store path and push to preview bus."""
+        """Handle a new annotated task image: store path and notify preview bus via URL.
+
+        Uses a lightweight URL notification instead of base64-encoding the
+        full image through the WebSocket, keeping the socket clear for
+        status/log/task updates on bandwidth-constrained links.
+        """
         self.latest_annotated_image_path = path
         try:
-            self.preview_bus.push_file(path, "task")
+            mtime_ns = Path(path).stat().st_mtime_ns
+            self.preview_bus.push_url(f"/api/task-preview/latest?t={mtime_ns}", "task")
         except Exception as e:
             CITRASCOPE_LOGGER.warning("Failed to publish annotated image preview for %s: %s", path, e)
 

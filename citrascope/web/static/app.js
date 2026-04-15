@@ -68,10 +68,14 @@ function handleBackendToast(data) {
     showToast(data.message, data.toast_type || 'info', { id: data.id });
 }
 
-function updateStoreFromConnection(connected, reconnectInfo = '') {
+function updateStoreFromConnection(connected, reconnectAt = 0) {
     const store = Alpine.store('citrascope');
     store.wsConnected = connected;
-    store.wsReconnecting = !!reconnectInfo;
+    store.wsReconnecting = !connected && reconnectAt > 0;
+    store.wsReconnectAt = reconnectAt;
+    if (connected) {
+        store.wsLastMessage = Date.now();
+    }
 }
 
 // --- Countdown tick (updates store.countdown) ---

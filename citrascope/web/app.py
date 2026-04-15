@@ -183,46 +183,58 @@ class HardwareConfig(BaseModel):
 class ConnectionManager:
     """Manages WebSocket connections for real-time updates."""
 
+    _SEND_TIMEOUT = 5.0
+    _STALE_THRESHOLD = 60.0
+
     def __init__(self):
         self.active_connections: list[WebSocket] = []
+        self._last_heard: dict[WebSocket, float] = {}
 
     async def connect(self, websocket: WebSocket):
         await websocket.accept()
         self.active_connections.append(websocket)
+        self._last_heard[websocket] = time.time()
         CITRASCOPE_LOGGER.info(f"WebSocket client connected. Total: {len(self.active_connections)}")
 
     def disconnect(self, websocket: WebSocket):
         if websocket in self.active_connections:
             self.active_connections.remove(websocket)
+        self._last_heard.pop(websocket, None)
         CITRASCOPE_LOGGER.info(f"WebSocket client disconnected. Total: {len(self.active_connections)}")
 
+    async def disconnect_and_close(self, websocket: WebSocket) -> None:
+        """Remove a client from the active set and close the underlying socket."""
+        self.disconnect(websocket)
+        try:
+            await websocket.close()
+        except Exception:
+            pass
+
+    def record_heard(self, websocket: WebSocket) -> None:
+        """Update last-heard timestamp when a client sends a message."""
+        self._last_heard[websocket] = time.time()
+
+    async def prune_stale(self) -> None:
+        """Disconnect clients that haven't sent a heartbeat recently."""
+        now = time.time()
+        stale = [ws for ws, ts in self._last_heard.items() if now - ts > self._STALE_THRESHOLD]
+        for ws in stale:
+            age = now - self._last_heard.get(ws, 0)
+            CITRASCOPE_LOGGER.info("Pruning stale WebSocket client (no heartbeat for %.0fs)", age)
+            await self.disconnect_and_close(ws)
+
     async def broadcast(self, message: dict):
-        """Broadcast message to all connected clients."""
+        """Broadcast message to all connected clients with per-client timeout."""
         disconnected = []
         for connection in self.active_connections:
             try:
-                await connection.send_json(message)
-            except Exception as e:
+                await asyncio.wait_for(connection.send_json(message), timeout=self._SEND_TIMEOUT)
+            except (asyncio.TimeoutError, Exception) as e:
                 CITRASCOPE_LOGGER.warning(f"Failed to send to WebSocket client: {e}")
                 disconnected.append(connection)
 
-        # Clean up disconnected clients
         for connection in disconnected:
-            self.disconnect(connection)
-
-    async def broadcast_text(self, message: str):
-        """Broadcast text message to all connected clients."""
-        disconnected = []
-        for connection in self.active_connections:
-            try:
-                await connection.send_text(message)
-            except Exception as e:
-                CITRASCOPE_LOGGER.warning(f"Failed to send to WebSocket client: {e}")
-                disconnected.append(connection)
-
-        # Clean up disconnected clients
-        for connection in disconnected:
-            self.disconnect(connection)
+            await self.disconnect_and_close(connection)
 
 
 class _TarStreamBuffer:
@@ -1875,15 +1887,30 @@ class CitraScopeWebApp:
             return task
 
         @self.app.get("/api/analysis/tasks/{task_id}/image")
-        async def analysis_task_image(task_id: str):
+        async def analysis_task_image(task_id: str, thumb: int = 0):
             """Serve annotated preview image for a task."""
             if not self.daemon:
                 return JSONResponse({"error": "Not available"}, status_code=503)
             safe_id = Path(task_id).name
-            preview = self.daemon.settings.directories.analysis_previews_dir / f"{safe_id}.jpg"
+            previews_dir = self.daemon.settings.directories.analysis_previews_dir
+
+            if thumb:
+                thumb_path = previews_dir / f"{safe_id}.thumb.jpg"
+                if thumb_path.is_file():
+                    return FileResponse(
+                        str(thumb_path),
+                        media_type="image/jpeg",
+                        headers={"Cache-Control": "public, max-age=604800, immutable"},
+                    )
+
+            preview = previews_dir / f"{safe_id}.jpg"
             if not preview.is_file():
                 return JSONResponse({"error": "Image not available"}, status_code=404)
-            return FileResponse(str(preview), media_type="image/jpeg")
+            return FileResponse(
+                str(preview),
+                media_type="image/jpeg",
+                headers={"Cache-Control": "public, max-age=604800, immutable"},
+            )
 
         @self.app.get("/api/analysis/tasks/{task_id}/artifacts/{filename}")
         async def analysis_task_artifact(task_id: str, filename: str):
@@ -1957,11 +1984,11 @@ class CitraScopeWebApp:
                     self._update_status_from_daemon()
                 await websocket.send_json({"type": "status", "data": self.status.dict()})
 
-                # Keep connection alive and listen for client messages
                 while True:
                     data = await websocket.receive_text()
-                    # Handle client requests if needed
-                    await websocket.send_json({"type": "pong", "data": data})
+                    self.connection_manager.record_heard(websocket)
+                    if data != "ping":
+                        await websocket.send_json({"type": "pong", "data": data})
 
             except WebSocketDisconnect:
                 self.connection_manager.disconnect(websocket)
@@ -2462,9 +2489,13 @@ class CitraScopeWebApp:
         if not bus:
             return
         frame = bus.pop()
-        if frame:
-            data_url, source = frame
-            await self.connection_manager.broadcast({"type": "preview", "data": data_url, "source": source})
+        if not frame:
+            return
+        payload, source, kind = frame
+        if kind == "url":
+            await self.connection_manager.broadcast({"type": "preview_url", "url": payload, "source": source})
+        else:
+            await self.connection_manager.broadcast({"type": "preview", "data": payload, "source": source})
 
     async def broadcast_log(self, log_entry: dict):
         """Broadcast log entry to all connected clients."""

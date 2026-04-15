@@ -35,8 +35,11 @@
             <span class="badge rounded-pill"
                   data-bs-toggle="tooltip" data-bs-theme="dark"
                   style="white-space:pre-line;"
+                  x-data="{ now: Date.now(), init() { setInterval(() => this.now = Date.now(), 1000); } }"
                   :data-bs-title="$store.citrascope.wsConnected
                       ? (() => {
+                            const stale = $store.citrascope.wsLastMessage > 0 && (now - $store.citrascope.wsLastMessage) > 5000;
+                            if (stale) return 'Connected but no data received for ' + Math.round((now - $store.citrascope.wsLastMessage) / 1000) + 's';
                             let tip = 'Connected \u2014 receiving live updates';
                             const ms = $store.citrascope.status?.status_collection_ms;
                             if (ms != null) tip += ' \u00b7 status in ' + ms.toFixed(1) + ' ms';
@@ -47,9 +50,23 @@
                             }
                             return tip;
                         })()
-                      : ($store.citrascope.wsReconnecting ? 'Reconnecting\u2026' : 'Daemon disconnected')"
-                  :class="$store.citrascope.wsConnected ? 'bg-success' : ($store.citrascope.wsReconnecting ? 'bg-warning text-dark' : 'bg-danger')"
-                  x-text="$store.citrascope.wsReconnecting ? 'Reconnecting' : 'Daemon'"></span>
+                      : ($store.citrascope.wsReconnecting
+                          ? 'Reconnecting in ' + Math.max(0, Math.ceil(($store.citrascope.wsReconnectAt - now) / 1000)) + 's\u2026'
+                          : 'Daemon disconnected')"
+                  :class="(() => {
+                      if (!$store.citrascope.wsConnected) return $store.citrascope.wsReconnecting ? 'bg-warning text-dark' : 'bg-danger';
+                      const stale = $store.citrascope.wsLastMessage > 0 && (now - $store.citrascope.wsLastMessage) > 5000;
+                      return stale ? 'bg-warning text-dark' : 'bg-success';
+                  })()"
+                  x-text="(() => {
+                      if ($store.citrascope.wsReconnecting) {
+                          const secs = Math.max(0, Math.ceil(($store.citrascope.wsReconnectAt - now) / 1000));
+                          return secs > 0 ? 'Reconnecting ' + secs + 's' : 'Reconnecting\u2026';
+                      }
+                      if (!$store.citrascope.wsConnected) return 'Disconnected';
+                      const stale = $store.citrascope.wsLastMessage > 0 && (now - $store.citrascope.wsLastMessage) > 5000;
+                      return stale ? 'Degraded' : 'Daemon';
+                  })()"></span>
 
             <span class="badge rounded-pill"
                   data-bs-toggle="tooltip" data-bs-theme="dark"

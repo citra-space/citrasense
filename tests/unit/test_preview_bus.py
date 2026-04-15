@@ -21,7 +21,7 @@ class TestPreviewBus:
         bus = PreviewBus()
         bus.push("data:image/jpeg;base64,abc", "autofocus")
         frame = bus.pop()
-        assert frame == ("data:image/jpeg;base64,abc", "autofocus")
+        assert frame == ("data:image/jpeg;base64,abc", "autofocus", "data")
 
     def test_pop_clears_slot(self):
         bus = PreviewBus()
@@ -33,7 +33,7 @@ class TestPreviewBus:
         bus = PreviewBus()
         bus.push("first", "a")
         bus.push("second", "b")
-        assert bus.pop() == ("second", "b")
+        assert bus.pop() == ("second", "b", "data")
 
     def test_clear(self):
         bus = PreviewBus()
@@ -44,7 +44,7 @@ class TestPreviewBus:
     def test_source_defaults_to_empty(self):
         bus = PreviewBus()
         bus.push("url")
-        assert bus.pop() == ("url", "")
+        assert bus.pop() == ("url", "", "data")
 
     def test_push_file_nonexistent_is_noop(self, tmp_path: Path):
         bus = PreviewBus()
@@ -60,8 +60,9 @@ class TestPreviewBus:
         bus.push_file(p, "test")
         frame = bus.pop()
         assert frame is not None
-        data_url, source = frame
+        data_url, source, kind = frame
         assert source == "test"
+        assert kind == "data"
         assert data_url.startswith("data:image/jpeg;base64,")
 
     def test_push_file_png(self, tmp_path: Path):
@@ -73,8 +74,9 @@ class TestPreviewBus:
         bus.push_file(p, "alignment")
         frame = bus.pop()
         assert frame is not None
-        data_url, source = frame
+        data_url, source, kind = frame
         assert source == "alignment"
+        assert kind == "data"
         assert data_url.startswith("data:image/png;base64,")
 
     def test_push_file_fits(self, tmp_path: Path):
@@ -89,9 +91,24 @@ class TestPreviewBus:
         bus.push_file(p, "calibration")
         frame = bus.pop()
         assert frame is not None
-        data_url, source = frame
+        data_url, source, kind = frame
         assert source == "calibration"
+        assert kind == "data"
         assert data_url.startswith("data:image/jpeg;base64,")
+
+    def test_push_url(self):
+        bus = PreviewBus()
+        bus.push_url("/api/task-preview/latest?t=123", "task")
+        frame = bus.pop()
+        assert frame == ("/api/task-preview/latest?t=123", "task", "url")
+
+    def test_push_url_overwrites_data(self):
+        bus = PreviewBus()
+        bus.push("data:image/jpeg;base64,abc", "autofocus")
+        bus.push_url("/preview", "task")
+        frame = bus.pop()
+        assert frame is not None
+        assert frame[2] == "url"
 
 
 class TestArrayToJpegDataUrl:

@@ -437,13 +437,7 @@
                                  x-data="{
                                      get pm() { return $store.citrascope.status?.pointing_model || {}; },
                                      accColor(deg) {
-                                         if (deg == null) return '';
-                                         const fov = $store.citrascope.status?.fov_short_deg;
-                                         const green = fov ? fov * 0.10 : 0.05;
-                                         const yellow = fov ? fov * 0.33 : 0.15;
-                                         if (deg < green) return 'text-success';
-                                         if (deg < yellow) return 'text-warning';
-                                         return 'text-danger';
+                                         return $store.citrascope.pointingAccuracyClass(deg, $store.citrascope.status?.fov_short_deg);
                                      }
                                  }">
 

@@ -246,7 +246,7 @@
                             <div class="analysis-detail-card mx-2 my-2">
                                 <div class="row g-0">
                                     <div class="col-md-6 p-3">
-                                        <img :src="'/api/analysis/tasks/' + task.task_id + '/image'" class="img-fluid rounded"
+                                        <img :src="expanded === task.task_id && detail ? '/api/analysis/tasks/' + task.task_id + '/image?thumb=1' : null" class="img-fluid rounded"
                                              @error="$event.target.style.display='none'"
                                              @click.stop="lightboxSrc = '/api/analysis/tasks/' + task.task_id + '/image'"
                                              style="object-fit: contain; background: #111; cursor: zoom-in; width: 100%;">

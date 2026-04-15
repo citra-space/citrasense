@@ -4,10 +4,11 @@ let ws = null;
 let reconnectAttempts = 0;
 let reconnectTimer = null;
 let connectionTimer = null;
-const reconnectDelay = 5000; // Fixed 5 second delay between reconnect attempts
-const connectionTimeout = 5000; // 5 second timeout for connection attempts
+let heartbeatTimer = null;
+const connectionTimeout = 5000;
+const heartbeatInterval = 15000;
+const maxReconnectDelay = 30000;
 
-// Callbacks for handling messages
 let onStatusUpdate = null;
 let onLogMessage = null;
 let onTasksUpdate = null;
@@ -17,7 +18,7 @@ let onConnectionChange = null;
 
 /**
  * Initialize WebSocket connection
- * @param {object} handlers - Event handlers {onStatus, onLog, onTasks, onConnectionChange}
+ * @param {object} handlers - Event handlers {onStatus, onLog, onTasks, onPreview, onToast, onConnectionChange}
  */
 export function connectWebSocket(handlers = {}) {
     onStatusUpdate = handlers.onStatus || null;
@@ -28,16 +29,22 @@ export function connectWebSocket(handlers = {}) {
     onConnectionChange = handlers.onConnectionChange || null;
 
     connect();
+
+    document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState === 'visible') {
+            if (!ws || ws.readyState !== WebSocket.OPEN) {
+                reconnectAttempts = 0;
+                connect();
+            }
+        }
+    });
 }
 
 function connect() {
-    // Clear any existing reconnect timer
     if (reconnectTimer) {
         clearTimeout(reconnectTimer);
         reconnectTimer = null;
     }
-
-    // Clear any existing connection timeout
     if (connectionTimer) {
         clearTimeout(connectionTimer);
         connectionTimer = null;
@@ -46,37 +53,46 @@ function connect() {
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     const wsUrl = `${protocol}//${window.location.host}/ws`;
 
-    console.log('Attempting WebSocket connection to:', wsUrl);
-
     try {
-        // Close existing connection if any
         if (ws && ws.readyState !== WebSocket.CLOSED) {
+            ws.onclose = null;
+            ws.onerror = null;
+            ws.onmessage = null;
             ws.close();
         }
 
         ws = new WebSocket(wsUrl);
 
-        // Set a timeout for connection attempt
         connectionTimer = setTimeout(() => {
-            console.log('WebSocket connection timeout');
             if (ws && ws.readyState !== WebSocket.OPEN) {
                 ws.close();
                 scheduleReconnect();
             }
         }, connectionTimeout);
 
-        ws.onopen = () => {
-            console.log('WebSocket connected successfully');
+        ws.onopen = (event) => {
+            if (event.target !== ws) return;
             if (connectionTimer) {
                 clearTimeout(connectionTimer);
                 connectionTimer = null;
             }
             reconnectAttempts = 0;
+            startHeartbeat();
             notifyConnectionChange(true);
         };
 
         ws.onmessage = (event) => {
-            const message = JSON.parse(event.data);
+            if (event.target !== ws) return;
+            let message;
+            try {
+                message = JSON.parse(event.data);
+            } catch (e) {
+                console.warn('Malformed WebSocket message:', e);
+                return;
+            }
+
+            notifyMessageReceived();
+
             if (message.type === 'status' && onStatusUpdate) {
                 onStatusUpdate(message.data);
             } else if (message.type === 'log' && onLogMessage) {
@@ -85,25 +101,27 @@ function connect() {
                 onTasksUpdate(message.data);
             } else if (message.type === 'preview' && onPreviewImage) {
                 onPreviewImage(message.data, message.source);
+            } else if (message.type === 'preview_url' && onPreviewImage) {
+                onPreviewImage(message.url, message.source);
             } else if (message.type === 'toast' && onToastMessage) {
                 onToastMessage(message.data);
             }
         };
 
         ws.onclose = (event) => {
+            if (event.target !== ws) return;
             console.log('WebSocket closed', event.code, event.reason);
             if (connectionTimer) {
                 clearTimeout(connectionTimer);
                 connectionTimer = null;
             }
+            stopHeartbeat();
             ws = null;
             scheduleReconnect();
         };
 
         ws.onerror = (error) => {
             console.error('WebSocket error:', error);
-            console.log('WebSocket readyState:', ws?.readyState);
-            // Close will be called automatically after error
         };
     } catch (error) {
         console.error('Failed to create WebSocket:', error);
@@ -116,20 +134,47 @@ function connect() {
     }
 }
 
+function startHeartbeat() {
+    stopHeartbeat();
+    heartbeatTimer = setInterval(() => {
+        if (ws && ws.readyState === WebSocket.OPEN) {
+            try { ws.send('ping'); } catch (_) { /* onclose will fire */ }
+        }
+    }, heartbeatInterval);
+}
+
+function stopHeartbeat() {
+    if (heartbeatTimer) {
+        clearInterval(heartbeatTimer);
+        heartbeatTimer = null;
+    }
+}
+
 function scheduleReconnect() {
-    // Fixed 5 second delay between reconnect attempts
-    const delay = reconnectDelay;
+    let delay;
+    if (reconnectAttempts === 0) {
+        delay = 0;
+    } else {
+        const base = Math.min(1000 * Math.pow(2, reconnectAttempts - 1), maxReconnectDelay);
+        delay = base + Math.random() * 1000;
+    }
 
-    notifyConnectionChange(false, 'reconnecting');
-
-    console.log(`Scheduling reconnect in ${delay/1000}s... (attempt ${reconnectAttempts + 1})`);
-
+    const reconnectAt = Date.now() + delay;
     reconnectAttempts++;
+    notifyConnectionChange(false, reconnectAt);
+
     reconnectTimer = setTimeout(connect, delay);
 }
 
-function notifyConnectionChange(connected, reconnectInfo = '') {
+function notifyConnectionChange(connected, reconnectAt = 0) {
     if (onConnectionChange) {
-        onConnectionChange(connected, reconnectInfo);
+        onConnectionChange(connected, reconnectAt);
     }
+}
+
+function notifyMessageReceived() {
+    try {
+        const store = window.Alpine?.store('citrascope');
+        if (store) store.wsLastMessage = Date.now();
+    } catch (_) { /* Alpine not ready yet */ }
 }

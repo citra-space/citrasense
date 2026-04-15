@@ -37,6 +37,8 @@ function compareVersions(v1, v2) {
             latestLog: null,
             wsConnected: false,
             wsReconnecting: false,
+            wsReconnectAt: 0,
+            wsLastMessage: 0,
             currentTaskId: null,
             isTaskActive: false,
             nextTaskStartTime: null,

@@ -218,3 +218,24 @@ export function formatCompactLocation(status) {
     }
     return s;
 }
+
+/**
+ * Return a Bootstrap text color class for a pointing accuracy value,
+ * scaled relative to the telescope's short-axis FOV.
+ *
+ * Green: < 10% of FOV (pointing well within the field)
+ * Yellow: < 33% of FOV (marginal)
+ * Red: >= 33% of FOV (significant error)
+ *
+ * @param {number|null} deg - Pointing error in degrees
+ * @param {number|null|undefined} fovShortDeg - Short-axis FOV in degrees
+ * @returns {string} Bootstrap text class
+ */
+export function pointingAccuracyClass(deg, fovShortDeg) {
+    if (deg == null) return 'text-muted';
+    const green = fovShortDeg ? fovShortDeg * 0.10 : 0.05;
+    const yellow = fovShortDeg ? fovShortDeg * 0.33 : 0.15;
+    if (deg < green) return 'text-success';
+    if (deg < yellow) return 'text-warning';
+    return 'text-danger';
+}

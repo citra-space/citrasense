@@ -107,7 +107,14 @@ class CitraScopeWebServer:
             # Configure Uvicorn logging
             self.configure_uvicorn_logging()
 
-            config = uvicorn.Config(self.web_app.app, host=self.host, port=self.port, log_config=None, access_log=True)
+            config = uvicorn.Config(
+                self.web_app.app,
+                host=self.host,
+                port=self.port,
+                log_config=None,
+                access_log=True,
+                ws_ping_interval=None,
+            )
             server = uvicorn.Server(config)
 
             # Start status broadcast loop
@@ -144,10 +151,11 @@ class CitraScopeWebServer:
                     await self.web_app.broadcast_tasks()
                     await self.web_app.broadcast_preview()
 
-                # Every 10 iterations (10 seconds), check if log handler is still attached
                 check_counter += 1
                 if check_counter >= 10:
                     check_counter = 0
                     self.ensure_log_handler()
+                    if self.web_app:
+                        await self.web_app.connection_manager.prune_stale()
             except Exception as e:
                 CITRASCOPE_LOGGER.error(f"Status broadcast error: {e}")
