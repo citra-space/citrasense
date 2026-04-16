@@ -36,12 +36,9 @@ _DEFAULT_SETTLE_TIME_S = 0.5
 _DEFAULT_CONVERGENCE_THRESHOLD_DEG = 0.3
 _FOV_CONVERGENCE_FRACTION = 0.35
 
-_MIN_MOTION_TIME_S = 0.2
-_MIN_SLEW_DISTANCE_DEG = 0.05
-_MIN_OBSERVED_RATE_DEG_PER_S = 0.1
-_MAX_OBSERVED_RATE_DEG_PER_S = 50.0
+_MIN_MOTION_TIME_S = 2.0
+_MIN_SLEW_DISTANCE_DEG = 1.0
 _RATE_DIVERGENCE_WARNING_THRESHOLD = 0.3
-_SLEW_RATE_EMA_ALPHA = 0.4
 
 
 def estimate_slew_time(
@@ -595,7 +592,8 @@ class AbstractBaseTelescopeTask(ABC):
         max_angular_distance_deg = self._compute_convergence_threshold()
         self.logger.info(f"Convergence threshold: {max_angular_distance_deg:.3f}°")
 
-        effective_rate = self.hardware_adapter.observed_slew_rate_deg_per_s
+        slew_rate_tracker = self.hardware_adapter.slew_rate_tracker
+        effective_rate = slew_rate_tracker.mean
         rate_warning_logged = False
         attempts = 0
         max_attempts = 10
@@ -638,27 +636,35 @@ class AbstractBaseTelescopeTask(ABC):
                 pre_slew_ra, pre_slew_dec, post_slew_ra, post_slew_dec
             )
 
-            # Adaptive rate: learn from observed slew performance.
+            # Adaptive rate: record the observed per-slew rate.  The adapter's
+            # SlewRateTracker keeps a rolling window of the last N samples
+            # (clamped to sane bounds) and returns the simple mean.  That mean
+            # drives the next iteration's lead-time estimate and is surfaced
+            # to the UI alongside the sample count.
+            #
+            # Only record slews that plausibly reached steady-state cruise —
+            # short hops (< _MIN_MOTION_TIME_S or < _MIN_SLEW_DISTANCE_DEG)
+            # are dominated by the mount's acceleration/deceleration envelope
+            # and massively understate peak rate.  Including them pulls the
+            # rolling mean toward garbage, which in turn mis-predicts lead time
+            # for the next big slew.  Filtering here is more impactful than
+            # enlarging the window.
+            #
             # slew_duration is GoTo time only (mount reports done); settle is post-motion
             # vibration damping and is NOT included, so no subtraction needed.
             iter_observed_rate: float | None = None
             if slew_duration > _MIN_MOTION_TIME_S and slewed_distance > _MIN_SLEW_DISTANCE_DEG:
                 observed_rate = slewed_distance / slew_duration
-                observed_rate = max(_MIN_OBSERVED_RATE_DEG_PER_S, min(_MAX_OBSERVED_RATE_DEG_PER_S, observed_rate))
+                slew_rate_tracker.record(observed_rate)
+                effective_rate = slew_rate_tracker.mean
+                iter_observed_rate = round(effective_rate, 2) if effective_rate is not None else None
 
-                if effective_rate is not None:
-                    effective_rate = _SLEW_RATE_EMA_ALPHA * observed_rate + (1 - _SLEW_RATE_EMA_ALPHA) * effective_rate
-                else:
-                    effective_rate = observed_rate
-
-                self.hardware_adapter.observed_slew_rate_deg_per_s = effective_rate
-                iter_observed_rate = round(effective_rate, 2)
-
-                if not rate_warning_logged:
+                if not rate_warning_logged and effective_rate is not None:
                     api_rate = self.hardware_adapter.scope_slew_rate_degrees_per_second
                     if api_rate > 0 and abs(effective_rate - api_rate) / api_rate > _RATE_DIVERGENCE_WARNING_THRESHOLD:
                         self.logger.warning(
-                            f"Observed slew rate ({effective_rate:.1f} deg/s) differs from "
+                            f"Observed slew rate ({effective_rate:.1f} deg/s, "
+                            f"n={slew_rate_tracker.count}) differs from "
                             f"configured maxSlewRate ({api_rate:.1f} deg/s) by "
                             f"{abs(effective_rate - api_rate) / api_rate * 100:.0f}% — "
                             f"using observed rate for predictions. Consider updating "

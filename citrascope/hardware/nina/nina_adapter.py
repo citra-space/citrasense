@@ -673,7 +673,12 @@ class NinaAdvancedHttpAdapter(AbstractAstroHardwareAdapter):
         return True
 
     def get_camera_info(self) -> dict | None:
-        """Query NINA camera info endpoint for sensor specs."""
+        """Query NINA camera info endpoint for sensor specs.
+
+        ASCOM's ``XSize``/``YSize``/``PixelSizeX`` always describe the full
+        **unbinned** sensor array — binning is reported separately via
+        :meth:`get_current_binning`.
+        """
         try:
             resp = requests.get(f"{self.nina_api_path}{self.CAM_URL}info", timeout=self.HEALTH_CHECK_TIMEOUT).json()
             if not resp.get("Success"):
@@ -693,6 +698,19 @@ class NinaAdvancedHttpAdapter(AbstractAstroHardwareAdapter):
             return info if info else None
         except Exception:
             return None
+
+    def get_current_binning(self) -> tuple[int, int]:
+        """Return configured imaging binning (``binning_x``, ``binning_y``).
+
+        These are the values templated into the survey sequence JSON sent to
+        NINA, so they describe what the adapter will request at capture time.
+        """
+        try:
+            bx = max(1, int(self.binning_x))
+            by = max(1, int(self.binning_y))
+        except (TypeError, ValueError):
+            return (1, 1)
+        return (bx, by)
 
     def select_camera(self, device_name: str) -> bool:
         return True

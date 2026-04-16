@@ -418,15 +418,15 @@
                             </div>
 
                             <!-- Telescope-group config checks (slew rate, etc.) -->
+                            <!-- Uses the same _config_health_item.html partial as the Optics
+                                 strip so a matching slew rate renders as a single value, a
+                                 warning renders "cfg → obs (+pct%)", and the rolling-mean
+                                 sample count shows up as "(n=N)" — consistent with Optics. -->
                             <template x-for="chk in ($store.citrascope.status?.config_health?.checks || []).filter(c => c.group === 'telescope')" :key="chk.name">
                                 <div class="row mb-2">
                                     <div class="col-6 fw-semibold" x-text="chk.label"></div>
-                                    <div class="col-6">
-                                        <span class="font-monospace small" x-text="chk.configured_fmt"></span>
-                                        <template x-if="chk.observed_fmt">
-                                            <span class="font-monospace small text-info ms-1"
-                                                  x-text="'(obs: ' + chk.observed_fmt + ')'"></span>
-                                        </template>
+                                    <div class="col-6 font-monospace small">
+                                        {% include '_config_health_item.html' %}
                                     </div>
                                 </div>
                             </template>
@@ -744,44 +744,78 @@
                 <!-- ── Optics Card ── -->
                 <div class="col-12 col-lg-6">
                     <div class="card bg-dark text-light border-secondary h-100">
-                        <div class="card-header d-flex align-items-center justify-content-between">
+                        <!--
+                            Header holds the minimal, at-a-glance optics readouts.
+                              FL  — always visible (muted): contextual, doesn't drift.
+                              FOV — always visible: colored green/yellow/muted by status.
+                              SCALE — surfaces only on `warning`; FOV covers the happy path
+                                      since FOV = scale × resolution. Binning suffix rides
+                                      along on SCALE's configured_fmt when it shows up.
+                            PX and SENSOR stay as silent checks — the body banner still
+                            enumerates them if they disagree with hardware.  Camera temp
+                            lives in the top status bar (_status_bar.html), not here.
+                        -->
+                        <div class="card-header d-flex align-items-center justify-content-between flex-wrap gap-2">
                             <span><i class="bi bi-eyeglasses me-1"></i>Optics</span>
-                            <div class="d-flex align-items-center gap-2">
-                                <span class="badge bg-secondary rounded-pill"
-                                      x-show="$store.citrascope.status?.camera_temperature != null"
-                                      x-text="($store.citrascope.status?.camera_temperature?.toFixed(1) ?? '') + ' \u00b0C'"></span>
-                            </div>
+                            <span class="small font-monospace d-flex flex-wrap align-items-baseline justify-content-end gap-2 ms-auto"
+                                  x-data="{
+                                      get headerChecks() {
+                                          const byName = Object.fromEntries(
+                                              ($store.citrascope.status?.config_health?.checks || [])
+                                                  .map(c => [c.name, c])
+                                          );
+                                          const out = [];
+                                          if (byName.focal_length) out.push(byName.focal_length);
+                                          if (byName.pixel_scale && byName.pixel_scale.status === 'warning') {
+                                              out.push(byName.pixel_scale);
+                                          }
+                                          if (byName.sensor_resolution) out.push(byName.sensor_resolution);
+                                          if (byName.fov) out.push(byName.fov);
+                                          return out;
+                                      }
+                                  }">
+                                <template x-for="(chk, idx) in headerChecks" :key="chk.name">
+                                    <span class="d-inline-flex align-items-baseline gap-2">
+                                        <span x-show="idx > 0" class="text-secondary" aria-hidden="true">|</span>
+                                        <span :class="{
+                                                'text-success': chk.status === 'ok',
+                                                'text-warning': chk.status === 'warning',
+                                                'text-muted':   chk.status === 'pending'
+                                              }"
+                                              :title="
+                                                  chk.status === 'warning'
+                                                      ? chk.label + ': ' + chk.configured_fmt + ' \u2192 ' + chk.observed_fmt +
+                                                        (chk.pct_diff != null ? ' (' + chk.pct_diff + '% off' : '') +
+                                                        (chk.source ? (chk.pct_diff != null ? ', from ' : ' (from ') + chk.source + ')' : (chk.pct_diff != null ? ')' : ''))
+                                                  : chk.status === 'ok'
+                                                      ? chk.label + ': ' + chk.configured_fmt + (chk.source ? ' (matches ' + chk.source + ')' : ' (matches hardware)')
+                                                      : chk.label + ': ' + chk.configured_fmt + ' (awaiting observation)'
+                                              ">
+                                            <span x-text="chk.configured_fmt"></span>
+                                            <template x-if="chk.status === 'warning' && chk.observed_fmt">
+                                                <span x-text="' \u2192 ' + chk.observed_fmt"></span>
+                                            </template>
+                                        </span>
+                                    </span>
+                                </template>
+                            </span>
                         </div>
                         <div class="card-body">
 
-                            <!-- ─── Config Health / Optics (pre-computed in Python, UI only renders) ─── -->
-                            <div x-show="($store.citrascope.status?.config_health?.checks || []).filter(c => c.group === 'optics').length"
-                                 x-data="{ get checks() { return ($store.citrascope.status?.config_health?.checks || []).filter(c => c.group === 'optics'); } }">
-                                <div class="row g-1 small font-monospace text-muted mb-2">
-                                    <template x-for="chk in checks" :key="chk.name">
-                                        <div class="col-6 col-md-3">
-                                            <span class="d-block text-secondary" style="font-size:.65rem" x-text="chk.label.toUpperCase()"></span>
-                                            <span x-text="chk.configured_fmt"></span>
-                                            <template x-if="chk.observed_fmt">
-                                                <span :class="chk.status === 'warning' ? 'text-warning' : 'text-success'"
-                                                      x-text="' \u2192 ' + chk.observed_fmt"></span>
-                                            </template>
-                                        </div>
-                                    </template>
+                            <!-- ─── Config Health warning banner (body) ───
+                                 Enumerates every failing check, including the PX/SENSOR ones
+                                 that aren't shown in the header.  Nothing renders here when
+                                 there are no warnings. -->
+                            <template x-if="$store.citrascope.status?.config_health?.has_warnings">
+                                <div class="alert alert-warning py-1 px-2 mb-2 small d-flex align-items-center">
+                                    <i class="bi bi-exclamation-triangle-fill me-2"></i>
+                                    <span>Hardware differs from server config &mdash; check telescope settings in Citra.
+                                        <template x-for="w in ($store.citrascope.status?.config_health?.checks || []).filter(c => c.status === 'warning')" :key="w.name">
+                                            <span class="d-block" x-text="w.label + ': ' + w.configured_fmt + ' \u2192 ' + w.observed_fmt + ' (' + w.pct_diff + '% off, from ' + w.source + ')'"></span>
+                                        </template>
+                                    </span>
                                 </div>
-                                <!-- Mismatch warning banner -->
-                                <template x-if="$store.citrascope.status?.config_health?.has_warnings">
-                                    <div class="alert alert-warning py-1 px-2 mb-2 small d-flex align-items-center">
-                                        <i class="bi bi-exclamation-triangle-fill me-2"></i>
-                                        <span>Hardware differs from server config &mdash; check telescope settings in Citra.
-                                            <template x-for="w in ($store.citrascope.status?.config_health?.checks || []).filter(c => c.status === 'warning')" :key="w.name">
-                                                <span class="d-block" x-text="w.label + ': ' + w.configured_fmt + ' \u2192 ' + w.observed_fmt + ' (' + w.pct_diff + '% off, from ' + w.source + ')'"></span>
-                                            </template>
-                                        </span>
-                                    </div>
-                                </template>
-                                <hr class="border-secondary my-2">
-                            </div>
+                            </template>
 
                             <!-- ─── Preview Image (visible for all adapters when an image is available) ─── -->
                             <div x-show="$store.citrascope.previewDataUrl || ($store.citrascope.status?.camera_connected && $store.citrascope.status?.supports_direct_camera_control)">

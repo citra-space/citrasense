@@ -1,0 +1,29 @@
+{#
+    Shared Configured/Observed value renderer for a HardwareConfigCheck.
+
+    Expected Alpine scope: a variable ``chk`` holding one check dict with
+    ``configured_fmt``, ``observed_fmt``, ``status``, ``pct_diff`` and
+    (optional) ``source_samples``.
+
+    Rendering rules:
+      - No observed value yet (config-only metric or no hardware data):
+          show just the configured string, muted.
+      - Status ok: collapse on match — show one value (observed wins since it
+          may include a binning suffix from the config side) in soft green.
+      - Status warning: show both sides on one line with arrow + pct, yellow.
+      - Sample count (slew rate rolling mean): render ``(n=N)`` when present.
+#}
+<template x-if="!chk.observed_fmt">
+    <span x-text="chk.configured_fmt"></span>
+</template>
+<template x-if="chk.observed_fmt && chk.status === 'ok'">
+    <span class="text-success" x-text="chk.configured_fmt"></span>
+</template>
+<template x-if="chk.observed_fmt && chk.status === 'warning'">
+    <span class="text-warning"
+          x-text="chk.configured_fmt + ' \u2192 ' + chk.observed_fmt + (chk.pct_diff !== null ? ' (' + (chk.pct_diff >= 0 ? '+' : '') + chk.pct_diff + '%)' : '')"></span>
+</template>
+<template x-if="chk.source_samples">
+    <span class="text-secondary ms-1" style="font-size:.7rem"
+          x-text="'(n=' + chk.source_samples + ')'"></span>
+</template>

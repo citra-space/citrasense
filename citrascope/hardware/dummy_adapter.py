@@ -573,6 +573,34 @@ class DummyAdapter(AbstractAstroHardwareAdapter):
     def focuser(self) -> AbstractFocuser:
         return self._focuser
 
+    def get_camera_info(self) -> dict | None:
+        """Mirror the configured sensor back as "hardware" for config-health checks.
+
+        The dummy adapter has no physical camera, so there's nothing to
+        interrogate for real sensor specs. Fabricating ``width``, ``height``,
+        and ``pixel_size_um`` from ``telescope_record`` keeps the PX and
+        SENSOR checks in ``assess_config_health`` from stalling at
+        ``pending`` — the dev UI lights up green in the matched case just
+        like a real, correctly-configured rig would.
+        """
+        tr = self.telescope_record
+        if not tr:
+            return None
+        info: dict = {"model": "DummyCamera"}
+        try:
+            w = tr.get("horizontalPixelCount")
+            h = tr.get("verticalPixelCount")
+            ps = tr.get("pixelSize")
+            if w:
+                info["width"] = int(w)
+            if h:
+                info["height"] = int(h)
+            if ps:
+                info["pixel_size_um"] = float(ps)
+        except (TypeError, ValueError):
+            return None
+        return info
+
     @classmethod
     def get_settings_schema(cls, **kwargs) -> list[SettingSchemaEntry]:
         """Return configuration schema for dummy adapter."""

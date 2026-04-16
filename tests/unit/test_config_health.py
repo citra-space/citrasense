@@ -159,6 +159,48 @@ class TestPixelScale:
         assert chk.pct_diff is not None
         assert chk.pct_diff > 10.0
 
+    def test_2x2_bin_ok_when_plate_solve_matches_binned_scale(self):
+        """2x2 binning: plate solver returns 2x the unbinned scale — must not false-flag."""
+        cfg_scale_unbinned = 3.76 / 600 * 206.265
+        cfg_scale_binned = cfg_scale_unbinned * 2
+        health = assess_config_health(
+            telescope_record={"pixelSize": 3.76, "focalLength": 600},
+            binning=(2, 2),
+            observed_pixel_scale=cfg_scale_binned,
+        )
+        chk = _find_check(health, "pixel_scale")
+        assert chk is not None
+        assert chk.status == "ok"
+        assert chk.pct_diff == 0.0
+        # Configured display reflects the binned (effective) scale plus a suffix.
+        assert "@ 2" in chk.configured_fmt
+        assert chk.configured == pytest.approx(cfg_scale_binned, abs=0.01)
+
+    def test_2x2_bin_ignored_triggers_false_mismatch_without_binning_arg(self):
+        """Regression guard: with default binning=(1,1), a bin=2 plate solve scale
+        does still flag as warning. Confirms the fix is ``binning=...``, not implicit."""
+        cfg_scale_unbinned = 3.76 / 600 * 206.265
+        health = assess_config_health(
+            telescope_record={"pixelSize": 3.76, "focalLength": 600},
+            observed_pixel_scale=cfg_scale_unbinned * 2,
+        )
+        chk = _find_check(health, "pixel_scale")
+        assert chk is not None
+        assert chk.status == "warning"
+
+    def test_1x1_bin_no_suffix(self):
+        """Unbinned imaging shows the classic '6.04"/px' format, no '@ NxN'."""
+        cfg_scale = 3.76 / 600 * 206.265
+        health = assess_config_health(
+            telescope_record={"pixelSize": 3.76, "focalLength": 600},
+            binning=(1, 1),
+            observed_pixel_scale=cfg_scale,
+        )
+        chk = _find_check(health, "pixel_scale")
+        assert chk is not None
+        assert chk.status == "ok"
+        assert "@" not in chk.configured_fmt
+
 
 # ---------------------------------------------------------------------------
 # Sensor resolution (config vs camera hardware)
@@ -185,7 +227,9 @@ class TestSensorResolution:
         assert chk is not None
         assert chk.status == "warning"
 
-    def test_physical_size_appended_when_pixel_size_present(self):
+    def test_physical_size_not_appended(self):
+        """Physical dims (mm × mm) intentionally dropped from the compact SENSOR
+        cell — they bloated the Optics strip without adding much operational value."""
         health = assess_config_health(
             telescope_record={
                 "pixelSize": 3.76,
@@ -195,7 +239,7 @@ class TestSensorResolution:
         )
         chk = _find_check(health, "sensor_resolution")
         assert chk is not None
-        assert "mm" in chk.configured_fmt
+        assert "mm" not in chk.configured_fmt
 
     def test_no_sensor_check_without_both_dims(self):
         health = assess_config_health(telescope_record={"horizontalPixelCount": 6248})
@@ -279,6 +323,61 @@ class TestSlewRate:
         assert chk.status == "warning"
         assert chk.pct_diff is not None
         assert chk.pct_diff > 10.0
+
+    def test_sample_count_is_propagated(self):
+        """``slew_rate_samples`` should show up on the check so UI can render ``(n=N)``."""
+        health = assess_config_health(
+            telescope_record={"maxSlewRate": 5.0},
+            observed_slew_rate=5.0,
+            slew_rate_samples=7,
+        )
+        chk = _find_check(health, "slew_rate")
+        assert chk is not None
+        assert chk.source_samples == 7
+
+    def test_sample_count_is_none_without_observed(self):
+        """No observed rate → no sample count either."""
+        health = assess_config_health(
+            telescope_record={"maxSlewRate": 5.0},
+            slew_rate_samples=3,
+        )
+        chk = _find_check(health, "slew_rate")
+        assert chk is not None
+        assert chk.source_samples is None
+
+
+# ---------------------------------------------------------------------------
+# short_label + UI-facing fields (used by the compact Optics strip)
+# ---------------------------------------------------------------------------
+
+
+class TestShortLabels:
+    @pytest.mark.parametrize(
+        ("name", "expected"),
+        [
+            ("focal_length", "FL"),
+            ("pixel_size", "PX"),
+            ("pixel_scale", "SCALE"),
+            ("sensor_resolution", "SENSOR"),
+            ("fov", "FOV"),
+            ("slew_rate", "SLEW"),
+        ],
+    )
+    def test_each_check_has_expected_short_label(self, name, expected):
+        health = assess_config_health(
+            telescope_record=TELESCOPE_RECORD,
+            camera_info=CAMERA_INFO,
+        )
+        chk = _find_check(health, name)
+        assert chk is not None, f"check {name} missing"
+        assert chk.short_label == expected
+
+    def test_short_label_serialized_in_to_dict(self):
+        health = assess_config_health(telescope_record=TELESCOPE_RECORD)
+        d = health.to_dict()
+        for chk in d["checks"]:
+            assert "short_label" in chk
+            assert "source_samples" in chk
 
 
 # ---------------------------------------------------------------------------

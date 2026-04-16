@@ -5,7 +5,10 @@ from unittest.mock import MagicMock, create_autospec, patch
 
 import pytest
 
-from citrascope.hardware.abstract_astro_hardware_adapter import AbstractAstroHardwareAdapter
+from citrascope.hardware.abstract_astro_hardware_adapter import (
+    AbstractAstroHardwareAdapter,
+    SlewRateTracker,
+)
 from citrascope.tasks.task import Task
 
 
@@ -23,13 +26,28 @@ def _make_task_dict(**overrides):
     return Task.from_dict(base)
 
 
-def _make_hardware_adapter(**overrides):
-    """Build a spec'd mock hardware adapter with sensible defaults for slew tests."""
+def _make_hardware_adapter(initial_slew_samples=None, **overrides):
+    """Build a spec'd mock hardware adapter with sensible defaults for slew tests.
+
+    ``initial_slew_samples`` pre-populates the SlewRateTracker; pass ``None``
+    for a fresh tracker with no history (matches a just-started daemon).
+    ``observed_slew_rate_deg_per_s`` is a property on the real class backed by
+    the tracker — tests should prefer inspecting ``adapter.slew_rate_tracker.mean``
+    directly, but the property is also wired below for backwards-compat.
+    """
     adapter = create_autospec(AbstractAstroHardwareAdapter, instance=True)
     adapter.observed_fov_short_deg = None
-    adapter.observed_slew_rate_deg_per_s = None
     adapter.telescope_record = None
     adapter.scope_slew_rate_degrees_per_second = 5.0
+
+    tracker = SlewRateTracker()
+    for sample in initial_slew_samples or []:
+        tracker.record(sample)
+    adapter.slew_rate_tracker = tracker
+    # Autospec treats @property as a plain attribute on the mock; keep the
+    # attribute in sync with the tracker so existing assertions keep working.
+    adapter.observed_slew_rate_deg_per_s = tracker.mean
+
     for k, v in overrides.items():
         setattr(adapter, k, v)
     return adapter
@@ -890,9 +908,9 @@ class TestEstimateLeadPositionExtraLead:
 
 
 class TestAdaptiveSlewRate:
-    """Tests for EMA smoothing, adapter persistence, and session initialization of slew rate."""
+    """Tests for rolling-mean slew rate tracking via ``SlewRateTracker``."""
 
-    def _make_concrete(self, adapter_rate=None):
+    def _make_concrete(self, initial_samples=None):
         from citrascope.tasks.scope.base_telescope_task import AbstractBaseTelescopeTask
 
         class ConcreteTask(AbstractBaseTelescopeTask):
@@ -900,7 +918,7 @@ class TestAdaptiveSlewRate:
                 pass
 
         daemon = _make_daemon()
-        adapter = _make_hardware_adapter(observed_slew_rate_deg_per_s=adapter_rate)
+        adapter = _make_hardware_adapter(initial_slew_samples=initial_samples)
         adapter.scope_slew_rate_degrees_per_second = 5.0
         daemon.hardware_adapter = adapter
         return ConcreteTask(MagicMock(), adapter, MagicMock(), _make_task_dict(), **_daemon_kwargs(daemon))
@@ -956,29 +974,31 @@ class TestAdaptiveSlewRate:
                         ct.point_to_lead_position({"most_recent_elset": {"tle": ["a", "b"]}})
 
     def test_first_measurement_sets_rate_directly(self):
-        """With no prior rate, first observation sets effective_rate = observed_rate."""
-        ct = self._make_concrete(adapter_rate=None)
-        self._run_single_slew(ct, slew_duration=1.0, slewed_distance=4.0)
+        """With an empty tracker, first observation becomes the mean."""
+        ct = self._make_concrete(initial_samples=None)
+        # Duration/distance chosen to exceed _MIN_MOTION_TIME_S (2.0s) and
+        # _MIN_SLEW_DISTANCE_DEG (1.0°) so the sample actually gets recorded.
+        self._run_single_slew(ct, slew_duration=2.5, slewed_distance=10.0)
 
-        stored = ct.hardware_adapter.observed_slew_rate_deg_per_s
-        assert stored is not None
-        assert abs(stored - 4.0) < 0.01
+        tracker = ct.hardware_adapter.slew_rate_tracker
+        assert tracker.count == 1
+        assert tracker.mean is not None
+        assert abs(tracker.mean - 4.0) < 0.01
 
-    def test_ema_blends_with_previous_rate(self):
-        """With a prior rate, new measurement is EMA-blended."""
-        from citrascope.tasks.scope.base_telescope_task import _SLEW_RATE_EMA_ALPHA
+    def test_rolling_mean_averages_recent_samples(self):
+        """With prior samples, a new measurement contributes a simple (1/N) share."""
+        ct = self._make_concrete(initial_samples=[3.0, 3.0, 3.0])
+        self._run_single_slew(ct, slew_duration=2.5, slewed_distance=12.5)
 
-        ct = self._make_concrete(adapter_rate=3.0)
-        self._run_single_slew(ct, slew_duration=1.0, slewed_distance=5.0)
+        tracker = ct.hardware_adapter.slew_rate_tracker
+        assert tracker.count == 4
+        expected = (3.0 + 3.0 + 3.0 + 5.0) / 4.0
+        assert tracker.mean is not None
+        assert abs(tracker.mean - expected) < 0.01
 
-        stored = ct.hardware_adapter.observed_slew_rate_deg_per_s
-        expected = _SLEW_RATE_EMA_ALPHA * 5.0 + (1 - _SLEW_RATE_EMA_ALPHA) * 3.0
-        assert stored is not None
-        assert abs(stored - expected) < 0.01
-
-    def test_session_persistence_initializes_from_adapter(self):
-        """effective_rate should start from adapter's persisted value, not None."""
-        ct = self._make_concrete(adapter_rate=6.0)
+    def test_session_persistence_seeds_lead_estimate(self):
+        """With prior samples, the first lead-time estimate uses the rolling mean."""
+        ct = self._make_concrete(initial_samples=[6.0, 6.0, 6.0])
 
         lead_ra = MagicMock(degrees=10.0)
         lead_dec = MagicMock(degrees=20.0)
@@ -999,19 +1019,20 @@ class TestAdaptiveSlewRate:
             assert abs(max_rate_used - 6.0) < 0.5
 
     def test_rate_clamped_to_bounds(self):
-        """Extreme observed rates should be clamped to [MIN, MAX]."""
-        from citrascope.tasks.scope.base_telescope_task import _MAX_OBSERVED_RATE_DEG_PER_S
+        """Extreme observed rates should be clamped by the tracker."""
+        ct = self._make_concrete(initial_samples=None)
+        # 250° / 2.5s = 100 deg/s — well above the tracker's hi bound,
+        # while still passing the steady-state duration/distance guards.
+        self._run_single_slew(ct, slew_duration=2.5, slewed_distance=250.0)
 
-        ct = self._make_concrete(adapter_rate=None)
-        self._run_single_slew(ct, slew_duration=0.3, slewed_distance=100.0)
+        tracker = ct.hardware_adapter.slew_rate_tracker
+        assert tracker.mean is not None
+        # Default hi=50.0 on SlewRateTracker.
+        assert tracker.mean <= 50.0
 
-        stored = ct.hardware_adapter.observed_slew_rate_deg_per_s
-        assert stored is not None
-        assert stored <= _MAX_OBSERVED_RATE_DEG_PER_S
-
-    def test_small_slew_below_threshold_does_not_update_rate(self):
-        """Slews below _MIN_SLEW_DISTANCE_DEG should not update the rate."""
-        ct = self._make_concrete(adapter_rate=4.0)
+    def test_small_slew_below_threshold_does_not_record(self):
+        """Slews below _MIN_SLEW_DISTANCE_DEG should not append a sample."""
+        ct = self._make_concrete(initial_samples=[4.0])
 
         lead_ra = MagicMock(degrees=10.0)
         lead_dec = MagicMock(degrees=20.0)
@@ -1025,7 +1046,9 @@ class TestAdaptiveSlewRate:
             with patch.object(ct, "get_target_radec_and_rates", return_value=sat_pos):
                 ct.point_to_lead_position({"most_recent_elset": {"tle": ["a", "b"]}})
 
-        assert ct.hardware_adapter.observed_slew_rate_deg_per_s == 4.0
+        tracker = ct.hardware_adapter.slew_rate_tracker
+        assert tracker.count == 1
+        assert tracker.mean == 4.0
 
 
 class TestAdaptiveExposure:

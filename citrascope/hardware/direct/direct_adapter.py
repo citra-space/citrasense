@@ -650,6 +650,23 @@ class DirectHardwareAdapter(AbstractAstroHardwareAdapter):
             return False
         return self._camera.is_connected()
 
+    def get_current_binning(self) -> tuple[int, int]:
+        """Return configured imaging binning from the camera device.
+
+        Direct cameras store a single ``default_binning`` setting that's
+        applied symmetrically at every capture site in this adapter (see the
+        ``capture_to_fits`` calls that pass ``binning=self._camera.get_default_binning()``).
+        Returns ``(1, 1)`` when no camera is connected so the monitoring card
+        can still render safely before hardware is up.
+        """
+        if not self._camera:
+            return (1, 1)
+        try:
+            b = max(1, int(self._camera.get_default_binning()))
+        except (AttributeError, TypeError, ValueError):
+            return (1, 1)
+        return (b, b)
+
     def _do_point_telescope(self, ra: float, dec: float):
         """Hardware-specific slew implementation.
 

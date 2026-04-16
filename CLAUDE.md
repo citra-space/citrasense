@@ -169,6 +169,8 @@ The full stack runs at three layers. New code must pass all three cleanly.
 
 **Pyright** (basic mode) handles type checking. Config is in `pyrightconfig.json`. The same engine powers Pylance in the editor, so red squiggles in Cursor match what CI enforces.
 
+> **Agent note:** Cursor's inline lint panel surfaces Pyright diagnostics but **does not run the full ruff ruleset** the project opts into (`select = ["E", "F", "W", "I", "UP", "PT", "B", "T20", "C4", "RUF"]`). That means editor-clean code can still fail pre-commit on things like `PT011` (`pytest.raises` too broad), `B` (bugbear), `T20` (stray `print`), or `C4` (comprehension style). After editing Python, run `uv run ruff check <files>` before handing back — don't rely on the editor's lint panel alone.
+
 Common type-checking patterns used in this codebase:
 
 - `assert self.x is not None` — narrow `T | None` attrs that are guaranteed set after initialization (e.g., after `connect()`, after `_initialize_components()`). Preferred over `if` guards when the None case is a programming error.

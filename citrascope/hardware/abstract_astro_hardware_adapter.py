@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import math
 from abc import ABC, abstractmethod
+from collections import deque
 from collections.abc import Callable
 from enum import Enum
 from pathlib import Path
@@ -77,6 +78,50 @@ class ObservationStrategy(Enum):
     SEQUENCE_TO_CONTROLLER = 2
 
 
+class SlewRateTracker:
+    """Rolling-mean tracker for observed mount slew rates.
+
+    Stores up to ``window`` recent per-slew rate samples (deg/s) and returns
+    their simple arithmetic mean.  Samples are clamped to [lo, hi] so a single
+    garbage reading cannot pull the mean off a cliff.
+
+    The mean is the value used for lead-time predictions in the pointing loop
+    and for the Configured/Observed readout in the monitoring UI.  ``count``
+    is surfaced to the UI as ``(n=N)`` so operators can tell how much data
+    backs the current estimate.
+
+    Not thread-safe; callers are expected to record from a single thread
+    (the pointing loop), which is how it's used today.
+    """
+
+    def __init__(self, window: int = 50, lo: float = 0.1, hi: float = 50.0) -> None:
+        if window < 1:
+            raise ValueError(f"SlewRateTracker window must be >= 1, got {window}")
+        self._samples: deque[float] = deque(maxlen=window)
+        self._lo = lo
+        self._hi = hi
+
+    def record(self, rate_deg_per_s: float) -> None:
+        """Record a new per-slew rate (deg/s), clamped to [lo, hi]."""
+        self._samples.append(max(self._lo, min(self._hi, rate_deg_per_s)))
+
+    def reset(self) -> None:
+        """Drop all samples — e.g. on reconnect or explicit operator reset."""
+        self._samples.clear()
+
+    @property
+    def mean(self) -> float | None:
+        """Simple mean of recorded samples, or ``None`` if no samples yet."""
+        if not self._samples:
+            return None
+        return sum(self._samples) / len(self._samples)
+
+    @property
+    def count(self) -> int:
+        """Number of samples currently held (at most ``window``)."""
+        return len(self._samples)
+
+
 class AbstractAstroHardwareAdapter(ABC):
     logger: logging.Logger  # Logger instance, must be provided by subclasses
     images_dir: Path  # Path to images directory, must be provided during initialization
@@ -88,7 +133,6 @@ class AbstractAstroHardwareAdapter(ABC):
     observed_fov_w_deg: float | None = None
     observed_fov_h_deg: float | None = None
     observed_pixel_scale_arcsec: float | None = None
-    observed_slew_rate_deg_per_s: float | None = None
     DEFAULT_FOCUS_POSITION: int = 0  # Default focus position, can be overridden by subclasses
 
     def __init__(self, images_dir: Path, **kwargs):
@@ -104,6 +148,7 @@ class AbstractAstroHardwareAdapter(ABC):
         self.location_service: Any | None = None
         self.elset_cache: Any | None = None
         self._pointing_model: AltAzPointingModel | None = None
+        self.slew_rate_tracker: SlewRateTracker = SlewRateTracker()
 
         # Load filter configuration from settings if available
         saved_filters = kwargs.get("filters", {})
@@ -158,6 +203,13 @@ class AbstractAstroHardwareAdapter(ABC):
         Direct adapters delegate to camera.get_camera_info().
         Orchestration adapters (NINA, KStars) should override to query their API.
         Returns dict with optional keys: width, height, pixel_size_um, model, etc.
+
+        Contract: ``width``, ``height``, and ``pixel_size_um`` are **unbinned
+        sensor values** in every implementation.  Moravian reports
+        ``GIP_CHIP_W/D`` and ``GIP_PIXEL_W`` (raw silicon); NINA/ASCOM's
+        ``XSize/YSize/PixelSizeX`` are the full unbinned sensor array per spec.
+        Binning is an imaging intent, not a camera property — it lives on the
+        adapter and is exposed via :meth:`get_current_binning`.
         """
         cam = self.camera
         if cam is not None and self.is_camera_connected():
@@ -166,6 +218,25 @@ class AbstractAstroHardwareAdapter(ABC):
             except Exception:
                 return None
         return None
+
+    def get_current_binning(self) -> tuple[int, int]:
+        """Return current imaging binning as ``(bx, by)``.
+
+        Defaults to ``(1, 1)`` — no binning.  Subclasses that support binning
+        (NINA, Direct) should override.  The status collector uses this to
+        scale the configured pixel scale when comparing against the
+        plate-solver observed value (which is per binned pixel).
+        """
+        return (1, 1)
+
+    @property
+    def observed_slew_rate_deg_per_s(self) -> float | None:
+        """Current rolling-mean observed slew rate (deg/s), or ``None``.
+
+        Backed by :class:`SlewRateTracker`; updated by the pointing loop in
+        ``base_telescope_task`` via ``slew_rate_tracker.record(...)``.
+        """
+        return self.slew_rate_tracker.mean
 
     def get_gps_location(self) -> GPSFix | None:
         """Return GPS location from hardware if available.

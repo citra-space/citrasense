@@ -386,13 +386,16 @@ class StatusCollector:
                 from citrascope.hardware.config_health import assess_config_health
 
                 camera_info = adapter.get_camera_info()
+                binning = adapter.get_current_binning()
                 health = assess_config_health(
                     telescope_record=self.daemon.telescope_record,
                     camera_info=camera_info,
+                    binning=binning,
                     observed_pixel_scale=adapter.observed_pixel_scale_arcsec,
                     observed_fov_w=adapter.observed_fov_w_deg,
                     observed_fov_h=adapter.observed_fov_h_deg,
                     observed_slew_rate=adapter.observed_slew_rate_deg_per_s,
+                    slew_rate_samples=adapter.slew_rate_tracker.count,
                 )
                 status.config_health = health.to_dict()
             else:
