@@ -850,3 +850,112 @@ class TestNearbyPointGuard:
 
         assert model.has_nearby_point(183.0, 45.0, min_sep_deg=5.0)
         assert not model.has_nearby_point(183.0, 45.0, min_sep_deg=2.0)
+
+
+# ------------------------------------------------------------------
+# Nearby-point index lookup (for replace-vs-add decision)
+# ------------------------------------------------------------------
+
+
+class TestFindNearbyPointIndex:
+    def test_returns_nearest_when_multiple_within_radius(self):
+        """Given several points in range, the closest one's index wins."""
+        model = AltAzPointingModel()
+        lat, lon = 40.0, -74.0
+
+        for az, alt in [(180.0, 45.0), (180.8, 45.0), (180.2, 45.0)]:
+            ra, dec = altaz_to_radec(az, alt, lat, lon)
+            model.add_point(ra, dec, ra + 0.01, dec + 0.01, lat, lon)
+
+        # Query at 180.15° — index 2 (180.2°) is nearest at 0.05°,
+        # index 0 (180.0°) is 0.15° away, index 1 (180.8°) is 0.65° away.
+        assert model.find_nearby_point_index(180.15, 45.0) == 2
+
+    def test_returns_none_when_outside_radius(self):
+        model = AltAzPointingModel()
+        lat, lon = 40.0, -74.0
+        ra, dec = altaz_to_radec(180.0, 45.0, lat, lon)
+        model.add_point(ra, dec, ra + 0.01, dec + 0.01, lat, lon)
+
+        assert model.find_nearby_point_index(185.0, 45.0) is None
+        assert model.find_nearby_point_index(180.0, 50.0) is None
+
+    def test_returns_none_for_empty_model(self):
+        model = AltAzPointingModel()
+        assert model.find_nearby_point_index(180.0, 45.0) is None
+
+    def test_default_guard_radius_is_one_degree(self):
+        """Regression: the operational feeding guard must stay at 1° unless
+        deliberately changed.  See issue #270."""
+        from citrascope.hardware.devices.mount import altaz_pointing_model
+
+        assert altaz_pointing_model._NEARBY_POINT_MIN_SEP == 1.0
+
+
+# ------------------------------------------------------------------
+# Replace-stale-point behaviour
+# ------------------------------------------------------------------
+
+
+class TestReplacePoint:
+    def test_replace_overwrites_and_refits(self):
+        """replace_point swaps one point in-place, keeps the count, refits."""
+        model = AltAzPointingModel()
+        lat, lon = 40.0, -74.0
+
+        for az, alt in [(90.0, 40.0), (180.0, 45.0), (270.0, 50.0)]:
+            ra, dec = altaz_to_radec(az, alt, lat, lon)
+            model.add_point(ra, dec, ra + 0.01, dec + 0.01, lat, lon)
+
+        assert model.point_count == 3
+        original_fit_ts = model._fit_timestamp
+        assert original_fit_ts is not None
+
+        snapshot = list(model._points)
+
+        # Replace point index 1 with a fresh measurement at the same az/alt
+        # but with a different solved offset (simulating drift).
+        mount_ra, mount_dec = altaz_to_radec(180.0, 45.0, lat, lon)
+        model.replace_point(1, mount_ra, mount_dec, mount_ra + 0.05, mount_dec + 0.05, lat, lon)
+
+        assert model.point_count == 3  # no growth
+        assert model._points[1] != snapshot[1]  # targeted index changed
+        assert model._points[0] == snapshot[0]  # neighbours untouched
+        assert model._points[2] == snapshot[2]
+
+        # Fit should have run again with the fresher data.
+        assert model._fit_timestamp is not None
+        assert model._fit_timestamp >= original_fit_ts
+
+    def test_replace_handles_az_wraparound(self):
+        """Measurement straddling the 0/360 boundary must wrap d_az correctly."""
+        model = AltAzPointingModel()
+        lat, lon = 40.0, -74.0
+
+        # Seed with something near az=359° so we have an index to replace.
+        mount_ra_init, mount_dec_init = altaz_to_radec(359.0, 45.0, lat, lon)
+        model.add_point(mount_ra_init, mount_dec_init, mount_ra_init + 0.01, mount_dec_init + 0.01, lat, lon)
+
+        # Replace with a solved position just across the wrap (~1°),
+        # which is a 2° raw d_az that must fold to -358° → +2° or similar.
+        mount_ra = mount_ra_init
+        mount_dec = mount_dec_init
+        solved_ra, solved_dec = altaz_to_radec(1.0, 45.0, lat, lon)
+        model.replace_point(0, mount_ra, mount_dec, solved_ra, solved_dec, lat, lon)
+
+        _az, _alt, d_az, _d_alt = model._points[0]
+        # The raw az difference would be about -358° without wrap handling;
+        # after wrap it should be a small positive number (≈+2°).
+        assert -180.0 <= d_az <= 180.0
+        assert abs(d_az) < 5.0
+
+    def test_replace_point_out_of_range_is_noop(self):
+        """A bad index is logged and ignored rather than raising."""
+        model = AltAzPointingModel()
+        lat, lon = 40.0, -74.0
+        ra, dec = altaz_to_radec(180.0, 45.0, lat, lon)
+        model.add_point(ra, dec, ra + 0.01, dec + 0.01, lat, lon)
+
+        before = list(model._points)
+        model.replace_point(5, ra, dec, ra + 0.02, dec + 0.02, lat, lon)
+        assert model._points == before

@@ -81,7 +81,7 @@ _SIGMA_CLIP_FLOOR_DEG = 1.0 / 60.0  # never clip points with < 1 arcmin residual
 _HEALTH_WINDOW = 5
 _HEALTH_DEGRADED_FACTOR = 3.0
 _LIVE_ACCURACY_WINDOW = 100
-_NEARBY_POINT_MIN_SEP = 2.0  # degrees — operational feeding guard
+_NEARBY_POINT_MIN_SEP = 1.0  # degrees — operational feeding guard
 
 
 # ---------------------------------------------------------------------------
@@ -757,23 +757,96 @@ class AltAzPointingModel:
                 max_gap = gap
         return 360.0 - max_gap
 
-    def has_nearby_point(self, az_deg: float, alt_deg: float, min_sep_deg: float = _NEARBY_POINT_MIN_SEP) -> bool:
-        """Check if any existing point is within ``min_sep_deg`` of (az, alt).
+    def find_nearby_point_index(
+        self,
+        az_deg: float,
+        alt_deg: float,
+        min_sep_deg: float = _NEARBY_POINT_MIN_SEP,
+    ) -> int | None:
+        """Return the index of the nearest stored point within ``min_sep_deg``.
 
-        Used by operational feeders to avoid adding near-duplicate points
-        from repeated observations of the same target.
+        Scans all stored points once and returns the index of the closest
+        one whose flat-euclidean separation ``sqrt(d_az**2 + d_alt**2)`` is
+        strictly less than ``min_sep_deg``, handling azimuth wraparound.
+        Returns ``None`` when no point is within range.
         """
+        nearest_idx: int | None = None
+        nearest_sep: float = min_sep_deg
         with self._lock:
-            for p_az, p_alt, _daz, _dalt in self._points:
+            for idx, (p_az, p_alt, _daz, _dalt) in enumerate(self._points):
                 d_alt = abs(alt_deg - p_alt)
                 if d_alt > min_sep_deg:
                     continue
                 d_az = abs(az_deg - p_az)
                 if d_az > 180.0:
                     d_az = 360.0 - d_az
-                if math.sqrt(d_az**2 + d_alt**2) < min_sep_deg:
-                    return True
-        return False
+                sep = math.sqrt(d_az**2 + d_alt**2)
+                if sep < nearest_sep:
+                    nearest_sep = sep
+                    nearest_idx = idx
+        return nearest_idx
+
+    def has_nearby_point(self, az_deg: float, alt_deg: float, min_sep_deg: float = _NEARBY_POINT_MIN_SEP) -> bool:
+        """Check if any existing point is within ``min_sep_deg`` of (az, alt).
+
+        Used by operational feeders to avoid adding near-duplicate points
+        from repeated observations of the same target.
+        """
+        return self.find_nearby_point_index(az_deg, alt_deg, min_sep_deg) is not None
+
+    def replace_point(
+        self,
+        index: int,
+        mount_ra: float,
+        mount_dec: float,
+        solved_ra: float,
+        solved_dec: float,
+        site_lat: float,
+        site_lon: float,
+    ) -> None:
+        """Overwrite ``self._points[index]`` with a fresh plate-solve measurement.
+
+        Used by operational feeders when a new measurement falls inside the
+        nearby-point guard radius: instead of discarding it (losing the
+        refresh) or duplicating the cell (biasing the fit), we replace the
+        stale point in-place.  Mirrors ``add_point``'s alt/az conversion and
+        ``d_az`` wraparound, then triggers a refit so the new terms (and the
+        persisted state written inside ``fit()``) apply immediately.
+        """
+        gast = _skyfield_gast()
+        mount_az, mount_alt = radec_to_altaz(mount_ra, mount_dec, site_lat, site_lon, _gast_override=gast)
+        solved_az, solved_alt = radec_to_altaz(solved_ra, solved_dec, site_lat, site_lon, _gast_override=gast)
+
+        d_az = solved_az - mount_az
+        if d_az > 180.0:
+            d_az -= 360.0
+        elif d_az < -180.0:
+            d_az += 360.0
+
+        d_alt = solved_alt - mount_alt
+
+        with self._lock:
+            if index < 0 or index >= len(self._points):
+                _logger.warning(
+                    "replace_point: index %d out of range (have %d points) — ignoring",
+                    index,
+                    len(self._points),
+                )
+                return
+            self._points[index] = (mount_az, mount_alt, d_az, d_alt)
+            n_points = len(self._points)
+
+        _logger.info(
+            "Pointing model: replaced point #%d — az=%.1f° alt=%.1f° dAz=%.4f° dAlt=%.4f°",
+            index + 1,
+            mount_az,
+            mount_alt,
+            d_az,
+            d_alt,
+        )
+
+        if n_points >= _MIN_POINTS_3TERM:
+            self.fit()
 
     def _compass_label(self, bearing_deg: float) -> str:
         """Convert a bearing in degrees to an 8-point compass label."""
