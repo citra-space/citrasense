@@ -183,6 +183,9 @@ async function loadConfiguration() {
             }
 
             store.config = config;
+            if (store.previewExposure === null) {
+                store.previewExposure = config.exposure_seconds || 2.0;
+            }
             store.savedAdapter = config.hardware_adapter; // Sync savedAdapter to store
             store.apiEndpoint =
                 config.host === PROD_API_HOST ? 'production' :

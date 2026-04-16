@@ -77,7 +77,7 @@ function compareVersions(v1, v2) {
             previewDataUrl: null,
             previewSource: '',
             loopCount: 0,
-            previewExposure: 0.01,
+            previewExposure: null,
             _lastTaskImageUrl: null,
 
             // Spread all formatter functions from shared module

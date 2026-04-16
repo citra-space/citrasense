@@ -1555,9 +1555,13 @@ class DummyAdapter(AbstractAstroHardwareAdapter):
 
         from citrascope.preview_bus import array_to_jpeg_data_url
 
+        start = time.monotonic()
         ra, dec = self._mount.get_radec()
         sigma = self._focus_dependent_psf_sigma()
         image_data, _ = self._generate_starfield(ra, dec, exposure_time, seed=int(time.time() * 1000), psf_sigma=sigma)
+        remaining = exposure_time - (time.monotonic() - start)
+        if remaining > 0:
+            time.sleep(remaining)
         return array_to_jpeg_data_url(image_data, flip_horizontal=flip_horizontal)
 
     def expose_camera(self, exposure_seconds: float = 1.0) -> str:
