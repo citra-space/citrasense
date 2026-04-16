@@ -34,8 +34,13 @@ _TLE_SOURCES: list[dict[str, str | int]] = [
     {"url": f"{_CELESTRAK_BASE}?NAME=DIRECTV&FORMAT=tle", "label": "DirecTV", "limit": 0},
 ]
 
-MIN_ELEVATION_DEG = 15.0
+MIN_ELEVATION_DEG = 0.0  # dummy is a UI testing stub; horizon-only filter is enough
 PASS_SEARCH_HOURS = 12
+# Don't anchor the queue on a future pass that's more than this far out.  The
+# real Citra scheduler doesn't give you tasks 5 hours away when nothing is
+# happening sooner, and a far-future anchor cascades the whole back-to-back
+# stack out with it.
+MAX_FUTURE_RISE_MINUTES = 10.0
 
 _DEFAULT_STATION_LAT = 38.8409
 _DEFAULT_STATION_LON = -105.0423
@@ -523,28 +528,33 @@ class DummyApiClient(AbstractCitraApiClient):
                     task_start.strftime("%H:%M:%S UTC"),
                 )
 
+        # Only honor future passes whose natural rise time both (a) doesn't
+        # overlap with what we've already placed and (b) is reasonably soon.
+        # Relocating a pass to the cursor was the source of the "queue anchored
+        # 5 hours out" bug — once any far-future pass became the cursor, every
+        # subsequent satellite got stacked behind it back-to-back.  A future
+        # pass means "this satellite is visible at this real time"; if we can't
+        # honor that, we drop it rather than lie about visibility.
+        max_future_start = now + timedelta(minutes=MAX_FUTURE_RISE_MINUTES)
         future_passes.sort(key=lambda x: x[0])
         for _, sat_id, rise_dt, set_dt in future_passes:
             if len(new_tasks) >= max_tasks:
                 break
-            # If the natural rise time is already past the cursor, use it as-is.
-            # Otherwise push the window forward to the cursor — the dummy isn't
-            # actually pointing at the satellite, so fidelity to the real pass
-            # time matters less than not handing out overlapping windows.
-            task_start = rise_dt if rise_dt >= cursor else cursor
+            if rise_dt < cursor or rise_dt > max_future_start:
+                continue
             natural_duration = (set_dt - rise_dt).total_seconds()
             duration_s = max(_TASK_WINDOW_S, min(natural_duration, _TASK_WINDOW_S * 4))
+            task_start = rise_dt
             task_stop = task_start + timedelta(seconds=duration_s)
             new_tasks.append(self._make_task(sat_id, task_start, task_stop, telescope, ground_station))
             cursor = task_stop + timedelta(seconds=_INTER_TASK_GAP_S)
             cat = self._satellite_catalog.get(sat_id, {})
             if self.logger:
                 self.logger.info(
-                    "DummyApiClient: Scheduled %s pass at %s (%.0fs, above %d°)",
+                    "DummyApiClient: Scheduled %s pass at %s (%.0fs)",
                     cat.get("name", sat_id),
                     task_start.strftime("%H:%M:%S UTC"),
                     duration_s,
-                    MIN_ELEVATION_DEG,
                 )
 
         return new_tasks
