@@ -648,6 +648,36 @@ class AltAzPointingModel:
 
         return corrected_ra, corrected_dec
 
+    def is_replacement_flyer(
+        self,
+        observed_residual_deg: float,
+        ra_deg: float,
+        dec_deg: float,
+        site_lat: float,
+        site_lon: float,
+    ) -> bool:
+        """Return True when ``observed_residual_deg`` is implausibly large vs.
+        the model's own prediction at this sky position — i.e. the new solve
+        looks like a flyer (trail contamination, edge-of-field extraction,
+        wrong plate solution) and should not overwrite an established
+        calibration point.
+
+        Threshold mirrors the ``record_verification_residual`` health-degraded
+        gate: ``max(predict_error * 3.0, 10 arcmin)``.  Returns ``False`` when
+        the model is not yet active (no prediction available) so seed
+        calibration data is never rejected.
+
+        This is advisory — callers (operational feeders) decide whether to
+        skip replacement when it returns ``True``.  ``add_point`` is
+        untouched; a flyer in a *new* cell still gets recorded and sigma-clip
+        in ``fit()`` handles it.
+        """
+        if not self.is_active:
+            return False
+        predicted = self.predict_error(ra_deg, dec_deg, site_lat, site_lon)
+        threshold = max(predicted * _HEALTH_DEGRADED_FACTOR, 10.0 / 60.0)
+        return observed_residual_deg > threshold
+
     def predict_error(
         self,
         ra_deg: float,

@@ -1327,14 +1327,25 @@ class DummyAdapter(AbstractAstroHardwareAdapter):
 
                 lat, lon = location["latitude"], location["longitude"]
                 cmd_az, cmd_alt = radec_to_altaz(expected_ra_deg, expected_dec_deg, lat, lon)
+                # Record every residual (for health + live accuracy UI), then
+                # decide whether to feed / refresh / skip the fit data.
+                self._pointing_model.record_verification_residual(residual_deg)
                 nearby_idx = self._pointing_model.find_nearby_point_index(cmd_az, cmd_alt)
                 if nearby_idx is None:
                     self._pointing_model.add_point(
                         expected_ra_deg, expected_dec_deg, solved_ra_deg, solved_dec_deg, lat, lon
                     )
                     self.logger.info("Pipeline fed pointing model (residual %.4f°)", residual_deg)
+                elif self._pointing_model.is_replacement_flyer(
+                    residual_deg, expected_ra_deg, expected_dec_deg, lat, lon
+                ):
+                    self.logger.warning(
+                        "Pipeline skipped replace: residual %.4f° too large vs model prediction "
+                        "(flyer protection, point #%d retained)",
+                        residual_deg,
+                        nearby_idx + 1,
+                    )
                 else:
-                    self._pointing_model.record_verification_residual(residual_deg)
                     self._pointing_model.replace_point(
                         nearby_idx,
                         expected_ra_deg,

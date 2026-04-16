@@ -959,3 +959,46 @@ class TestReplacePoint:
         before = list(model._points)
         model.replace_point(5, ra, dec, ra + 0.02, dec + 0.02, lat, lon)
         assert model._points == before
+
+
+# ------------------------------------------------------------------
+# Flyer protection for replacement
+# ------------------------------------------------------------------
+
+
+class TestIsReplacementFlyer:
+    def test_inactive_model_never_flags_flyer(self):
+        """With no fitted model, we have no prediction; never reject."""
+        model = AltAzPointingModel()
+        assert not model.is_active
+        # Absurdly large residual — still accepted because we have nothing
+        # to compare against.
+        assert not model.is_replacement_flyer(10.0, 180.0, 0.0, 40.0, -74.0)
+
+    def test_small_residual_below_arcmin_floor_accepted(self):
+        """Under the 10-arcmin floor, a solve is always welcome."""
+        model = _model_with_three_points()
+        assert model.is_active
+        # 5 arcmin — well under the 10-arcmin floor.
+        ra, dec = altaz_to_radec(180.0, 45.0, 40.0, -74.0)
+        assert not model.is_replacement_flyer(5.0 / 60.0, ra, dec, 40.0, -74.0)
+
+    def test_large_residual_flags_flyer(self):
+        """A residual well above 3x predict (and above the 10-arcmin floor)
+        must be rejected."""
+        model = _model_with_three_points()
+        ra, dec = altaz_to_radec(180.0, 45.0, 40.0, -74.0)
+        # 2° — orders of magnitude above anything the model would predict
+        # for a clean session.  Clearly a flyer.
+        assert model.is_replacement_flyer(2.0, ra, dec, 40.0, -74.0)
+
+
+def _model_with_three_points() -> AltAzPointingModel:
+    """Build an active model with three clean calibration points."""
+    model = AltAzPointingModel()
+    lat, lon = 40.0, -74.0
+    for az, alt in [(90.0, 40.0), (180.0, 45.0), (270.0, 50.0)]:
+        ra, dec = altaz_to_radec(az, alt, lat, lon)
+        model.add_point(ra, dec, ra + 0.001, dec + 0.001, lat, lon)
+    assert model.is_active
+    return model

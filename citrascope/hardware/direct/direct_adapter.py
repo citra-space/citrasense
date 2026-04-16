@@ -1337,6 +1337,15 @@ class DirectHardwareAdapter(AbstractAstroHardwareAdapter):
                         expected_ra_deg, expected_dec_deg, solved_ra_deg, solved_dec_deg, lat, lon
                     )
                     self.logger.info("Pipeline fed pointing model (residual %.4f°)", residual_deg)
+                elif self._pointing_model.is_replacement_flyer(
+                    residual_deg, expected_ra_deg, expected_dec_deg, lat, lon
+                ):
+                    self.logger.warning(
+                        "Pipeline skipped replace: residual %.4f° too large vs model prediction "
+                        "(flyer protection, point #%d retained)",
+                        residual_deg,
+                        nearby_idx + 1,
+                    )
                 else:
                     self._pointing_model.replace_point(
                         nearby_idx,
