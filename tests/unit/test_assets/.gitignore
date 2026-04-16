@@ -1,0 +1,12 @@
+# Plate-solver byproducts emitted alongside test FITS fixtures
+*-indx.xyls
+*.axy
+*.corr
+*.match
+*.rdls
+*.solved
+*.wcs
+
+# Preview images written by the annotated-image processor during tests
+latest_preview.jpg
+latest_preview.png
