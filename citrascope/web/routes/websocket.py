@@ -23,7 +23,7 @@ def build_websocket_router(ctx: CitraScopeWebApp) -> APIRouter:
             # Send initial status
             if ctx.daemon:
                 ctx._update_status_from_daemon()
-            await websocket.send_json({"type": "status", "data": ctx.status.dict()})
+            await websocket.send_json({"type": "status", "data": ctx.status.model_dump()})
 
             while True:
                 data = await websocket.receive_text()
@@ -34,7 +34,7 @@ def build_websocket_router(ctx: CitraScopeWebApp) -> APIRouter:
         except WebSocketDisconnect:
             ctx.connection_manager.disconnect(websocket)
         except Exception as e:
-            CITRASCOPE_LOGGER.error(f"WebSocket error: {e}")
-            ctx.connection_manager.disconnect(websocket)
+            CITRASCOPE_LOGGER.exception("WebSocket error: %s", e)
+            await ctx.connection_manager.disconnect_and_close(websocket)
 
     return router

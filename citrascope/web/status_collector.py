@@ -404,8 +404,8 @@ class StatusCollector:
             status.status_collection_ms = round((time.perf_counter() - _t0) * 1000, 2)
             status.status_collection_breakdown = _breakdown
 
-        except Exception as e:
-            CITRASCOPE_LOGGER.error(f"Error updating status: {e}")
+        except Exception:
+            CITRASCOPE_LOGGER.exception("Error updating status")
 
     def _build_calibration_status(self) -> dict[str, Any] | None:
         """Build calibration status dict for SystemStatus."""

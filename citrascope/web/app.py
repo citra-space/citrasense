@@ -119,7 +119,7 @@ class CitraScopeWebApp:
         """Broadcast current status to all connected clients."""
         if self.daemon:
             self._update_status_from_daemon()
-        await self.connection_manager.broadcast({"type": "status", "data": self.status.dict()})
+        await self.connection_manager.broadcast({"type": "status", "data": self.status.model_dump()})
 
     async def broadcast_tasks(self):
         """Broadcast current task queue to all connected clients."""
