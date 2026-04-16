@@ -99,8 +99,9 @@
                                     <button type="button"
                                             class="btn btn-sm btn-outline-secondary py-0 px-1 ms-1 align-baseline"
                                             @click="$store.citrascope.copyPath(dep.install_cmd, $event)"
-                                            title="Copy install command">
-                                        <i class="bi bi-clipboard" style="font-size: 0.75rem;"></i>
+                                            title="Copy install command"
+                                            aria-label="Copy install command">
+                                        <i class="bi bi-clipboard" style="font-size: 0.75rem;" aria-hidden="true"></i>
                                     </button>
                                 </li>
                             </template>

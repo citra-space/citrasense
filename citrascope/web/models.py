@@ -49,8 +49,8 @@ class SystemStatus(BaseModel):
     gpsd_fix: dict[str, Any] | None = None
     adapter_gps: dict[str, Any] | None = None
     last_update: str = ""
-    # Entries: {device_type, device_name, missing_packages: list[str], install_cmd}
-    missing_dependencies: list[dict[str, Any]] = []
+    # Entries: {device_type, device_name, missing_packages, install_cmd} — all str
+    missing_dependencies: list[dict[str, str]] = []
     active_processors: list[str] = []  # Names of enabled image processors
     tasks_by_stage: dict[str, list[dict]] | None = None  # Tasks in each pipeline stage
     pipeline_stats: dict[str, Any] | None = None  # Lifetime counters for queues, processors, and tasks

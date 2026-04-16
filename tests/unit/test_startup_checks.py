@@ -12,11 +12,13 @@ from citrascope.startup_checks import _binary_hint, check_processor_runtime_deps
 
 def _settings(
     *,
+    processors_enabled: bool = True,
     use_local_apass_catalog: bool = False,
     enabled_processors: dict[str, bool] | None = None,
 ):
     """Build a minimal settings stub — the only fields the function touches."""
     return SimpleNamespace(
+        processors_enabled=processors_enabled,
         use_local_apass_catalog=use_local_apass_catalog,
         enabled_processors=enabled_processors or {},
     )
@@ -30,6 +32,16 @@ class TestCheckProcessorRuntimeDeps:
         monkeypatch.setattr(startup_checks.shutil, "which", lambda name: f"/usr/local/bin/{name}")
 
         issues = check_processor_runtime_deps(_settings(use_local_apass_catalog=True))
+
+        assert issues == []
+
+    def test_returns_empty_when_processors_globally_disabled(self, monkeypatch):
+        """The global processors_enabled kill-switch short-circuits everything."""
+        monkeypatch.setattr(startup_checks.importlib.util, "find_spec", lambda name: None)
+        monkeypatch.setattr(startup_checks.shutil, "which", lambda name: None)
+
+        settings = _settings(processors_enabled=False, use_local_apass_catalog=True)
+        issues = check_processor_runtime_deps(settings)
 
         assert issues == []
 
@@ -47,7 +59,7 @@ class TestCheckProcessorRuntimeDeps:
         entry = issues[0]
         assert entry["device_type"] == "processor"
         assert entry["device_name"] == "Photometry Calibrator"
-        assert entry["missing_packages"] == ["astropy_healpix"]
+        assert entry["missing_packages"] == "astropy_healpix"
         assert "uv tool install --force" in entry["install_cmd"]
 
     def test_missing_healpix_ignored_when_local_apass_disabled(self, monkeypatch):
@@ -83,7 +95,7 @@ class TestCheckProcessorRuntimeDeps:
         names = [i["device_name"] for i in issues]
         assert "Plate Solver" in names
         plate = next(i for i in issues if i["device_name"] == "Plate Solver")
-        assert plate["missing_packages"] == ["solve-field"]
+        assert plate["missing_packages"] == "solve-field"
         assert plate["install_cmd"]  # platform-specific; concrete string is tested elsewhere
 
     def test_missing_solve_field_ignored_when_plate_solver_disabled(self, monkeypatch):

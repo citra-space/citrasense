@@ -47,21 +47,27 @@ def _binary_hint(binary: str) -> str:
     return f"Install {binary} and ensure it's on PATH"
 
 
-def check_processor_runtime_deps(settings: CitraScopeSettings) -> list[dict]:
+def check_processor_runtime_deps(settings: CitraScopeSettings) -> list[dict[str, str]]:
     """Return banner-shape dicts for every missing processor dependency.
 
     Each entry matches the shape consumed by the Missing Dependencies
-    banner (see ``web/templates/_monitoring.html``):
+    banner (see ``web/templates/_monitoring.html``) and the hardware
+    adapter's ``get_missing_dependencies()`` output — all string values,
+    with ``missing_packages`` comma-joined for multi-package cases:
 
         {"device_type": "processor",
          "device_name": str,
-         "missing_packages": [str],
+         "missing_packages": str,   # e.g. "astropy_healpix" or "a, b"
          "install_cmd": str}
 
-    Disabled processors are skipped so operators don't see warnings for
-    stuff they've intentionally turned off.
+    Returns ``[]`` immediately if the whole processing pipeline is
+    disabled. Per-processor flags are consulted for the other gates so
+    operators don't see warnings for processors they've turned off.
     """
-    issues: list[dict] = []
+    if not settings.processors_enabled:
+        return []
+
+    issues: list[dict[str, str]] = []
     enabled = settings.enabled_processors
 
     # astropy_healpix is only imported when the local APASS catalog is
@@ -72,7 +78,7 @@ def check_processor_runtime_deps(settings: CitraScopeSettings) -> list[dict]:
                 {
                     "device_type": "processor",
                     "device_name": "Photometry Calibrator",
-                    "missing_packages": ["astropy_healpix"],
+                    "missing_packages": "astropy_healpix",
                     "install_cmd": "uv tool install --force citrascope",
                 }
             )
@@ -82,7 +88,7 @@ def check_processor_runtime_deps(settings: CitraScopeSettings) -> list[dict]:
             {
                 "device_type": "processor",
                 "device_name": "Plate Solver",
-                "missing_packages": ["solve-field"],
+                "missing_packages": "solve-field",
                 "install_cmd": _binary_hint("solve-field"),
             }
         )
@@ -93,7 +99,7 @@ def check_processor_runtime_deps(settings: CitraScopeSettings) -> list[dict]:
             {
                 "device_type": "processor",
                 "device_name": "Source Extractor",
-                "missing_packages": ["source-extractor"],
+                "missing_packages": "source-extractor",
                 "install_cmd": _binary_hint("source-extractor"),
             }
         )
