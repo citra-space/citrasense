@@ -41,11 +41,21 @@ jobs:
         run: uv run pyright
 
   test:
-    runs-on: ubuntu-latest
+    # Matrix covers x86_64 across all supported python versions, plus a single
+    # arm64 leg on py3.12 (the prod Pi version). The arm64 leg exists to catch
+    # native-extension behavior skews that don't surface on x86_64 — the
+    # motivating case is issue #300, where skyfield/sgp4 silently NaN'd on
+    # SGP4-XP TLEs *only* on linux/aarch64. ``ubuntu-24.04-arm`` is a free
+    # GitHub-hosted runner for public repos.
+    runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
+        os: [ubuntu-latest]
         python-version: ['3.10', '3.11', '3.12', '3.13', '3.14']
+        include:
+          - os: ubuntu-24.04-arm
+            python-version: '3.12'
     steps:
       - name: Checkout code
         uses: actions/checkout@v6
@@ -58,7 +68,7 @@ jobs:
       - name: Install dependencies
         run: |
           if ! uv sync --extra dev --extra test --extra indi --extra all; then
-            echo "::warning::pyindi-client has no wheel for Python ${{ matrix.python-version }} — installing without indi/all extras"
+            echo "::warning::pyindi-client has no wheel for Python ${{ matrix.python-version }} on ${{ matrix.os }} — installing without indi/all extras"
             uv sync --extra dev --extra test
           fi
       - name: Run pytest with coverage
@@ -66,7 +76,7 @@ jobs:
           uv run pytest -m "not integration" --import-mode=importlib --override-ini="addopts=" --cov=citrascope --cov-report=term-missing --cov-report=xml --cov-branch
       - name: Upload coverage report
         uses: actions/upload-artifact@v7
-        if: matrix.python-version == '3.12'
+        if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.12'
         with:
           name: coverage-xml
           path: coverage.xml

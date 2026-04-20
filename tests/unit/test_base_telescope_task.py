@@ -1,6 +1,7 @@
 """Tests for AbstractBaseTelescopeTask and SiderealTelescopeTask."""
 
 import math
+import platform
 from unittest.mock import MagicMock, create_autospec, patch
 
 import pytest
@@ -1121,15 +1122,24 @@ class TestAdaptiveExposure:
 # or swaps rate units, or stops catching NaN, one of these fires.
 # ---------------------------------------------------------------------------
 
-# Real SGP4-XP TLE captured from citrascope-galileo's elset cache snapshot
-# (MSIimageworker sdo_debug_bundles/77592f67…/elset_cache_snapshot.json).
-# Column 63 on line 1 is ``4``, the XP ephemeris-type marker.
-_GOES18_XP_TLE = (
-    "1 99999U          26103.19597709 +.00000000  13000-1  10000-1 4 00008",
-    "2 99999   0.0118 102.2391 0001121   4.4195  28.2815  1.00267201000008",
+# Real SGP4-XP TLE that triggered issue #300 on citrascope-galileo
+# (2026-04-19 incident, DIRECTV 15, task dd782a8d). Pulled live from the
+# backend ``GET /satellites/{id}/elsets`` endpoint and verified to:
+#   - NaN in skyfield/sgp4 2.25 on galileo's Raspberry Pi (the actual
+#     observed failure: RA/Dec/range all NaN),
+#   - Propagate to finite values in keplemon.
+# Column 63 on line 1 is ``4``, the XP ephemeris-type marker; the ``.03000``
+# ballistic-coefficient and ``10000-1`` Bstar fields are XP-specific
+# encodings that classic sgp4 silently mis-parses into NaN-producing state.
+_DIRECTV15_XP_TLE = (
+    "1     0U          26110.51972782  .00000000  0.03000  10000-1 4    02",
+    "2     0   0.0088 131.7837 0000602  81.2681  79.7779  1.00268173    06",
 )
 
-# Plain SGP4 (GP) TLE for the same satellite family; sanity baseline.
+# Back-compat alias — older tests below reference this name.
+_GOES18_XP_TLE = _DIRECTV15_XP_TLE
+
+# Plain SGP4 (GP) TLE for a GEO sat; sanity baseline.
 _GOES18_GP_TLE = (
     "1 51850U 22021A   26103.19597709 +.00000000  00000+0  00000+0 0  9995",
     "2 51850   0.0118 102.2391 0001121   4.4195  28.2815  1.00267201000001",
@@ -1206,6 +1216,69 @@ class TestXPTLEPropagationGate:
         sidereal_deg_s = 15.04106864 / 3600.0
         expected_delta = sidereal_deg_s * math.cos(math.radians(dec_c))
         assert (ra_rate_c - ra_rate_m) == pytest.approx(expected_delta, rel=1e-3)
+
+
+class TestSkyfieldFailsOnXPTLE:
+    """Canary tests that document *why* this issue exists.
+
+    The 2026-04-19 galileo incident looked like "every GEO task fails with
+    ``cannot convert float NaN to integer``". Root cause: the backend's
+    ``GET /satellites/{id}/elsets`` endpoint returns SGP4-XP elsets as the
+    preferred "best" elset for many GEOs, and skyfield's bundled sgp4
+    implementation doesn't support SGP4-XP. What skyfield *does* with XP
+    input turns out to be platform-dependent:
+
+        linux/arm64 (the Pi fleet): NaN — exactly reproduces the log.
+        darwin/arm64 (dev macs):    silently mis-propagates with ~arcmin
+                                    error (finite, plausible-looking, wrong).
+
+    Both are broken. Both are fixed by the keplemon migration. The NaN
+    variant is platform-specific so the hard-NaN assertion below only runs
+    on linux/arm64, where the prod failure actually lives. The
+    "keplemon-produces-finite" assertion runs everywhere — that's the fix.
+
+    The exact XP TLE below was pulled live from
+    ``https://dev.api.citra.space/satellites/849d…/elsets?limit=1`` on
+    2026-04-20, which is the same endpoint ``fetch_satellite`` hits at
+    task time.
+    """
+
+    @pytest.mark.slow
+    @pytest.mark.skipif(
+        not (platform.system() == "Linux" and platform.machine() in ("aarch64", "arm64")),
+        reason=(
+            "skyfield's XP-TLE behavior is platform-specific: it NaN's on "
+            "linux/arm64 (the Pi fleet, where the incident was reproduced) "
+            "but silently mis-propagates on darwin. This NaN assertion only "
+            "runs where it reliably reproduces the prod failure."
+        ),
+    )
+    def test_skyfield_produces_nan_on_xp_tle_on_linux_arm64(self):
+        from datetime import datetime, timezone
+
+        from skyfield.api import EarthSatellite, load, wgs84
+
+        ts = load.timescale()
+        obs = wgs84.latlon(38.821757, -104.855860, elevation_m=1865.1)  # galileo GPS
+        sat = EarthSatellite(_DIRECTV15_XP_TLE[0], _DIRECTV15_XP_TLE[1], "DIRECTV 15", ts)
+        topo = (sat - obs).at(ts.from_datetime(datetime.now(timezone.utc)))
+        ra, dec, dist = topo.radec()
+
+        # These three assertions are the exact failure we saw on galileo.
+        assert math.isnan(ra.degrees), f"skyfield should NaN XP TLE on linux/arm64 but got RA={ra.degrees}"  # type: ignore[attr-defined]
+        assert math.isnan(dec.degrees), f"skyfield should NaN XP TLE on linux/arm64 but got Dec={dec.degrees}"  # type: ignore[attr-defined]
+        assert math.isnan(dist.km), f"skyfield should NaN XP TLE on linux/arm64 but got km={dist.km}"  # type: ignore[attr-defined]
+
+    def test_keplemon_produces_finite_on_same_xp_tle(self):
+        """Same TLE, branch path: must be finite on every platform (this is the fix)."""
+        ct = _make_concrete_for_propagation()
+        ra, dec, ra_rate, dec_rate = ct.get_target_radec_and_rates(_make_sat_data(_DIRECTV15_XP_TLE, "DIRECTV 15"))
+        assert math.isfinite(ra)
+        assert math.isfinite(dec)
+        assert math.isfinite(ra_rate)
+        assert math.isfinite(dec_rate)
+        # Sanity: DIRECTV 15 is a near-equatorial GEO — dec should be small.
+        assert -15.0 < dec < 15.0, f"DIRECTV 15 dec out of sane band: {dec}"
 
 
 class TestPropagationParityWithSkyfield:
