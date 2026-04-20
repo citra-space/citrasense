@@ -8,6 +8,7 @@ when satellites are actually visible from the ground station.
 
 import json
 import logging
+import math
 import random
 import threading
 import time
@@ -492,13 +493,23 @@ class DummyApiClient(AbstractCitraApiClient):
             # keplemon's access report needs min_duration > 0 or it hangs, so
             # for the point-in-time "visible now" check we convert J2000
             # topocentric RA/Dec to alt/az via the shared helper.
+            #
+            # Pass ``_gast_override`` anchored to the same ``now_epoch`` used
+            # for propagation. Today both sides are "now" so the outcome is
+            # sub-arcsec identical to letting ``radec_to_altaz`` fall back to
+            # wall-clock GAST, but keeping the anchoring explicit makes the
+            # pattern uniform with ``sky_enrichment._propagate_static`` and
+            # prevents a silent bug if anyone ever refactors this into a
+            # "visible at window-start" check (see PR #301 Copilot comment).
             try:
+                gast_deg = math.degrees(now_epoch.to_fk5_greenwich_angle())
                 topo = observer.get_topocentric_to_satellite(now_epoch, sat, ReferenceFrame.J2000)
                 _, alt_deg = radec_to_altaz(
                     float(topo.right_ascension),
                     float(topo.declination),
                     lat_deg,
                     lon_deg,
+                    _gast_override=gast_deg,
                 )
             except Exception:
                 alt_deg = -1.0

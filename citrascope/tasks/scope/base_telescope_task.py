@@ -620,9 +620,20 @@ class AbstractBaseTelescopeTask(ABC):
         else:
             # Subtract the sidereal-tracking term the mount applies internally,
             # so the returned rate is the *extra* motion the mount needs to
-            # command on top of its sidereal drive. Matches what Skyfield's
-            # frame_latlon_and_rates(ground_station) used to return.
-            ra_rate = ra_rate_inertial - _SIDEREAL_RATE_DEG_PER_S * math.cos(math.radians(dec))
+            # command on top of its sidereal drive.
+            #
+            # ``ra_rate`` is dRA/dt in RA-coordinate space (deg/s), NOT the
+            # on-sky great-circle rate. Mount tracking-offset APIs (ZWO AM5
+            # ``:RA±NNN#``, INDI ``TELESCOPE_TRACK_RATE``, etc.) consume
+            # coordinate rates — the mount's RA axis drives at
+            # ``sidereal + offset`` where sidereal is a constant ~15.041 "/s
+            # regardless of declination. No cos(dec) projection here.
+            #
+            # cos(dec) IS applied exactly once, downstream, in
+            # ``compute_angular_rate()`` where we need the projected sky rate
+            # for trail length / exposure math. Keep the projection in one
+            # place so refactors can't accidentally double- or zero-count it.
+            ra_rate = ra_rate_inertial - _SIDEREAL_RATE_DEG_PER_S
             dec_rate = dec_rate_inertial
 
         self._assert_finite_propagation(satellite_data, ra, dec, ra_rate, dec_rate)

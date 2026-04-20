@@ -220,7 +220,12 @@ def _propagate_static(
             if i == 0:
                 target_ra_deg = ra
                 target_dec_deg = dec
-            az, alt = radec_to_altaz(ra, dec, obs_lat_deg, obs_lon_deg)
+            # GAST must match the propagation epoch, not wall-clock now —
+            # scheduled tasks can be hours in the future, and without this
+            # the alt/az would be rotated by ~15°/hr (i.e. a task 4 hours
+            # out looks horizontal-mirrored if we silently use "now"-GAST).
+            gast_deg = degrees(epoch.to_fk5_greenwich_angle())
+            az, alt = radec_to_altaz(ra, dec, obs_lat_deg, obs_lon_deg, _gast_override=gast_deg)
             alts.append(alt)
             azs.append(az)
     except Exception as exc:

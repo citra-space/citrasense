@@ -389,6 +389,73 @@ def test_get_web_tasks_returns_empty_when_daemon_not_ready():
     assert get_web_tasks(SimpleNamespace(task_manager=None), _make_status()) == []
 
 
+def test_propagate_static_passes_per_sample_gast_override(monkeypatch):
+    """Regression for PR #301 Copilot comment: ``radec_to_altaz`` must be called
+    with ``_gast_override`` derived from the same epoch used for propagation,
+    not ``datetime.now()``.
+
+    With the bug, ``radec_to_altaz`` is called without ``_gast_override``; its
+    default path reads wall-clock "now" for GAST regardless of ``sample_dt``.
+    For tasks hours in the future, that's ~15°/hr of alt/az rotation wrong.
+
+    We spy on the helper at the module boundary and check two things:
+
+    1. Every call passes ``_gast_override`` (i.e. the kwarg is present and
+       not None).
+    2. The override values span a range consistent with sampling across the
+       task window — i.e. they are per-sample, not frozen to one moment.
+    """
+    import citrascope.web.sky_enrichment as se
+
+    captured_kwargs: list[dict] = []
+    real = se.radec_to_altaz
+
+    def spy(ra, dec, lat, lon, *, _gast_override=None):
+        captured_kwargs.append({"_gast_override": _gast_override})
+        return real(ra, dec, lat, lon, _gast_override=_gast_override)
+
+    monkeypatch.setattr(se, "radec_to_altaz", spy)
+
+    # Task far enough in the future, with a wide enough window, that the
+    # per-sample GAST values differ noticeably (Earth turns at ~0.0042°/s,
+    # so a 30-minute window gives ~7.5° of spread — well above any
+    # numerical noise).
+    daemon = _make_daemon(
+        tasks=[],
+        location=_OBSERVER,
+        elsets=[{"satellite_id": "sat-25544", "name": "ISS", "tle": _ISS_TLE}],
+    )
+    now = datetime.now(timezone.utc)
+    task = {
+        "id": "task-future",
+        "satelliteId": "sat-25544",
+        "target": "ISS future",
+        "start_time": (now + timedelta(hours=6)).isoformat(),
+        "stop_time": (now + timedelta(hours=6, minutes=30)).isoformat(),
+        "status": "Pending",
+        "filter": "Red",
+    }
+
+    _enrich_tasks([task], daemon=daemon, status=_make_status())
+
+    assert captured_kwargs, "_propagate_static never called radec_to_altaz"
+    # Every call must pass a concrete GAST; None would mean we fell back to
+    # datetime.now() inside _gast_degrees().
+    for call in captured_kwargs:
+        override = call["_gast_override"]
+        assert override is not None, "radec_to_altaz called without _gast_override (bug)"
+        assert isinstance(override, float)
+
+    # Per-sample: the override values must span the task window, not all be
+    # identical. 30 minutes of Earth rotation is ~7.5° of GAST drift; require
+    # at least 1° of spread to comfortably exclude a single-value bug.
+    overrides = [c["_gast_override"] for c in captured_kwargs]
+    assert max(overrides) - min(overrides) > 1.0, (
+        f"_gast_override values barely changed across samples ({overrides!r}) — "
+        "this is exactly the PR #301 bug where GAST was frozen at 'now'."
+    )
+
+
 def test_get_web_tasks_emits_dicts_with_sky_fields():
     """End-to-end: stub daemon -> get_web_tasks -> sky-enriched dicts.
 

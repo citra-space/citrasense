@@ -1204,7 +1204,14 @@ class TestXPTLEPropagationGate:
             assert math.isfinite(val)
 
     def test_celestial_kwarg_changes_ra_rate(self):
-        """celestial=True returns J2000 inertial rate; celestial=False subtracts the sidereal term."""
+        """celestial=True returns J2000 inertial rate; celestial=False subtracts the sidereal term.
+
+        The subtraction is a pure *coordinate* rate — sidereal drive moves the
+        mount's RA axis at a constant ~15.041"/s regardless of declination, so
+        there is no cos(dec) factor here. Any cos(dec) projection onto the sky
+        happens downstream in ``compute_angular_rate`` (see
+        ``TestAngularRateProjection`` below).
+        """
         ct = _make_concrete_for_propagation()
         _, dec_c, ra_rate_c, _ = ct.get_target_radec_and_rates(_make_sat_data(_GOES18_GP_TLE), celestial=True)
         _, dec_m, ra_rate_m, _ = ct.get_target_radec_and_rates(_make_sat_data(_GOES18_GP_TLE), celestial=False)
@@ -1212,10 +1219,9 @@ class TestXPTLEPropagationGate:
         # Same dec either way.
         assert dec_c == pytest.approx(dec_m, abs=1e-6)
 
-        # Earth-fixed (mount) rate = inertial - sidereal * cos(dec).
+        # Earth-fixed (mount) rate = inertial - sidereal (coordinate rate, no cos(dec)).
         sidereal_deg_s = 15.04106864 / 3600.0
-        expected_delta = sidereal_deg_s * math.cos(math.radians(dec_c))
-        assert (ra_rate_c - ra_rate_m) == pytest.approx(expected_delta, rel=1e-3)
+        assert (ra_rate_c - ra_rate_m) == pytest.approx(sidereal_deg_s, rel=1e-3)
 
 
 class TestSkyfieldFailsOnXPTLE:
@@ -1368,3 +1374,67 @@ class TestRateUnits:
         # If units were arcsec/s by mistake, this would be ~15. The assertion
         # is generous because different epochs give different exact values.
         assert total_rate < 1.0, f"rate magnitude {total_rate} looks like arcsec/s, not deg/s"
+
+
+class TestAngularRateProjection:
+    """``compute_angular_rate`` must apply cos(dec) exactly once.
+
+    The split of responsibility is:
+      - ``get_target_radec_and_rates`` returns coordinate rates (deg/s in RA
+        and Dec coordinate space). No cos(dec) anywhere.
+      - ``compute_angular_rate`` projects onto the sky for trail / exposure
+        math by multiplying the RA component by cos(dec).
+
+    This test locks that contract in place so a future refactor can't
+    silently re-introduce a double-cos(dec) (the PR #301 Copilot bug) or
+    drop the projection entirely (which would over-expose high-dec
+    satellites).
+    """
+
+    def test_angular_rate_equals_projected_rss_of_coordinate_rates(self):
+        ct = _make_concrete_for_propagation()
+        sat_data = _make_sat_data(_GOES18_GP_TLE)
+
+        # Pull both the raw coordinate rates and the projected sky rate from
+        # the same satellite. They're evaluated at "now" on each call, so
+        # there's a few ms of wall-clock slop between them, but for a GEO the
+        # rates are small enough that the numerical divergence from that
+        # slop is well under the tolerance we care about.
+        _, dec, ra_rate, dec_rate = ct.get_target_radec_and_rates(sat_data, celestial=False)
+        angular_rate = ct.compute_angular_rate(sat_data, celestial=False)
+
+        # If projection is applied exactly once:
+        expected_once = math.sqrt((ra_rate * math.cos(math.radians(dec))) ** 2 + dec_rate**2)
+        assert angular_rate == pytest.approx(expected_once, rel=1e-2, abs=1e-9)
+
+        # Belt-and-suspenders: the bug would manifest as either zero or
+        # double cos(dec). At dec ≈ 0 (GOES 18 / DIRECTV GEOs) cos(dec) ≈ 1
+        # so we can't distinguish there, but the test above using ``expected_once``
+        # is exact independent of the dec magnitude.
+
+    def test_angular_rate_projects_ra_component_at_high_dec(self):
+        """Synthetic high-dec case that actually distinguishes 'no projection',
+        'single projection', and 'double projection'. Pure arithmetic — no
+        keplemon propagation.
+        """
+        from unittest.mock import patch
+
+        ct = _make_concrete_for_propagation()
+
+        # ra_rate = 0.01 deg/s, dec_rate = 0, at dec = 60° (cos(dec) = 0.5).
+        fake_ra = 123.0
+        fake_dec = 60.0
+        fake_ra_rate = 0.01
+        fake_dec_rate = 0.0
+
+        with patch.object(
+            ct,
+            "get_target_radec_and_rates",
+            return_value=(fake_ra, fake_dec, fake_ra_rate, fake_dec_rate),
+        ):
+            angular_rate = ct.compute_angular_rate({"name": "SYNTH"}, celestial=False)
+
+        # Single projection: 0.01 * cos(60°) = 0.005 deg/s.
+        assert angular_rate == pytest.approx(0.005, rel=1e-9)
+        # No projection would give 0.01 (off by 2x); double projection would
+        # give 0.0025 (off by 2x the other way). Either would fail above.
