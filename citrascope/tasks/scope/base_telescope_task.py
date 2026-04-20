@@ -13,14 +13,9 @@ from keplemon.bodies import Observatory, Satellite
 from keplemon.elements import TLE
 from keplemon.enums import ReferenceFrame
 
+from citrascope.astro.sidereal import SIDEREAL_RATE_DEG_PER_S, make_observatory
 from citrascope.hardware.abstract_astro_hardware_adapter import AbstractAstroHardwareAdapter
 from citrascope.tasks.fits_enrichment import enrich_fits_metadata
-
-# One sidereal day is ~86164.0905 s, so Earth rotates ~15.04107 arcsec / s.
-# Used to convert J2000 inertial RA rate into the Earth-fixed (co-rotating)
-# rate the mount-commanding path expects — matches what Skyfield's
-# frame_latlon_and_rates(ground_station) used to return.
-_SIDEREAL_RATE_DEG_PER_S = 15.04106864 / 3600.0
 
 
 @dataclass
@@ -539,10 +534,10 @@ class AbstractBaseTelescopeTask(ABC):
         if not location:
             raise ValueError("No location available from location service")
 
-        obs = Observatory(
+        obs = make_observatory(
             float(location["latitude"]),
             float(location["longitude"]),
-            float(location.get("altitude") or 0.0) / 1000.0,  # meters -> km
+            float(location.get("altitude") or 0.0),
         )
         tle = most_recent_elset["tle"]
         satellite = Satellite.from_tle(TLE.from_lines(tle[0], tle[1]))
@@ -577,21 +572,35 @@ class AbstractBaseTelescopeTask(ABC):
         )
 
     def get_target_radec_and_rates(
-        self, satellite_data: dict, seconds_from_now: float = 0.0, *, celestial: bool = False
+        self,
+        satellite_data: dict,
+        seconds_from_now: float = 0.0,
+        *,
+        inertial: bool = False,
+        target_dt: datetime | None = None,
     ) -> tuple[float, float, float, float]:
         """Return ``(ra_deg, dec_deg, ra_rate_deg_s, dec_rate_deg_s)`` for the target.
 
         All four values are plain floats in degrees / degrees per second.
 
         Args:
-            celestial: When ``True``, rates are J2000 inertial — motion relative
-                to the star field, used for sidereal-tracking trail calculations.
-                When ``False`` (default), rates are in the observer's Earth-fixed
-                frame (inertial minus the sidereal tracking term the mount applies
-                internally), used for mount rate commanding.
+            satellite_data: Satellite record including the ``most_recent_elset`` TLE.
+            seconds_from_now: Offset applied to the current wall clock when
+                ``target_dt`` is not supplied. Ignored when ``target_dt`` is set.
+            inertial: When ``True``, rates are in the J2000 inertial frame —
+                motion relative to the star field, used for sidereal-tracking
+                trail calculations. When ``False`` (default), rates are in the
+                observer's Earth-fixed frame (inertial minus the sidereal
+                tracking term the mount applies internally), used for mount
+                rate commanding.
+            target_dt: Explicit UTC datetime to evaluate at. If supplied,
+                overrides ``seconds_from_now``. Intended for deterministic tests
+                and for scheduled-future propagation where wall-clock drift
+                would corrupt the result.
         """
         obs, satellite = self._get_keplemon_observatory_and_satellite(satellite_data)
-        target_dt = datetime.now(timezone.utc) + timedelta(seconds=seconds_from_now)
+        if target_dt is None:
+            target_dt = datetime.now(timezone.utc) + timedelta(seconds=seconds_from_now)
         epoch = ktime.Epoch.from_datetime(target_dt)
         topo = obs.get_topocentric_to_satellite(epoch, satellite, ReferenceFrame.J2000)
 
@@ -614,7 +623,7 @@ class AbstractBaseTelescopeTask(ABC):
         ra_rate_inertial = float(ra_rate_raw)
         dec_rate_inertial = float(dec_rate_raw)
 
-        if celestial:
+        if inertial:
             ra_rate = ra_rate_inertial
             dec_rate = dec_rate_inertial
         else:
@@ -633,7 +642,7 @@ class AbstractBaseTelescopeTask(ABC):
             # ``compute_angular_rate()`` where we need the projected sky rate
             # for trail length / exposure math. Keep the projection in one
             # place so refactors can't accidentally double- or zero-count it.
-            ra_rate = ra_rate_inertial - _SIDEREAL_RATE_DEG_PER_S
+            ra_rate = ra_rate_inertial - SIDEREAL_RATE_DEG_PER_S
             dec_rate = dec_rate_inertial
 
         self._assert_finite_propagation(satellite_data, ra, dec, ra_rate, dec_rate)
@@ -906,17 +915,19 @@ class AbstractBaseTelescopeTask(ABC):
 
         return 0.5
 
-    def compute_angular_rate(self, satellite_data: dict, *, celestial: bool = False) -> float:
+    def compute_angular_rate(self, satellite_data: dict, *, inertial: bool = False) -> float:
         """Total angular rate of the satellite on the sky (deg/s).
 
         Combines RA and Dec rates with cos(dec) correction for RA projection.
 
         Args:
-            celestial: When ``True``, compute rate relative to the star field
-                (J2000 inertial frame).  When ``False``, compute rate in the
-                observer's Earth-fixed frame (the mount-commanding convention).
+            inertial: When ``True``, compute rate in the J2000 inertial frame
+                — motion relative to the star field (used for sidereal-tracking
+                trail calculations). When ``False`` (default), compute rate in
+                the observer's Earth-fixed frame — the mount-commanding
+                convention.
         """
-        _, dec, ra_rate, dec_rate = self.get_target_radec_and_rates(satellite_data, celestial=celestial)
+        _, dec, ra_rate, dec_rate = self.get_target_radec_and_rates(satellite_data, inertial=inertial)
         ra_deg_s = ra_rate * math.cos(math.radians(dec))
         dec_deg_s = dec_rate
         return math.sqrt(ra_deg_s**2 + dec_deg_s**2)

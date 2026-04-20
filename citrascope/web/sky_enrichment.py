@@ -43,6 +43,7 @@ from keplemon.bodies import Observatory, Satellite
 from keplemon.elements import TLE
 from keplemon.enums import ReferenceFrame
 
+from citrascope.astro.sidereal import gast_degrees, make_observatory
 from citrascope.hardware.devices.mount.altaz_pointing_model import radec_to_altaz
 from citrascope.web.helpers import _task_to_dict
 
@@ -224,7 +225,7 @@ def _propagate_static(
             # scheduled tasks can be hours in the future, and without this
             # the alt/az would be rotated by ~15°/hr (i.e. a task 4 hours
             # out looks horizontal-mirrored if we silently use "now"-GAST).
-            gast_deg = degrees(epoch.to_fk5_greenwich_angle())
+            gast_deg = gast_degrees(sample_dt)
             az, alt = radec_to_altaz(ra, dec, obs_lat_deg, obs_lon_deg, _gast_override=gast_deg)
             alts.append(alt)
             azs.append(az)
@@ -350,8 +351,7 @@ def _enrich_tasks(tasks: list[dict], *, daemon: Any, status: Any) -> None:
         elset_cache = getattr(daemon, "elset_cache", None)
         if elset_cache is not None:
             try:
-                # keplemon Observatory takes altitude in km, not metres.
-                observer = Observatory(obs_sig[0], obs_sig[1], obs_sig[2] / 1000.0)
+                observer = make_observatory(obs_sig[0], obs_sig[1], obs_sig[2])
             except (TypeError, ValueError) as exc:
                 _logger.debug("Observatory construction failed for %s: %s", obs_sig, exc)
                 observer = None

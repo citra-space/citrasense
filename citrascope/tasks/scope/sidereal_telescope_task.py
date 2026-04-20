@@ -57,7 +57,7 @@ class SiderealTelescopeTask(AbstractBaseTelescopeTask):
         to enter the FOV, then burst-capture.
         """
         num_exposures = self.settings.num_exposures
-        angular_rate = self.compute_angular_rate(satellite_data, celestial=True)
+        angular_rate = self.compute_angular_rate(satellite_data, inertial=True)
 
         adaptive_actually_applied = False
         if self.settings.adaptive_exposure:

@@ -52,11 +52,12 @@ import math
 import threading
 import time
 from collections import deque
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 import numpy as np
+
+from citrascope.astro.sidereal import gast_degrees
 
 _logger = logging.getLogger("citrascope.AltAzPointingModel")
 
@@ -78,21 +79,6 @@ _NEARBY_POINT_MIN_SEP = 1.0  # degrees — operational feeding guard
 # ---------------------------------------------------------------------------
 
 
-def _gast_degrees() -> float:
-    """Greenwich Apparent Sidereal Time in degrees via keplemon.
-
-    ``Epoch.to_fk5_greenwich_angle()`` returns radians; wrap in
-    :func:`math.degrees` — missing the conversion is a load-bearing bug
-    that shows up as wildly wrong alt-az.
-    """
-    # Imported inside the function so test imports of this module don't
-    # require keplemon to be loaded until actually needed.
-    from keplemon import time as ktime
-
-    epoch = ktime.Epoch.from_datetime(datetime.now(timezone.utc))
-    return math.degrees(epoch.to_fk5_greenwich_angle())
-
-
 def lst_deg(longitude_deg: float, *, _gast_override: float | None = None) -> float:
     """Local Sidereal Time in degrees for the given longitude.
 
@@ -100,10 +86,10 @@ def lst_deg(longitude_deg: float, *, _gast_override: float | None = None) -> flo
         longitude_deg: Observer longitude in degrees.
         _gast_override: If provided, use this GAST (degrees) instead of
             computing a fresh one.  Callers that need two conversions at
-            the same instant should capture ``_gast_degrees()`` once and
+            the same instant should capture ``gast_degrees()`` once and
             pass it to both calls.
     """
-    gast = _gast_override if _gast_override is not None else _gast_degrees()
+    gast = _gast_override if _gast_override is not None else gast_degrees()
     return (gast + longitude_deg) % 360.0
 
 
@@ -117,8 +103,9 @@ def radec_to_altaz(
 ) -> tuple[float, float]:
     """Convert RA/Dec to (azimuth, altitude) in degrees.
 
-    Uses standard spherical trigonometry with LST derived from keplemon's
-    ``Epoch.to_fk5_greenwich_angle()``.
+    Uses standard spherical trigonometry with LST derived from
+    :func:`~citrascope.astro.sidereal.gast_degrees` (true apparent sidereal
+    time via astropy/ERFA, IAU 2006/2000A).
 
     Args:
         ra_deg: Right Ascension in degrees.
@@ -404,7 +391,7 @@ class AltAzPointingModel:
             site_lat: Observer latitude in degrees.
             site_lon: Observer longitude in degrees.
         """
-        gast = _gast_degrees()
+        gast = gast_degrees()
         mount_az, mount_alt = radec_to_altaz(mount_ra, mount_dec, site_lat, site_lon, _gast_override=gast)
         solved_az, solved_alt = radec_to_altaz(solved_ra, solved_dec, site_lat, site_lon, _gast_override=gast)
 
@@ -636,7 +623,7 @@ class AltAzPointingModel:
         if not self.is_active:
             return ra_deg, dec_deg
 
-        gast = _gast_degrees()
+        gast = gast_degrees()
         az, alt = radec_to_altaz(ra_deg, dec_deg, site_lat, site_lon, _gast_override=gast)
 
         with self._lock:
@@ -850,7 +837,7 @@ class AltAzPointingModel:
         ``d_az`` wraparound, then triggers a refit so the new terms (and the
         persisted state written inside ``fit()``) apply immediately.
         """
-        gast = _gast_degrees()
+        gast = gast_degrees()
         mount_az, mount_alt = radec_to_altaz(mount_ra, mount_dec, site_lat, site_lon, _gast_override=gast)
         solved_az, solved_alt = radec_to_altaz(solved_ra, solved_dec, site_lat, site_lon, _gast_override=gast)
 

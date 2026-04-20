@@ -8,7 +8,6 @@ when satellites are actually visible from the ground station.
 
 import json
 import logging
-import math
 import random
 import threading
 import time
@@ -19,11 +18,12 @@ from pathlib import Path
 import platformdirs
 import requests
 from keplemon import time as ktime
-from keplemon.bodies import Observatory, Satellite
+from keplemon.bodies import Satellite
 from keplemon.elements import TLE
 from keplemon.enums import ReferenceFrame
 from keplemon.time import TimeSpan
 
+from citrascope.astro.sidereal import gast_degrees, make_observatory
 from citrascope.hardware.devices.mount.altaz_pointing_model import radec_to_altaz
 
 from .abstract_api_client import AbstractCitraApiClient
@@ -45,6 +45,10 @@ MIN_ELEVATION_DEG = 0.0  # dummy is a UI testing stub; horizon-only filter is en
 # keplemon's access report hangs when min_duration is literally zero (every
 # instant satisfies the predicate). One second is effectively "any pass" for
 # a horizon-only filter while still being a defined minimum.
+#
+# TODO(keplemon): remove this workaround once an upstream fix lands for the
+# zero-duration access-report hang. No issue filed yet; this comment is the
+# placeholder so the workaround doesn't outlive the bug.
 _MIN_PASS_DURATION_SECONDS = 1.0
 PASS_SEARCH_HOURS = 12
 # Don't anchor the queue on a future pass that's more than this far out.  The
@@ -460,7 +464,7 @@ class DummyApiClient(AbstractCitraApiClient):
         lat_deg = float(ground_station.get("latitude", _DEFAULT_STATION_LAT))
         lon_deg = float(ground_station.get("longitude", _DEFAULT_STATION_LON))
         alt_m = float(ground_station.get("altitude", _DEFAULT_STATION_ALT))
-        observer = Observatory(lat_deg, lon_deg, alt_m / 1000.0)  # keplemon wants km
+        observer = make_observatory(lat_deg, lon_deg, alt_m)
 
         now = datetime.now(timezone.utc)
         now_epoch = ktime.Epoch.from_datetime(now)
@@ -494,15 +498,15 @@ class DummyApiClient(AbstractCitraApiClient):
             # for the point-in-time "visible now" check we convert J2000
             # topocentric RA/Dec to alt/az via the shared helper.
             #
-            # Pass ``_gast_override`` anchored to the same ``now_epoch`` used
-            # for propagation. Today both sides are "now" so the outcome is
+            # Pass ``_gast_override`` anchored to the same ``now`` used for
+            # propagation. Today both sides are "now" so the outcome is
             # sub-arcsec identical to letting ``radec_to_altaz`` fall back to
             # wall-clock GAST, but keeping the anchoring explicit makes the
             # pattern uniform with ``sky_enrichment._propagate_static`` and
             # prevents a silent bug if anyone ever refactors this into a
             # "visible at window-start" check (see PR #301 Copilot comment).
             try:
-                gast_deg = math.degrees(now_epoch.to_fk5_greenwich_angle())
+                gast_deg = gast_degrees(now)
                 topo = observer.get_topocentric_to_satellite(now_epoch, sat, ReferenceFrame.J2000)
                 _, alt_deg = radec_to_altaz(
                     float(topo.right_ascension),

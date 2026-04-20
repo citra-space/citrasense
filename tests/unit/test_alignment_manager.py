@@ -15,8 +15,14 @@ from citrascope.tasks.alignment_manager import AlignmentManager
 
 @pytest.fixture(autouse=True)
 def _patch_gast_degrees():
+    """Patch ``gast_degrees`` as imported into ``altaz_pointing_model``.
+
+    See the matching fixture in ``tests/unit/test_altaz_pointing_model.py``
+    for the full note on why we target the consumer's namespace rather than
+    ``citrascope.astro.sidereal``.
+    """
     with patch(
-        "citrascope.hardware.devices.mount.altaz_pointing_model._gast_degrees",
+        "citrascope.hardware.devices.mount.altaz_pointing_model.gast_degrees",
         return_value=90.0,
     ):
         yield

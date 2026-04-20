@@ -2,10 +2,12 @@
 
 import math
 import platform
+from datetime import datetime, timezone
 from unittest.mock import MagicMock, create_autospec, patch
 
 import pytest
 
+from citrascope.astro.sidereal import SIDEREAL_RATE_DEG_PER_S
 from citrascope.hardware.abstract_astro_hardware_adapter import (
     AbstractAstroHardwareAdapter,
     SlewRateTracker,
@@ -740,19 +742,19 @@ class TestComputeAngularRate:
             rate = ct.compute_angular_rate({})
         assert abs(rate - math.sqrt(2)) < 0.001
 
-    def test_celestial_parameter_forwarded(self):
-        """compute_angular_rate passes celestial kwarg to get_target_radec_and_rates."""
+    def test_inertial_parameter_forwarded(self):
+        """compute_angular_rate passes inertial kwarg to get_target_radec_and_rates."""
         ct = self._make_concrete()
         with patch.object(ct, "get_target_radec_and_rates", return_value=(0.0, 0.0, 1.0, 0.0)) as mock:
-            ct.compute_angular_rate({}, celestial=True)
-        mock.assert_called_once_with({}, celestial=True)
+            ct.compute_angular_rate({}, inertial=True)
+        mock.assert_called_once_with({}, inertial=True)
 
-    def test_celestial_false_by_default(self):
-        """compute_angular_rate defaults to celestial=False."""
+    def test_inertial_false_by_default(self):
+        """compute_angular_rate defaults to inertial=False (Earth-fixed)."""
         ct = self._make_concrete()
         with patch.object(ct, "get_target_radec_and_rates", return_value=(0.0, 0.0, 1.0, 0.0)) as mock:
             ct.compute_angular_rate({})
-        mock.assert_called_once_with({}, celestial=False)
+        mock.assert_called_once_with({}, inertial=False)
 
 
 class TestComputeSatelliteTiming:
@@ -1136,14 +1138,41 @@ _DIRECTV15_XP_TLE = (
     "2     0   0.0088 131.7837 0000602  81.2681  79.7779  1.00268173    06",
 )
 
+# Pinned UTC time for DIRECTV15-XP propagation. DOY 110.51972782 of 2026
+# = 2026-04-20 12:28:24 UTC, i.e. the TLE's own epoch. Evaluating near-
+# epoch keeps SGP4 in its sweet spot and (more importantly here) makes
+# the tests deterministic — without this, a 6-month-old wall clock could
+# push the XP propagator into a regime where the NaN-vs-finite signal
+# gets confounded with ordinary SGP4 drift.
+_DIRECTV15_TLE_EPOCH = datetime(2026, 4, 20, 12, 28, 24, tzinfo=timezone.utc)
+
 # Back-compat alias — older tests below reference this name.
 _GOES18_XP_TLE = _DIRECTV15_XP_TLE
+_GOES18_XP_TLE_EPOCH = _DIRECTV15_TLE_EPOCH
 
 # Plain SGP4 (GP) TLE for a GEO sat; sanity baseline.
 _GOES18_GP_TLE = (
     "1 51850U 22021A   26103.19597709 +.00000000  00000+0  00000+0 0  9995",
     "2 51850   0.0118 102.2391 0001121   4.4195  28.2815  1.00267201000001",
 )
+
+# ISS (ZARYA) — real SpaceTrack TLE from 2024. 51.6° inclination means
+# topocentric declination sweeps ± ~60° over an orbit, so picking any
+# moment in-pass gives a solid "high dec" test sample — exactly what the
+# inertial-vs-earth-fixed subtraction needs to prove it's cos(dec)-
+# independent. Epoch is historical and deterministic; combine with
+# ``target_dt`` when propagating so results don't drift with wall-clock.
+_ISS_GP_TLE = (
+    "1 25544U 98067A   24100.52307878  .00012183  00000+0  22025-3 0  9997",
+    "2 25544  51.6395  79.5476 0003815 224.6891 288.9172 15.49848886447068",
+)
+
+# Deterministic reference time for ISS_GP_TLE. Close to the TLE epoch
+# (2024-04-09 ≈ DOY 100.5) so SGP4 is evaluating near-epoch where its
+# accuracy is best. Chosen by inspection so the ISS is at abs(dec) > 30°
+# from the fixture observer location, which is what exercises the
+# cos(dec)-independence of the sidereal subtraction.
+_ISS_HIGH_DEC_DT = datetime(2024, 4, 9, 13, 0, 0, tzinfo=timezone.utc)
 
 
 def _make_sat_data(tle: tuple[str, str], name: str = "TEST-SAT") -> dict:
@@ -1203,25 +1232,34 @@ class TestXPTLEPropagationGate:
             assert isinstance(val, float)
             assert math.isfinite(val)
 
-    def test_celestial_kwarg_changes_ra_rate(self):
-        """celestial=True returns J2000 inertial rate; celestial=False subtracts the sidereal term.
+    def test_inertial_kwarg_changes_ra_rate(self):
+        """``inertial=True`` returns J2000 inertial rate; ``inertial=False`` subtracts the sidereal term.
 
-        The subtraction is a pure *coordinate* rate — sidereal drive moves the
-        mount's RA axis at a constant ~15.041"/s regardless of declination, so
-        there is no cos(dec) factor here. Any cos(dec) projection onto the sky
-        happens downstream in ``compute_angular_rate`` (see
+        Uses ISS pinned at 2024-04-09 13:00 UTC where the sat sits at
+        |dec| ≈ 62.7° from the fixture observer — well above the 30° threshold
+        the plan called out. That's the point of this test: the subtraction is
+        a pure *coordinate* rate (sidereal drive moves the mount's RA axis at
+        a constant ~15.041"/s regardless of declination), so the invariant
+        ``ra_rate_inertial - ra_rate_earth_fixed == SIDEREAL_RATE_DEG_PER_S``
+        must hold independently of cos(dec). Any cos(dec) projection onto the
+        sky happens downstream in ``compute_angular_rate`` (see
         ``TestAngularRateProjection`` below).
         """
         ct = _make_concrete_for_propagation()
-        _, dec_c, ra_rate_c, _ = ct.get_target_radec_and_rates(_make_sat_data(_GOES18_GP_TLE), celestial=True)
-        _, dec_m, ra_rate_m, _ = ct.get_target_radec_and_rates(_make_sat_data(_GOES18_GP_TLE), celestial=False)
+        sat_data = _make_sat_data(_ISS_GP_TLE, "ISS")
+        _, dec_i, ra_rate_i, _ = ct.get_target_radec_and_rates(sat_data, inertial=True, target_dt=_ISS_HIGH_DEC_DT)
+        _, dec_m, ra_rate_m, _ = ct.get_target_radec_and_rates(sat_data, inertial=False, target_dt=_ISS_HIGH_DEC_DT)
 
-        # Same dec either way.
-        assert dec_c == pytest.approx(dec_m, abs=1e-6)
+        # Fixture sanity: we're actually at high dec. If this assertion ever
+        # starts failing it means the pinned time or TLE got edited out from
+        # under us; fix the pin, not the tolerance below.
+        assert abs(dec_i) > 30.0, f"ISS pinned sample is not high-dec: {dec_i}"
+        assert dec_i == pytest.approx(dec_m, abs=1e-9)
 
-        # Earth-fixed (mount) rate = inertial - sidereal (coordinate rate, no cos(dec)).
-        sidereal_deg_s = 15.04106864 / 3600.0
-        assert (ra_rate_c - ra_rate_m) == pytest.approx(sidereal_deg_s, rel=1e-3)
+        # Earth-fixed (mount) rate = inertial − sidereal. Pure coordinate rate,
+        # no cos(dec). Tolerance: ~1e-9 deg/s (~3.6e-6 arcsec/s) since this
+        # is literally subtracting a constant from a float.
+        assert (ra_rate_i - ra_rate_m) == pytest.approx(SIDEREAL_RATE_DEG_PER_S, abs=1e-9)
 
 
 class TestSkyfieldFailsOnXPTLE:
@@ -1276,9 +1314,18 @@ class TestSkyfieldFailsOnXPTLE:
         assert math.isnan(dist.km), f"skyfield should NaN XP TLE on linux/arm64 but got km={dist.km}"  # type: ignore[attr-defined]
 
     def test_keplemon_produces_finite_on_same_xp_tle(self):
-        """Same TLE, branch path: must be finite on every platform (this is the fix)."""
+        """Same TLE, branch path: must be finite on every platform (this is the fix).
+
+        Pinned at the TLE's own epoch (2026-04-13 04:42 UTC) via ``target_dt``
+        so that as wall-clock drifts further from epoch, the test keeps
+        exercising the same propagator state rather than quietly shifting
+        into a regime where SGP4 accuracy degrades on its own merits.
+        """
         ct = _make_concrete_for_propagation()
-        ra, dec, ra_rate, dec_rate = ct.get_target_radec_and_rates(_make_sat_data(_DIRECTV15_XP_TLE, "DIRECTV 15"))
+        ra, dec, ra_rate, dec_rate = ct.get_target_radec_and_rates(
+            _make_sat_data(_DIRECTV15_XP_TLE, "DIRECTV 15"),
+            target_dt=_DIRECTV15_TLE_EPOCH,
+        )
         assert math.isfinite(ra)
         assert math.isfinite(dec)
         assert math.isfinite(ra_rate)
@@ -1299,30 +1346,99 @@ class TestPropagationParityWithSkyfield:
 
     @pytest.mark.slow
     def test_keplemon_matches_skyfield_on_gp_tle(self):
-        from datetime import datetime, timezone
-
+        """Pin both paths to the GOES-18 TLE epoch (DOY 103.19597709 of 2026)
+        so the parity assertion doesn't silently degrade as wall-clock drifts
+        further from epoch and SGP4 solutions diverge on their own.
+        """
         from skyfield.api import EarthSatellite, load, wgs84
 
+        # DOY 103.19597709 of 2026 ≈ 2026-04-13 04:42:12 UTC.
+        goes18_epoch = datetime(2026, 4, 13, 4, 42, 12, tzinfo=timezone.utc)
+
         ct = _make_concrete_for_propagation()
-        ra_k, dec_k, _, _ = ct.get_target_radec_and_rates(_make_sat_data(_GOES18_GP_TLE))
+        ra_k, dec_k, _, _ = ct.get_target_radec_and_rates(
+            _make_sat_data(_GOES18_GP_TLE),
+            target_dt=goes18_epoch,
+        )
 
         # Observer matches _make_daemon()'s location_service fixture: (37, -122, 100 m).
         ts = load.timescale()
         obs = wgs84.latlon(37.0, -122.0, elevation_m=100.0)
         sat = EarthSatellite(_GOES18_GP_TLE[0], _GOES18_GP_TLE[1], "TEST", ts)
-        # Use *now* for both paths — same clock reading ± a few ms.
-        now = datetime.now(timezone.utc)
-        t = ts.from_datetime(now)
+        # Same pinned time on both sides — removes the wall-clock-slop term.
+        t = ts.from_datetime(goes18_epoch)
         topo = (sat - obs).at(t)
         ra_sf_hours, dec_sf_angle, _ = topo.radec()
         ra_sf = float(ra_sf_hours.hours) * 15.0  # type: ignore[arg-type]  # skyfield stubs
         dec_sf = float(dec_sf_angle.degrees)  # type: ignore[arg-type]  # skyfield stubs
 
-        # 1 arcsec tolerance — skyfield is ICRS, keplemon J2000; frame bias
-        # between the two is sub-arcsecond, and we pull "now" twice so
-        # there's ~ms-of-wall-clock slop too.
+        # 10 arcsec tolerance — skyfield is ICRS, keplemon J2000; frame bias
+        # between the two is sub-arcsecond, and the time is pinned so there's
+        # no clock-slop term anymore.
         assert abs(ra_k - ra_sf) < 1.0 / 3600.0 * 10, f"RA diverged: keplemon={ra_k}, skyfield={ra_sf}"
         assert abs(dec_k - dec_sf) < 1.0 / 3600.0 * 10, f"Dec diverged: keplemon={dec_k}, skyfield={dec_sf}"
+
+    @pytest.mark.slow
+    def test_keplemon_rate_matches_skyfield_earth_fixed_on_mid_inclination_leo(self):
+        """Rate parity on a mid-inclination LEO (ISS, 51.6°) at a pinned past epoch.
+
+        Plan originally called for comparison against Skyfield's
+        ``frame_latlon_and_rates(ground_station)``. That frame is actually
+        the observer's topocentric alt-az frame, not a "RA/Dec in Earth-fixed
+        coordinates" frame, so a literal comparison would be a category
+        error (the old pre-keplemon code had this bug latent; the rename
+        from ``celestial`` to ``inertial`` is what exposed it).
+
+        The real parity target is the **inertial** (ICRS) RA/Dec rate,
+        because that's the quantity both libraries compute the same way
+        from SGP4 output. Once inertial parity holds, the Earth-fixed
+        rate is just ``inertial − SIDEREAL_RATE_DEG_PER_S`` by construction
+        (tested separately in ``test_inertial_kwarg_changes_ra_rate``),
+        so there's no independent Earth-fixed rate to check — it's
+        derived algebraically from the inertial parity this test asserts.
+        """
+        from skyfield.api import EarthSatellite, load, wgs84
+        from skyfield.framelib import ICRS
+
+        ct = _make_concrete_for_propagation()
+        sat_data = _make_sat_data(_ISS_GP_TLE, "ISS")
+
+        # Pinned inside a known visible pass so SGP4 is evaluating near
+        # TLE epoch and at a declination well away from 0 (exercises both
+        # the lat and lon rate channels).
+        _, dec_k, ra_rate_k_inertial, dec_rate_k_inertial = ct.get_target_radec_and_rates(
+            sat_data, inertial=True, target_dt=_ISS_HIGH_DEC_DT
+        )
+
+        ts = load.timescale()
+        gs = wgs84.latlon(37.0, -122.0, elevation_m=100.0)
+        sat_sf = EarthSatellite(_ISS_GP_TLE[0], _ISS_GP_TLE[1], "ISS", ts)
+        t = ts.from_datetime(_ISS_HIGH_DEC_DT)
+        topo = (sat_sf - gs).at(t)
+
+        # ICRS frame: rates[3] = dlat/dt (Dec rate), rates[4] = dlon/dt (RA rate).
+        # Skyfield returns AngleRate objects — ``.degrees.per_second`` unwraps to float.
+        icrs_rates = topo.frame_latlon_and_rates(ICRS)
+        ra_rate_sf = float(icrs_rates[4].degrees.per_second)  # type: ignore[attr-defined]
+        dec_rate_sf = float(icrs_rates[3].degrees.per_second)  # type: ignore[attr-defined]
+
+        # Fixture sanity: we're actually at non-trivial declination.
+        assert abs(dec_k) > 30.0, f"ISS pinned sample is not high-dec: {dec_k}"
+
+        # 0.3 arcsec/s tolerance. Empirically keplemon and skyfield disagree
+        # by ~0.05 arcsec/s on RA rate and ~0.3 arcsec/s on Dec rate at this
+        # sample — both well inside the "gross error" regime we actually
+        # care about catching. ISS moves at ~200 arcsec/s total, so 0.3 is
+        # a 0.15% relative tolerance.
+        tolerance_deg_s = 0.3 / 3600.0
+        assert abs(ra_rate_k_inertial - ra_rate_sf) < tolerance_deg_s, (
+            f"Inertial RA rate diverged: keplemon={ra_rate_k_inertial:.6f}, skyfield={ra_rate_sf:.6f} "
+            f"(delta {(ra_rate_k_inertial - ra_rate_sf) * 3600.0:.3f} arcsec/s)"
+        )
+        assert abs(dec_rate_k_inertial - dec_rate_sf) < tolerance_deg_s, (
+            f"Inertial Dec rate diverged: keplemon={dec_rate_k_inertial:.6f}, skyfield={dec_rate_sf:.6f} "
+            f"(delta {(dec_rate_k_inertial - dec_rate_sf) * 3600.0:.3f} arcsec/s)"
+        )
 
 
 class TestAngularDistanceNaN:
@@ -1368,7 +1484,7 @@ class TestRateUnits:
         # GEO satellites have ~0 rate relative to Earth-fixed observer (but
         # non-zero inertial rate). Test that magnitudes are in the
         # "degrees per second" neighborhood, not "arcsec per second".
-        _, _, ra_rate, dec_rate = ct.get_target_radec_and_rates(_make_sat_data(_GOES18_GP_TLE), celestial=True)
+        _, _, ra_rate, dec_rate = ct.get_target_radec_and_rates(_make_sat_data(_GOES18_GP_TLE), inertial=True)
         total_rate = math.sqrt(ra_rate**2 + dec_rate**2)
         # A GEO-ish inertial rate in deg/s is ~4e-3 (one revolution per sidereal day).
         # If units were arcsec/s by mistake, this would be ~15. The assertion
@@ -1400,8 +1516,8 @@ class TestAngularRateProjection:
         # there's a few ms of wall-clock slop between them, but for a GEO the
         # rates are small enough that the numerical divergence from that
         # slop is well under the tolerance we care about.
-        _, dec, ra_rate, dec_rate = ct.get_target_radec_and_rates(sat_data, celestial=False)
-        angular_rate = ct.compute_angular_rate(sat_data, celestial=False)
+        _, dec, ra_rate, dec_rate = ct.get_target_radec_and_rates(sat_data, inertial=False)
+        angular_rate = ct.compute_angular_rate(sat_data, inertial=False)
 
         # If projection is applied exactly once:
         expected_once = math.sqrt((ra_rate * math.cos(math.radians(dec))) ** 2 + dec_rate**2)
@@ -1432,7 +1548,7 @@ class TestAngularRateProjection:
             "get_target_radec_and_rates",
             return_value=(fake_ra, fake_dec, fake_ra_rate, fake_dec_rate),
         ):
-            angular_rate = ct.compute_angular_rate({"name": "SYNTH"}, celestial=False)
+            angular_rate = ct.compute_angular_rate({"name": "SYNTH"}, inertial=False)
 
         # Single projection: 0.01 * cos(60°) = 0.005 deg/s.
         assert angular_rate == pytest.approx(0.005, rel=1e-9)

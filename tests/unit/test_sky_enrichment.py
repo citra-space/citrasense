@@ -440,7 +440,7 @@ def test_propagate_static_passes_per_sample_gast_override(monkeypatch):
 
     assert captured_kwargs, "_propagate_static never called radec_to_altaz"
     # Every call must pass a concrete GAST; None would mean we fell back to
-    # datetime.now() inside _gast_degrees().
+    # datetime.now() inside gast_degrees().
     for call in captured_kwargs:
         override = call["_gast_override"]
         assert override is not None, "radec_to_altaz called without _gast_override (bug)"
