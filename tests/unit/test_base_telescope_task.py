@@ -1273,6 +1273,9 @@ _GOES18_GP_TLE = (
     "1 51850U 22021A   26103.19597709 +.00000000  00000+0  00000+0 0  9995",
     "2 51850   0.0118 102.2391 0001121   4.4195  28.2815  1.00267201000001",
 )
+# DOY 103.19597709 of 2026 = 2026-04-13 04:42:12 UTC (the TLE's own epoch).
+# Pinned so the propagation-regression tests below don't drift with wall clock.
+_GOES18_GP_TLE_EPOCH = datetime(2026, 4, 13, 4, 42, 12, tzinfo=timezone.utc)
 
 # ISS (ZARYA) — real SpaceTrack TLE from 2024. 51.6° inclination means
 # topocentric declination sweeps ± ~60° over an orbit, so picking any
@@ -1326,7 +1329,10 @@ class TestXPTLEPropagationGate:
 
     def test_xp_tle_returns_four_finite_floats(self):
         ct = _make_concrete_for_propagation()
-        ra, dec, ra_rate, dec_rate = ct.get_target_radec_and_rates(_make_sat_data(_GOES18_XP_TLE, "GOES 18"))
+        ra, dec, ra_rate, dec_rate = ct.get_target_radec_and_rates(
+            _make_sat_data(_GOES18_XP_TLE, "GOES 18"),
+            target_dt=_GOES18_XP_TLE_EPOCH,
+        )
 
         # Plain floats, not Angle/Rate wrappers. Fails loudly on main.
         assert isinstance(ra, float)
@@ -1345,7 +1351,10 @@ class TestXPTLEPropagationGate:
     def test_gp_tle_also_works(self):
         """Regression guard: we didn't break plain SGP4 TLEs in the process."""
         ct = _make_concrete_for_propagation()
-        ra, dec, ra_rate, dec_rate = ct.get_target_radec_and_rates(_make_sat_data(_GOES18_GP_TLE, "GOES 18"))
+        ra, dec, ra_rate, dec_rate = ct.get_target_radec_and_rates(
+            _make_sat_data(_GOES18_GP_TLE, "GOES 18"),
+            target_dt=_GOES18_GP_TLE_EPOCH,
+        )
         for val in (ra, dec, ra_rate, dec_rate):
             assert isinstance(val, float)
             assert math.isfinite(val)
@@ -1597,12 +1606,16 @@ class TestRateUnits:
     divide by 3600 when plumbing the keplemon output downstream.
     """
 
-    def test_leo_rate_is_degrees_per_second_not_arcseconds(self):
+    def test_geo_rate_is_degrees_per_second_not_arcseconds(self):
         ct = _make_concrete_for_propagation()
         # GEO satellites have ~0 rate relative to Earth-fixed observer (but
         # non-zero inertial rate). Test that magnitudes are in the
         # "degrees per second" neighborhood, not "arcsec per second".
-        _, _, ra_rate, dec_rate = ct.get_target_radec_and_rates(_make_sat_data(_GOES18_GP_TLE), inertial=True)
+        _, _, ra_rate, dec_rate = ct.get_target_radec_and_rates(
+            _make_sat_data(_GOES18_GP_TLE),
+            inertial=True,
+            target_dt=_GOES18_GP_TLE_EPOCH,
+        )
         total_rate = math.sqrt(ra_rate**2 + dec_rate**2)
         # A GEO-ish inertial rate in deg/s is ~4e-3 (one revolution per sidereal day).
         # If units were arcsec/s by mistake, this would be ~15. The assertion
