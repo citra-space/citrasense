@@ -5,7 +5,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from citrascope.hardware.devices.mount.mount_state_cache import (
+from citrasense.hardware.devices.mount.mount_state_cache import (
     MountSnapshot,
     MountStateCache,
 )

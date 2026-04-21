@@ -1,0 +1,858 @@
+from __future__ import annotations
+
+import atexit
+import os
+import signal
+import threading
+import time
+from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from citrasense.calibration.calibration_library import CalibrationLibrary
+
+from citrasense.analysis.retention import cleanup_previews, cleanup_processing_output
+from citrasense.analysis.task_index import TaskIndex
+from citrasense.api.citra_api_client import AbstractCitraApiClient, CitraApiClient
+from citrasense.api.dummy_api_client import DummyApiClient
+from citrasense.catalogs.apass_catalog import ApassCatalog
+from citrasense.elset_cache import ElsetCache
+from citrasense.hardware.abstract_astro_hardware_adapter import AbstractAstroHardwareAdapter
+from citrasense.hardware.adapter_registry import get_adapter_class
+from citrasense.hardware.filter_sync import sync_filters_to_backend
+from citrasense.location import LocationService
+from citrasense.logging import CITRASENSE_LOGGER
+from citrasense.logging._citrasense_logger import setup_file_logging
+from citrasense.preview_bus import PreviewBus
+from citrasense.processors.processor_registry import ProcessorRegistry
+from citrasense.settings.citrasense_settings import CitraSenseSettings
+from citrasense.startup_checks import check_processor_runtime_deps
+from citrasense.tasks.runner import TaskManager
+from citrasense.time.time_monitor import TimeMonitor
+from citrasense.web.server import CitraSenseWebServer
+
+
+class CitraSenseDaemon:
+    def __init__(
+        self,
+        settings: CitraSenseSettings,
+        api_client: AbstractCitraApiClient | None = None,
+        hardware_adapter: AbstractAstroHardwareAdapter | None = None,
+    ):
+        self.settings = settings
+        CITRASENSE_LOGGER.setLevel(self.settings.log_level)
+
+        # Setup file logging if enabled
+        if self.settings.file_logging_enabled:
+            self.settings.directories.ensure_log_directory()
+            log_path = self.settings.directories.current_log_path()
+            setup_file_logging(log_path, backup_count=self.settings.log_retention_days)
+            CITRASENSE_LOGGER.info(f"Logging to file: {log_path}")
+
+        from citrasense.version import format_version_log, get_version_info
+
+        ver_info = get_version_info()
+        ver = format_version_log(ver_info)
+        CITRASENSE_LOGGER.info("=" * 60)
+        CITRASENSE_LOGGER.info(f"CitraSense {ver} starting (PID {os.getpid()})")
+
+        self.api_client = api_client
+        self.hardware_adapter = hardware_adapter
+        self.web_server = None
+        self.task_manager = None
+        self.time_monitor = None
+        self.location_service = None
+        self.ground_station = None
+        self.telescope_record = None
+        self.safety_monitor = None
+        self.configuration_error: str | None = None
+        self.latest_annotated_image_path: str | None = None
+        self.preview_bus = PreviewBus()
+        self.calibration_library: CalibrationLibrary | None = None
+        self._stop_requested = False
+        self._shutdown_done = False
+
+        # Cached list of banner-shape dicts for processor-layer missing
+        # deps; populated once per startup in _initialize_components.
+        self._processor_dep_issues: list[dict] = []
+
+        # Initialize processor registry
+        self.processor_registry = ProcessorRegistry(settings=self.settings, logger=CITRASENSE_LOGGER)
+
+        # Elset cache for satellite matcher (file-backed; warm-start from disk, full refresh at init)
+        self.elset_cache = ElsetCache()
+
+        # APASS catalog for local photometry (file-backed; downloaded on first authenticated startup)
+        self.apass_catalog = ApassCatalog(logger=CITRASENSE_LOGGER)
+
+        # Local analysis index — persists pipeline metrics across restarts
+        db_path = self.settings.directories.analysis_dir / "task_index.db"
+        self.task_index = TaskIndex(db_path)
+        self._retention_timer: threading.Timer | None = None
+
+        # Note: Work queues and stage tracking now managed by TaskManager
+
+        # Create web server instance (always enabled)
+        self.web_server = CitraSenseWebServer(daemon=self, host="0.0.0.0", port=self.settings.web_port)
+
+    def _on_annotated_image(self, path: str) -> None:
+        """Handle a new annotated task image: store path and notify preview bus via URL.
+
+        Uses a lightweight URL notification instead of base64-encoding the
+        full image through the WebSocket, keeping the socket clear for
+        status/log/task updates on bandwidth-constrained links.
+        """
+        self.latest_annotated_image_path = path
+        try:
+            mtime_ns = Path(path).stat().st_mtime_ns
+            self.preview_bus.push_url(f"/api/task-preview/latest?t={mtime_ns}", "task")
+        except Exception as e:
+            CITRASENSE_LOGGER.warning("Failed to publish annotated image preview for %s: %s", path, e)
+
+    def _refresh_elset_cache_with_retry(self, max_attempts: int = 3) -> None:
+        """Force-refresh the elset cache at startup, retrying on failure."""
+        assert self.api_client is not None
+        for attempt in range(1, max_attempts + 1):
+            if self.elset_cache.refresh(self.api_client, logger=CITRASENSE_LOGGER):
+                return
+            if attempt < max_attempts:
+                backoff = 2**attempt
+                CITRASENSE_LOGGER.warning(
+                    "ElsetCache: refresh attempt %d/%d failed, retrying in %ds",
+                    attempt,
+                    max_attempts,
+                    backoff,
+                )
+                time.sleep(backoff)
+        CITRASENSE_LOGGER.warning(
+            "ElsetCache: all %d refresh attempts failed — using cached data if available",
+            max_attempts,
+        )
+
+    def _create_hardware_adapter(self) -> AbstractAstroHardwareAdapter:
+        """Factory method to create the appropriate hardware adapter based on settings."""
+        try:
+            adapter_class = get_adapter_class(self.settings.hardware_adapter)
+            self.settings.directories.ensure_data_directories()
+            images_dir = self.settings.directories.images_dir
+            return adapter_class(logger=CITRASENSE_LOGGER, images_dir=images_dir, **self.settings.adapter_settings)
+        except ImportError as e:
+            CITRASENSE_LOGGER.error(
+                f"{self.settings.hardware_adapter} adapter requested but dependencies not available. " f"Error: {e}"
+            )
+            raise RuntimeError(
+                f"{self.settings.hardware_adapter} adapter requires additional dependencies. "
+                f"Check documentation for installation instructions."
+            ) from e
+
+    def _initialize_components(self, reload_settings: bool = False) -> tuple[bool, str | None]:
+        """Initialize or reinitialize all components.
+
+        Args:
+            reload_settings: If True, reload settings from disk before initializing
+
+        Returns:
+            Tuple of (success, error_message)
+        """
+        try:
+            if reload_settings:
+                CITRASENSE_LOGGER.info("\u2500" * 60)
+                CITRASENSE_LOGGER.info("Configuration reload requested")
+                CITRASENSE_LOGGER.info("\u2500" * 60)
+                # Reload settings from file (preserving web_port)
+                new_settings = CitraSenseSettings.load(web_port=self.settings.web_port)
+                self.settings = new_settings
+                CITRASENSE_LOGGER.setLevel(self.settings.log_level)
+
+                # Ensure web log handler is still attached after logger changes
+                if self.web_server:
+                    self.web_server.ensure_log_handler()
+
+                # Re-setup file logging if enabled
+                if self.settings.file_logging_enabled:
+                    self.settings.directories.ensure_log_directory()
+                    log_path = self.settings.directories.current_log_path()
+                    setup_file_logging(log_path, backup_count=self.settings.log_retention_days)
+
+            # Preserve task metadata across reload
+            old_task_dict = {}
+            old_imaging_tasks = {}
+            old_processing_tasks = {}
+            old_uploading_tasks = {}
+
+            # Cleanup existing resources
+            if self.task_manager:
+                CITRASENSE_LOGGER.info("Stopping existing task manager...")
+                # Capture task metadata before destruction
+                old_task_dict = dict(self.task_manager.task_dict)
+                old_imaging_tasks = dict(self.task_manager.imaging_tasks)
+                old_processing_tasks = dict(self.task_manager.processing_tasks)
+                old_uploading_tasks = dict(self.task_manager.uploading_tasks)
+                self.task_manager.stop()
+                self.task_manager = None
+
+            if self.safety_monitor:
+                self.safety_monitor.stop_watchdog()
+                self.safety_monitor = None
+
+            if self.time_monitor:
+                self.time_monitor.stop()
+                self.time_monitor = None
+
+            if self.location_service:
+                self.location_service.stop()
+                self.location_service = None
+
+            if self.hardware_adapter:
+                try:
+                    self.hardware_adapter.disconnect()
+                except Exception as e:
+                    CITRASENSE_LOGGER.warning(f"Error disconnecting hardware: {e}")
+                self.hardware_adapter = None
+
+            # Check if configuration is complete
+            if not self.settings.is_configured():
+                error_msg = "Configuration incomplete. Please set access token, telescope ID, and hardware adapter."
+                CITRASENSE_LOGGER.warning(error_msg)
+                self.configuration_error = error_msg
+                return False, error_msg
+
+            # Initialize API client
+            if self.settings.use_dummy_api:
+                CITRASENSE_LOGGER.info("Using DummyApiClient for local testing")
+                self.api_client = DummyApiClient(logger=CITRASENSE_LOGGER)
+            else:
+                self.api_client = CitraApiClient(
+                    self.settings.host,
+                    self.settings.personal_access_token,
+                    self.settings.use_ssl,
+                    CITRASENSE_LOGGER,
+                )
+
+            # Warm-start elset cache from disk (source-aware: discards if API source changed)
+            self.elset_cache.load_from_file(expected_source=self.api_client.cache_source_key)
+            elset_thread = getattr(self, "_elset_refresh_thread", None)
+            if elset_thread is None or not elset_thread.is_alive():
+                self._elset_refresh_thread = threading.Thread(
+                    target=self._refresh_elset_cache_with_retry,
+                    name="elset-refresh",
+                    daemon=True,
+                )
+                self._elset_refresh_thread.start()
+
+            if self.settings.use_local_apass_catalog:
+                self.apass_catalog.start_background_download(self.api_client)
+
+            # Initialize hardware adapter
+            self.hardware_adapter = self._create_hardware_adapter()
+
+            # Check for missing dependencies (non-fatal, just warn)
+            missing_deps = self.hardware_adapter.get_missing_dependencies()
+            if missing_deps:
+                for dep in missing_deps:
+                    CITRASENSE_LOGGER.warning(
+                        f"{dep['device_type']} '{dep['device_name']}' missing dependencies: "
+                        f"{dep['missing_packages']}. Install with: {dep['install_cmd']}"
+                    )
+
+            # Check processor-layer runtime deps (astropy_healpix, solve-field, sex).
+            # Cached on self so the status collector reads it without re-probing.
+            self._processor_dep_issues = check_processor_runtime_deps(self.settings)
+            for dep in self._processor_dep_issues:
+                CITRASENSE_LOGGER.warning(
+                    f"processor '{dep['device_name']}' missing dependencies: "
+                    f"{dep['missing_packages']}. Install with: {dep['install_cmd']}"
+                )
+
+            # Initialize location service (manages GPS internally)
+            self.location_service = LocationService(
+                api_client=self.api_client,
+                settings=self.settings,
+            )
+
+            # Initialize time monitor with GPS reference from location service
+            self.time_monitor = TimeMonitor(
+                check_interval_minutes=self.settings.time_check_interval_minutes,
+                pause_threshold_ms=self.settings.time_offset_pause_ms,
+                gps_monitor=(
+                    self.location_service.gps_monitor
+                    if self.location_service and self.location_service.gps_monitor_started
+                    else None
+                ),
+            )
+            self.time_monitor.start()
+            CITRASENSE_LOGGER.info("Time synchronization monitoring started")
+
+            # Initialize telescope
+            success, error = self._initialize_telescope(
+                old_task_dict=old_task_dict,
+                old_imaging_tasks=old_imaging_tasks,
+                old_processing_tasks=old_processing_tasks,
+                old_uploading_tasks=old_uploading_tasks,
+            )
+
+            if success:
+                self.configuration_error = None
+                CITRASENSE_LOGGER.info("Components initialized successfully!")
+                return True, None
+            else:
+                self.configuration_error = error
+                return False, error
+
+        except Exception as e:
+            error_msg = f"Failed to initialize components: {e!s}"
+            CITRASENSE_LOGGER.error(error_msg, exc_info=True)
+            self.configuration_error = error_msg
+            return False, error_msg
+
+    def reload_configuration(self) -> tuple[bool, str | None]:
+        """Reload configuration from file and reinitialize all components."""
+        return self._initialize_components(reload_settings=True)
+
+    def retry_connection(self) -> tuple[bool, str | None]:
+        """Retry hardware connection using current in-memory settings."""
+        CITRASENSE_LOGGER.info("\u2500" * 60)
+        CITRASENSE_LOGGER.info("Hardware reconnect requested")
+        CITRASENSE_LOGGER.info("\u2500" * 60)
+        success, error = self._initialize_components(reload_settings=False)
+        if success:
+            CITRASENSE_LOGGER.info("Hardware reconnect completed successfully")
+        else:
+            CITRASENSE_LOGGER.warning(f"Hardware reconnect failed: {error}")
+        return success, error
+
+    def _initialize_telescope(
+        self,
+        old_task_dict: dict | None = None,
+        old_imaging_tasks: dict | None = None,
+        old_processing_tasks: dict | None = None,
+        old_uploading_tasks: dict | None = None,
+    ) -> tuple[bool, str | None]:
+        """Initialize telescope connection and task manager.
+
+        Args:
+            old_task_dict: Preserved task_dict from previous TaskManager (for config reload)
+            old_imaging_tasks: Preserved imaging_tasks from previous TaskManager (for config reload)
+            old_processing_tasks: Preserved processing_tasks from previous TaskManager (for config reload)
+            old_uploading_tasks: Preserved uploading_tasks from previous TaskManager (for config reload)
+
+        Returns:
+            Tuple of (success, error_message)
+        """
+        old_task_dict = old_task_dict or {}
+        old_imaging_tasks = old_imaging_tasks or {}
+        old_processing_tasks = old_processing_tasks or {}
+        old_uploading_tasks = old_uploading_tasks or {}
+        assert self.api_client is not None
+        assert self.hardware_adapter is not None
+        try:
+            CITRASENSE_LOGGER.info(f"CitraAPISettings host is {self.settings.host}")
+            CITRASENSE_LOGGER.info(f"CitraAPISettings telescope_id is {self.settings.telescope_id}")
+
+            # check api for valid key, telescope and ground station
+            if not self.api_client.does_api_server_accept_key():
+                error_msg = "Could not authenticate with Citra API. Check your access token."
+                CITRASENSE_LOGGER.error(error_msg)
+                return False, error_msg
+
+            citra_telescope_record = self.api_client.get_telescope(self.settings.telescope_id)
+            if not citra_telescope_record:
+                error_msg = f"Telescope ID '{self.settings.telescope_id}' is not valid on the server."
+                CITRASENSE_LOGGER.error(error_msg)
+                return False, error_msg
+            self.telescope_record = citra_telescope_record
+
+            ground_station = self.api_client.get_ground_station(citra_telescope_record["groundStationId"])
+            if not ground_station:
+                error_msg = "Could not get ground station info from the server."
+                CITRASENSE_LOGGER.error(error_msg)
+                return False, error_msg
+            self.ground_station = ground_station
+
+            # Update location service with ground station reference
+            if self.location_service:
+                self.location_service.set_ground_station(self.ground_station)
+
+            # Provide location service so the adapter can sync site coordinates to the mount
+            if self.location_service:
+                self.hardware_adapter.set_location_service(self.location_service)
+
+            # connect to hardware server (serial handshake + config — no motion)
+            CITRASENSE_LOGGER.info(f"Connecting to hardware with {type(self.hardware_adapter).__name__}...")
+            if not self.hardware_adapter.connect():
+                error_msg = f"Failed to connect to hardware adapter: {type(self.hardware_adapter).__name__}"
+                CITRASENSE_LOGGER.error(error_msg)
+                return False, error_msg
+
+            self.hardware_adapter.scope_slew_rate_degrees_per_second = citra_telescope_record["maxSlewRate"]
+            self.hardware_adapter.telescope_record = citra_telescope_record
+            self.hardware_adapter.elset_cache = self.elset_cache
+            CITRASENSE_LOGGER.info(
+                f"Hardware connected. Slew rate: {self.hardware_adapter.scope_slew_rate_degrees_per_second} deg/sec"
+            )
+
+            if self.location_service:
+                self.location_service.set_hardware_adapter_gps_provider(self.hardware_adapter.get_gps_location)
+
+            # Save filter configuration if adapter supports it
+            self.save_filter_config()
+            # Sync discovered filters to backend on startup
+            self.sync_filters_to_backend()
+
+            adapter_name = type(self.hardware_adapter).__name__
+            slew_rate = self.hardware_adapter.scope_slew_rate_degrees_per_second
+            filter_cfg = self.hardware_adapter.get_filter_config()
+            enabled = sum(1 for f in filter_cfg.values() if f.get("enabled", False)) if filter_cfg else 0
+            gs_name = self.ground_station.get("name", "?") if self.ground_station else "?"
+            scope_name = citra_telescope_record.get("name", "?")
+            CITRASENSE_LOGGER.info(
+                f"Hardware ready: adapter={adapter_name}, slew={slew_rate} deg/s, "
+                f"filters={enabled}/{len(filter_cfg)}, "
+                f"station={gs_name}, telescope={scope_name}"
+            )
+
+            # Safety monitor MUST be online before any mount motion.
+            # connect() above establishes the serial link and syncs site/time
+            # but does NOT home.  The operator can home manually via the web
+            # UI (/api/mount/home) when ready.
+            if not self.hardware_adapter.is_mount_homed():
+                CITRASENSE_LOGGER.info("Mount is not at home position — home via web UI if GoTo fails")
+
+            self._initialize_safety_monitor()
+
+            # Create TaskManager (now owns all queues and stage tracking)
+            self.task_manager = TaskManager(
+                self.api_client,
+                CITRASENSE_LOGGER,
+                self.hardware_adapter,
+                self.settings,
+                self.processor_registry,
+                elset_cache=self.elset_cache,
+                apass_catalog=self.apass_catalog,
+                safety_monitor=self.safety_monitor,
+                location_service=self.location_service,
+                telescope_record=self.telescope_record,
+                ground_station=self.ground_station,
+                on_annotated_image=self._on_annotated_image,
+                preview_bus=self.preview_bus,
+                task_index=self.task_index,
+            )
+
+            # Wire backend→frontend toast notifications for autofocus
+            if self.web_server and self.task_manager.autofocus_manager:
+                self.task_manager.autofocus_manager.on_toast = self.web_server.send_toast
+
+            # Wire self-tasking session managers
+            from citrasense.tasks.observing_session import ObservingSessionManager
+            from citrasense.tasks.self_tasking_manager import SelfTaskingManager
+
+            def _get_location_tuple() -> tuple[float, float] | None:
+                if not self.location_service:
+                    return None
+                loc = self.location_service.get_current_location()
+                if loc and loc.get("latitude") is not None and loc.get("longitude") is not None:
+                    return loc["latitude"], loc["longitude"]
+                return None
+
+            can_park = self.hardware_adapter.supports_park()
+            alignment_mgr = self.task_manager.alignment_manager
+            observing_session_manager = ObservingSessionManager(
+                settings=self.settings,
+                logger=CITRASENSE_LOGGER,
+                get_location=_get_location_tuple,
+                request_autofocus=self.task_manager.autofocus_manager.request,
+                is_autofocus_running=self.task_manager.autofocus_manager.is_running,
+                is_imaging_idle=self.task_manager.imaging_queue.is_idle,
+                are_queues_idle=self.task_manager.are_queues_idle,
+                park_mount=self.hardware_adapter.park_mount if can_park else None,
+                unpark_mount=self.hardware_adapter.unpark_mount if can_park else None,
+                request_pointing_calibration=alignment_mgr.request_calibration,
+                is_pointing_calibration_running=alignment_mgr.is_calibrating,
+            )
+
+            self_tasking_manager = SelfTaskingManager(
+                api_client=self.api_client,
+                settings=self.settings,
+                logger=CITRASENSE_LOGGER,
+                ground_station_id=ground_station["id"],
+                sensor_id=self.telescope_record["id"],
+                get_session_state=lambda: observing_session_manager.state,
+                get_observing_window=lambda: observing_session_manager.observing_window,
+            )
+
+            self.task_manager.set_session_managers(observing_session_manager, self_tasking_manager)
+
+            # Wire pointing model to AlignmentManager
+            if self.hardware_adapter.pointing_model:
+                self.task_manager.alignment_manager.set_pointing_model(self.hardware_adapter.pointing_model)
+
+            # Restore preserved task metadata
+            if old_task_dict:
+                CITRASENSE_LOGGER.info(f"Restoring {len(old_task_dict)} task(s) from previous TaskManager")
+                self.task_manager.task_dict.update(old_task_dict)
+            if old_imaging_tasks:
+                CITRASENSE_LOGGER.info(f"Restoring {len(old_imaging_tasks)} imaging task(s)")
+                self.task_manager.imaging_tasks.update(old_imaging_tasks)
+
+            # Don't restore processing_tasks or uploading_tasks — those represent
+            # in-flight work that died with the old queues.  The tasks still exist
+            # in task_dict and on the API, so the next poll cycle will see them as
+            # unassigned and re-queue them from scratch.
+            dropped = len(old_processing_tasks) + len(old_uploading_tasks)
+            if dropped:
+                CITRASENSE_LOGGER.info(
+                    f"Dropping {dropped} in-flight processing/uploading task(s) — will be re-queued on next poll"
+                )
+
+            # Initialize CalibrationManager if direct camera control is available
+            if self.hardware_adapter.supports_direct_camera_control():
+                from citrasense.calibration.calibration_library import CalibrationLibrary
+                from citrasense.processors.builtin.calibration_processor import CalibrationProcessor
+                from citrasense.tasks.calibration_manager import CalibrationManager
+
+                self.calibration_library = CalibrationLibrary()
+                self.task_manager.calibration_manager = CalibrationManager(
+                    CITRASENSE_LOGGER,
+                    self.hardware_adapter,
+                    self.calibration_library,
+                    imaging_queue=self.task_manager.imaging_queue,
+                )
+                # Inject the library into the CalibrationProcessor
+                for proc in self.processor_registry.processors:
+                    if isinstance(proc, CalibrationProcessor):
+                        proc.library = self.calibration_library
+                        break
+
+            self.task_manager.start()
+            self._start_retention_timer()
+
+            CITRASENSE_LOGGER.info("Telescope initialized successfully!")
+            return True, None
+
+        except Exception as e:
+            error_msg = f"Error initializing telescope: {e!s}"
+            CITRASENSE_LOGGER.error(error_msg, exc_info=True)
+            return False, error_msg
+
+    def _start_retention_timer(self) -> None:
+        """Run retention cleanup once, then schedule the next run in 1 hour."""
+        try:
+            retention = self.settings.processing_output_retention_hours
+            cleanup_processing_output(self.settings.directories.processing_dir, retention)
+            cleanup_previews(self.settings.directories.analysis_previews_dir)
+        except Exception as e:
+            CITRASENSE_LOGGER.warning("Retention cleanup error: %s", e)
+
+        if self._stop_requested:
+            return
+        self._retention_timer = threading.Timer(3600, self._start_retention_timer)
+        self._retention_timer.daemon = True
+        self._retention_timer.start()
+
+    def _initialize_safety_monitor(self) -> None:
+        """Create SafetyMonitor with applicable checks and wire to hardware."""
+        from citrasense.safety.cable_wrap_check import CableWrapCheck
+        from citrasense.safety.disk_space_check import DiskSpaceCheck
+        from citrasense.safety.safety_monitor import SafetyMonitor
+        from citrasense.safety.time_health_check import TimeHealthCheck
+
+        assert self.hardware_adapter is not None
+
+        checks: list = []
+
+        # Cable wrap check — only for adapters with a direct mount
+        cable_check: CableWrapCheck | None = None
+        needs_startup_unwind = False
+        mount = self.hardware_adapter.mount
+        if mount is not None:
+            import platformdirs
+
+            data_dir = Path(platformdirs.user_data_dir("citrasense", appauthor="citrasense"))
+            state_file = data_dir / "cable_wrap_state.json"
+            cable_check = CableWrapCheck(CITRASENSE_LOGGER, mount, state_file=state_file)
+            cable_check.start()
+            mount.register_sync_listener(cable_check.notify_sync)
+
+            if cable_check.needs_startup_unwind():
+                CITRASENSE_LOGGER.warning(
+                    "Persisted cable wrap at %.1f° exceeds hard limit — will unwind after safety gate is wired",
+                    cable_check.cumulative_deg,
+                )
+                needs_startup_unwind = True
+
+            checks.append(cable_check)
+
+        # Disk space check
+        checks.append(DiskSpaceCheck(CITRASENSE_LOGGER, self.hardware_adapter.images_dir))
+
+        # Time health check
+        if self.time_monitor:
+            checks.append(TimeHealthCheck(CITRASENSE_LOGGER, self.time_monitor))
+
+        # Hardware safety check — polls the adapter's external safety monitor device
+        if self.settings and self.settings.hardware_safety_check_enabled:
+            if self.hardware_adapter.supports_hardware_safety_monitor:
+                from citrasense.safety.hardware_safety_check import HardwareSafetyCheck
+
+                checks.append(HardwareSafetyCheck(CITRASENSE_LOGGER, self.hardware_adapter.query_hardware_safety))
+                CITRASENSE_LOGGER.info("Hardware safety check enabled")
+            else:
+                CITRASENSE_LOGGER.info(
+                    "Hardware safety check enabled in settings but adapter %s does not support it — skipping",
+                    type(self.hardware_adapter).__name__,
+                )
+
+        def abort_callback() -> None:
+            try:
+                m = self.hardware_adapter.mount if self.hardware_adapter else None
+                if not m:
+                    return
+                m.abort_slew()
+                m.stop_tracking()
+                for d in ("north", "south", "east", "west"):
+                    m.stop_move(d)
+            except Exception:
+                pass
+
+        self.safety_monitor = SafetyMonitor(CITRASENSE_LOGGER, checks, abort_callback=abort_callback)
+        self.hardware_adapter.set_safety_monitor(self.safety_monitor)
+
+        # Wire safety gate so cable unwind respects operator stop.
+        # Must check operator_stop directly — is_action_safe() would ask
+        # cable_wrap itself, which returns False while _unwinding is True.
+        # IMPORTANT: this must happen BEFORE any execute_action() call so
+        # the unwind can be interrupted by operator stop.
+        op_stop = self.safety_monitor.operator_stop
+        if cable_check is not None:
+            cable_check.safety_gate = lambda: not op_stop.is_active
+
+        self.safety_monitor.start_watchdog()
+        CITRASENSE_LOGGER.info("Safety monitor started with %d check(s)", len(checks))
+
+        # Now that the safety gate is wired, attempt the startup unwind.
+        if needs_startup_unwind and cable_check is not None:
+            CITRASENSE_LOGGER.info("Starting deferred cable unwind (safety gate active)")
+            cable_check.execute_action()
+            if cable_check.did_last_unwind_fail():
+                cable_check.mark_intervention_required()
+                CITRASENSE_LOGGER.critical(
+                    "Startup unwind did not converge (%.1f° remaining) — "
+                    "manual intervention required before the system can "
+                    "operate. Use web UI to reset after physically "
+                    "verifying cables.",
+                    cable_check.cumulative_deg,
+                )
+
+    def save_filter_config(self):
+        """Save filter configuration from adapter to settings if supported.
+
+        This method is called:
+        - After hardware initialization to save discovered filters
+        - After autofocus to save updated focus positions
+        - After manual filter focus updates via web API
+
+        Note: This only saves locally. Call sync_filters_to_backend() separately
+        when enabled filters change to update the backend.
+
+        Thread safety: This modifies self.settings and writes to disk.
+        Should be called from main daemon thread or properly synchronized.
+        """
+        if not self.hardware_adapter or not self.hardware_adapter.supports_filter_management():
+            return
+
+        try:
+            filter_config = self.hardware_adapter.get_filter_config()
+            if filter_config:
+                self.settings.adapter_settings["filters"] = filter_config
+                self.settings.save()
+                CITRASENSE_LOGGER.info(f"Saved filter configuration with {len(filter_config)} filters")
+        except Exception as e:
+            CITRASENSE_LOGGER.warning(f"Failed to save filter configuration: {e}")
+
+    def sync_filters_to_backend(self):
+        """Sync enabled filters to backend API.
+
+        Extracts enabled filter names from hardware adapter, expands them via
+        the filter library API, then updates the telescope's spectral_config.
+        Logs warnings on failure without blocking daemon operations.
+        """
+        if not self.hardware_adapter or not self.api_client or not self.telescope_record:
+            return
+
+        try:
+            filter_config = self.hardware_adapter.get_filter_config()
+            sync_filters_to_backend(self.api_client, self.telescope_record["id"], filter_config, CITRASENSE_LOGGER)
+        except Exception as e:
+            CITRASENSE_LOGGER.warning(f"Failed to sync filters to backend: {e}", exc_info=True)
+
+    def trigger_autofocus(self) -> tuple[bool, str | None]:
+        """Request autofocus to run at next safe point between tasks.
+
+        Returns:
+            Tuple of (success, error_message)
+        """
+        if not self.hardware_adapter:
+            return False, "No hardware adapter initialized"
+
+        if not self.hardware_adapter.supports_filter_management():
+            return False, "Hardware adapter does not support filter management"
+
+        if not self.task_manager:
+            return False, "Task manager not initialized"
+
+        # Request autofocus - will run between tasks
+        self.task_manager.autofocus_manager.request()
+        return True, None
+
+    def cancel_autofocus(self) -> bool:
+        """Cancel autofocus whether it is queued or actively running.
+
+        Returns:
+            bool: True if something was cancelled, False if nothing to cancel.
+        """
+        if not self.task_manager:
+            return False
+        return self.task_manager.autofocus_manager.cancel()
+
+    def is_autofocus_requested(self) -> bool:
+        """Check if autofocus is currently queued.
+
+        Returns:
+            bool: True if autofocus is queued, False otherwise.
+        """
+        if not self.task_manager:
+            return False
+        return self.task_manager.autofocus_manager.is_requested()
+
+    def trigger_calibration(self, params: dict) -> tuple[bool, str | None]:
+        """Request calibration capture at next safe point between tasks."""
+        if not self.task_manager or not self.task_manager.calibration_manager:
+            return False, "Calibration not available (no direct camera control)"
+        ok = self.task_manager.calibration_manager.request(params)
+        if not ok:
+            return False, "Calibration already in progress"
+        return True, None
+
+    def trigger_calibration_suite(self, jobs: list[dict]) -> tuple[bool, str | None]:
+        """Request a batch calibration suite at next safe point between tasks."""
+        if not self.task_manager or not self.task_manager.calibration_manager:
+            return False, "Calibration not available (no direct camera control)"
+        if not jobs:
+            return False, "No calibration jobs specified"
+        ok = self.task_manager.calibration_manager.request_suite(jobs)
+        if not ok:
+            return False, "Calibration already in progress"
+        return True, None
+
+    def cancel_calibration(self) -> bool:
+        """Cancel calibration whether queued or actively running."""
+        if not self.task_manager or not self.task_manager.calibration_manager:
+            return False
+        return self.task_manager.calibration_manager.cancel()
+
+    def run(self):
+        assert self.web_server is not None
+        # atexit ensures cleanup runs even if the process is killed abruptly
+        # (e.g. debugger Stop button). _shutdown is idempotent so it's safe
+        # to fire from both atexit and the finally block.
+        atexit.register(self._shutdown)
+
+        # Start web server FIRST, so users can monitor/configure
+        # The web interface will remain available even if configuration is incomplete
+        self.web_server.start()
+        CITRASENSE_LOGGER.info(f"Web interface available at http://{self.web_server.host}:{self.web_server.port}")
+
+        try:
+            # Try to initialize components
+            success, error = self._initialize_components()
+            if success:
+                CITRASENSE_LOGGER.info("=" * 60)
+                CITRASENSE_LOGGER.info("CitraSense ready \u2014 watching for tasks")
+            else:
+                CITRASENSE_LOGGER.warning(
+                    f"Could not start telescope operations: {error}. "
+                    f"Configure via web interface at http://{self.web_server.host}:{self.web_server.port}"
+                )
+            self._keep_running()
+        finally:
+            self._shutdown()
+
+    def _keep_running(self):
+        """Keep the daemon running until interrupted by SIGINT/SIGTERM."""
+        self._stop_requested = False
+
+        def _signal_handler(signum, _frame):
+            sig_name = signal.Signals(signum).name
+            CITRASENSE_LOGGER.info(f"Received {sig_name}, shutting down daemon.")
+            self._stop_requested = True
+
+        signal.signal(signal.SIGTERM, _signal_handler)
+        signal.signal(signal.SIGINT, _signal_handler)
+
+        try:
+            while not self._stop_requested:
+                time.sleep(1)
+        except KeyboardInterrupt:
+            CITRASENSE_LOGGER.info("Shutting down daemon.")
+
+    def _shutdown(self):
+        """Clean up resources on shutdown.  Idempotent — safe to call multiple
+        times (e.g. from both the ``finally`` block and ``atexit``)."""
+        if self._shutdown_done:
+            return
+        self._shutdown_done = True
+
+        CITRASENSE_LOGGER.info("Shutting down...")
+
+        # 0. Cancel retention timer — set _stop_requested first to prevent reschedule
+        self._stop_requested = True
+        if self._retention_timer:
+            self._retention_timer.cancel()
+
+        # 1. Stop sources of new motion
+        if self.task_manager:
+            self.task_manager.stop()
+        if self.time_monitor:
+            self.time_monitor.stop()
+
+        # 2. Abort any residual motion
+        if self.hardware_adapter:
+            try:
+                m = self.hardware_adapter.mount
+                if m:
+                    m.abort_slew()
+            except Exception:
+                pass
+
+        # 3. Stop safety (watchdog last — it was guarding steps 1-2)
+        if self.safety_monitor:
+            from citrasense.safety.cable_wrap_check import CableWrapCheck
+
+            cable_check = self.safety_monitor.get_check("cable_wrap")
+            if isinstance(cable_check, CableWrapCheck):
+                cable_check.join_unwind(timeout=10.0)
+                cable_check.stop()
+            self.safety_monitor.stop_watchdog()
+
+        # 4. Disconnect hardware
+        if self.hardware_adapter:
+            try:
+                CITRASENSE_LOGGER.info("Disconnecting hardware...")
+                self.hardware_adapter.disconnect()
+            except Exception as e:
+                CITRASENSE_LOGGER.warning(f"Error disconnecting hardware: {e}")
+
+        # 5. Close analysis index
+        if self.task_index:
+            try:
+                self.task_index.close()
+            except Exception:
+                pass
+            self.task_index = None
+
+        CITRASENSE_LOGGER.info("Shutdown complete.")
+
+        # 6. Stop web server (tears down log handler — must be last)
+        if self.web_server:
+            if self.web_server.web_log_handler:
+                CITRASENSE_LOGGER.removeHandler(self.web_server.web_log_handler)

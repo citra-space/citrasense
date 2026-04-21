@@ -1,6 +1,6 @@
 """Unit tests for the Task dataclass."""
 
-from citrascope.tasks.task import Task
+from citrasense.tasks.task import Task
 
 
 def _sample_dict():

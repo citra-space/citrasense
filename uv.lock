@@ -510,7 +510,7 @@ wheels = [
 ]
 
 [[package]]
-name = "citrascope"
+name = "citrasense"
 version = "1.0.0"
 source = { editable = "." }
 dependencies = [
@@ -599,9 +599,9 @@ requires-dist = [
     { name = "black", marker = "extra == 'dev'" },
     { name = "build", marker = "extra == 'build'" },
     { name = "bump-my-version", marker = "extra == 'dev'" },
-    { name = "citrascope", extras = ["indi", "kstars"], marker = "extra == 'all'" },
-    { name = "citrascope", extras = ["indi", "zwo-mount"], marker = "extra == 'all-hardware'" },
-    { name = "citrascope", extras = ["test"], marker = "extra == 'dev'" },
+    { name = "citrasense", extras = ["indi", "kstars"], marker = "extra == 'all'" },
+    { name = "citrasense", extras = ["indi", "zwo-mount"], marker = "extra == 'all-hardware'" },
+    { name = "citrasense", extras = ["test"], marker = "extra == 'dev'" },
     { name = "click" },
     { name = "cv2-enumerate-cameras", marker = "extra == 'all-hardware'", specifier = ">=1.0.0" },
     { name = "cv2-enumerate-cameras", marker = "extra == 'usb-camera'", specifier = ">=1.0.0" },

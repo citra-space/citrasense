@@ -151,5 +151,5 @@ nina_focus_positions.json
 tests/unit/test_assets/latest_preview.*
 tests/unit/test_assets/*_wcs.fits
 
-citrascope-env/
+citrasense-env/
 test_data/

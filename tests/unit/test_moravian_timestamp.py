@@ -15,7 +15,7 @@ from astropy.io import fits
 @pytest.fixture
 def moravian_camera():
     """Create a MoravianCamera instance without connecting to real hardware."""
-    from citrascope.hardware.devices.camera.moravian_camera import MoravianCamera
+    from citrasense.hardware.devices.camera.moravian_camera import MoravianCamera
 
     logger = MagicMock()
     cam = MoravianCamera(logger=logger)

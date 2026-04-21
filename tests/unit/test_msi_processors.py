@@ -9,13 +9,13 @@ import pandas as pd
 import pytest
 from astropy.io import fits
 
-# CitraScope repo root (tests/unit -> tests -> root). Used so demo-FITS tests run with stable cwd.
+# CitraSense repo root (tests/unit -> tests -> root). Used so demo-FITS tests run with stable cwd.
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 
 
 @pytest.fixture
 def run_from_repo_root():
-    """Run test with cwd = citrascope repo root, then restore. Makes demo-FITS tests match terminal runs."""
+    """Run test with cwd = citrasense repo root, then restore. Makes demo-FITS tests match terminal runs."""
     prev = os.getcwd()
     os.chdir(_REPO_ROOT)
     try:
@@ -24,16 +24,16 @@ def run_from_repo_root():
         os.chdir(prev)
 
 
-from citrascope.elset_cache import ElsetCache
-from citrascope.processors.builtin.photometry_processor import PhotometryProcessor
-from citrascope.processors.builtin.plate_solver_processor import PlateSolverProcessor
-from citrascope.processors.builtin.processor_dependencies import (
+from citrasense.elset_cache import ElsetCache
+from citrasense.processors.builtin.photometry_processor import PhotometryProcessor
+from citrasense.processors.builtin.plate_solver_processor import PlateSolverProcessor
+from citrasense.processors.builtin.processor_dependencies import (
     check_astrometry,
     check_sextractor,
 )
-from citrascope.processors.builtin.satellite_matcher_processor import SatelliteMatcherProcessor
-from citrascope.processors.processor_registry import ProcessorRegistry
-from citrascope.processors.processor_result import ProcessingContext, ProcessorResult
+from citrasense.processors.builtin.satellite_matcher_processor import SatelliteMatcherProcessor
+from citrasense.processors.processor_registry import ProcessorRegistry
+from citrasense.processors.processor_result import ProcessingContext, ProcessorResult
 
 # Telescope record matching the PlaneWave scope used to capture the demo FITS.
 _PLANEWAVE_TELESCOPE_RECORD = {
@@ -88,12 +88,12 @@ def _first_three_elsets_from_file(tle_path: Path) -> list:
 
 
 def _make_mock_settings(**overrides) -> Mock:
-    """Create a Mock settings with plate solving defaults from CitraScopeSettings."""
-    from citrascope.settings.citrascope_settings import CitraScopeSettings
+    """Create a Mock settings with plate solving defaults from CitraSenseSettings."""
+    from citrasense.settings.citrasense_settings import CitraSenseSettings
 
     attrs = {
         name: field.default
-        for name, field in CitraScopeSettings.model_fields.items()
+        for name, field in CitraSenseSettings.model_fields.items()
         if name.startswith(("plate_solve_", "astrometry_"))
     }
     attrs.update(overrides)
@@ -136,7 +136,7 @@ class TestPlateSolverProcessor:
         assert processor.friendly_name == "Plate Solver"
         assert "astrometry" in processor.description.lower()
 
-    @patch("citrascope.processors.builtin.plate_solver_processor.check_astrometry")
+    @patch("citrasense.processors.builtin.plate_solver_processor.check_astrometry")
     def test_astrometry_not_available(self, mock_check, mock_context):
         """Test processor fails gracefully when solve-field not available."""
         mock_check.return_value = False
@@ -149,8 +149,8 @@ class TestPlateSolverProcessor:
         assert result.confidence == 0.0
         assert "not available" in result.reason
 
-    @patch("citrascope.processors.builtin.plate_solver_processor.check_astrometry")
-    @patch("citrascope.processors.builtin.plate_solver_processor.PlateSolverProcessor._solve_field")
+    @patch("citrasense.processors.builtin.plate_solver_processor.check_astrometry")
+    @patch("citrasense.processors.builtin.plate_solver_processor.PlateSolverProcessor._solve_field")
     @patch("astropy.io.fits.open")
     def test_successful_plate_solve(self, mock_fits_open, mock_solve, mock_check, mock_context, tmp_path):
         """Test successful plate solving with astrometry.net."""
@@ -180,8 +180,8 @@ class TestPlateSolverProcessor:
         assert result.extracted_data["dec_center"] == 45.3
         assert mock_context.working_image_path == new_file
 
-    @patch("citrascope.processors.builtin.plate_solver_processor.check_astrometry")
-    @patch("citrascope.processors.builtin.plate_solver_processor.PlateSolverProcessor._solve_field")
+    @patch("citrasense.processors.builtin.plate_solver_processor.check_astrometry")
+    @patch("citrasense.processors.builtin.plate_solver_processor.PlateSolverProcessor._solve_field")
     def test_plate_solve_failure(self, mock_solve, mock_check, mock_context):
         """Test plate solving failure handling (fail-open)."""
         mock_check.return_value = True
@@ -214,7 +214,7 @@ class TestPhotometryProcessor:
         assert result.confidence == 0.0
         assert "source catalog not found" in result.reason.lower()
 
-    @patch("citrascope.processors.builtin.photometry_processor.PhotometryProcessor._calibrate_photometry")
+    @patch("citrasense.processors.builtin.photometry_processor.PhotometryProcessor._calibrate_photometry")
     @patch("pandas.read_csv")
     def test_successful_calibration(self, mock_read, mock_calibrate, mock_context, tmp_path):
         """Test successful photometric calibration."""
@@ -271,7 +271,7 @@ class TestDependencyChecks:
         result = check_astrometry()
         assert isinstance(result, bool)
 
-    @patch("citrascope.processors.builtin.processor_dependencies.shutil.which")
+    @patch("citrasense.processors.builtin.processor_dependencies.shutil.which")
     def test_check_astrometry_mocked(self, mock_which):
         """Test astrometry.net detection with mocked which."""
         mock_which.side_effect = lambda cmd: "/usr/local/bin/solve-field" if cmd == "solve-field" else None
@@ -281,7 +281,7 @@ class TestDependencyChecks:
         mock_which.side_effect = lambda cmd: None
         assert check_astrometry() is False
 
-    @patch("citrascope.processors.builtin.processor_dependencies.shutil.which")
+    @patch("citrasense.processors.builtin.processor_dependencies.shutil.which")
     def test_check_sextractor(self, mock_which):
         """Test SExtractor detection."""
         # Test source-extractor command
@@ -304,7 +304,7 @@ class TestPlateScaleComputation:
 
     def test_compute_plate_scale_planewave(self):
         """Verify plate scale computation for the PlaneWave CDK14."""
-        from citrascope.processors.builtin.plate_solver_processor import _compute_plate_scale
+        from citrasense.processors.builtin.plate_solver_processor import _compute_plate_scale
 
         scale = _compute_plate_scale(_PLANEWAVE_TELESCOPE_RECORD, x_binning=4, y_binning=4)
         assert scale is not None
@@ -312,7 +312,7 @@ class TestPlateScaleComputation:
         assert 1.5 < scale < 2.5
 
     def test_compute_plate_scale_no_binning(self):
-        from citrascope.processors.builtin.plate_solver_processor import _compute_plate_scale
+        from citrasense.processors.builtin.plate_solver_processor import _compute_plate_scale
 
         scale = _compute_plate_scale(_PLANEWAVE_TELESCOPE_RECORD)
         assert scale is not None
@@ -320,7 +320,7 @@ class TestPlateScaleComputation:
         assert 0.3 < scale < 0.7
 
     def test_compute_plate_scale_missing_fields(self):
-        from citrascope.processors.builtin.plate_solver_processor import _compute_plate_scale
+        from citrasense.processors.builtin.plate_solver_processor import _compute_plate_scale
 
         assert _compute_plate_scale({}) is None
         assert _compute_plate_scale({"pixelSize": 3.76}) is None

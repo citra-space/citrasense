@@ -2,7 +2,7 @@
 
 from unittest.mock import MagicMock
 
-from citrascope.hardware.filter_sync import (
+from citrasense.hardware.filter_sync import (
     build_spectral_config_from_expanded,
     extract_enabled_filter_names,
     sync_filters_to_backend,

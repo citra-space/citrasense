@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<SequenceQueue version='2.6'>
+  <Observer>CitraSense</Observer>
+  <GuideDeviation enabled='false'>2</GuideDeviation>
+  <GuideStartDeviation enabled='false'>2</GuideStartDeviation>
+  <HFRCheck enabled='false'>
+    <HFRDeviation>0.5</HFRDeviation>
+    <HFRCheckAlgorithm>0</HFRCheckAlgorithm>
+    <HFRCheckThreshold>10</HFRCheckThreshold>
+    <HFRCheckFrames>1</HFRCheckFrames>
+  </HFRCheck>
+  <RefocusOnTemperatureDelta enabled='false'>1</RefocusOnTemperatureDelta>
+  <RefocusEveryN enabled='false'>60</RefocusEveryN>
+  <RefocusOnMeridianFlip enabled='false' />
+{{JOBS}}
+</SequenceQueue>

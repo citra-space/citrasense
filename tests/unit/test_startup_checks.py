@@ -6,8 +6,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from citrascope import startup_checks
-from citrascope.startup_checks import _binary_hint, check_processor_runtime_deps
+from citrasense import startup_checks
+from citrasense.startup_checks import _binary_hint, check_processor_runtime_deps
 
 
 def _settings(

@@ -4,7 +4,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from citrascope.hardware.abstract_astro_hardware_adapter import (
+from citrasense.hardware.abstract_astro_hardware_adapter import (
     AbstractAstroHardwareAdapter,
     ObservationStrategy,
 )

@@ -6,7 +6,7 @@ import math
 
 import pytest
 
-from citrascope.hardware.abstract_astro_hardware_adapter import SlewRateTracker
+from citrasense.hardware.abstract_astro_hardware_adapter import SlewRateTracker
 
 
 class TestEmptyState:

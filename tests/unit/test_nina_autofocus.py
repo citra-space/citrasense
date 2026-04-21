@@ -8,7 +8,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from citrascope.hardware.nina.nina_adapter import NinaAdvancedHttpAdapter
+from citrasense.hardware.nina.nina_adapter import NinaAdvancedHttpAdapter
 
 
 @pytest.fixture
@@ -47,7 +47,7 @@ def _mock_response(json_data):
 
 
 class TestGetCurrentFilterId:
-    @patch("citrascope.hardware.nina.nina_adapter.requests.get")
+    @patch("citrasense.hardware.nina.nina_adapter.requests.get")
     def test_returns_id_from_selected_filter(self, mock_get, adapter):
         mock_get.return_value = _mock_response(
             {
@@ -60,17 +60,17 @@ class TestGetCurrentFilterId:
         )
         assert adapter._get_current_filter_id() == 2
 
-    @patch("citrascope.hardware.nina.nina_adapter.requests.get")
+    @patch("citrasense.hardware.nina.nina_adapter.requests.get")
     def test_returns_none_on_failure(self, mock_get, adapter):
         mock_get.return_value = _mock_response({"Success": False, "Error": "Not connected"})
         assert adapter._get_current_filter_id() is None
 
-    @patch("citrascope.hardware.nina.nina_adapter.requests.get")
+    @patch("citrasense.hardware.nina.nina_adapter.requests.get")
     def test_returns_none_on_missing_field(self, mock_get, adapter):
         mock_get.return_value = _mock_response({"Success": True, "Response": {}})
         assert adapter._get_current_filter_id() is None
 
-    @patch("citrascope.hardware.nina.nina_adapter.requests.get")
+    @patch("citrasense.hardware.nina.nina_adapter.requests.get")
     def test_returns_none_on_network_error(self, mock_get, adapter):
         mock_get.side_effect = ConnectionError("refused")
         assert adapter._get_current_filter_id() is None
@@ -80,7 +80,7 @@ class TestGetCurrentFilterId:
 
 
 class TestAutoFocusFilterSkip:
-    @patch("citrascope.hardware.nina.nina_adapter.requests.get")
+    @patch("citrasense.hardware.nina.nina_adapter.requests.get")
     def test_skips_change_when_already_on_filter(self, mock_get, adapter):
         """When _get_current_filter_id returns the target, skip the WS wait."""
         fw_info = _mock_response({"Success": True, "Response": {"SelectedFilter": {"Name": "Clear", "Id": 0}}})
@@ -117,7 +117,7 @@ class TestAutoFocusFilterSkip:
         result = adapter._auto_focus_one_filter(0, "Clear", 9000)
         assert result == 8500
 
-    @patch("citrascope.hardware.nina.nina_adapter.requests.get")
+    @patch("citrasense.hardware.nina.nina_adapter.requests.get")
     def test_changes_filter_when_different(self, mock_get, adapter):
         """When current filter differs from target, do the change+wait dance."""
         fw_info = _mock_response({"Success": True, "Response": {"SelectedFilter": {"Name": "Red", "Id": 0}}})
@@ -169,7 +169,7 @@ class TestAutoFocusSilentFailure:
     """When NINA AF fails without sending WS events, the adapter should detect
     stale AF activity + idle focuser and exit early."""
 
-    @patch("citrascope.hardware.nina.nina_adapter.requests.get")
+    @patch("citrasense.hardware.nina.nina_adapter.requests.get")
     def test_detects_silent_failure_via_activity_timeout(self, mock_get, adapter):
         """AF points stop arriving and focuser is idle → silent failure detected."""
         adapter.AF_ACTIVITY_TIMEOUT = 0
@@ -198,7 +198,7 @@ class TestAutoFocusSilentFailure:
             f"no AF points for {adapter.AF_ACTIVITY_TIMEOUT}s and focuser is idle"
         )
 
-    @patch("citrascope.hardware.nina.nina_adapter.requests.get")
+    @patch("citrasense.hardware.nina.nina_adapter.requests.get")
     def test_detects_silent_failure_when_no_points_ever_arrive(self, mock_get, adapter):
         """NINA fails before sending any AF points — activity timeout still fires."""
         adapter.AF_ACTIVITY_TIMEOUT = 0
@@ -225,7 +225,7 @@ class TestAutoFocusSilentFailure:
         assert result == 9000
         assert adapter._event_listener.last_af_point_time > 0.0
 
-    @patch("citrascope.hardware.nina.nina_adapter.requests.get")
+    @patch("citrasense.hardware.nina.nina_adapter.requests.get")
     def test_no_false_positive_while_focuser_moving(self, mock_get, adapter):
         """AF points are stale but focuser is still moving → don't declare failure yet.
         Instead, the WS event fires and the normal success path is taken."""

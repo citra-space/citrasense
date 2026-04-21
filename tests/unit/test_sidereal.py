@@ -18,7 +18,7 @@ from datetime import datetime, timezone
 
 import pytest
 
-from citrascope.astro.sidereal import SIDEREAL_RATE_DEG_PER_S, gast_degrees
+from citrasense.astro.sidereal import SIDEREAL_RATE_DEG_PER_S, gast_degrees
 
 _TOL_ARCSEC = 0.1
 _TOL_DEG = _TOL_ARCSEC / 3600.0
@@ -44,7 +44,7 @@ def test_gast_matches_skyfield(dt: datetime, expected_gast_deg: float) -> None:
         f"GAST drift at {dt.isoformat()}: got {got}, expected {expected_gast_deg} "
         f"(delta {(got - expected_gast_deg) * 3600:.3f} arcsec). If this test fails with "
         f"a multi-arcsec delta, someone probably routed the implementation through "
-        f"GMST — re-read the docstring in citrascope/astro/sidereal.py."
+        f"GMST — re-read the docstring in citrasense/astro/sidereal.py."
     )
 
 

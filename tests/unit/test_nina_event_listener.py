@@ -6,7 +6,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from citrascope.hardware.nina.nina_event_listener import NinaEventListener, derive_ws_url
+from citrasense.hardware.nina.nina_event_listener import NinaEventListener, derive_ws_url
 
 # ---------- derive_ws_url ----------
 
@@ -284,7 +284,7 @@ class TestThreadSafety:
 class TestLifecycle:
     """Test start/stop without a real WebSocket server."""
 
-    @patch("citrascope.hardware.nina.nina_event_listener.ws_connect")
+    @patch("citrasense.hardware.nina.nina_event_listener.ws_connect")
     def test_start_and_stop(self, mock_ws_connect, listener):
         mock_ws = MagicMock()
         mock_ws.recv.side_effect = TimeoutError
@@ -304,7 +304,7 @@ class TestLifecycle:
 
     def test_double_start(self, listener):
         """Starting twice should not create two threads."""
-        with patch("citrascope.hardware.nina.nina_event_listener.ws_connect") as mock:
+        with patch("citrasense.hardware.nina.nina_event_listener.ws_connect") as mock:
             mock_ws = MagicMock()
             mock_ws.recv.side_effect = TimeoutError
             mock_ws.__enter__ = MagicMock(return_value=mock_ws)

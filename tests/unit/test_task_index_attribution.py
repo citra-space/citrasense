@@ -1,4 +1,4 @@
-"""Unit tests for lateness-attribution helpers in ``citrascope.analysis.task_index``.
+"""Unit tests for lateness-attribution helpers in ``citrasense.analysis.task_index``.
 
 These exercise the pure-Python enrichment functions in isolation — the SQL CTE
 that supplies ``prev_imaging_finished_at`` / ``prev_task_id`` /
@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import json
 
-from citrascope.analysis.task_index import (
+from citrasense.analysis.task_index import (
     CROSS_SESSION_GAP_S,
     SLIP_ORIGIN_THRESHOLD_S,
     _enrich_with_attribution,

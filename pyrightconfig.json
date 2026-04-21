@@ -1,5 +1,5 @@
 {
   "typeCheckingMode": "basic",
   "pythonVersion": "3.10",
-  "include": ["citrascope"]
+  "include": ["citrasense"]
 }

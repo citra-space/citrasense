@@ -14,7 +14,7 @@ from unittest.mock import MagicMock, patch
 import numpy as np
 import pytest
 
-from citrascope.hardware.direct.autofocus import (
+from citrasense.hardware.direct.autofocus import (
     _crop_center,
     _hyperbolic_fit,
     _hyperbolic_model,
@@ -489,7 +489,7 @@ class TestRunAutofocus:
         # monotonic guard logic from SEP noise.
         hfr_iter = iter([10.0, 9.5, 9.0, 8.5, 8.0, 7.5, 7.0, 6.5, 6.0])
 
-        with patch("citrascope.hardware.direct.autofocus.compute_hfr", side_effect=lambda *a, **kw: next(hfr_iter)):
+        with patch("citrasense.hardware.direct.autofocus.compute_hfr", side_effect=lambda *a, **kw: next(hfr_iter)):
             best = run_autofocus(
                 camera=camera,
                 focuser=focuser,
@@ -577,7 +577,7 @@ class TestVCurveFit:
 
 class TestCurrentPositionPreset:
     def test_preset_exists(self):
-        from citrascope.constants import AUTOFOCUS_TARGET_PRESETS
+        from citrasense.constants import AUTOFOCUS_TARGET_PRESETS
 
         assert "current" in AUTOFOCUS_TARGET_PRESETS
         preset = AUTOFOCUS_TARGET_PRESETS["current"]

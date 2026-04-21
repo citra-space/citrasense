@@ -1,0 +1,277 @@
+<!-- Hardware Configuration (included by _config.html) -->
+<div class="row g-3 mb-3">
+    <div class="col">
+        <label for="hardwareAdapterSelect" class="form-label">Hardware Adapter <span class="text-danger">*</span></label>
+        <select id="hardwareAdapterSelect" class="form-select" required x-model="$store.citrasense.config.hardware_adapter"
+            @change="$store.citrasense.handleAdapterChange($event.target.value)">
+            <option value="">-- Select Hardware Adapter --</option>
+            <template x-for="adapter in $store.citrasense.hardwareAdapters" :key="adapter.value">
+                <option :value="adapter.value" x-text="adapter.label"></option>
+            </template>
+        </select>
+    </div>
+    <div class="col-auto d-flex align-items-end gap-2"
+         x-show="$store.citrasense.config.hardware_adapter">
+        <button type="button" class="btn btn-sm btn-outline-secondary"
+                x-show="$store.citrasense.config.hardware_adapter === 'direct'"
+                :disabled="$store.citrasense.isScanning || $store.citrasense.isSavingConfig"
+                @click="$store.citrasense.scanHardware()"
+                data-bs-toggle="tooltip" data-bs-theme="dark" data-bs-placement="bottom"
+                title="Re-enumerate USB devices, serial ports, and cameras">
+            <i class="bi" :class="$store.citrasense.isScanning ? 'bi-arrow-repeat spin' : 'bi-search'"></i>
+            <span x-text="$store.citrasense.isScanning ? 'Scanning...' : 'Scan Hardware'"></span>
+        </button>
+        <button type="button" class="btn btn-sm btn-outline-secondary"
+                :disabled="$store.citrasense.isReconnecting || $store.citrasense.isSavingConfig"
+                @click="$store.citrasense.reconnectHardware()"
+                data-bs-toggle="tooltip" data-bs-theme="dark" data-bs-placement="bottom"
+                title="Reinitialize hardware and services (may briefly pause active tasks)">
+            <i class="bi" :class="$store.citrasense.isReconnecting ? 'bi-arrow-repeat spin' : 'bi-arrow-repeat'"></i>
+            <span x-text="$store.citrasense.isReconnecting ? 'Reconnecting...' : 'Reconnect'"></span>
+        </button>
+    </div>
+</div>
+
+<!-- Dynamic Adapter Settings Container -->
+<div id="adapter-settings-container">
+    <template x-if="$store.citrasense.adapterFields.length > 0">
+        <div>
+            <h5 class="mb-3">Adapter Settings</h5>
+            <!-- Group fields by group property -->
+            <template x-for="[groupName, fields] in $store.citrasense.groupedAdapterFields" :key="groupName">
+                <div class="card bg-dark border-secondary mb-3">
+                    <div class="card-header">
+                        <h6 class="mb-0" x-text="groupName"></h6>
+                    </div>
+                    <div class="card-body">
+                        <div class="row g-3">
+                            <template x-for="field in fields" :key="field.name">
+                                <div x-data="adapterField(field)"
+                                     class="col-12 col-md-4" x-show="field && field.name && isVisible">
+                                    <label :for="inputId" class="form-label">
+                                        <span x-text="field.friendly_name || field.name"></span>
+                                        <span class="text-danger" x-show="field.required">*</span>
+                                    </label>
+
+                                    <!-- Boolean checkbox -->
+                                    <template x-if="isBoolean">
+                                        <div class="form-check mt-2">
+                                            <input class="form-check-input adapter-setting" type="checkbox"
+                                                   :id="inputId" :data-field="field.name" :data-type="field.type"
+                                                   x-model="field.value">
+                                            <label class="form-check-label" :for="inputId" x-text="field.description"></label>
+                                        </div>
+                                    </template>
+
+                                    <!-- Select dropdown -->
+                                    <template x-if="isSelect">
+                                        <select :id="inputId" class="form-select adapter-setting"
+                                                :data-field="field.name" :data-type="field.type"
+                                                :required="field.required" @change="handleChange">
+                                            <option value="" x-text="'-- Select ' + (field.friendly_name || field.name) + ' --'"></option>
+                                            <template x-for="(opt, idx) in (field.options || [])" :key="(typeof opt === 'object' ? opt.value : opt) + '_' + idx">
+                                                <option :value="typeof opt === 'object' ? opt.value : opt"
+                                                        :selected="(typeof opt === 'object' ? opt.value : opt) === field.value"
+                                                        x-text="typeof opt === 'object' ? opt.label : opt"></option>
+                                            </template>
+                                        </select>
+                                    </template>
+
+                                    <!-- Number input -->
+                                    <template x-if="isNumber">
+                                        <input type="number" :id="inputId"
+                                               class="form-control adapter-setting"
+                                               :data-field="field.name" :data-type="field.type"
+                                               :placeholder="field.placeholder || ''"
+                                               :min="field.min" :max="field.max"
+                                               :step="field.step || (field.type === 'float' ? 'any' : '1')"
+                                               :required="field.required"
+                                               x-model.lazy="field.value" @change="handleChange">
+                                    </template>
+
+                                    <!-- Text input -->
+                                    <template x-if="isText">
+                                        <input type="text" :id="inputId"
+                                               class="form-control adapter-setting"
+                                               :data-field="field.name" :data-type="field.type"
+                                               :placeholder="field.placeholder || ''"
+                                               :pattern="field.pattern || null"
+                                               :required="field.required"
+                                               x-model="field.value">
+                                    </template>
+
+                                    <small class="text-muted" x-show="!isBoolean && field.description"
+                                           x-text="field.description"></small>
+                                </div>
+                            </template>
+                        </div>
+                    </div>
+                </div>
+            </template>
+        </div>
+    </template>
+</div>
+
+<!-- Missing Dependencies Alert -->
+<div class="alert alert-warning mt-3" role="alert"
+    x-show="$store.citrasense.status?.missing_dependencies?.length > 0">
+    <template x-if="$store.citrasense.status?.missing_dependencies?.length > 0">
+        <div>
+            <strong><i class="bi bi-exclamation-triangle-fill me-2"></i>Missing Dependencies:</strong>
+            <ul class="mb-0 mt-2">
+                <template x-for="dep in $store.citrasense.status.missing_dependencies" :key="dep.device_name">
+                    <li>
+                        <strong x-text="dep.device_name"></strong>: Missing <span x-text="dep.missing_packages"></span><br>
+                        <code class="small" x-text="dep.install_cmd"></code>
+                    </li>
+                </template>
+            </ul>
+        </div>
+    </template>
+</div>
+
+<!-- Filter Configuration -->
+<div x-show="$store.citrasense.filterConfigVisible" class="card bg-dark border-secondary mb-3 mt-3">
+    <div class="card-header">
+        <h6 class="mb-0">Filter Configuration</h6>
+    </div>
+    <div class="card-body">
+        <p class="text-muted mb-3" x-show="$store.citrasense.filterAdapterChangeMessageVisible">
+            Save configuration to edit filter settings for this adapter
+        </p>
+        <div id="filterTableContainer">
+            <table class="table table-dark table-sm">
+                <thead>
+                    <tr>
+                        <th>Enabled</th>
+                        <th>Name</th>
+                        <th>Focus Position</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <template x-for="[filterId, filter] in Object.entries($store.citrasense.filters || {})" :key="filterId">
+                        <tr x-data="filterRow(filter, filterId)">
+                            <td>
+                                <input type="checkbox" class="form-check-input filter-enabled-checkbox"
+                                    :data-filter-id="filterId" x-model="$store.citrasense.filters[filterId].enabled">
+                            </td>
+                            <td x-data="{ customName: '', isCustom: !$store.citrasense.filterNameOptions.some(g => g.names.includes($store.citrasense.filters[filterId].name)) }"
+                                x-init="if (isCustom) customName = $store.citrasense.filters[filterId].name">
+                                <div x-show="$store.citrasense.filterNamesEditable">
+                                    <div class="d-flex align-items-center gap-2">
+                                        <span class="rounded-circle d-inline-block flex-shrink-0"
+                                            :style="{ width: '12px', height: '12px', minWidth: '12px', backgroundColor: $store.citrasense.filterColors[$store.citrasense.filters[filterId].name] || '#777' }"></span>
+                                        <select class="form-select form-select-sm"
+                                            :data-filter-id="filterId"
+                                            :value="isCustom ? '__custom__' : $store.citrasense.filters[filterId].name"
+                                            @change="if ($event.target.value === '__custom__') { isCustom = true; customName = $store.citrasense.filters[filterId].name; } else { isCustom = false; $store.citrasense.filters[filterId].name = $event.target.value; }">
+                                            <template x-for="group in $store.citrasense.filterNameOptions" :key="group.group">
+                                                <optgroup :label="group.group">
+                                                    <template x-for="fname in group.names" :key="fname">
+                                                        <option :value="fname" x-text="fname"></option>
+                                                    </template>
+                                                </optgroup>
+                                            </template>
+                                            <option value="__custom__">Custom...</option>
+                                        </select>
+                                    </div>
+                                    <input x-show="isCustom"
+                                        type="text" class="form-control form-control-sm mt-1"
+                                        placeholder="Custom filter name"
+                                        x-model="customName"
+                                        @input="$store.citrasense.filters[filterId].name = customName">
+                                </div>
+                                <span x-show="!$store.citrasense.filterNamesEditable" class="badge" :style="badgeStyle" x-text="filter.name"></span>
+                            </td>
+                            <td>
+                                <input type="number" class="form-control form-control-sm filter-focus-input"
+                                    :data-filter-id="filterId" x-model.number="$store.citrasense.filters[filterId].focus_position" min="0" step="1">
+                            </td>
+                        </tr>
+                    </template>
+                </tbody>
+            </table>
+            <div class="text-muted small" x-show="Object.keys($store.citrasense.filters || {}).length === 0">
+                No filters configured. Connect to hardware to discover filters.
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Mount Alignment -->
+<div x-show="$store.citrasense.status?.supports_alignment || $store.citrasense.status?.supports_manual_sync"
+     class="card bg-dark border-secondary mb-3"
+     x-data="{ syncRa: $store.citrasense.status?.telescope_ra ?? '', syncDec: $store.citrasense.status?.telescope_dec ?? '' }">
+    <div class="card-header d-flex justify-content-between align-items-center">
+        <h6 class="mb-0">Mount Alignment</h6>
+        <small class="text-muted font-monospace"
+            x-show="$store.citrasense.status?.telescope_ra != null"
+            x-text="'Position: RA ' + ($store.citrasense.status?.telescope_ra?.toFixed(4) ?? '—') + '°  Dec ' + ($store.citrasense.status?.telescope_dec?.toFixed(4) ?? '—') + '°'">
+        </small>
+    </div>
+    <div class="card-body">
+        <div class="row">
+            <!-- Alignment Settings Column -->
+            <div class="col-12 col-md-6" x-show="$store.citrasense.status?.supports_alignment">
+                <h6 class="mb-2">Alignment Settings</h6>
+                <div class="mb-3">
+                    <label for="alignment_exposure_seconds" class="form-label small">Alignment Exposure (seconds)</label>
+                    <input type="number" id="alignment_exposure_seconds" class="form-control form-control-sm"
+                        step="0.5" min="0.5" max="30"
+                        x-model.number="$store.citrasense.config.alignment_exposure_seconds">
+                </div>
+            </div>
+
+            <!-- Manual Sync Column -->
+            <div class="col-12 col-md-6" x-show="$store.citrasense.status?.supports_manual_sync">
+                <h6 class="mb-2">Manual Sync</h6>
+                <p class="text-muted small mb-2">Tell the mount where it's currently pointing (no camera needed)</p>
+                <div x-show="$store.citrasense.status?.mount_at_home"
+                     class="alert alert-warning py-1 px-2 small mb-2">
+                    <i class="bi bi-exclamation-triangle me-1"></i>
+                    Mount is at home — sync requires a slew first
+                </div>
+                <div class="row g-2 mb-3">
+                    <div class="col-6">
+                        <label for="sync_ra" class="form-label small">RA (degrees)</label>
+                        <input type="number" id="sync_ra" class="form-control form-control-sm"
+                            step="any" min="0" max="360" placeholder="0 - 360"
+                            x-model.number="syncRa">
+                    </div>
+                    <div class="col-6">
+                        <label for="sync_dec" class="form-label small">Dec (degrees)</label>
+                        <input type="number" id="sync_dec" class="form-control form-control-sm"
+                            step="any" min="-90" max="90" placeholder="-90 - 90"
+                            x-model.number="syncDec">
+                    </div>
+                </div>
+                <button type="button" class="btn btn-sm btn-outline-primary w-100"
+                    :disabled="$store.citrasense.status?.mount_at_home || $store.citrasense.isSystemBusy"
+                    @click="window.manualSync(syncRa, syncDec)">
+                    <i class="bi bi-crosshair me-1"></i> Manually Sync Mount
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Hardware Safety Monitor -->
+<div x-show="$store.citrasense.status?.supports_hardware_safety_monitor"
+     class="card bg-dark border-secondary mb-3">
+    <div class="card-header">
+        <h6 class="mb-0"><i class="bi bi-shield-check me-1"></i>Hardware Safety Monitor</h6>
+    </div>
+    <div class="card-body">
+        <div class="form-check form-switch mb-2">
+            <input class="form-check-input" type="checkbox" id="hardwareSafetyCheckEnabled"
+                   x-model="$store.citrasense.config.hardware_safety_check_enabled">
+            <label class="form-check-label" for="hardwareSafetyCheckEnabled">
+                Enable hardware safety monitor
+            </label>
+        </div>
+        <small class="text-muted d-block">
+            Polls the hardware adapter's external safety device (e.g. weather station, roof/ceiling sensor).
+            When unsafe conditions are reported, all telescope operations are immediately halted.
+        </small>
+    </div>
+</div>

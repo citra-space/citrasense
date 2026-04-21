@@ -4,7 +4,7 @@ import math
 
 import pytest
 
-from citrascope.hardware.config_health import (
+from citrasense.hardware.config_health import (
     ConfigHealth,
     HardwareConfigCheck,
     _safe_float,

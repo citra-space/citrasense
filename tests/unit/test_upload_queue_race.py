@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
 
-from citrascope.tasks.scope.base_telescope_task import AbstractBaseTelescopeTask
+from citrasense.tasks.scope.base_telescope_task import AbstractBaseTelescopeTask
 
 # ---------------------------------------------------------------------------
 # Minimal concrete subclass — AbstractBaseTelescopeTask is abstract
@@ -97,9 +97,9 @@ class TestConfigReloadDropsInFlightStages:
     """_initialize_telescope must not restore processing_tasks or uploading_tasks."""
 
     def _make_daemon(self):
-        from citrascope.citra_scope_daemon import CitraScopeDaemon
+        from citrasense.citrasense_daemon import CitraSenseDaemon
 
-        daemon = CitraScopeDaemon.__new__(CitraScopeDaemon)
+        daemon = CitraSenseDaemon.__new__(CitraSenseDaemon)
         daemon.settings = MagicMock()
         daemon.api_client = MagicMock()
         daemon.api_client.does_api_server_accept_key.return_value = True
@@ -141,7 +141,7 @@ class TestConfigReloadDropsInFlightStages:
         old_uploading = {"task-u1": MagicMock(), "task-u2": MagicMock()}
 
         with (
-            patch("citrascope.citra_scope_daemon.TaskManager") as MockTM,
+            patch("citrasense.citrasense_daemon.TaskManager") as MockTM,
             patch.object(daemon, "_initialize_safety_monitor"),
             patch.object(daemon, "save_filter_config"),
             patch.object(daemon, "sync_filters_to_backend"),

@@ -1,8 +1,8 @@
 """Tests for calibration suite generators."""
 
-from citrascope.calibration import FilterSlot
-from citrascope.calibration.calibration_suites import all_flats_suite, bias_and_dark_suite
-from citrascope.hardware.devices.camera.abstract_camera import CalibrationProfile
+from citrasense.calibration import FilterSlot
+from citrasense.calibration.calibration_suites import all_flats_suite, bias_and_dark_suite
+from citrasense.hardware.devices.camera.abstract_camera import CalibrationProfile
 
 
 def _profile(current_binning: int = 1) -> CalibrationProfile:

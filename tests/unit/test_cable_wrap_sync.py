@@ -11,8 +11,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from citrascope.hardware.devices.mount.mount_state_cache import MountSnapshot, MountStateCache
-from citrascope.safety.cable_wrap_check import CableWrapCheck
+from citrasense.hardware.devices.mount.mount_state_cache import MountSnapshot, MountStateCache
+from citrasense.safety.cable_wrap_check import CableWrapCheck
 
 # ------------------------------------------------------------------
 # Helpers
@@ -177,7 +177,7 @@ class TestNoPhantomAfterSync:
 
 class TestSyncFiresListeners:
     def test_dummy_mount_fires_listeners(self):
-        from citrascope.hardware.dummy_adapter import _DummyMount
+        from citrasense.hardware.dummy_adapter import _DummyMount
 
         mount = _DummyMount(logging.getLogger("test"))
         received: list[float | None] = []
@@ -189,7 +189,7 @@ class TestSyncFiresListeners:
         assert isinstance(received[0], float)
 
     def test_multiple_listeners(self):
-        from citrascope.hardware.dummy_adapter import _DummyMount
+        from citrasense.hardware.dummy_adapter import _DummyMount
 
         mount = _DummyMount(logging.getLogger("test"))
         calls_a: list[float | None] = []
@@ -203,7 +203,7 @@ class TestSyncFiresListeners:
         assert len(calls_b) == 1
 
     def test_listener_exception_does_not_break_sync(self):
-        from citrascope.hardware.dummy_adapter import _DummyMount
+        from citrasense.hardware.dummy_adapter import _DummyMount
 
         mount = _DummyMount(logging.getLogger("test"))
 

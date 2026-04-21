@@ -9,7 +9,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 import requests
 
-from citrascope.hardware.nina.nina_focuser import NinaFocuser
+from citrasense.hardware.nina.nina_focuser import NinaFocuser
 
 API = "http://nina:1888/v2/api"
 
@@ -58,7 +58,7 @@ def focuser():
 
 
 class TestNinaFocuserConnect:
-    @patch("citrascope.hardware.nina.nina_focuser.requests.get")
+    @patch("citrasense.hardware.nina.nina_focuser.requests.get")
     def test_connect_success(self, mock_get, focuser):
         mock_get.return_value = _ok()
         assert focuser.connect() is True
@@ -66,23 +66,23 @@ class TestNinaFocuserConnect:
         mock_get.assert_called_once()
         assert "focuser/connect" in mock_get.call_args.args[0]
 
-    @patch("citrascope.hardware.nina.nina_focuser.requests.get")
+    @patch("citrasense.hardware.nina.nina_focuser.requests.get")
     def test_connect_failure(self, mock_get, focuser):
         mock_get.return_value = _fail()
         assert focuser.connect() is False
         assert focuser._connected is False
 
-    @patch("citrascope.hardware.nina.nina_focuser.requests.get")
+    @patch("citrasense.hardware.nina.nina_focuser.requests.get")
     def test_connect_network_error(self, mock_get, focuser):
         mock_get.side_effect = requests.ConnectionError("refused")
         assert focuser.connect() is False
 
-    @patch("citrascope.hardware.nina.nina_focuser.requests.get")
+    @patch("citrasense.hardware.nina.nina_focuser.requests.get")
     def test_is_connected_queries_info(self, mock_get, focuser):
         mock_get.return_value = _info_response(connected=True)
         assert focuser.is_connected() is True
 
-    @patch("citrascope.hardware.nina.nina_focuser.requests.get")
+    @patch("citrasense.hardware.nina.nina_focuser.requests.get")
     def test_is_connected_false_when_disconnected(self, mock_get, focuser):
         mock_get.return_value = _info_response(connected=False)
         assert focuser.is_connected() is False
@@ -99,7 +99,7 @@ class TestNinaFocuserConnect:
 
 
 class TestNinaFocuserMove:
-    @patch("citrascope.hardware.nina.nina_focuser.requests.get")
+    @patch("citrasense.hardware.nina.nina_focuser.requests.get")
     def test_move_absolute_success(self, mock_get, focuser):
         mock_get.return_value = _ok()
         assert focuser.move_absolute(12345) is True
@@ -107,12 +107,12 @@ class TestNinaFocuserMove:
         assert "focuser/move?" in url
         assert "position=12345" in url
 
-    @patch("citrascope.hardware.nina.nina_focuser.requests.get")
+    @patch("citrasense.hardware.nina.nina_focuser.requests.get")
     def test_move_absolute_failure(self, mock_get, focuser):
         mock_get.return_value = _fail()
         assert focuser.move_absolute(12345) is False
 
-    @patch("citrascope.hardware.nina.nina_focuser.requests.get")
+    @patch("citrasense.hardware.nina.nina_focuser.requests.get")
     def test_move_relative_computes_absolute_target(self, mock_get, focuser):
         """NINA has no relative endpoint — move_relative reads position then issues absolute move."""
         mock_get.side_effect = [
@@ -125,7 +125,7 @@ class TestNinaFocuserMove:
         assert "focuser/move?" in move_url
         assert "position=4800" in move_url
 
-    @patch("citrascope.hardware.nina.nina_focuser.requests.get")
+    @patch("citrasense.hardware.nina.nina_focuser.requests.get")
     def test_move_relative_clamps_to_zero(self, mock_get, focuser):
         mock_get.side_effect = [
             _info_response(position=100, max_step=50000),
@@ -136,7 +136,7 @@ class TestNinaFocuserMove:
         move_url = mock_get.call_args_list[-1].args[0]
         assert "position=0" in move_url
 
-    @patch("citrascope.hardware.nina.nina_focuser.requests.get")
+    @patch("citrasense.hardware.nina.nina_focuser.requests.get")
     def test_move_relative_clamps_to_max(self, mock_get, focuser):
         mock_get.side_effect = [
             _info_response(position=49900, max_step=50000),
@@ -147,19 +147,19 @@ class TestNinaFocuserMove:
         move_url = mock_get.call_args_list[-1].args[0]
         assert "position=50000" in move_url
 
-    @patch("citrascope.hardware.nina.nina_focuser.requests.get")
+    @patch("citrasense.hardware.nina.nina_focuser.requests.get")
     def test_move_relative_fails_when_position_unknown(self, mock_get, focuser):
         mock_get.return_value = _fail()
         assert focuser.move_relative(100) is False
 
-    @patch("citrascope.hardware.nina.nina_focuser.requests.get")
+    @patch("citrasense.hardware.nina.nina_focuser.requests.get")
     def test_abort_move(self, mock_get, focuser):
         mock_get.return_value = _ok()
         focuser.abort_move()
         url = mock_get.call_args.args[0]
         assert "stop-move" in url
 
-    @patch("citrascope.hardware.nina.nina_focuser.requests.get")
+    @patch("citrasense.hardware.nina.nina_focuser.requests.get")
     def test_abort_move_tolerates_error(self, mock_get, focuser):
         mock_get.side_effect = requests.Timeout("timeout")
         focuser.abort_move()  # should not raise
@@ -171,47 +171,47 @@ class TestNinaFocuserMove:
 
 
 class TestNinaFocuserInfo:
-    @patch("citrascope.hardware.nina.nina_focuser.requests.get")
+    @patch("citrasense.hardware.nina.nina_focuser.requests.get")
     def test_get_position(self, mock_get, focuser):
         mock_get.return_value = _info_response(position=7777)
         assert focuser.get_position() == 7777
 
-    @patch("citrascope.hardware.nina.nina_focuser.requests.get")
+    @patch("citrasense.hardware.nina.nina_focuser.requests.get")
     def test_get_position_returns_none_on_failure(self, mock_get, focuser):
         mock_get.return_value = _fail()
         assert focuser.get_position() is None
 
-    @patch("citrascope.hardware.nina.nina_focuser.requests.get")
+    @patch("citrasense.hardware.nina.nina_focuser.requests.get")
     def test_is_moving(self, mock_get, focuser):
         mock_get.return_value = _info_response(is_moving=True)
         assert focuser.is_moving() is True
 
-    @patch("citrascope.hardware.nina.nina_focuser.requests.get")
+    @patch("citrasense.hardware.nina.nina_focuser.requests.get")
     def test_is_not_moving(self, mock_get, focuser):
         mock_get.return_value = _info_response(is_moving=False)
         assert focuser.is_moving() is False
 
-    @patch("citrascope.hardware.nina.nina_focuser.requests.get")
+    @patch("citrasense.hardware.nina.nina_focuser.requests.get")
     def test_is_moving_returns_false_on_error(self, mock_get, focuser):
         mock_get.side_effect = requests.ConnectionError("refused")
         assert focuser.is_moving() is False
 
-    @patch("citrascope.hardware.nina.nina_focuser.requests.get")
+    @patch("citrasense.hardware.nina.nina_focuser.requests.get")
     def test_get_max_position(self, mock_get, focuser):
         mock_get.return_value = _info_response(max_step=65000)
         assert focuser.get_max_position() == 65000
 
-    @patch("citrascope.hardware.nina.nina_focuser.requests.get")
+    @patch("citrasense.hardware.nina.nina_focuser.requests.get")
     def test_get_temperature(self, mock_get, focuser):
         mock_get.return_value = _info_response(temperature=18.3)
         assert focuser.get_temperature() == pytest.approx(18.3)
 
-    @patch("citrascope.hardware.nina.nina_focuser.requests.get")
+    @patch("citrasense.hardware.nina.nina_focuser.requests.get")
     def test_get_temperature_nan_returns_none(self, mock_get, focuser):
         mock_get.return_value = _info_response(temperature=float("nan"))
         assert focuser.get_temperature() is None
 
-    @patch("citrascope.hardware.nina.nina_focuser.requests.get")
+    @patch("citrasense.hardware.nina.nina_focuser.requests.get")
     def test_get_temperature_none_returns_none(self, mock_get, focuser):
         resp = MagicMock()
         resp.json.return_value = {
@@ -228,7 +228,7 @@ class TestNinaFocuserInfo:
 
 
 def _make_adapter():
-    from citrascope.hardware.nina.nina_adapter import NinaAdvancedHttpAdapter
+    from citrasense.hardware.nina.nina_adapter import NinaAdvancedHttpAdapter
 
     return NinaAdvancedHttpAdapter(
         logger=MagicMock(),
@@ -238,7 +238,7 @@ def _make_adapter():
 
 
 class TestCapturePreview:
-    @patch("citrascope.hardware.nina.nina_adapter.requests.get")
+    @patch("citrasense.hardware.nina.nina_adapter.requests.get")
     def test_returns_jpeg_data_url(self, mock_get):
         adapter = _make_adapter()
         jpeg_bytes = b"\xff\xd8\xff\xe0fake-jpeg-data"
@@ -256,7 +256,7 @@ class TestCapturePreview:
         call_kwargs = mock_get.call_args
         assert "stream" in call_kwargs.kwargs.get("params", {}) or "stream" in str(call_kwargs)
 
-    @patch("citrascope.hardware.nina.nina_adapter.requests.get")
+    @patch("citrasense.hardware.nina.nina_adapter.requests.get")
     def test_returns_png_data_url(self, mock_get):
         adapter = _make_adapter()
         png_bytes = b"\x89PNGfake-png-data"
@@ -271,7 +271,7 @@ class TestCapturePreview:
 
         assert result.startswith("data:image/png;base64,")
 
-    @patch("citrascope.hardware.nina.nina_adapter.requests.get")
+    @patch("citrasense.hardware.nina.nina_adapter.requests.get")
     def test_concurrent_capture_raises(self, mock_get):
         adapter = _make_adapter()
         adapter._preview_lock.acquire()
@@ -281,7 +281,7 @@ class TestCapturePreview:
         finally:
             adapter._preview_lock.release()
 
-    @patch("citrascope.hardware.nina.nina_adapter.requests.get")
+    @patch("citrasense.hardware.nina.nina_adapter.requests.get")
     def test_network_error_propagates(self, mock_get):
         adapter = _make_adapter()
         mock_get.side_effect = requests.ConnectionError("refused")
@@ -313,7 +313,7 @@ class TestSetFilter:
         }
         return adapter, listener
 
-    @patch("citrascope.hardware.nina.nina_adapter.requests.get")
+    @patch("citrasense.hardware.nina.nina_adapter.requests.get")
     def test_set_filter_already_on_target(self, mock_get):
         adapter, _listener = self._adapter_with_listener()
         info_resp = MagicMock()
@@ -328,7 +328,7 @@ class TestSetFilter:
         urls = [c.args[0] for c in mock_get.call_args_list]
         assert not any("change-filter" in u for u in urls)
 
-    @patch("citrascope.hardware.nina.nina_adapter.requests.get")
+    @patch("citrasense.hardware.nina.nina_adapter.requests.get")
     def test_set_filter_changes_and_moves_focus(self, mock_get):
         adapter, listener = self._adapter_with_listener()
         focuser_mock = MagicMock()
@@ -358,7 +358,7 @@ class TestSetFilter:
         assert adapter.set_filter(1) is True
         focuser_mock.move_absolute.assert_called_once_with(9200)
 
-    @patch("citrascope.hardware.nina.nina_adapter.requests.get")
+    @patch("citrasense.hardware.nina.nina_adapter.requests.get")
     def test_set_filter_nina_rejects(self, mock_get):
         adapter, _listener = self._adapter_with_listener()
 
@@ -378,7 +378,7 @@ class TestSetFilter:
         adapter._event_listener = None
         assert adapter.set_filter(0) is False
 
-    @patch("citrascope.hardware.nina.nina_adapter.requests.get")
+    @patch("citrasense.hardware.nina.nina_adapter.requests.get")
     def test_set_filter_timeout_returns_false(self, mock_get):
         adapter, _listener = self._adapter_with_listener()
         adapter.HARDWARE_MOVE_TIMEOUT = 0.01
@@ -424,8 +424,8 @@ def _all_succeed_responses():
 
 
 class TestFocuserWiring:
-    @patch("citrascope.hardware.nina.nina_adapter.NinaEventListener")
-    @patch("citrascope.hardware.nina.nina_adapter.requests.get")
+    @patch("citrasense.hardware.nina.nina_adapter.NinaEventListener")
+    @patch("citrasense.hardware.nina.nina_adapter.requests.get")
     def test_focuser_created_on_connect(self, mock_get, mock_ws):
         mock_get.side_effect = _all_succeed_responses()
         adapter = _make_adapter()
@@ -434,8 +434,8 @@ class TestFocuserWiring:
         assert adapter.focuser is not None
         assert isinstance(adapter.focuser, NinaFocuser)
 
-    @patch("citrascope.hardware.nina.nina_adapter.NinaEventListener")
-    @patch("citrascope.hardware.nina.nina_adapter.requests.get")
+    @patch("citrasense.hardware.nina.nina_adapter.NinaEventListener")
+    @patch("citrasense.hardware.nina.nina_adapter.requests.get")
     def test_focuser_none_when_focuser_connect_fails(self, mock_get, mock_ws):
         responses = _all_succeed_responses()
         responses[3] = _fail("No focuser")  # focuser connect fails
@@ -445,8 +445,8 @@ class TestFocuserWiring:
         assert adapter.connect() is True
         assert adapter.focuser is None
 
-    @patch("citrascope.hardware.nina.nina_adapter.NinaEventListener")
-    @patch("citrascope.hardware.nina.nina_adapter.requests.get")
+    @patch("citrasense.hardware.nina.nina_adapter.NinaEventListener")
+    @patch("citrasense.hardware.nina.nina_adapter.requests.get")
     def test_focuser_cleared_on_disconnect(self, mock_get, mock_ws):
         mock_get.side_effect = _all_succeed_responses()
         adapter = _make_adapter()

@@ -6,8 +6,8 @@ import logging
 import time
 from unittest.mock import MagicMock, patch
 
-from citrascope.location.twilight import ObservingWindow
-from citrascope.tasks.observing_session import _SHUTDOWN_TIMEOUT_SECONDS, ObservingSessionManager, SessionState
+from citrasense.location.twilight import ObservingWindow
+from citrasense.tasks.observing_session import _SHUTDOWN_TIMEOUT_SECONDS, ObservingSessionManager, SessionState
 
 
 def _make_settings(**overrides):

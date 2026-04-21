@@ -5,7 +5,7 @@ import time
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-from citrascope.tasks.base_work_queue import BaseWorkQueue
+from citrasense.tasks.base_work_queue import BaseWorkQueue
 
 # ---------------------------------------------------------------------------
 # Concrete subclass for testing BaseWorkQueue
@@ -182,7 +182,7 @@ def test_clear_epoch_discards_in_flight_result():
 
 
 def test_imaging_queue_clear_cancels_in_flight_task():
-    from citrascope.tasks.imaging_queue import ImagingQueue
+    from citrasense.tasks.imaging_queue import ImagingQueue
 
     cancel_event = threading.Event()
 
@@ -213,7 +213,7 @@ def test_imaging_queue_clear_cancels_in_flight_task():
 
 
 def test_imaging_queue_submit():
-    from citrascope.tasks.imaging_queue import ImagingQueue
+    from citrasense.tasks.imaging_queue import ImagingQueue
 
     iq = ImagingQueue(
         num_workers=1,
@@ -230,7 +230,7 @@ def test_imaging_queue_submit():
 
 
 def test_imaging_queue_success():
-    from citrascope.tasks.imaging_queue import ImagingQueue
+    from citrasense.tasks.imaging_queue import ImagingQueue
 
     mock_tm = MagicMock()
     iq = ImagingQueue(
@@ -254,7 +254,7 @@ def test_imaging_queue_success():
 
 
 def test_imaging_queue_get_task_from_item():
-    from citrascope.tasks.imaging_queue import ImagingQueue
+    from citrasense.tasks.imaging_queue import ImagingQueue
 
     iq = ImagingQueue(
         num_workers=1,
@@ -273,7 +273,7 @@ def test_imaging_queue_get_task_from_item():
 
 
 def test_processing_queue_get_working_dir_with_settings():
-    from citrascope.tasks.processing_queue import ProcessingQueue
+    from citrasense.tasks.processing_queue import ProcessingQueue
 
     pq = ProcessingQueue(
         num_workers=1,
@@ -287,7 +287,7 @@ def test_processing_queue_get_working_dir_with_settings():
 
 
 def test_processing_queue_get_working_dir_no_settings():
-    from citrascope.tasks.processing_queue import ProcessingQueue
+    from citrasense.tasks.processing_queue import ProcessingQueue
 
     pq = ProcessingQueue(num_workers=1, settings=MagicMock(), logger=MagicMock())
     wd = pq._get_working_dir("task-123", None)
@@ -295,7 +295,7 @@ def test_processing_queue_get_working_dir_no_settings():
 
 
 def test_processing_queue_cleanup(tmp_path):
-    from citrascope.tasks.processing_queue import ProcessingQueue
+    from citrasense.tasks.processing_queue import ProcessingQueue
 
     pq = ProcessingQueue(num_workers=1, settings=MagicMock(), logger=MagicMock())
     mock_settings = MagicMock()
@@ -310,7 +310,7 @@ def test_processing_queue_cleanup(tmp_path):
 
 
 def test_processing_queue_get_task_from_item():
-    from citrascope.tasks.processing_queue import ProcessingQueue
+    from citrasense.tasks.processing_queue import ProcessingQueue
 
     pq = ProcessingQueue(num_workers=1, settings=MagicMock(), logger=MagicMock())
     task = MagicMock()
@@ -318,7 +318,7 @@ def test_processing_queue_get_task_from_item():
 
 
 def test_processing_queue_submit():
-    from citrascope.tasks.processing_queue import ProcessingQueue
+    from citrasense.tasks.processing_queue import ProcessingQueue
 
     pq = ProcessingQueue(num_workers=1, settings=MagicMock(), logger=MagicMock())
     pq.submit("t1", Path("/img.fits"), {"task": MagicMock()}, MagicMock())
@@ -326,7 +326,7 @@ def test_processing_queue_submit():
 
 
 def test_processing_queue_execute_success(tmp_path):
-    from citrascope.tasks.processing_queue import ProcessingQueue
+    from citrasense.tasks.processing_queue import ProcessingQueue
 
     pq = ProcessingQueue(
         num_workers=1,
@@ -361,7 +361,7 @@ def test_processing_queue_execute_success(tmp_path):
 
 
 def test_processing_queue_execute_exception(tmp_path):
-    from citrascope.tasks.processing_queue import ProcessingQueue
+    from citrasense.tasks.processing_queue import ProcessingQueue
 
     pq = ProcessingQueue(num_workers=1, settings=MagicMock(), logger=MagicMock())
     mock_processor_registry = MagicMock()
@@ -387,7 +387,7 @@ def test_processing_queue_execute_exception(tmp_path):
 
 
 def test_processing_queue_on_success():
-    from citrascope.tasks.processing_queue import ProcessingQueue
+    from citrasense.tasks.processing_queue import ProcessingQueue
 
     pq = ProcessingQueue(num_workers=1, settings=MagicMock(), logger=MagicMock())
     on_complete = MagicMock()
@@ -407,7 +407,7 @@ def test_processing_queue_on_success():
 
 
 def test_processing_queue_on_success_keeps_output():
-    from citrascope.tasks.processing_queue import ProcessingQueue
+    from citrasense.tasks.processing_queue import ProcessingQueue
 
     pq = ProcessingQueue(num_workers=1, settings=MagicMock(), logger=MagicMock())
     on_complete = MagicMock()
@@ -425,7 +425,7 @@ def test_processing_queue_on_success_keeps_output():
 
 
 def test_processing_queue_on_permanent_failure():
-    from citrascope.tasks.processing_queue import ProcessingQueue
+    from citrasense.tasks.processing_queue import ProcessingQueue
 
     pq = ProcessingQueue(num_workers=1, settings=MagicMock(), logger=MagicMock())
     on_complete = MagicMock()
@@ -444,7 +444,7 @@ def test_processing_queue_on_permanent_failure():
 
 
 def test_processing_queue_on_permanent_failure_keeps_output():
-    from citrascope.tasks.processing_queue import ProcessingQueue
+    from citrasense.tasks.processing_queue import ProcessingQueue
 
     pq = ProcessingQueue(num_workers=1, settings=MagicMock(), logger=MagicMock())
     on_complete = MagicMock()

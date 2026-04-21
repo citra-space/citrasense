@@ -7,7 +7,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from fastapi.testclient import TestClient
 
-from citrascope.web.app import CitraScopeWebApp
+from citrasense.web.app import CitraSenseWebApp
 
 
 @pytest.fixture
@@ -48,7 +48,7 @@ def mock_settings():
     s.directories = MagicMock()
     s.directories.images_dir = MagicMock(__str__=lambda self: "/tmp/images", exists=lambda: False)
     s.directories.processing_dir = MagicMock(__str__=lambda self: "/tmp/processing")
-    s.directories.current_log_path.return_value = "/tmp/citrascope.log"
+    s.directories.current_log_path.return_value = "/tmp/citrasense.log"
     s.is_configured.return_value = True
     s.keep_processing_output = False
     s.alignment_exposure_seconds = 2.0
@@ -112,8 +112,8 @@ def mock_daemon(mock_settings):
 
 @pytest.fixture
 def web_app(mock_daemon):
-    with patch("citrascope.web.app.StaticFiles"):
-        app = CitraScopeWebApp(daemon=mock_daemon)
+    with patch("citrasense.web.app.StaticFiles"):
+        app = CitraSenseWebApp(daemon=mock_daemon)
     return app
 
 
@@ -243,7 +243,7 @@ def test_toggle_self_tasking_no_daemon(web_app):
 
 def test_status_includes_self_tasking_fields(web_app, mock_daemon):
     """Verify the SystemStatus model has observing session and self-tasking fields."""
-    from citrascope.web.app import SystemStatus
+    from citrasense.web.app import SystemStatus
 
     status = SystemStatus()
     assert hasattr(status, "observing_session_enabled")

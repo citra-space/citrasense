@@ -3,12 +3,12 @@
 import logging
 from unittest.mock import MagicMock
 
-from citrascope.logging._citrascope_logger import (
+from citrasense.logging._citrasense_logger import (
     ColoredFormatter,
     ExcludeHttpRequestFilter,
     ExcludeWebLogsFilter,
 )
-from citrascope.logging.web_log_handler import WebLogHandler
+from citrasense.logging.web_log_handler import WebLogHandler
 
 # ---------------------------------------------------------------------------
 # Filters

@@ -9,7 +9,7 @@ supported commands, broken commands, response formats, and error codes.
 
 import pytest
 
-from citrascope.hardware.devices.mount.zwo_am_protocol import (
+from citrasense.hardware.devices.mount.zwo_am_protocol import (
     Direction,
     MountMode,
     SlewRate,

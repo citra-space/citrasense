@@ -11,7 +11,7 @@ from unittest.mock import MagicMock, patch
 
 def _make_task_instance():
     """Create a minimal AbstractBaseTelescopeTask for testing _on_image_done."""
-    from citrascope.tasks.scope.base_telescope_task import AbstractBaseTelescopeTask
+    from citrasense.tasks.scope.base_telescope_task import AbstractBaseTelescopeTask
 
     class ConcreteTask(AbstractBaseTelescopeTask):
         def execute(self):
@@ -209,7 +209,7 @@ class TestFinalizationGuard:
 class TestMarkCompleteRetry:
     """Verify mark_task_complete retries and failure handling."""
 
-    @patch("citrascope.tasks.scope.base_telescope_task.time.sleep")
+    @patch("citrasense.tasks.scope.base_telescope_task.time.sleep")
     def test_retries_on_transient_failure(self, mock_sleep):
         t = _make_task_instance()
         t._pending_images = 1
@@ -220,7 +220,7 @@ class TestMarkCompleteRetry:
         assert t.api_client.mark_task_complete.call_count == 3
         t.task_manager.record_task_succeeded.assert_called_once()
 
-    @patch("citrascope.tasks.scope.base_telescope_task.time.sleep")
+    @patch("citrasense.tasks.scope.base_telescope_task.time.sleep")
     def test_records_failure_after_exhausted_retries(self, mock_sleep):
         t = _make_task_instance()
         t._pending_images = 1

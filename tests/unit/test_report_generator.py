@@ -2,7 +2,7 @@
 
 import json
 
-from citrascope.processors.report_generator import (
+from citrasense.processors.report_generator import (
     _deg_to_dms,
     _deg_to_hms,
     generate_html_report,

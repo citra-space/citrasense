@@ -1,4 +1,4 @@
-"""Unit tests for citrascope.version — install type detection and git metadata."""
+"""Unit tests for citrasense.version — install type detection and git metadata."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ import subprocess
 from importlib.metadata import PackageNotFoundError
 from unittest.mock import patch
 
-from citrascope.version import (
+from citrasense.version import (
     VersionInfo,
     format_version_cli,
     format_version_log,
@@ -45,8 +45,8 @@ class TestGetVersionInfo:
     def test_pypi_install(self, tmp_path):
         """No git repo detected -> install_type 'pypi'."""
         with (
-            patch("citrascope.version.pkg_version", return_value="1.2.3"),
-            patch("citrascope.version._find_git_root", return_value=None),
+            patch("citrasense.version.pkg_version", return_value="1.2.3"),
+            patch("citrasense.version._find_git_root", return_value=None),
         ):
             info = get_version_info()
         assert info["version"] == "1.2.3"
@@ -58,8 +58,8 @@ class TestGetVersionInfo:
     def test_editable_install_clean(self, tmp_path):
         """Metadata found + git repo -> install_type 'editable'."""
         with (
-            patch("citrascope.version.pkg_version", return_value="0.9.10"),
-            patch("citrascope.version._find_git_root", return_value=tmp_path),
+            patch("citrasense.version.pkg_version", return_value="0.9.10"),
+            patch("citrasense.version._find_git_root", return_value=tmp_path),
             patch("subprocess.run", side_effect=_fake_run("main", "deadbeef", "")),
         ):
             info = get_version_info()
@@ -72,8 +72,8 @@ class TestGetVersionInfo:
     def test_editable_install_dirty(self, tmp_path):
         """Dirty working tree is detected."""
         with (
-            patch("citrascope.version.pkg_version", return_value="0.9.10"),
-            patch("citrascope.version._find_git_root", return_value=tmp_path),
+            patch("citrasense.version.pkg_version", return_value="0.9.10"),
+            patch("citrasense.version._find_git_root", return_value=tmp_path),
             patch("subprocess.run", side_effect=_fake_run("dev", "1234567", " M foo.py\n")),
         ):
             info = get_version_info()
@@ -83,8 +83,8 @@ class TestGetVersionInfo:
     def test_source_install_no_metadata(self, tmp_path):
         """No pip metadata at all -> install_type 'source'."""
         with (
-            patch("citrascope.version.pkg_version", side_effect=PackageNotFoundError("citrascope")),
-            patch("citrascope.version._find_git_root", return_value=tmp_path),
+            patch("citrasense.version.pkg_version", side_effect=PackageNotFoundError("citrasense")),
+            patch("citrasense.version._find_git_root", return_value=tmp_path),
             patch("subprocess.run", side_effect=_fake_run()),
         ):
             info = get_version_info()
@@ -99,8 +99,8 @@ class TestGetVersionInfo:
             raise FileNotFoundError("git not found")
 
         with (
-            patch("citrascope.version.pkg_version", return_value="1.0.0"),
-            patch("citrascope.version._find_git_root", return_value=tmp_path),
+            patch("citrasense.version.pkg_version", return_value="1.0.0"),
+            patch("citrasense.version._find_git_root", return_value=tmp_path),
             patch("subprocess.run", side_effect=_no_git),
         ):
             info = get_version_info()
@@ -114,8 +114,8 @@ class TestGetVersionInfo:
             raise subprocess.TimeoutExpired(cmd, 5)
 
         with (
-            patch("citrascope.version.pkg_version", return_value="1.0.0"),
-            patch("citrascope.version._find_git_root", return_value=tmp_path),
+            patch("citrasense.version.pkg_version", return_value="1.0.0"),
+            patch("citrasense.version._find_git_root", return_value=tmp_path),
             patch("subprocess.run", side_effect=_timeout),
         ):
             info = get_version_info()

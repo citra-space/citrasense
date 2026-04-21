@@ -1,0 +1,415 @@
+/* CitraSense Web Interface - Custom Styles
+ * Bootstrap 5 handles most styling; these are overrides and additions only
+ */
+
+/* Alpine.js: hide elements until Alpine has processed them */
+[x-cloak] {
+    display: none !important;
+}
+
+/* Log terminal container - custom scrollbar and background watermark */
+.log-container {
+    background: #0d1117 url('/static/img/citra.png') no-repeat 85% center;
+    background-size: auto 70%;
+    background-blend-mode: soft-light;
+    opacity: 1;
+    font-family: monospace;
+    line-height: 1.5;
+}
+
+/* Dark scrollbar for log container */
+.log-container::-webkit-scrollbar {
+    width: 12px;
+}
+
+.log-container::-webkit-scrollbar-track {
+    background: #0d1117;
+    border-radius: 5px;
+}
+
+.log-container::-webkit-scrollbar-thumb {
+    background: #30363d;
+    border-radius: 5px;
+}
+
+.log-container::-webkit-scrollbar-thumb:hover {
+    background: #484f58;
+}
+
+/* Body padding for fixed bottom log terminal */
+body {
+    padding-bottom: 100px;
+}
+
+/* Logo styling */
+.logo-img {
+    height: 1.5em;
+    width: auto;
+    vertical-align: middle;
+    display: inline-block;
+}
+
+/* Status badge container */
+.status-badge-container {
+    gap: 0.5em;
+}
+
+#automatedSchedulingStatus {
+    display: inline-block;
+    min-width: 70px;
+}
+
+#toggleAutomatedSchedulingSwitch {
+    margin-top: 6px;
+    cursor: pointer;
+}
+
+#toggleAutomatedSchedulingSwitch:checked {
+    background-color: #198754;
+    border-color: #198754;
+}
+
+#toggleAutomatedSchedulingSwitch:focus {
+    box-shadow: 0 0 0 0.25rem rgba(25, 135, 84, 0.25);
+}
+
+#processingStatus {
+    display: inline-block;
+    min-width: 70px;
+}
+
+/* Task processing switch alignment */
+#toggleProcessingSwitch {
+    margin-top: 6px;
+    cursor: pointer;
+}
+
+#toggleProcessingSwitch:checked {
+    background-color: #198754;
+    border-color: #198754;
+}
+
+#toggleProcessingSwitch:focus {
+    box-shadow: 0 0 0 0.25rem rgba(25, 135, 84, 0.25);
+}
+
+/* Clickable elements */
+#headerVersion, #updateIndicator {
+    cursor: pointer;
+}
+
+/* Muted text color for placeholders */
+.text-muted-dark {
+    color: #a0aec0;
+}
+
+/* Log accordion customization */
+.log-accordion-button {
+    border-bottom: 1px solid #444 !important;
+    position: relative;
+    padding: 0.4rem 1rem !important;
+}
+
+.accordion-social-links {
+    position: absolute;
+    right: 50px; /* Position to the left of the accordion arrow */
+    top: 50%;
+    transform: translateY(-50%);
+    display: flex;
+    gap: 12px;
+    align-items: center;
+}
+
+.social-link {
+    color: #a0aec0;
+    transition: color 0.2s ease;
+    display: flex;
+    align-items: center;
+    text-decoration: none;
+}
+
+.social-link:hover {
+    color: #e2e8f0;
+}
+
+.log-accordion-body {
+    max-height: 40vh;
+    overflow: hidden;
+}
+
+.log-container {
+    max-height: 40vh;
+    overflow-y: auto;
+}
+
+.log-latest-line {
+    font-family: monospace;
+    font-size: 0.75rem;
+    color: #e2e8f0;
+    display: block;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    line-height: 1.4em;
+    max-height: 1.4em;
+    padding-right: 130px; /* Make room for 3 social icons and accordion arrow */
+}
+
+/* Task display */
+.task-title {
+    font-size: 1.1em;
+}
+
+.no-task-message {
+    color: #a0aec0;
+    margin: 0;
+}
+
+/* Ground station link */
+.ground-station-link {
+    color: #4299e1;
+    text-decoration: none;
+}
+
+.ground-station-link:hover {
+    color: #63b3ed;
+    text-decoration: underline;
+}
+
+/* Log entry components */
+.log-entry {
+    margin-bottom: 2px;
+    font-size: 0.75rem;
+}
+
+.log-timestamp {
+    color: #a0aec0;
+}
+
+.log-level {
+    font-weight: bold;
+    margin: 0 6px;
+}
+
+.log-level-DEBUG { color: #a0aec0; }
+.log-level-INFO { color: #48bb78; }
+.log-level-WARNING { color: #f6ad55; }
+.log-level-ERROR { color: #f56565; }
+.log-level-CRITICAL { color: #c53030; }
+
+.log-module {
+    color: #718096;
+    margin-right: 4px;
+}
+
+.log-message {
+    color: #e2e8f0;
+}
+
+/* Form validation — ensure is-invalid border overrides dark theme border-secondary */
+.form-control.is-invalid {
+    border-color: #dc3545 !important;
+}
+
+.form-control.is-invalid:focus {
+    border-color: #dc3545 !important;
+    box-shadow: 0 0 0 0.25rem rgba(220, 53, 69, 0.25);
+}
+
+/* Config side navigation */
+.config-sidenav {
+    gap: 2px;
+}
+
+.config-sidenav .nav-link {
+    color: #a0aec0;
+    border-radius: 6px;
+    padding: 0.5rem 0.75rem;
+    font-size: 0.875rem;
+    white-space: nowrap;
+    transition: color 0.15s, background-color 0.15s;
+}
+
+.config-sidenav .nav-link:hover {
+    color: #e2e8f0;
+    background-color: rgba(255, 255, 255, 0.05);
+}
+
+.config-sidenav .nav-link.active {
+    color: #fff;
+    background-color: rgba(13, 110, 253, 0.2);
+}
+
+/* Mobile: horizontal scrollable nav bar */
+@media (max-width: 767.98px) {
+    .config-sidenav {
+        overflow-x: auto;
+        flex-wrap: nowrap;
+        padding-bottom: 0.5rem;
+        border-bottom: 1px solid var(--bs-border-color);
+        margin-bottom: 1rem;
+    }
+}
+
+/* Desktop: sticky side nav */
+@media (min-width: 768px) {
+    .config-sidenav {
+        position: sticky;
+        top: 1rem;
+    }
+}
+
+/* Config save bar — sticks above the fixed log terminal.
+   bottom = collapsed log bar height (0.8rem padding + 1.25rem chevron + 3px borders)
+   minus 1px so the bar tucks behind the log terminal (z-3) with no gutter. */
+.config-save-bar {
+    position: sticky;
+    bottom: calc(2.05rem + 2px);
+    background-color: var(--bs-body-bg);
+    padding: 1rem 0;
+    margin-top: 1.5rem;
+    border-top: 1px solid var(--bs-border-color);
+    z-index: 2;
+}
+
+/* Spinning icon for async operations (e.g. reconnect button) */
+.spin {
+    animation: spin 1s linear infinite;
+}
+@keyframes spin {
+    from { transform: rotate(0deg); }
+    to { transform: rotate(360deg); }
+}
+@media (prefers-reduced-motion: reduce) {
+    .spin { animation: none; }
+}
+
+/* Toast countdown progress bar */
+.toast-countdown {
+    height: 3px;
+    border-radius: 0 0 var(--bs-toast-border-radius) var(--bs-toast-border-radius);
+    background: rgba(255, 255, 255, 0.45);
+    animation: toast-countdown linear forwards;
+}
+@keyframes toast-countdown {
+    from { width: 100%; }
+    to   { width: 0%; }
+}
+
+/* ── Analysis tab ─────────────────────────────────────────────── */
+
+.analysis-card {
+    background: var(--bs-dark);
+    border-color: var(--bs-border-color);
+}
+.analysis-card-value {
+    font-size: 1.5rem;
+    font-weight: 600;
+    line-height: 1.2;
+    color: #e2e8f0;
+}
+.analysis-card-label {
+    font-size: 0.75rem;
+    color: #a0aec0;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+
+.analysis-table {
+    font-size: 0.85rem;
+}
+.analysis-table th {
+    white-space: nowrap;
+    font-weight: 500;
+    color: #a0aec0;
+    border-bottom-color: var(--bs-border-color);
+}
+.analysis-table th.sortable {
+    cursor: pointer;
+    user-select: none;
+}
+.analysis-table th.sortable:hover {
+    color: #e2e8f0;
+}
+
+.analysis-mini-bar {
+    display: flex;
+    width: 80px;
+    height: 8px;
+    border-radius: 2px;
+    overflow: hidden;
+    background: #2d3748;
+}
+.analysis-mini-bar.overran {
+    outline: 1px solid #e74c3c;
+}
+.analysis-mini-bar-seg.delay   { background: #4a5568; }
+.analysis-mini-bar-seg.slew    { background: var(--bs-primary); }
+.analysis-mini-bar-seg.imaging { background: #00cec9; }
+.analysis-mini-bar-seg.margin  { background: #2d3748; }
+
+.analysis-timing-seg {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 0;
+    transition: width 0.3s ease;
+}
+.analysis-timing-seg-label {
+    font-size: 0.65rem;
+    color: #fff;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    padding: 0 4px;
+}
+
+.analysis-legend-dot {
+    display: inline-block;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    margin-right: 3px;
+    vertical-align: middle;
+}
+
+.analysis-summary-row:hover {
+    background: rgba(255, 255, 255, 0.03);
+}
+.analysis-row-expanded {
+    background: rgba(255, 255, 255, 0.04) !important;
+    border-bottom: none;
+}
+.analysis-row-expanded td {
+    border-bottom-color: transparent;
+}
+.analysis-detail-row td {
+    background: transparent;
+}
+.analysis-detail-card {
+    background: #1a1d23;
+    border: 1px solid var(--bs-border-color);
+    border-radius: 6px;
+}
+
+.analysis-detail-card > .row > div {
+    transition: width 0.3s ease;
+}
+
+.analysis-lightbox {
+    position: fixed;
+    inset: 0;
+    z-index: 10000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(0, 0, 0, 0.9);
+    cursor: zoom-out;
+}
+.analysis-lightbox img {
+    max-width: 95vw;
+    max-height: 95vh;
+    object-fit: contain;
+    cursor: default;
+    border-radius: 4px;
+}

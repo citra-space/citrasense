@@ -7,8 +7,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from citrascope.hardware.devices.mount.zwo_am_mount import ZwoAmMount
-from citrascope.hardware.devices.mount.zwo_am_transport import ZwoAmTransport
+from citrasense.hardware.devices.mount.zwo_am_mount import ZwoAmMount
+from citrasense.hardware.devices.mount.zwo_am_transport import ZwoAmTransport
 
 
 @pytest.fixture
@@ -26,7 +26,7 @@ class TestSyncDatetime:
         frozen = datetime(2026, 2, 24, 19, 45, 30, tzinfo=timezone.utc)
         mock_dt = MagicMock(wraps=datetime)
         mock_dt.now.return_value = frozen
-        with patch("citrascope.hardware.devices.mount.zwo_am_mount.datetime", mock_dt):
+        with patch("citrasense.hardware.devices.mount.zwo_am_mount.datetime", mock_dt):
             result = mount.sync_datetime()
 
         assert result is True

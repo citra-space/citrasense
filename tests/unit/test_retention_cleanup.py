@@ -3,39 +3,39 @@
 import os
 import time
 
-from citrascope.analysis.retention import cleanup_previews, cleanup_processing_output
-from citrascope.settings.citrascope_settings import CitraScopeSettings
+from citrasense.analysis.retention import cleanup_previews, cleanup_processing_output
+from citrasense.settings.citrasense_settings import CitraSenseSettings
 
 
 class TestRetentionMigration:
     """Test the processing_output_retention_hours validator handles legacy bool values."""
 
     def test_true_migrates_to_keep_forever(self):
-        s = CitraScopeSettings.model_validate({"processing_output_retention_hours": True})
+        s = CitraSenseSettings.model_validate({"processing_output_retention_hours": True})
         assert s.processing_output_retention_hours == -1
 
     def test_false_migrates_to_delete_immediately(self):
-        s = CitraScopeSettings.model_validate({"processing_output_retention_hours": False})
+        s = CitraSenseSettings.model_validate({"processing_output_retention_hours": False})
         assert s.processing_output_retention_hours == 0
 
     def test_positive_int_preserved(self):
-        s = CitraScopeSettings.model_validate({"processing_output_retention_hours": 24})
+        s = CitraSenseSettings.model_validate({"processing_output_retention_hours": 24})
         assert s.processing_output_retention_hours == 24
 
     def test_negative_one_preserved(self):
-        s = CitraScopeSettings.model_validate({"processing_output_retention_hours": -1})
+        s = CitraSenseSettings.model_validate({"processing_output_retention_hours": -1})
         assert s.processing_output_retention_hours == -1
 
     def test_below_negative_one_clamped(self):
-        s = CitraScopeSettings.model_validate({"processing_output_retention_hours": -5})
+        s = CitraSenseSettings.model_validate({"processing_output_retention_hours": -5})
         assert s.processing_output_retention_hours == -1
 
     def test_default_is_zero(self):
-        s = CitraScopeSettings.model_validate({})
+        s = CitraSenseSettings.model_validate({})
         assert s.processing_output_retention_hours == 0
 
     def test_invalid_falls_back_to_zero(self):
-        s = CitraScopeSettings.model_validate({"processing_output_retention_hours": "bogus"})
+        s = CitraSenseSettings.model_validate({"processing_output_retention_hours": "bogus"})
         assert s.processing_output_retention_hours == 0
 
 

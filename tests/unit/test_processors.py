@@ -6,10 +6,10 @@ from unittest.mock import Mock
 import numpy as np
 import pytest
 
-from citrascope.processors.abstract_processor import AbstractImageProcessor
-from citrascope.processors.processor_registry import ProcessorRegistry
-from citrascope.processors.processor_result import AggregatedResult, ProcessingContext, ProcessorResult
-from citrascope.tasks.task import Task
+from citrasense.processors.abstract_processor import AbstractImageProcessor
+from citrasense.processors.processor_registry import ProcessorRegistry
+from citrasense.processors.processor_result import AggregatedResult, ProcessingContext, ProcessorResult
+from citrasense.tasks.task import Task
 
 
 class MockPassProcessor(AbstractImageProcessor):

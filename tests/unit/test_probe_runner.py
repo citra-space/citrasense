@@ -3,8 +3,8 @@
 import time
 from unittest.mock import patch
 
-from citrascope.hardware.devices.abstract_hardware_device import AbstractHardwareDevice
-from citrascope.hardware.probe_runner import run_hardware_probe
+from citrasense.hardware.devices.abstract_hardware_device import AbstractHardwareDevice
+from citrasense.hardware.probe_runner import run_hardware_probe
 
 # --- Standalone module-level functions for subprocess pickling ---
 
@@ -103,10 +103,10 @@ class TestCachedHardwareProbe:
         AbstractHardwareDevice._hardware_probe_cache.clear()
 
     def test_delegates_to_subprocess_and_caches(self):
-        from citrascope.hardware.devices.focuser.zwo_eaf import ZwoEafFocuser
+        from citrasense.hardware.devices.focuser.zwo_eaf import ZwoEafFocuser
 
         with patch(
-            "citrascope.hardware.probe_runner.run_hardware_probe",
+            "citrasense.hardware.probe_runner.run_hardware_probe",
             return_value=[{"value": 1, "label": "Focuser 1"}],
         ) as mock_probe:
             result = ZwoEafFocuser._cached_hardware_probe(
@@ -129,10 +129,10 @@ class TestCachedHardwareProbe:
             assert mock_probe.call_count == 1  # still 1
 
     def test_cache_expires(self):
-        from citrascope.hardware.devices.focuser.zwo_eaf import ZwoEafFocuser
+        from citrasense.hardware.devices.focuser.zwo_eaf import ZwoEafFocuser
 
         with patch(
-            "citrascope.hardware.probe_runner.run_hardware_probe",
+            "citrasense.hardware.probe_runner.run_hardware_probe",
             return_value=["first"],
         ) as mock_probe:
             ZwoEafFocuser._cached_hardware_probe(
@@ -144,7 +144,7 @@ class TestCachedHardwareProbe:
             assert mock_probe.call_count == 1
 
         with patch(
-            "citrascope.hardware.probe_runner.run_hardware_probe",
+            "citrasense.hardware.probe_runner.run_hardware_probe",
             return_value=["second"],
         ) as mock_probe2:
             result = ZwoEafFocuser._cached_hardware_probe(
@@ -157,10 +157,10 @@ class TestCachedHardwareProbe:
             assert mock_probe2.call_count == 1
 
     def test_clear_probe_cache(self):
-        from citrascope.hardware.devices.focuser.zwo_eaf import ZwoEafFocuser
+        from citrasense.hardware.devices.focuser.zwo_eaf import ZwoEafFocuser
 
         with patch(
-            "citrascope.hardware.probe_runner.run_hardware_probe",
+            "citrasense.hardware.probe_runner.run_hardware_probe",
             return_value=["cached"],
         ):
             ZwoEafFocuser._cached_hardware_probe(
@@ -173,7 +173,7 @@ class TestCachedHardwareProbe:
         ZwoEafFocuser._clear_probe_cache()
 
         with patch(
-            "citrascope.hardware.probe_runner.run_hardware_probe",
+            "citrasense.hardware.probe_runner.run_hardware_probe",
             return_value=["fresh"],
         ) as mock_probe:
             result = ZwoEafFocuser._cached_hardware_probe(
@@ -186,11 +186,11 @@ class TestCachedHardwareProbe:
             assert mock_probe.call_count == 1
 
     def test_different_classes_have_independent_caches(self):
-        from citrascope.hardware.devices.camera.moravian_camera import MoravianCamera
-        from citrascope.hardware.devices.focuser.zwo_eaf import ZwoEafFocuser
+        from citrasense.hardware.devices.camera.moravian_camera import MoravianCamera
+        from citrasense.hardware.devices.focuser.zwo_eaf import ZwoEafFocuser
 
         with patch(
-            "citrascope.hardware.probe_runner.run_hardware_probe",
+            "citrasense.hardware.probe_runner.run_hardware_probe",
             return_value=["moravian_result"],
         ):
             MoravianCamera._cached_hardware_probe(
@@ -201,7 +201,7 @@ class TestCachedHardwareProbe:
             )
 
         with patch(
-            "citrascope.hardware.probe_runner.run_hardware_probe",
+            "citrasense.hardware.probe_runner.run_hardware_probe",
             return_value=["eaf_result"],
         ):
             ZwoEafFocuser._cached_hardware_probe(
@@ -211,16 +211,16 @@ class TestCachedHardwareProbe:
                 timeout=5.0,
             )
 
-        moravian_key = "citrascope.hardware.devices.camera.moravian_camera.MoravianCamera:default"
-        eaf_key = "citrascope.hardware.devices.focuser.zwo_eaf.ZwoEafFocuser:default"
+        moravian_key = "citrasense.hardware.devices.camera.moravian_camera.MoravianCamera:default"
+        eaf_key = "citrasense.hardware.devices.focuser.zwo_eaf.ZwoEafFocuser:default"
         assert AbstractHardwareDevice._hardware_probe_cache[moravian_key][0] == ["moravian_result"]
         assert AbstractHardwareDevice._hardware_probe_cache[eaf_key][0] == ["eaf_result"]
 
     def test_cache_key_separates_probes(self):
-        from citrascope.hardware.devices.camera.moravian_camera import MoravianCamera
+        from citrasense.hardware.devices.camera.moravian_camera import MoravianCamera
 
         with patch(
-            "citrascope.hardware.probe_runner.run_hardware_probe",
+            "citrasense.hardware.probe_runner.run_hardware_probe",
             return_value=["cameras"],
         ):
             MoravianCamera._cached_hardware_probe(
@@ -232,7 +232,7 @@ class TestCachedHardwareProbe:
             )
 
         with patch(
-            "citrascope.hardware.probe_runner.run_hardware_probe",
+            "citrasense.hardware.probe_runner.run_hardware_probe",
             return_value=["modes"],
         ):
             MoravianCamera._cached_hardware_probe(
@@ -243,8 +243,8 @@ class TestCachedHardwareProbe:
                 timeout=5.0,
             )
 
-        cameras_key = "citrascope.hardware.devices.camera.moravian_camera.MoravianCamera:cameras"
-        modes_key = "citrascope.hardware.devices.camera.moravian_camera.MoravianCamera:read_modes"
+        cameras_key = "citrasense.hardware.devices.camera.moravian_camera.MoravianCamera:cameras"
+        modes_key = "citrasense.hardware.devices.camera.moravian_camera.MoravianCamera:read_modes"
         assert AbstractHardwareDevice._hardware_probe_cache[cameras_key][0] == ["cameras"]
         assert AbstractHardwareDevice._hardware_probe_cache[modes_key][0] == ["modes"]
 
@@ -263,14 +263,14 @@ class TestMoravianProbeIntegration:
         AbstractHardwareDevice._hardware_probe_cache.clear()
 
     def test_fallback_on_probe_failure(self):
-        from citrascope.hardware.devices.camera.moravian_camera import (
+        from citrasense.hardware.devices.camera.moravian_camera import (
             _CAMERA_FALLBACK,
             _READ_MODE_FALLBACK,
             MoravianCamera,
         )
 
         with patch(
-            "citrascope.hardware.probe_runner.run_hardware_probe",
+            "citrasense.hardware.probe_runner.run_hardware_probe",
             return_value=(_CAMERA_FALLBACK, _READ_MODE_FALLBACK),
         ):
             result = MoravianCamera._detect_available_cameras()
@@ -280,11 +280,11 @@ class TestMoravianProbeIntegration:
         assert "Auto" in str(result[0]["label"])
 
     def test_cache_hit_skips_probe(self):
-        from citrascope.hardware.devices.camera.moravian_camera import MoravianCamera
+        from citrasense.hardware.devices.camera.moravian_camera import MoravianCamera
 
         cached_cameras = [{"value": 42, "label": "Cached Camera"}]
         cached_modes = [{"value": 0, "label": "Mode 0"}]
-        key = "citrascope.hardware.devices.camera.moravian_camera.MoravianCamera:default"
+        key = "citrasense.hardware.devices.camera.moravian_camera.MoravianCamera:default"
         AbstractHardwareDevice._hardware_probe_cache[key] = (
             (cached_cameras, cached_modes),
             time.time(),
@@ -305,13 +305,13 @@ class TestEafProbeIntegration:
         AbstractHardwareDevice._hardware_probe_cache.clear()
 
     def test_fallback_on_probe_failure(self):
-        from citrascope.hardware.devices.focuser.zwo_eaf import (
+        from citrasense.hardware.devices.focuser.zwo_eaf import (
             _FOCUSER_FALLBACK,
             ZwoEafFocuser,
         )
 
         with patch(
-            "citrascope.hardware.probe_runner.run_hardware_probe",
+            "citrasense.hardware.probe_runner.run_hardware_probe",
             return_value=_FOCUSER_FALLBACK,
         ):
             result = ZwoEafFocuser._detect_available_focusers()
@@ -321,10 +321,10 @@ class TestEafProbeIntegration:
         assert "Auto" in str(result[0]["label"])
 
     def test_cache_hit_skips_probe(self):
-        from citrascope.hardware.devices.focuser.zwo_eaf import ZwoEafFocuser
+        from citrasense.hardware.devices.focuser.zwo_eaf import ZwoEafFocuser
 
         cached = [{"value": 7, "label": "Cached Focuser"}]
-        key = "citrascope.hardware.devices.focuser.zwo_eaf.ZwoEafFocuser:default"
+        key = "citrasense.hardware.devices.focuser.zwo_eaf.ZwoEafFocuser:default"
         AbstractHardwareDevice._hardware_probe_cache[key] = (
             cached,
             time.time(),
@@ -345,13 +345,13 @@ class TestUsbCameraProbeIntegration:
         AbstractHardwareDevice._hardware_probe_cache.clear()
 
     def test_fallback_on_probe_failure(self):
-        from citrascope.hardware.devices.camera.usb_camera import (
+        from citrasense.hardware.devices.camera.usb_camera import (
             _USB_CAMERA_FALLBACK,
             UsbCamera,
         )
 
         with patch(
-            "citrascope.hardware.probe_runner.run_hardware_probe",
+            "citrasense.hardware.probe_runner.run_hardware_probe",
             return_value=_USB_CAMERA_FALLBACK,
         ):
             result = UsbCamera._detect_available_cameras()
@@ -361,10 +361,10 @@ class TestUsbCameraProbeIntegration:
         assert "default" in str(result[0]["label"]).lower()
 
     def test_cache_hit_skips_probe(self):
-        from citrascope.hardware.devices.camera.usb_camera import UsbCamera
+        from citrasense.hardware.devices.camera.usb_camera import UsbCamera
 
         cached = [{"value": 2, "label": "Cached USB Cam"}]
-        key = "citrascope.hardware.devices.camera.usb_camera.UsbCamera:default"
+        key = "citrasense.hardware.devices.camera.usb_camera.UsbCamera:default"
         AbstractHardwareDevice._hardware_probe_cache[key] = (
             cached,
             time.time(),
@@ -374,9 +374,9 @@ class TestUsbCameraProbeIntegration:
         assert result == cached
 
     def test_clear_camera_cache_delegates(self):
-        from citrascope.hardware.devices.camera.usb_camera import UsbCamera
+        from citrasense.hardware.devices.camera.usb_camera import UsbCamera
 
-        key = "citrascope.hardware.devices.camera.usb_camera.UsbCamera:default"
+        key = "citrasense.hardware.devices.camera.usb_camera.UsbCamera:default"
         AbstractHardwareDevice._hardware_probe_cache[key] = (
             [{"value": 0, "label": "stale"}],
             time.time(),
@@ -397,12 +397,12 @@ class TestFallbackCaching:
 
     def test_fallback_result_is_cached(self):
         """When the probe returns the fallback sentinel, it should still be cached."""
-        from citrascope.hardware.devices.focuser.zwo_eaf import ZwoEafFocuser
+        from citrasense.hardware.devices.focuser.zwo_eaf import ZwoEafFocuser
 
         fallback = [{"value": -1, "label": "Auto"}]
 
         with patch(
-            "citrascope.hardware.probe_runner.run_hardware_probe",
+            "citrasense.hardware.probe_runner.run_hardware_probe",
             return_value=fallback,
         ) as mock_probe:
             result1 = ZwoEafFocuser._cached_hardware_probe(
@@ -423,10 +423,10 @@ class TestFallbackCaching:
 
     def test_default_ttl_is_infinite(self):
         """The default cache_ttl should be infinite so probes only re-run on explicit clear."""
-        from citrascope.hardware.devices.focuser.zwo_eaf import ZwoEafFocuser
+        from citrasense.hardware.devices.focuser.zwo_eaf import ZwoEafFocuser
 
         with patch(
-            "citrascope.hardware.probe_runner.run_hardware_probe",
+            "citrasense.hardware.probe_runner.run_hardware_probe",
             return_value=["devices"],
         ) as mock_probe:
             ZwoEafFocuser._cached_hardware_probe(
@@ -437,8 +437,8 @@ class TestFallbackCaching:
             assert mock_probe.call_count == 1
 
         with (
-            patch("citrascope.hardware.devices.abstract_hardware_device.time") as mock_time,
-            patch("citrascope.hardware.probe_runner.run_hardware_probe") as mock_probe2,
+            patch("citrasense.hardware.devices.abstract_hardware_device.time") as mock_time,
+            patch("citrasense.hardware.probe_runner.run_hardware_probe") as mock_probe2,
         ):
             mock_time.time.return_value = time.time() + 86400 * 365  # one year later
             result = ZwoEafFocuser._cached_hardware_probe(

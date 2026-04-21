@@ -9,7 +9,7 @@ import pandas as pd
 import pytest
 from astropy.io import fits
 
-from citrascope.processors.artifact_writer import (
+from citrasense.processors.artifact_writer import (
     _read_fits_header,
     _task_to_dict,
     dump_context_artifacts,
@@ -18,8 +18,8 @@ from citrascope.processors.artifact_writer import (
     dump_processing_summary,
     dump_processor_result,
 )
-from citrascope.processors.processor_result import AggregatedResult, ProcessingContext, ProcessorResult
-from citrascope.tasks.task import Task
+from citrasense.processors.processor_result import AggregatedResult, ProcessingContext, ProcessorResult
+from citrasense.tasks.task import Task
 
 
 @pytest.fixture

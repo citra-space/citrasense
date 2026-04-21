@@ -8,7 +8,7 @@ Classes:
     MockCitraApiClient: A mock implementation of AbstractCitraApiClient for testing purposes.
 """
 
-from citrascope.api.citra_api_client import AbstractCitraApiClient
+from citrasense.api.citra_api_client import AbstractCitraApiClient
 
 
 class DummyLogger:

@@ -7,8 +7,8 @@ from unittest.mock import MagicMock, patch
 import numpy as np
 from PIL import Image, ImageDraw
 
-from citrascope.processors.builtin.annotated_image_processor import AnnotatedImageProcessor
-from citrascope.processors.processor_result import ProcessingContext
+from citrasense.processors.builtin.annotated_image_processor import AnnotatedImageProcessor
+from citrasense.processors.processor_result import ProcessingContext
 
 
 def _make_context(
@@ -252,7 +252,7 @@ class TestAnnotatedImageSaving:
 
     def test_large_image_is_scaled_to_annotated_width(self, tmp_path):
         """Images wider than _ANNOTATED_WIDTH are downscaled before annotation."""
-        from citrascope.processors.builtin.annotated_image_processor import _ANNOTATED_WIDTH
+        from citrasense.processors.builtin.annotated_image_processor import _ANNOTATED_WIDTH
 
         proc = AnnotatedImageProcessor()
         debug = _make_debug_json()

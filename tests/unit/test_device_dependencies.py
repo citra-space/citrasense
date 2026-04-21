@@ -2,7 +2,7 @@
 
 import pytest
 
-from citrascope.hardware.devices.device_registry import (
+from citrasense.hardware.devices.device_registry import (
     CAMERA_DEVICES,
     FILTER_WHEEL_DEVICES,
     FOCUSER_DEVICES,
@@ -131,7 +131,7 @@ class TestDeviceDependencies:
             # If not available, should have missing packages
             if not result["available"]:
                 assert len(result["missing"]) > 0
-                assert "citrascope" in result["install_cmd"]
+                assert "citrasense" in result["install_cmd"]
 
     def test_camera_friendly_names(self):
         """Verify all cameras have friendly names."""
@@ -228,7 +228,7 @@ class TestDependencyCheckOutput:
             result = check_dependencies(camera_class)
             cmd = result["install_cmd"]
             assert cmd.startswith("uv ")
-            assert "citrascope" in cmd
+            assert "citrasense" in cmd
 
     def test_missing_packages_list(self):
         """Verify missing packages list is accurate."""

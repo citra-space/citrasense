@@ -6,9 +6,9 @@ import numpy as np
 import pytest
 from astropy.io import fits
 
-from citrascope.calibration.calibration_library import CalibrationLibrary
-from citrascope.processors.builtin.calibration_processor import CalibrationProcessor
-from citrascope.processors.processor_result import ProcessingContext
+from citrasense.calibration.calibration_library import CalibrationLibrary
+from citrasense.processors.builtin.calibration_processor import CalibrationProcessor
+from citrasense.processors.processor_result import ProcessingContext
 
 
 @pytest.fixture

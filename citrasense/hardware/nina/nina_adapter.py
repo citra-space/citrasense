@@ -1,0 +1,1058 @@
+from __future__ import annotations
+
+import base64
+import json
+import logging
+import os
+import threading
+import time
+from collections.abc import Callable
+from pathlib import Path
+from typing import TYPE_CHECKING
+
+import requests
+
+if TYPE_CHECKING:
+    from citrasense.hardware.devices.focuser import AbstractFocuser
+
+from citrasense.astro.elset_types import CLASSIC_SGP4_ELSET_TYPES
+from citrasense.hardware.abstract_astro_hardware_adapter import (
+    AbstractAstroHardwareAdapter,
+    ObservationStrategy,
+    SettingSchemaEntry,
+)
+from citrasense.hardware.nina.nina_event_listener import NinaEventListener, derive_ws_url
+from citrasense.hardware.nina.nina_focuser import NinaFocuser
+
+
+class NinaAdvancedHttpAdapter(AbstractAstroHardwareAdapter):
+    """HTTP adapter for controlling astronomical equipment through N.I.N.A.
+    (Nighttime Imaging 'N' Astronomy) Advanced API.
+
+    REST API docs:  https://christian-photo.github.io/github-page/projects/ninaAPI/v2/doc/api
+    WebSocket docs: https://github.com/christian-photo/ninaAPI/wiki/Websocket-V2
+    """
+
+    DEFAULT_FOCUS_POSITION = 9000
+
+    # API endpoint paths
+    CAM_URL = "/equipment/camera/"
+    FILTERWHEEL_URL = "/equipment/filterwheel/"
+    FOCUSER_URL = "/equipment/focuser/"
+    MOUNT_URL = "/equipment/mount/"
+    SAFETYMON_URL = "/equipment/safetymonitor/"
+    SEQUENCE_URL = "/sequence/"
+
+    # HTTP request timeouts (seconds) — tiered by expected response latency
+    HEALTH_CHECK_TIMEOUT = 2
+    CONNECT_TIMEOUT = 5
+    INFO_QUERY_TIMEOUT = 10
+    COMMAND_TIMEOUT = 30
+
+    # Hardware operation timeouts (seconds) — waiting for physical movement to complete
+    HARDWARE_MOVE_TIMEOUT = 60
+    MOUNT_PARK_TIMEOUT = 120  # park/unpark can require a full-sky slew
+    AUTOFOCUS_TIMEOUT = 60 * 10  # 10 minutes
+    SEQUENCE_TIMEOUT_MINUTES = 60
+
+    # Polling intervals (seconds)
+    SLEW_POLL_INTERVAL = 2
+    FOCUSER_POLL_INTERVAL = 5
+
+    # If no AUTOFOCUS-POINT-ADDED events arrive for this long and the focuser
+    # is idle, assume NINA autofocus failed silently (no WS completion event).
+    AF_ACTIVITY_TIMEOUT = 60
+
+    def __init__(self, logger: logging.Logger, images_dir: Path, **kwargs):
+        super().__init__(images_dir=images_dir, **kwargs)
+        self.logger: logging.Logger = logger
+        self.nina_api_path = kwargs.get("nina_api_path", "http://nina:1888/v2/api")
+
+        self.binning_x = kwargs.get("binning_x", 1)
+        self.binning_y = kwargs.get("binning_y", 1)
+        self._event_listener: NinaEventListener | None = None
+        self._focuser: NinaFocuser | None = None
+        self._preview_lock = threading.Lock()
+
+    @classmethod
+    def get_settings_schema(cls, **kwargs) -> list[SettingSchemaEntry]:
+        """
+        Return a schema describing configurable settings for the NINA Advanced HTTP adapter.
+        """
+        return [
+            {
+                "name": "nina_api_path",
+                "friendly_name": "N.I.N.A. API URL",
+                "type": "str",
+                "default": "http://nina:1888/v2/api",
+                "description": "Base URL for the NINA Advanced HTTP API",
+                "required": True,
+                "placeholder": "http://localhost:1888/v2/api",
+                "pattern": r"^https?://.*",
+                "group": "Connection",
+            },
+            {
+                "name": "binning_x",
+                "friendly_name": "Binning X",
+                "type": "int",
+                "default": 1,
+                "description": "Horizontal pixel binning for observations (1=no binning, 2=2x2, etc.)",
+                "required": False,
+                "placeholder": "1",
+                "min": 1,
+                "max": 4,
+                "group": "Imaging",
+            },
+            {
+                "name": "binning_y",
+                "friendly_name": "Binning Y",
+                "type": "int",
+                "default": 1,
+                "description": "Vertical pixel binning for observations (1=no binning, 2=2x2, etc.)",
+                "required": False,
+                "placeholder": "1",
+                "min": 1,
+                "max": 4,
+                "group": "Imaging",
+            },
+        ]
+
+    def select_elset_types(self) -> tuple[str, ...] | None:
+        """NINA's satellite-tracking plugins (Joko Orbitals, DaleGhent PlaneWave
+        Tools) use classic SGP4 internally — XP TLEs mis-propagate silently and
+        osculating elements fail outright. Constrain the server-side ranking to
+        TLEs NINA can actually handle.
+        """
+        return CLASSIC_SGP4_ELSET_TYPES
+
+    def do_autofocus(
+        self,
+        target_ra: float | None = None,
+        target_dec: float | None = None,
+        on_progress: Callable[[str], None] | None = None,
+        cancel_event: threading.Event | None = None,
+        on_point: Callable[[int, float], None] | None = None,
+        on_filter_start: Callable[[str], None] | None = None,
+        on_image=None,
+    ):
+        """Perform autofocus routine for all enabled filters.
+
+        Slews telescope to a bright reference star and runs autofocus
+        for each enabled filter in the filter map, updating focus positions.
+
+        Note: cancel_event is accepted for interface compatibility but not
+        checked — NINA runs autofocus internally and there is no REST API
+        endpoint to cancel a NINA autofocus in progress.
+
+        Note: on_image is accepted for interface compatibility but never
+        called — NINA runs autofocus internally and does not expose
+        intermediate frames.
+
+        Args:
+            target_ra: RA of the slew target in degrees (J2000), or None to
+                focus at the current telescope position (no slew).
+            target_dec: Dec of the slew target in degrees (J2000), or None to
+                focus at the current telescope position (no slew).
+            on_progress: Optional callback(str) to report progress updates
+            cancel_event: Unused (NINA manages its own autofocus lifecycle)
+            on_filter_start: Optional callback(filter_name) fired at the start
+                of each per-filter autofocus run.
+            on_image: Unused (NINA manages its own autofocus imaging)
+
+        Raises:
+            RuntimeError: If no filters discovered or no enabled filters
+            ValueError: If only one of target_ra/target_dec is None
+        """
+
+        def report(msg):
+            if on_progress:
+                on_progress(msg)
+
+        if (target_ra is None) != (target_dec is None):
+            raise ValueError(
+                f"target_ra and target_dec must both be set or both be None, " f"got ra={target_ra}, dec={target_dec}"
+            )
+
+        if not self.filter_map:
+            raise RuntimeError("No filters discovered. Cannot perform autofocus.")
+
+        enabled_filters = {fid: fdata for fid, fdata in self.filter_map.items() if fdata.get("enabled", True)}
+        if not enabled_filters:
+            raise RuntimeError("No enabled filters. Cannot perform autofocus.")
+
+        total = len(enabled_filters)
+        self.logger.info(f"Performing autofocus routine on {total} enabled filter(s) ...")
+
+        if target_ra is not None and target_dec is not None:
+            report("Slewing to target...")
+            self.logger.info(f"Slewing to autofocus target (RA={target_ra:.4f}, Dec={target_dec:.4f}) ...")
+            try:
+                response = requests.get(
+                    f"{self.nina_api_path}{self.MOUNT_URL}slew?ra={target_ra}&dec={target_dec}",
+                    timeout=self.COMMAND_TIMEOUT,
+                )
+                response.raise_for_status()
+                mount_status = response.json()
+                if not mount_status.get("Success"):
+                    raise RuntimeError(f"Mount slew rejected by NINA: {mount_status.get('Error')}")
+                self.logger.info(f"Mount {mount_status['Response']}")
+            except requests.Timeout as e:
+                raise RuntimeError("Mount slew request timed out") from e
+            except requests.RequestException as e:
+                raise RuntimeError(f"Mount slew failed: {e}") from e
+
+            time.sleep(self.SLEW_POLL_INTERVAL)
+            while self.telescope_is_moving():
+                self.logger.info("Waiting for mount to finish slewing...")
+                time.sleep(self.SLEW_POLL_INTERVAL)
+        else:
+            self.logger.info("Autofocus at current position (no slew)")
+
+        for idx, (id, filter) in enumerate(enabled_filters.items(), 1):
+            name = filter["name"]
+
+            if on_filter_start:
+                on_filter_start(name)
+
+            def filter_progress(msg: str, _prefix=f"Filter {idx}/{total}: {name}"):
+                report(f"{_prefix} — {msg}")
+
+            filter_progress("focusing...")
+            self.logger.info(f"Focusing Filter ID: {id}, Name: {name}")
+            existing_focus = filter.get("focus_position", self.DEFAULT_FOCUS_POSITION)
+
+            def af_point_progress(position: int, hfr: float, _idx=idx, _total=total, _name=name):
+                report(f"Filter {_idx}/{_total}: {_name} — pos {position}, HFR {hfr:.2f}")
+                if on_point:
+                    on_point(position, hfr)
+
+            focus_value = self._auto_focus_one_filter(id, name, existing_focus, on_af_point=af_point_progress)
+            self.filter_map[id]["focus_position"] = focus_value
+            filter_progress(f"done (position {focus_value})")
+
+    def _is_focuser_idle(self) -> bool:
+        """Return True if the focuser reports IsMoving=false; return False when state is unknown."""
+        if self._focuser is None:
+            return False
+        try:
+            return not self._focuser.is_moving()
+        except Exception as e:
+            self.logger.debug(f"Focuser idle check failed: {e}")
+            return False
+
+    def _auto_focus_one_filter(
+        self,
+        filter_id: int,
+        filter_name: str,
+        existing_focus_position: int,
+        on_af_point: Callable[[int, float], None] | None = None,
+    ) -> int:
+        assert self._event_listener is not None
+
+        current_filter = self._get_current_filter_id()
+        if current_filter == filter_id:
+            self.logger.info(f"Already on filter {filter_id} ({filter_name}), skipping change")
+        else:
+            self._event_listener.filter_changed.clear()
+            resp = requests.get(
+                self.nina_api_path + self.FILTERWHEEL_URL + "change-filter?filterId=" + str(filter_id),
+                timeout=self.COMMAND_TIMEOUT,
+            ).json()
+            if not resp.get("Success"):
+                raise RuntimeError(f"Filter change to {filter_id} rejected by NINA: {resp.get('Error')}")
+            if not self._event_listener.filter_changed.wait(timeout=self.HARDWARE_MOVE_TIMEOUT):
+                raise RuntimeError(
+                    f"Filterwheel failed to change to filter {filter_id} within {self.HARDWARE_MOVE_TIMEOUT}s"
+                )
+            self.logger.info(f"Filter changed to ID {filter_id}")
+
+        if self._focuser is None:
+            raise RuntimeError("Focuser not available — cannot perform autofocus")
+        self.logger.info("Moving focus to autofocus starting position ...")
+        starting_focus_position = (
+            existing_focus_position if existing_focus_position is not None else self.DEFAULT_FOCUS_POSITION
+        )
+        if not self._focuser.move_absolute(starting_focus_position):
+            raise RuntimeError(f"Focuser move to {starting_focus_position} rejected by NINA")
+        deadline = time.time() + self.HARDWARE_MOVE_TIMEOUT
+        while True:
+            pos = self._focuser.get_position()
+            if pos is not None and pos == starting_focus_position:
+                break
+            if time.time() > deadline:
+                raise RuntimeError(
+                    f"Focuser failed to reach position {starting_focus_position} within {self.HARDWARE_MOVE_TIMEOUT}s"
+                )
+            self.logger.info("Waiting for focuser to reach starting position ...")
+            time.sleep(self.FOCUSER_POLL_INTERVAL)
+
+        self.logger.info("Starting autofocus ...")
+
+        self._event_listener.autofocus_finished.clear()
+        self._event_listener.autofocus_error.clear()
+        self._event_listener.last_af_point_time = time.time()
+        prev_af_callback = self._event_listener.on_af_point
+        self._event_listener.on_af_point = on_af_point
+
+        af_resp = requests.get(
+            self.nina_api_path + self.FOCUSER_URL + "auto-focus", timeout=self.COMMAND_TIMEOUT
+        ).json()
+        if not af_resp.get("Success"):
+            raise RuntimeError(f"Autofocus trigger rejected by NINA: {af_resp.get('Error')}")
+        self.logger.info(f"Focuser {af_resp['Response']}")
+
+        silent_failure = False
+        try:
+            deadline = time.time() + self.AUTOFOCUS_TIMEOUT
+            while not self._event_listener.autofocus_finished.is_set():
+                if self._event_listener.autofocus_error.is_set():
+                    self.logger.warning(f"Autofocus error reported via WebSocket for filter {filter_name}")
+                    break
+                remaining = deadline - time.time()
+                if remaining <= 0:
+                    self.logger.warning(f"Autofocus timed out after {self.AUTOFOCUS_TIMEOUT}s for filter {filter_name}")
+                    break
+                last_point = self._event_listener.last_af_point_time
+                if last_point > 0 and time.time() - last_point > self.AF_ACTIVITY_TIMEOUT:
+                    if self._is_focuser_idle():
+                        self.logger.warning(
+                            f"Autofocus for filter {filter_name} appears to have failed silently — "
+                            f"no AF points for {self.AF_ACTIVITY_TIMEOUT}s and focuser is idle"
+                        )
+                        silent_failure = True
+                        break
+                self._event_listener.autofocus_finished.wait(timeout=min(remaining, 1.0))
+        finally:
+            self._event_listener.on_af_point = prev_af_callback
+
+        if self._event_listener.autofocus_finished.is_set():
+            try:
+                last_af = requests.get(
+                    self.nina_api_path + self.FOCUSER_URL + "last-af", timeout=self.INFO_QUERY_TIMEOUT
+                ).json()
+                if last_af.get("Success"):
+                    resp = last_af["Response"]
+                    position = resp["CalculatedFocusPoint"]["Position"]
+                    hfr = resp["CalculatedFocusPoint"]["Value"]
+                    self.logger.info(f"Autofocus complete for filter {filter_name}: Position {position}, HFR {hfr}")
+                    return position
+                self.logger.warning(f"last-af query failed after AUTOFOCUS-FINISHED: {last_af.get('Error')}")
+            except Exception as e:
+                self.logger.warning(f"last-af query error after AUTOFOCUS-FINISHED: {e}")
+
+        if silent_failure:
+            self.logger.warning(
+                f"Preserving focus position {existing_focus_position} for {filter_name} after silent AF failure"
+            )
+        else:
+            self.logger.warning(f"Preserving existing focus position {existing_focus_position} for {filter_name}")
+        return existing_focus_position
+
+    def _find_task_images(self, task_id: str, expected_count: int) -> list[int]:
+        """Query NINA /image-history and return indices of images matching task_id."""
+        resp = requests.get(f"{self.nina_api_path}/image-history?all=true").json()
+        if not resp.get("Success"):
+            self.logger.error(f"Failed to get image history: {resp.get('Error')}")
+            raise RuntimeError("Failed to get images list from NINA")
+        all_images = resp["Response"]
+        search_window = expected_count + 10
+        matches = []
+        for i in range(max(0, len(all_images) - search_window), len(all_images)):
+            if task_id in all_images[i].get("Filename", ""):
+                matches.append(i)
+        return matches
+
+    def _do_point_telescope(self, ra: float, dec: float):
+        self.logger.info(f"Slewing to RA: {ra}, Dec: {dec}")
+        try:
+            response = requests.get(
+                f"{self.nina_api_path}{self.MOUNT_URL}slew?ra={ra}&dec={dec}", timeout=self.COMMAND_TIMEOUT
+            )
+            response.raise_for_status()
+            slew_response = response.json()
+
+            if slew_response.get("Success"):
+                self.logger.info(f"Mount slew initiated: {slew_response['Response']}")
+                return True
+            else:
+                self.logger.error(f"Failed to slew mount: {slew_response.get('Error')}")
+                return False
+        except requests.Timeout:
+            self.logger.error("Mount slew request timed out")
+            return False
+        except requests.RequestException as e:
+            self.logger.error(f"Mount slew request failed: {e}")
+            return False
+
+    def connect(self) -> bool:
+        try:
+            # start connection to all equipments
+            self.logger.info("Connecting camera ...")
+            cam_status = requests.get(
+                self.nina_api_path + self.CAM_URL + "connect", timeout=self.CONNECT_TIMEOUT
+            ).json()
+            if not cam_status["Success"]:
+                self.logger.error(f"Failed to connect camera: {cam_status.get('Error')}")
+                return False
+            self.logger.info("Camera Connected!")
+
+            self.logger.info("Starting camera cooling ...")
+            cool_status = requests.get(self.nina_api_path + self.CAM_URL + "cool", timeout=self.CONNECT_TIMEOUT).json()
+            if not cool_status["Success"]:
+                self.logger.warning(f"Failed to start camera cooling: {cool_status.get('Error')}")
+            else:
+                self.logger.info("Cooler started!")
+
+            self.logger.info("Connecting filterwheel ...")
+            filterwheel_status = requests.get(
+                self.nina_api_path + self.FILTERWHEEL_URL + "connect", timeout=self.CONNECT_TIMEOUT
+            ).json()
+            if not filterwheel_status["Success"]:
+                self.logger.warning(f"Failed to connect filterwheel: {filterwheel_status.get('Error')}")
+            else:
+                self.logger.info("Filterwheel Connected!")
+
+            self.logger.info("Connecting focuser ...")
+            focuser = NinaFocuser(
+                logger=self.logger,
+                nina_api_path=self.nina_api_path,
+                info_timeout=self.INFO_QUERY_TIMEOUT,
+                command_timeout=self.COMMAND_TIMEOUT,
+                connect_timeout=self.CONNECT_TIMEOUT,
+            )
+            if focuser.connect():
+                self._focuser = focuser
+                self.logger.info("Focuser Connected!")
+            else:
+                self.logger.warning("Failed to connect focuser")
+
+            self.logger.info("Connecting safety monitor ...")
+            try:
+                safety_status = requests.get(
+                    self.nina_api_path + self.SAFETYMON_URL + "connect", timeout=self.CONNECT_TIMEOUT
+                ).json()
+                if not safety_status["Success"]:
+                    self.logger.warning(f"Failed to connect safety monitor: {safety_status.get('Error')}")
+                else:
+                    self.logger.info("Safety monitor Connected!")
+            except requests.RequestException as e:
+                self.logger.warning(f"Failed to connect safety monitor: {e}")
+            except ValueError as e:
+                self.logger.warning(f"Failed to parse safety monitor response: {e}")
+
+            self.logger.info("Connecting mount ...")
+            mount_status = requests.get(
+                self.nina_api_path + self.MOUNT_URL + "connect", timeout=self.CONNECT_TIMEOUT
+            ).json()
+            if not mount_status["Success"]:
+                self.logger.error(f"Failed to connect mount: {mount_status.get('Error')}")
+                return False
+            self.logger.info("Mount Connected!")
+
+            self.logger.info("Unparking mount ...")
+            mount_status = requests.get(
+                self.nina_api_path + self.MOUNT_URL + "unpark", timeout=self.CONNECT_TIMEOUT
+            ).json()
+            if not mount_status["Success"]:
+                self.logger.error(f"Failed to unpark mount: {mount_status.get('Error')}")
+                return False
+            self.logger.info("Mount Unparked!")
+
+            # Discover available filters (focus positions loaded from saved settings)
+            self.discover_filters()
+
+            # Start WebSocket event listener for reactive hardware monitoring
+            ws_url = derive_ws_url(self.nina_api_path)
+            self._event_listener = NinaEventListener(ws_url, self.logger)
+            self._event_listener.start()
+
+            return True
+        except Exception as e:
+            self.logger.error(f"Failed to connect to NINA Advanced API: {e}")
+            return False
+
+    def _get_current_filter_id(self) -> int | None:
+        """Query NINA for the currently selected filter wheel position.
+
+        Returns the filter Id (0-indexed int) or None if the query fails.
+        """
+        try:
+            resp = requests.get(
+                self.nina_api_path + self.FILTERWHEEL_URL + "info", timeout=self.INFO_QUERY_TIMEOUT
+            ).json()
+            if not resp.get("Success"):
+                return None
+            selected = resp.get("Response", {}).get("SelectedFilter")
+            if selected is not None and "Id" in selected:
+                return int(selected["Id"])
+            return None
+        except Exception:
+            return None
+
+    def discover_filters(self):
+        self.logger.info("Discovering filters ...")
+        filterwheel_info = requests.get(
+            self.nina_api_path + self.FILTERWHEEL_URL + "info", timeout=self.CONNECT_TIMEOUT
+        ).json()
+        if not filterwheel_info.get("Success"):
+            self.logger.error(f"Failed to get filterwheel info: {filterwheel_info.get('Error')}")
+            raise RuntimeError("Failed to get filterwheel info")
+
+        filters = filterwheel_info["Response"]["AvailableFilters"]
+        for filter in filters:
+            filter_id = filter["Id"]
+            filter_name = filter["Name"]
+            # Use existing focus position and enabled state if filter already in map
+            if filter_id in self.filter_map:
+                focus_position = self.filter_map[filter_id].get("focus_position", self.DEFAULT_FOCUS_POSITION)
+                enabled = self.filter_map[filter_id].get("enabled", True)
+                self.logger.info(
+                    f"Discovered filter: {filter_name} with ID: {filter_id}, "
+                    f"using saved focus position: {focus_position}, enabled: {enabled}"
+                )
+            else:
+                focus_position = self.DEFAULT_FOCUS_POSITION
+                enabled = True  # Default new filters to enabled
+                self.logger.info(
+                    f"Discovered new filter: {filter_name} with ID: {filter_id}, "
+                    f"using default focus position: {focus_position}"
+                )
+
+            self.filter_map[filter_id] = {"name": filter_name, "focus_position": focus_position, "enabled": enabled}
+
+    def disconnect(self):
+        self._focuser = None
+        if self._event_listener:
+            try:
+                self._event_listener.stop()
+            finally:
+                self._event_listener = None
+
+    def get_filter_position(self) -> int | None:
+        """Get the current filter wheel position from NINA."""
+        return self._get_current_filter_id()
+
+    def set_filter(self, filter_position: int) -> bool:
+        """Change to specified filter via NINA, with optional focus offset.
+
+        Sends a filter-change command over REST, waits for the
+        FILTERWHEEL-CHANGED WebSocket event, then moves the focuser
+        to the stored focus position for this filter (if available).
+        """
+        if self._event_listener is None:
+            self.logger.error("Cannot change filter: event listener not connected")
+            return False
+
+        current = self._get_current_filter_id()
+        if current == filter_position:
+            return True
+
+        self._event_listener.filter_changed.clear()
+        try:
+            resp = requests.get(
+                f"{self.nina_api_path}{self.FILTERWHEEL_URL}change-filter?filterId={filter_position}",
+                timeout=self.COMMAND_TIMEOUT,
+            ).json()
+        except Exception as e:
+            self.logger.error(f"Filter change request failed: {e}")
+            return False
+
+        if not resp.get("Success"):
+            self.logger.error(f"Filter change to {filter_position} rejected by NINA: {resp.get('Error')}")
+            return False
+
+        if not self._event_listener.filter_changed.wait(timeout=self.HARDWARE_MOVE_TIMEOUT):
+            self.logger.error(f"Filterwheel failed to reach position {filter_position} within timeout")
+            return False
+
+        self.logger.info(f"Filter changed to position {filter_position}")
+
+        if self._focuser and filter_position in self.filter_map:
+            focus_pos = self.filter_map[filter_position].get("focus_position")
+            if focus_pos is not None:
+                self.logger.info(f"Adjusting focus to {focus_pos} for filter {filter_position}")
+                if not self._focuser.move_absolute(focus_pos):
+                    self.logger.error(f"Focus adjustment to {focus_pos} for filter {filter_position} failed")
+                    return False
+
+        return True
+
+    def supports_autofocus(self) -> bool:
+        """Indicates that NINA adapter supports autofocus."""
+        return True
+
+    def supports_filter_management(self) -> bool:
+        """Indicates that NINA adapter supports filter/focus management."""
+        return True
+
+    @property
+    def focuser(self) -> AbstractFocuser | None:
+        return self._focuser
+
+    @property
+    def supports_hardware_safety_monitor(self) -> bool:
+        return True
+
+    def query_hardware_safety(self) -> bool | None:
+        """Query NINA's safety monitor device for environmental safety status."""
+        try:
+            resp = requests.get(
+                f"{self.nina_api_path}{self.SAFETYMON_URL}info",
+                timeout=self.HEALTH_CHECK_TIMEOUT,
+            ).json()
+            if not resp.get("Success"):
+                return None
+            response = resp.get("Response", {})
+            if not response.get("Connected"):
+                return None
+            is_safe = response.get("IsSafe")
+            if isinstance(is_safe, bool):
+                return is_safe
+            return None
+        except Exception:
+            return None
+
+    def is_telescope_connected(self) -> bool:
+        """Check if telescope is connected and responsive."""
+        try:
+            mount_info = requests.get(
+                f"{self.nina_api_path}{self.MOUNT_URL}info", timeout=self.HEALTH_CHECK_TIMEOUT
+            ).json()
+            return mount_info.get("Success", False) and mount_info.get("Response", {}).get("Connected", False)
+        except Exception:
+            return False
+
+    def is_camera_connected(self) -> bool:
+        """Check if camera is connected and responsive."""
+        try:
+            cam_info = requests.get(f"{self.nina_api_path}{self.CAM_URL}info", timeout=self.HEALTH_CHECK_TIMEOUT).json()
+            return cam_info.get("Success", False) and cam_info.get("Response", {}).get("Connected", False)
+        except Exception:
+            return False
+
+    def list_devices(self) -> list[str]:
+        return []
+
+    def select_telescope(self, device_name: str) -> bool:
+        return True
+
+    def get_telescope_direction(self) -> tuple[float, float]:
+        mount_info = requests.get(self.nina_api_path + self.MOUNT_URL + "info", timeout=self.INFO_QUERY_TIMEOUT).json()
+        if mount_info.get("Success"):
+            ra_degrees = mount_info["Response"]["Coordinates"]["RADegrees"]
+            dec_degrees = mount_info["Response"]["Coordinates"]["Dec"]
+            return (ra_degrees, dec_degrees)
+        else:
+            self.logger.error(f"Failed to get telescope direction: {mount_info.get('Error')}")
+            raise RuntimeError(f"Failed to get mount info: {mount_info.get('Error')}")
+
+    def telescope_is_moving(self) -> bool:
+        mount_info = requests.get(self.nina_api_path + self.MOUNT_URL + "info", timeout=self.INFO_QUERY_TIMEOUT).json()
+        if mount_info.get("Success"):
+            return mount_info["Response"]["Slewing"]
+        else:
+            self.logger.error(f"Failed to get telescope status: {mount_info.get('Error')}")
+            return False
+
+    def park_mount(self) -> bool:
+        try:
+            resp = requests.get(f"{self.nina_api_path}{self.MOUNT_URL}park", timeout=self.MOUNT_PARK_TIMEOUT).json()
+            if resp.get("Success"):
+                self.logger.info("Mount parked via NINA")
+                return True
+            self.logger.error(f"Failed to park mount: {resp.get('Error')}")
+            return False
+        except Exception as e:
+            self.logger.error(f"Error parking mount: {e}")
+            return False
+
+    def unpark_mount(self) -> bool:
+        try:
+            resp = requests.get(f"{self.nina_api_path}{self.MOUNT_URL}unpark", timeout=self.MOUNT_PARK_TIMEOUT).json()
+            if resp.get("Success"):
+                self.logger.info("Mount unparked via NINA")
+                return True
+            self.logger.error(f"Failed to unpark mount: {resp.get('Error')}")
+            return False
+        except Exception as e:
+            self.logger.error(f"Error unparking mount: {e}")
+            return False
+
+    def supports_park(self) -> bool:
+        return True
+
+    def get_camera_info(self) -> dict | None:
+        """Query NINA camera info endpoint for sensor specs.
+
+        ASCOM's ``XSize``/``YSize``/``PixelSizeX`` always describe the full
+        **unbinned** sensor array — binning is reported separately via
+        :meth:`get_current_binning`.
+        """
+        try:
+            resp = requests.get(f"{self.nina_api_path}{self.CAM_URL}info", timeout=self.HEALTH_CHECK_TIMEOUT).json()
+            if not resp.get("Success"):
+                return None
+            r = resp.get("Response", {})
+            if not r.get("Connected"):
+                return None
+            info: dict = {}
+            if r.get("XSize"):
+                info["width"] = int(r["XSize"])
+            if r.get("YSize"):
+                info["height"] = int(r["YSize"])
+            if r.get("PixelSizeX"):
+                info["pixel_size_um"] = float(r["PixelSizeX"])
+            if r.get("Name"):
+                info["model"] = r["Name"]
+            return info if info else None
+        except Exception:
+            return None
+
+    def get_current_binning(self) -> tuple[int, int]:
+        """Return configured imaging binning (``binning_x``, ``binning_y``).
+
+        These are the values templated into the survey sequence JSON sent to
+        NINA, so they describe what the adapter will request at capture time.
+        """
+        try:
+            bx = max(1, int(self.binning_x))
+            by = max(1, int(self.binning_y))
+        except (TypeError, ValueError):
+            return (1, 1)
+        return (bx, by)
+
+    def select_camera(self, device_name: str) -> bool:
+        return True
+
+    def supports_direct_camera_control(self) -> bool:
+        return self.is_camera_connected()
+
+    def capture_preview(self, exposure_time: float, flip_horizontal: bool = False) -> str:
+        """Take a preview exposure via NINA and return a JPEG or PNG data URL.
+
+        Uses NINA's streaming capture endpoint to avoid base64-in-JSON overhead.
+        A threading lock prevents concurrent captures (mirrors DirectAdapter).
+        """
+        if not self._preview_lock.acquire(blocking=False):
+            raise RuntimeError("Preview capture already in progress")
+
+        try:
+            capture_timeout = max(self.COMMAND_TIMEOUT, exposure_time + 30)
+            resp = requests.get(
+                f"{self.nina_api_path}{self.CAM_URL}capture",
+                params={
+                    "duration": str(exposure_time),
+                    "stream": "true",
+                    "waitForResult": "true",
+                },
+                timeout=capture_timeout,
+            )
+            resp.raise_for_status()
+
+            content_type = resp.headers.get("Content-Type", "image/jpeg").lower()
+            image_bytes = resp.content
+
+            if flip_horizontal:
+                image_bytes = self._flip_image_horizontal(image_bytes)
+
+            mime = "image/jpeg" if "jpeg" in content_type or "jpg" in content_type else "image/png"
+            encoded = base64.b64encode(image_bytes).decode("ascii")
+            return f"data:{mime};base64,{encoded}"
+        finally:
+            self._preview_lock.release()
+
+    @staticmethod
+    def _flip_image_horizontal(image_bytes: bytes) -> bytes:
+        """Flip raw JPEG/PNG bytes left-to-right."""
+        import io
+
+        from PIL import Image, ImageOps
+
+        img = Image.open(io.BytesIO(image_bytes))
+        flipped = ImageOps.mirror(img)
+        buf = io.BytesIO()
+        fmt = img.format or "JPEG"
+        flipped.save(buf, format=fmt)
+        return buf.getvalue()
+
+    def take_image(self, task_id: str, exposure_duration_seconds=1) -> str:
+        raise NotImplementedError
+
+    def set_custom_tracking_rate(self, ra_rate: float, dec_rate: float):
+        pass  # TODO: make real
+
+    def get_tracking_rate(self) -> tuple[float, float]:
+        return (0, 0)  # TODO: make real
+
+    @property
+    def sequence_provides_tracking(self) -> bool:
+        return True
+
+    def _get_sequence_template(self) -> str:
+        """Load the sequence template as a string for placeholder replacement."""
+        template_path = os.path.join(os.path.dirname(__file__), "survey_template.json")
+        with open(template_path) as f:
+            return f.read()
+
+    def get_observation_strategy(self) -> ObservationStrategy:
+        return ObservationStrategy.SEQUENCE_TO_CONTROLLER
+
+    def _find_by_id(self, data, target_id):
+        """Recursively search for an item with a specific $id in the JSON structure.
+
+        Args:
+            data: The JSON data structure to search (dict, list, or primitive)
+            target_id: The $id value to search for (as string)
+
+        Returns:
+            The item with the matching $id, or None if not found
+        """
+        if isinstance(data, dict):
+            if data.get("$id") == target_id:
+                return data
+            for value in data.values():
+                result = self._find_by_id(value, target_id)
+                if result is not None:
+                    return result
+        elif isinstance(data, list):
+            for item in data:
+                result = self._find_by_id(item, target_id)
+                if result is not None:
+                    return result
+        return None
+
+    def _get_max_id(self, data):
+        """Recursively find the maximum $id value in the JSON structure.
+
+        Args:
+            data: The JSON data structure to search (dict, list, or primitive)
+
+        Returns:
+            The maximum numeric $id value found, or 0 if none found
+        """
+        max_id = 0
+        if isinstance(data, dict):
+            if "$id" in data:
+                try:
+                    max_id = max(max_id, int(data["$id"]))
+                except (ValueError, TypeError):
+                    pass
+            for value in data.values():
+                max_id = max(max_id, self._get_max_id(value))
+        elif isinstance(data, list):
+            for item in data:
+                max_id = max(max_id, self._get_max_id(item))
+        return max_id
+
+    def _update_all_ids(self, data, id_counter):
+        """Recursively update all $id values in a data structure.
+
+        Args:
+            data: The JSON data structure to update (dict, list, or primitive)
+            id_counter: A list with a single integer element [current_id] that gets incremented
+
+        Returns:
+            None (modifies data in place)
+        """
+        if isinstance(data, dict):
+            if "$id" in data:
+                data["$id"] = str(id_counter[0])
+                id_counter[0] += 1
+            for value in data.values():
+                self._update_all_ids(value, id_counter)
+        elif isinstance(data, list):
+            for item in data:
+                self._update_all_ids(item, id_counter)
+
+    def perform_observation_sequence(self, task, satellite_data) -> list[str]:
+        """Create and execute a NINA sequence for the given satellite.
+
+        Args:
+            task: Task object containing id and filter assignment
+            satellite_data: Satellite data including TLE information
+
+        Returns:
+            list[str]: Paths to the captured images
+        """
+        assert self._event_listener is not None
+        elset = satellite_data["most_recent_elset"]
+
+        # Load template as JSON and replace binning placeholders
+        template_str = self._get_sequence_template()
+        template_str = template_str.replace("{binning_x}", str(self.binning_x))
+        template_str = template_str.replace("{binning_y}", str(self.binning_y))
+        sequence_json = json.loads(template_str)
+
+        nina_sequence_name = f"Citra Target: {satellite_data['name']}, Task: {task.id}"
+
+        # Replace basic placeholders (use \r\n for Windows NINA compatibility)
+        tle_data = f"{elset['tle'][0]}\r\n{elset['tle'][1]}"
+        sequence_json["Name"] = nina_sequence_name
+
+        # Navigate to the TLE container (ID 20 in the template)
+        target_container = self._find_by_id(sequence_json, "20")
+        if not target_container:
+            raise RuntimeError("Could not find TLE container (ID 20) in sequence template")
+
+        target_container["TLEData"] = tle_data
+        target_container["Name"] = satellite_data["name"]
+        target_container["Target"]["TargetName"] = satellite_data["name"]
+
+        # Find the TLE control item and update it
+        tle_items = target_container["Items"]["$values"]
+        for item in tle_items:
+            if item.get("$type") == "DaleGhent.NINA.PlaneWaveTools.TLE.TLEControl, PlaneWave Tools":
+                item["Line1"] = elset["tle"][0]
+                item["Line2"] = elset["tle"][1]
+                break
+
+        # Find the template triplet (filter/focus/expose) - should be items 1, 2, 3
+        # (item 0 is TLE control)
+        template_triplet = tle_items[1:4]  # SwitchFilter, MoveFocuserAbsolute, TakeExposure
+
+        # Clear the items list and rebuild with TLE control + triplets for each filter
+        new_items = [tle_items[0]]  # Keep TLE control as first item
+
+        # Generate triplet for each discovered filter
+        # Find the maximum ID in use and start after it to avoid collisions
+        base_id = self._get_max_id(sequence_json) + 1
+        self.logger.debug(f"Starting dynamic ID generation at {base_id}")
+
+        id_counter = [base_id]  # Use list so it can be modified in nested function
+
+        # select_filters_for_task raises RuntimeError when allow_no_filter=False and no filter found
+        filters_to_use = self.select_filters_for_task(task, allow_no_filter=False)
+        assert filters_to_use is not None
+
+        for filter_id, filter_info in filters_to_use.items():
+            filter_name = filter_info["name"]
+            focus_position = filter_info["focus_position"]
+
+            # Create a deep copy of the triplet and update ALL nested IDs
+            filter_triplet = json.loads(json.dumps(template_triplet))
+            self._update_all_ids(filter_triplet, id_counter)
+
+            # Update filter switch (first item in triplet)
+            filter_triplet[0]["Filter"]["_name"] = filter_name
+            filter_triplet[0]["Filter"]["_position"] = filter_id
+
+            # Update focus position (second item in triplet)
+            filter_triplet[1]["Position"] = focus_position
+
+            # Exposure settings (third item) are already set from template
+
+            # Add this triplet to the sequence
+            new_items.extend(filter_triplet)
+
+            self.logger.debug(f"Added filter {filter_name} (ID: {filter_id}) with focus position {focus_position}")
+
+        # Update the items list
+        tle_items.clear()
+        tle_items.extend(new_items)
+
+        # Convert back to JSON string
+        template_str = json.dumps(sequence_json, indent=2)
+
+        # POST the sequence
+
+        self.logger.info("Posting NINA sequence")
+        post_response = requests.post(f"{self.nina_api_path}{self.SEQUENCE_URL}load", json=sequence_json).json()
+        if not post_response.get("Success"):
+            self.logger.error(f"Failed to post sequence: {post_response.get('Error')}")
+            raise RuntimeError("Failed to post NINA sequence")
+
+        self.logger.info("Loaded sequence to NINA, starting sequence...")
+
+        self._event_listener.sequence_finished.clear()
+        self._event_listener.sequence_failed.clear()
+
+        # Wait for IMAGE-SAVE WS events to know images are flushed to disk,
+        # then query image-history once to get indices for download.
+        expected_image_count = len(filters_to_use)
+        matched_count = [0]
+        images_ready = threading.Event()
+
+        def _on_image_saved(stats: dict) -> None:
+            # Called on the single WS listener thread — no concurrent writes to matched_count
+            filename = stats.get("Filename", "")
+            if task.id in filename:
+                matched_count[0] += 1
+                self.logger.info(f"IMAGE-SAVE: {filename} ({matched_count[0]}/{expected_image_count})")
+                if matched_count[0] >= expected_image_count:
+                    images_ready.set()
+
+        prev_callback = self._event_listener.on_image_save
+        self._event_listener.on_image_save = _on_image_saved
+
+        try:
+            start_response = requests.get(
+                f"{self.nina_api_path}{self.SEQUENCE_URL}start?skipValidation=true"
+            ).json()  # TODO: try and fix validation issues
+            if not start_response.get("Success"):
+                self.logger.error(f"Failed to start sequence: {start_response.get('Error')}")
+                raise RuntimeError("Failed to start NINA sequence")
+
+            deadline = time.time() + self.SEQUENCE_TIMEOUT_MINUTES * 60
+            while not self._event_listener.sequence_finished.is_set():
+                if self._event_listener.sequence_failed.is_set():
+                    err = self._event_listener.last_sequence_error or {}
+                    entity = err.get("Entity", "unknown")
+                    error_msg = err.get("Error", "unknown error")
+                    self.logger.error(f"NINA sequence entity failed: {entity} — {error_msg}")
+                    raise RuntimeError(f"NINA sequence failed: {entity} — {error_msg}")
+                remaining = deadline - time.time()
+                if remaining <= 0:
+                    self.logger.error(
+                        f"NINA sequence did not complete within timeout of {self.SEQUENCE_TIMEOUT_MINUTES} minutes"
+                    )
+                    raise RuntimeError("NINA sequence timeout")
+                self._event_listener.sequence_finished.wait(timeout=min(remaining, 2.0))
+
+            self.logger.info("NINA sequence completed, waiting for images to save...")
+            images_ready.wait(timeout=self.INFO_QUERY_TIMEOUT)
+        finally:
+            self._event_listener.on_image_save = prev_callback
+
+        images_to_download = self._find_task_images(task.id, expected_image_count)
+
+        if not images_to_download:
+            self.logger.error(
+                f"No images matching task {task.id} found. "
+                "Ensure NINA is configured to include Sequence Title in image filenames "
+                "under Options > Imaging > Image File Pattern."
+            )
+            raise RuntimeError(f"No matching images found for task {task.id}")
+
+        self.logger.info(f"Downloading {len(images_to_download)} images")
+
+        filepaths = []
+        for image_index in images_to_download:
+            self.logger.debug("Retrieving image from NINA...")
+            image_response = requests.get(
+                f"{self.nina_api_path}/image/{image_index}",
+                params={"raw_fits": "true"},
+            )
+
+            if image_response.status_code != 200:
+                self.logger.error(f"Failed to retrieve image: HTTP {image_response.status_code}")
+                raise RuntimeError("Failed to retrieve image from NINA")
+
+            image_data = image_response.json()
+            if not image_data.get("Success"):
+                self.logger.error(f"Failed to get image: {image_data.get('Error')}")
+                raise RuntimeError(f"Failed to get image from NINA: {image_data.get('Error')}")
+
+            # Decode base64 FITS data and save to file
+            fits_base64 = image_data["Response"]
+            fits_bytes = base64.b64decode(fits_base64)
+
+            # Save the FITS file
+            filepath = str(self.images_dir / f"citra_task_{task.id}_image_{image_index}.fits")
+            filepaths.append(filepath)
+
+            with open(filepath, "wb") as f:
+                f.write(fits_bytes)
+
+            self.logger.info(f"Saved FITS image to {filepath}")
+
+        return filepaths

@@ -5,7 +5,7 @@ from unittest.mock import MagicMock, patch
 import httpx
 import pytest
 
-from citrascope.api.citra_api_client import CitraApiClient, _build_filter_wavelength_lookup
+from citrasense.api.citra_api_client import CitraApiClient, _build_filter_wavelength_lookup
 
 
 @pytest.fixture

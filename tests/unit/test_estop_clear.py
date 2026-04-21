@@ -5,8 +5,8 @@ import threading
 import time
 from unittest.mock import MagicMock
 
-from citrascope.tasks.imaging_queue import ImagingQueue
-from citrascope.tasks.runner import TaskManager
+from citrasense.tasks.imaging_queue import ImagingQueue
+from citrasense.tasks.runner import TaskManager
 
 
 def _make_task_manager() -> TaskManager:

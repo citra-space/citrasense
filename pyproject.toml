@@ -1,5 +1,5 @@
 [project]
-name = "citrascope"
+name = "citrasense"
 version = "1.0.0"
 description = "Remotely control a telescope while it polls for tasks, collects and edge processes data, and delivers results and data for further processing."
 readme = "README.md"
@@ -56,7 +56,7 @@ dependencies = [
 ]
 
 [project.scripts]
-citrascope = "citrascope.__main__:cli"
+citrasense = "citrasense.__main__:cli"
 
 [project.urls]
 Homepage = "https://citra.space"
@@ -81,7 +81,7 @@ zwo-mount = [
   "pyserial>=3.5",
 ]
 all-hardware = [
-  "citrascope[indi,zwo-mount]",
+  "citrasense[indi,zwo-mount]",
   "opencv-python>=4.8.0",
   "cv2-enumerate-cameras>=1.0.0",
   "picamera2>=0.3.12; sys_platform == 'linux'",
@@ -90,7 +90,7 @@ kstars = [
   "dbus-python",
 ]
 all = [
-  "citrascope[indi,kstars]",
+  "citrasense[indi,kstars]",
 ]
 dev = [
   "black",
@@ -99,7 +99,7 @@ dev = [
   "pyright",
   "types-requests",
   "bump-my-version",
-  "citrascope[test]",
+  "citrasense[test]",
 ]
 test = ["pytest", "pytest-cov", "mockito"]
 build = ["build"]
@@ -139,17 +139,17 @@ select = ["E", "F", "W", "I", "UP", "PT", "B", "T20", "C4", "RUF"]
 ignore = ["E203", "RUF001", "RUF002", "RUF003"]
 
 [tool.ruff.lint.isort]
-known-first-party = ["citrascope"]
+known-first-party = ["citrasense"]
 
 [tool.ruff.lint.per-file-ignores]
-"citrascope/settings/citrascope_settings.py" = ["E402"]
+"citrasense/settings/citrasense_settings.py" = ["E402"]
 "tests/unit/test_msi_processors.py" = ["E402"]
 "tests/*" = ["RUF012"]
 
 [tool.pytest.ini_options]
 pythonpath = ["."]
 addopts = [
-  "--cov=citrascope",
+  "--cov=citrasense",
   "--cov-report=term-missing",
   "--cov-report=xml",
   "--cov-branch",
@@ -165,17 +165,17 @@ markers = [
 omit = [
     "tests/*",
     "__init__.py",
-    "citrascope/hardware/devices/camera/moravian_camera.py",
-    "citrascope/hardware/devices/camera/ximea_camera.py",
-    "citrascope/hardware/devices/camera/rpi_hq_camera.py",
-    "citrascope/hardware/devices/camera/usb_camera.py",
-    "citrascope/hardware/devices/focuser/zwo_eaf.py",
-    "citrascope/hardware/devices/mount/zwo_am_mount.py",
-    "citrascope/hardware/devices/mount/zwo_am_transport.py",
-    "citrascope/hardware/indi/*",
-    "citrascope/hardware/kstars/*",
-    "citrascope/hardware/nina/*",
-    "citrascope/location/gps_monitor.py",
+    "citrasense/hardware/devices/camera/moravian_camera.py",
+    "citrasense/hardware/devices/camera/ximea_camera.py",
+    "citrasense/hardware/devices/camera/rpi_hq_camera.py",
+    "citrasense/hardware/devices/camera/usb_camera.py",
+    "citrasense/hardware/devices/focuser/zwo_eaf.py",
+    "citrasense/hardware/devices/mount/zwo_am_mount.py",
+    "citrasense/hardware/devices/mount/zwo_am_transport.py",
+    "citrasense/hardware/indi/*",
+    "citrasense/hardware/kstars/*",
+    "citrasense/hardware/nina/*",
+    "citrasense/location/gps_monitor.py",
 ]
 
 [tool.hatch.metadata]

@@ -1,6 +1,6 @@
 import pytest
 
-from citrascope.hardware.adapter_registry import REGISTERED_ADAPTERS, get_adapter_schema
+from citrasense.hardware.adapter_registry import REGISTERED_ADAPTERS, get_adapter_schema
 
 from .utils import DummyLogger
 

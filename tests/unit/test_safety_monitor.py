@@ -3,7 +3,7 @@
 import time
 from unittest.mock import MagicMock
 
-from citrascope.safety.safety_monitor import OperatorStopCheck, SafetyAction, SafetyCheck, SafetyMonitor
+from citrasense.safety.safety_monitor import OperatorStopCheck, SafetyAction, SafetyCheck, SafetyMonitor
 
 
 class _StubCheck(SafetyCheck):

@@ -4,19 +4,19 @@
     "version": "0.2.0",
     "configurations": [
         {
-            "name": "Python: citrascope",
+            "name": "Python: citrasense",
             "type": "debugpy",
             "request": "launch",
-            "module": "citrascope",
+            "module": "citrasense",
             "args": [],
             "console": "integratedTerminal",
             "justMyCode": false
         },
         {
-            "name": "Python: citrascope (custom port)",
+            "name": "Python: citrasense (custom port)",
             "type": "debugpy",
             "request": "launch",
-            "module": "citrascope",
+            "module": "citrasense",
             "args": ["--web-port", "8080"],
             "console": "integratedTerminal",
             "justMyCode": false

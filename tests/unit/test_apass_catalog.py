@@ -11,7 +11,7 @@ import pandas as pd
 import pytest
 from astropy_healpix import HEALPix
 
-from citrascope.catalogs.apass_catalog import ApassCatalog
+from citrasense.catalogs.apass_catalog import ApassCatalog
 
 _HEALPIX_NSIDE = 64
 _HEALPIX_ORDER = "nested"
@@ -28,8 +28,7 @@ def tiny_db(tmp_path):
     """Create a minimal APASS SQLite database matching the real build_apass_catalog.py schema."""
     db_path = tmp_path / "apass_dr10.db"
     conn = sqlite3.connect(db_path)
-    conn.execute(
-        """CREATE TABLE stars (
+    conn.execute("""CREATE TABLE stars (
             ra       REAL NOT NULL,
             dec      REAL NOT NULL,
             healpix  INTEGER NOT NULL,
@@ -47,8 +46,7 @@ def tiny_db(tmp_path):
             rmag_err REAL,
             imag_err REAL,
             zmag_err REAL
-        )"""
-    )
+        )""")
     conn.execute("CREATE INDEX idx_stars_dec_ra ON stars(dec, ra)")
     conn.execute("CREATE INDEX idx_stars_healpix ON stars(healpix)")
     # Star positions with HEALPix computed at runtime to match build_apass_catalog.py (NSIDE=64, nested)

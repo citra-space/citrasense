@@ -1,4 +1,4 @@
-"""Unit tests for CitraScopeSettings and SettingsFileManager."""
+"""Unit tests for CitraSenseSettings and SettingsFileManager."""
 
 from unittest.mock import patch
 
@@ -12,8 +12,8 @@ import pytest
 @pytest.fixture
 def sfm(tmp_path):
     """SettingsFileManager pointed at a temp directory."""
-    from citrascope.settings.citrascope_settings import CitraScopeSettings  # noqa: F401 — triggers module load
-    from citrascope.settings.settings_file_manager import SettingsFileManager
+    from citrasense.settings.citrasense_settings import CitraSenseSettings  # noqa: F401 — triggers module load
+    from citrasense.settings.settings_file_manager import SettingsFileManager
 
     mgr = SettingsFileManager()
     mgr.config_dir = tmp_path
@@ -74,7 +74,7 @@ def test_validate_config_non_dict(sfm):
 
 
 def test_directory_manager_defaults():
-    from citrascope.settings.directory_manager import DirectoryManager
+    from citrasense.settings.directory_manager import DirectoryManager
 
     dm = DirectoryManager()
     assert dm.data_dir == DirectoryManager.default_data_dir()
@@ -84,7 +84,7 @@ def test_directory_manager_defaults():
 
 
 def test_directory_manager_custom_dirs(tmp_path):
-    from citrascope.settings.directory_manager import DirectoryManager
+    from citrasense.settings.directory_manager import DirectoryManager
 
     data = tmp_path / "data"
     logs = tmp_path / "logs"
@@ -96,7 +96,7 @@ def test_directory_manager_custom_dirs(tmp_path):
 
 
 def test_directory_manager_ensure_dirs(tmp_path):
-    from citrascope.settings.directory_manager import DirectoryManager
+    from citrasense.settings.directory_manager import DirectoryManager
 
     dm = DirectoryManager(custom_data_dir=str(tmp_path / "data"), custom_log_dir=str(tmp_path / "logs"))
     dm.ensure_data_directories()
@@ -106,28 +106,28 @@ def test_directory_manager_ensure_dirs(tmp_path):
 
 
 def test_directory_manager_current_log_path():
-    from citrascope.settings.directory_manager import DirectoryManager
+    from citrasense.settings.directory_manager import DirectoryManager
 
     dm = DirectoryManager()
     p = dm.current_log_path()
-    assert "citrascope-" in p.name
+    assert "citrasense-" in p.name
     assert p.suffix == ".log"
 
 
 # ---------------------------------------------------------------------------
-# CitraScopeSettings
+# CitraSenseSettings
 # ---------------------------------------------------------------------------
 
 
 def test_settings_defaults(tmp_path):
     """Settings should use sensible defaults when config is empty."""
-    with patch("citrascope.settings.citrascope_settings.SettingsFileManager") as MockSFM:
+    with patch("citrasense.settings.citrasense_settings.SettingsFileManager") as MockSFM:
         instance = MockSFM.return_value
         instance.load_config.return_value = {}
 
-        from citrascope.settings.citrascope_settings import CitraScopeSettings
+        from citrasense.settings.citrasense_settings import CitraSenseSettings
 
-        s = CitraScopeSettings.load()
+        s = CitraSenseSettings.load()
 
     assert s.hardware_adapter == ""
     assert s.personal_access_token == ""
@@ -138,7 +138,7 @@ def test_settings_defaults(tmp_path):
 
 def test_settings_to_dict(tmp_path):
     """to_dict should include all persistent settings."""
-    with patch("citrascope.settings.citrascope_settings.SettingsFileManager") as MockSFM:
+    with patch("citrasense.settings.citrasense_settings.SettingsFileManager") as MockSFM:
         instance = MockSFM.return_value
         instance.load_config.return_value = {
             "personal_access_token": "tok",
@@ -146,9 +146,9 @@ def test_settings_to_dict(tmp_path):
             "hardware_adapter": "dummy",
         }
 
-        from citrascope.settings.citrascope_settings import CitraScopeSettings
+        from citrasense.settings.citrasense_settings import CitraSenseSettings
 
-        s = CitraScopeSettings.load()
+        s = CitraSenseSettings.load()
 
     d = s.to_dict()
     assert d["personal_access_token"] == "tok"
@@ -160,65 +160,65 @@ def test_settings_to_dict(tmp_path):
 
 
 def test_settings_is_configured(tmp_path):
-    with patch("citrascope.settings.citrascope_settings.SettingsFileManager") as MockSFM:
+    with patch("citrasense.settings.citrasense_settings.SettingsFileManager") as MockSFM:
         instance = MockSFM.return_value
         instance.load_config.return_value = {
             "personal_access_token": "tok",
             "telescope_id": "tel",
             "hardware_adapter": "nina_advanced_http",
         }
-        from citrascope.settings.citrascope_settings import CitraScopeSettings
+        from citrasense.settings.citrasense_settings import CitraSenseSettings
 
-        s = CitraScopeSettings.load()
+        s = CitraSenseSettings.load()
 
     assert s.is_configured() is True
 
 
 def test_settings_validates_custom_ra_out_of_range():
-    with patch("citrascope.settings.citrascope_settings.SettingsFileManager") as MockSFM:
+    with patch("citrasense.settings.citrasense_settings.SettingsFileManager") as MockSFM:
         instance = MockSFM.return_value
         instance.load_config.return_value = {
             "autofocus_target_custom_ra": 999.0,
             "autofocus_target_custom_dec": -100.0,
         }
-        from citrascope.settings.citrascope_settings import CitraScopeSettings
+        from citrasense.settings.citrasense_settings import CitraSenseSettings
 
-        s = CitraScopeSettings.load()
+        s = CitraSenseSettings.load()
 
     assert s.autofocus_target_custom_ra is None
     assert s.autofocus_target_custom_dec is None
 
 
 def test_settings_validates_autofocus_interval():
-    with patch("citrascope.settings.citrascope_settings.SettingsFileManager") as MockSFM:
+    with patch("citrasense.settings.citrasense_settings.SettingsFileManager") as MockSFM:
         instance = MockSFM.return_value
         instance.load_config.return_value = {"autofocus_interval_minutes": -5}
-        from citrascope.settings.citrascope_settings import CitraScopeSettings
+        from citrasense.settings.citrasense_settings import CitraSenseSettings
 
-        s = CitraScopeSettings.load()
+        s = CitraSenseSettings.load()
 
     assert s.autofocus_interval_minutes == 60
 
 
 def test_settings_save(tmp_path):
-    with patch("citrascope.settings.citrascope_settings.SettingsFileManager") as MockSFM:
+    with patch("citrasense.settings.citrasense_settings.SettingsFileManager") as MockSFM:
         instance = MockSFM.return_value
         instance.load_config.return_value = {"hardware_adapter": "dummy"}
-        from citrascope.settings.citrascope_settings import CitraScopeSettings
+        from citrasense.settings.citrasense_settings import CitraSenseSettings
 
-        s = CitraScopeSettings.load()
+        s = CitraSenseSettings.load()
         s.save()
 
     instance.save_config.assert_called_once()
 
 
 def test_settings_update_and_save():
-    with patch("citrascope.settings.citrascope_settings.SettingsFileManager") as MockSFM:
+    with patch("citrasense.settings.citrasense_settings.SettingsFileManager") as MockSFM:
         instance = MockSFM.return_value
         instance.load_config.return_value = {"hardware_adapter": "dummy"}
-        from citrascope.settings.citrascope_settings import CitraScopeSettings
+        from citrasense.settings.citrasense_settings import CitraSenseSettings
 
-        s = CitraScopeSettings.load()
+        s = CitraSenseSettings.load()
         s.update_and_save(
             {
                 "hardware_adapter": "dummy",
@@ -235,16 +235,16 @@ def test_settings_update_and_save():
 
 def test_update_and_save_preserves_fields_not_in_payload():
     """Backend-only fields survive a web UI save that omits them (data-loss bug fix)."""
-    with patch("citrascope.settings.citrascope_settings.SettingsFileManager") as MockSFM:
+    with patch("citrasense.settings.citrasense_settings.SettingsFileManager") as MockSFM:
         instance = MockSFM.return_value
         instance.load_config.return_value = {
             "hardware_adapter": "dummy",
             "elset_refresh_interval_hours": 12,
             "observation_mode": "tracking",
         }
-        from citrascope.settings.citrascope_settings import CitraScopeSettings
+        from citrasense.settings.citrasense_settings import CitraSenseSettings
 
-        s = CitraScopeSettings.load()
+        s = CitraSenseSettings.load()
         s.update_and_save(
             {
                 "hardware_adapter": "dummy",
@@ -261,12 +261,12 @@ def test_update_and_save_preserves_fields_not_in_payload():
 
 def test_update_and_save_strips_computed_keys():
     """Computed/server-only keys from the web UI should not be written to disk."""
-    with patch("citrascope.settings.citrascope_settings.SettingsFileManager") as MockSFM:
+    with patch("citrasense.settings.citrasense_settings.SettingsFileManager") as MockSFM:
         instance = MockSFM.return_value
         instance.load_config.return_value = {"hardware_adapter": "dummy"}
-        from citrascope.settings.citrascope_settings import CitraScopeSettings
+        from citrasense.settings.citrasense_settings import CitraSenseSettings
 
-        s = CitraScopeSettings.load()
+        s = CitraSenseSettings.load()
         s.update_and_save(
             {
                 "hardware_adapter": "dummy",
@@ -291,52 +291,52 @@ def test_update_and_save_strips_computed_keys():
 
 
 def test_observation_mode_defaults_to_auto():
-    with patch("citrascope.settings.citrascope_settings.SettingsFileManager") as MockSFM:
+    with patch("citrasense.settings.citrasense_settings.SettingsFileManager") as MockSFM:
         MockSFM.return_value.load_config.return_value = {}
-        from citrascope.settings.citrascope_settings import CitraScopeSettings
+        from citrasense.settings.citrasense_settings import CitraSenseSettings
 
-        s = CitraScopeSettings.load()
+        s = CitraSenseSettings.load()
 
     assert s.observation_mode == "auto"
 
 
 @pytest.mark.parametrize("mode", ["auto", "tracking", "sidereal"])
 def test_observation_mode_accepts_valid_values(mode):
-    with patch("citrascope.settings.citrascope_settings.SettingsFileManager") as MockSFM:
+    with patch("citrasense.settings.citrasense_settings.SettingsFileManager") as MockSFM:
         MockSFM.return_value.load_config.return_value = {"observation_mode": mode}
-        from citrascope.settings.citrascope_settings import CitraScopeSettings
+        from citrasense.settings.citrasense_settings import CitraSenseSettings
 
-        s = CitraScopeSettings.load()
+        s = CitraSenseSettings.load()
 
     assert s.observation_mode == mode
 
 
 def test_observation_mode_migrates_static_to_sidereal():
-    with patch("citrascope.settings.citrascope_settings.SettingsFileManager") as MockSFM:
+    with patch("citrasense.settings.citrasense_settings.SettingsFileManager") as MockSFM:
         MockSFM.return_value.load_config.return_value = {"observation_mode": "static"}
-        from citrascope.settings.citrascope_settings import CitraScopeSettings
+        from citrasense.settings.citrasense_settings import CitraSenseSettings
 
-        s = CitraScopeSettings.load()
+        s = CitraSenseSettings.load()
 
     assert s.observation_mode == "sidereal"
 
 
 def test_observation_mode_rejects_invalid_value():
-    with patch("citrascope.settings.citrascope_settings.SettingsFileManager") as MockSFM:
+    with patch("citrasense.settings.citrasense_settings.SettingsFileManager") as MockSFM:
         MockSFM.return_value.load_config.return_value = {"observation_mode": "bogus"}
-        from citrascope.settings.citrascope_settings import CitraScopeSettings
+        from citrasense.settings.citrasense_settings import CitraSenseSettings
 
-        s = CitraScopeSettings.load()
+        s = CitraSenseSettings.load()
 
     assert s.observation_mode == "auto"
 
 
 def test_observation_mode_in_to_dict():
-    with patch("citrascope.settings.citrascope_settings.SettingsFileManager") as MockSFM:
+    with patch("citrasense.settings.citrasense_settings.SettingsFileManager") as MockSFM:
         MockSFM.return_value.load_config.return_value = {"observation_mode": "tracking"}
-        from citrascope.settings.citrascope_settings import CitraScopeSettings
+        from citrasense.settings.citrasense_settings import CitraSenseSettings
 
-        s = CitraScopeSettings.load()
+        s = CitraSenseSettings.load()
 
     assert s.to_dict()["observation_mode"] == "tracking"
 
@@ -347,31 +347,31 @@ def test_observation_mode_in_to_dict():
 
 
 def test_plate_solve_timeout_clamps_out_of_range():
-    with patch("citrascope.settings.citrascope_settings.SettingsFileManager") as MockSFM:
+    with patch("citrasense.settings.citrasense_settings.SettingsFileManager") as MockSFM:
         MockSFM.return_value.load_config.return_value = {"plate_solve_timeout": 999}
-        from citrascope.settings.citrascope_settings import CitraScopeSettings
+        from citrasense.settings.citrasense_settings import CitraSenseSettings
 
-        s = CitraScopeSettings.load()
+        s = CitraSenseSettings.load()
 
     assert s.plate_solve_timeout == 300
 
 
 def test_plate_solve_timeout_clamps_low():
-    with patch("citrascope.settings.citrascope_settings.SettingsFileManager") as MockSFM:
+    with patch("citrasense.settings.citrasense_settings.SettingsFileManager") as MockSFM:
         MockSFM.return_value.load_config.return_value = {"plate_solve_timeout": 2}
-        from citrascope.settings.citrascope_settings import CitraScopeSettings
+        from citrasense.settings.citrasense_settings import CitraSenseSettings
 
-        s = CitraScopeSettings.load()
+        s = CitraSenseSettings.load()
 
     assert s.plate_solve_timeout == 10
 
 
 def test_plate_solve_timeout_falls_back_on_invalid():
-    with patch("citrascope.settings.citrascope_settings.SettingsFileManager") as MockSFM:
+    with patch("citrasense.settings.citrasense_settings.SettingsFileManager") as MockSFM:
         MockSFM.return_value.load_config.return_value = {"plate_solve_timeout": "not_a_number"}
-        from citrascope.settings.citrascope_settings import CitraScopeSettings
+        from citrasense.settings.citrasense_settings import CitraSenseSettings
 
-        s = CitraScopeSettings.load()
+        s = CitraSenseSettings.load()
 
     assert s.plate_solve_timeout == 60
 
@@ -382,31 +382,31 @@ def test_plate_solve_timeout_falls_back_on_invalid():
 
 
 def test_custom_data_dir_empty_is_default():
-    with patch("citrascope.settings.citrascope_settings.SettingsFileManager") as MockSFM:
+    with patch("citrasense.settings.citrasense_settings.SettingsFileManager") as MockSFM:
         MockSFM.return_value.load_config.return_value = {"custom_data_dir": ""}
-        from citrascope.settings.citrascope_settings import CitraScopeSettings
+        from citrasense.settings.citrasense_settings import CitraSenseSettings
 
-        s = CitraScopeSettings.load()
+        s = CitraSenseSettings.load()
 
     assert s.custom_data_dir == ""
 
 
 def test_custom_data_dir_absolute_path_resolved(tmp_path):
-    with patch("citrascope.settings.citrascope_settings.SettingsFileManager") as MockSFM:
+    with patch("citrasense.settings.citrasense_settings.SettingsFileManager") as MockSFM:
         MockSFM.return_value.load_config.return_value = {"custom_data_dir": str(tmp_path)}
-        from citrascope.settings.citrascope_settings import CitraScopeSettings
+        from citrasense.settings.citrasense_settings import CitraSenseSettings
 
-        s = CitraScopeSettings.load()
+        s = CitraSenseSettings.load()
 
     assert s.custom_data_dir == str(tmp_path.resolve())
 
 
 def test_custom_log_dir_relative_path_rejected():
-    with patch("citrascope.settings.citrascope_settings.SettingsFileManager") as MockSFM:
+    with patch("citrasense.settings.citrasense_settings.SettingsFileManager") as MockSFM:
         MockSFM.return_value.load_config.return_value = {"custom_log_dir": "relative/path"}
-        from citrascope.settings.citrascope_settings import CitraScopeSettings
+        from citrasense.settings.citrasense_settings import CitraSenseSettings
 
-        s = CitraScopeSettings.load()
+        s = CitraSenseSettings.load()
 
     # Relative paths resolve to absolute via expanduser().resolve(), so
     # the validator will accept them after resolution. Verify it's absolute.
@@ -421,188 +421,188 @@ def test_custom_log_dir_relative_path_rejected():
 
 
 def test_sextractor_detect_thresh_default():
-    with patch("citrascope.settings.citrascope_settings.SettingsFileManager") as MockSFM:
+    with patch("citrasense.settings.citrasense_settings.SettingsFileManager") as MockSFM:
         MockSFM.return_value.load_config.return_value = {}
-        from citrascope.settings.citrascope_settings import CitraScopeSettings
+        from citrasense.settings.citrasense_settings import CitraSenseSettings
 
-        s = CitraScopeSettings.load()
+        s = CitraSenseSettings.load()
 
     assert s.sextractor_detect_thresh == 5.0
 
 
 def test_sextractor_detect_thresh_valid():
-    with patch("citrascope.settings.citrascope_settings.SettingsFileManager") as MockSFM:
+    with patch("citrasense.settings.citrasense_settings.SettingsFileManager") as MockSFM:
         MockSFM.return_value.load_config.return_value = {"sextractor_detect_thresh": 3.0}
-        from citrascope.settings.citrascope_settings import CitraScopeSettings
+        from citrasense.settings.citrasense_settings import CitraSenseSettings
 
-        s = CitraScopeSettings.load()
+        s = CitraSenseSettings.load()
 
     assert s.sextractor_detect_thresh == 3.0
 
 
 def test_sextractor_detect_thresh_string_coercion():
-    with patch("citrascope.settings.citrascope_settings.SettingsFileManager") as MockSFM:
+    with patch("citrasense.settings.citrasense_settings.SettingsFileManager") as MockSFM:
         MockSFM.return_value.load_config.return_value = {"sextractor_detect_thresh": "8.5"}
-        from citrascope.settings.citrascope_settings import CitraScopeSettings
+        from citrasense.settings.citrasense_settings import CitraSenseSettings
 
-        s = CitraScopeSettings.load()
+        s = CitraSenseSettings.load()
 
     assert s.sextractor_detect_thresh == 8.5
 
 
 def test_sextractor_detect_thresh_clamps_low():
-    with patch("citrascope.settings.citrascope_settings.SettingsFileManager") as MockSFM:
+    with patch("citrasense.settings.citrasense_settings.SettingsFileManager") as MockSFM:
         MockSFM.return_value.load_config.return_value = {"sextractor_detect_thresh": 0.1}
-        from citrascope.settings.citrascope_settings import CitraScopeSettings
+        from citrasense.settings.citrasense_settings import CitraSenseSettings
 
-        s = CitraScopeSettings.load()
+        s = CitraSenseSettings.load()
 
     assert s.sextractor_detect_thresh == 1.0
 
 
 def test_sextractor_detect_thresh_clamps_high():
-    with patch("citrascope.settings.citrascope_settings.SettingsFileManager") as MockSFM:
+    with patch("citrasense.settings.citrasense_settings.SettingsFileManager") as MockSFM:
         MockSFM.return_value.load_config.return_value = {"sextractor_detect_thresh": 99.0}
-        from citrascope.settings.citrascope_settings import CitraScopeSettings
+        from citrasense.settings.citrasense_settings import CitraSenseSettings
 
-        s = CitraScopeSettings.load()
+        s = CitraSenseSettings.load()
 
     assert s.sextractor_detect_thresh == 20.0
 
 
 def test_sextractor_detect_thresh_invalid_fallback():
-    with patch("citrascope.settings.citrascope_settings.SettingsFileManager") as MockSFM:
+    with patch("citrasense.settings.citrasense_settings.SettingsFileManager") as MockSFM:
         MockSFM.return_value.load_config.return_value = {"sextractor_detect_thresh": "not_a_number"}
-        from citrascope.settings.citrascope_settings import CitraScopeSettings
+        from citrasense.settings.citrasense_settings import CitraSenseSettings
 
-        s = CitraScopeSettings.load()
+        s = CitraSenseSettings.load()
 
     assert s.sextractor_detect_thresh == 5.0
 
 
 def test_sextractor_detect_minarea_default():
-    with patch("citrascope.settings.citrascope_settings.SettingsFileManager") as MockSFM:
+    with patch("citrasense.settings.citrasense_settings.SettingsFileManager") as MockSFM:
         MockSFM.return_value.load_config.return_value = {}
-        from citrascope.settings.citrascope_settings import CitraScopeSettings
+        from citrasense.settings.citrasense_settings import CitraSenseSettings
 
-        s = CitraScopeSettings.load()
+        s = CitraSenseSettings.load()
 
     assert s.sextractor_detect_minarea == 3
 
 
 def test_sextractor_detect_minarea_valid():
-    with patch("citrascope.settings.citrascope_settings.SettingsFileManager") as MockSFM:
+    with patch("citrasense.settings.citrasense_settings.SettingsFileManager") as MockSFM:
         MockSFM.return_value.load_config.return_value = {"sextractor_detect_minarea": 10}
-        from citrascope.settings.citrascope_settings import CitraScopeSettings
+        from citrasense.settings.citrasense_settings import CitraSenseSettings
 
-        s = CitraScopeSettings.load()
+        s = CitraSenseSettings.load()
 
     assert s.sextractor_detect_minarea == 10
 
 
 def test_sextractor_detect_minarea_float_coercion():
-    with patch("citrascope.settings.citrascope_settings.SettingsFileManager") as MockSFM:
+    with patch("citrasense.settings.citrasense_settings.SettingsFileManager") as MockSFM:
         MockSFM.return_value.load_config.return_value = {"sextractor_detect_minarea": 7.9}
-        from citrascope.settings.citrascope_settings import CitraScopeSettings
+        from citrasense.settings.citrasense_settings import CitraSenseSettings
 
-        s = CitraScopeSettings.load()
+        s = CitraSenseSettings.load()
 
     assert s.sextractor_detect_minarea == 7
 
 
 def test_sextractor_detect_minarea_clamps_low():
-    with patch("citrascope.settings.citrascope_settings.SettingsFileManager") as MockSFM:
+    with patch("citrasense.settings.citrasense_settings.SettingsFileManager") as MockSFM:
         MockSFM.return_value.load_config.return_value = {"sextractor_detect_minarea": 0}
-        from citrascope.settings.citrascope_settings import CitraScopeSettings
+        from citrasense.settings.citrasense_settings import CitraSenseSettings
 
-        s = CitraScopeSettings.load()
+        s = CitraSenseSettings.load()
 
     assert s.sextractor_detect_minarea == 1
 
 
 def test_sextractor_detect_minarea_clamps_high():
-    with patch("citrascope.settings.citrascope_settings.SettingsFileManager") as MockSFM:
+    with patch("citrasense.settings.citrasense_settings.SettingsFileManager") as MockSFM:
         MockSFM.return_value.load_config.return_value = {"sextractor_detect_minarea": 100}
-        from citrascope.settings.citrascope_settings import CitraScopeSettings
+        from citrasense.settings.citrasense_settings import CitraSenseSettings
 
-        s = CitraScopeSettings.load()
+        s = CitraSenseSettings.load()
 
     assert s.sextractor_detect_minarea == 50
 
 
 def test_sextractor_detect_minarea_invalid_fallback():
-    with patch("citrascope.settings.citrascope_settings.SettingsFileManager") as MockSFM:
+    with patch("citrasense.settings.citrasense_settings.SettingsFileManager") as MockSFM:
         MockSFM.return_value.load_config.return_value = {"sextractor_detect_minarea": "garbage"}
-        from citrascope.settings.citrascope_settings import CitraScopeSettings
+        from citrasense.settings.citrasense_settings import CitraSenseSettings
 
-        s = CitraScopeSettings.load()
+        s = CitraSenseSettings.load()
 
     assert s.sextractor_detect_minarea == 3
 
 
 def test_sextractor_filter_name_default():
-    with patch("citrascope.settings.citrascope_settings.SettingsFileManager") as MockSFM:
+    with patch("citrasense.settings.citrasense_settings.SettingsFileManager") as MockSFM:
         MockSFM.return_value.load_config.return_value = {}
-        from citrascope.settings.citrascope_settings import CitraScopeSettings
+        from citrasense.settings.citrasense_settings import CitraSenseSettings
 
-        s = CitraScopeSettings.load()
+        s = CitraSenseSettings.load()
 
     assert s.sextractor_filter_name == "default"
 
 
 @pytest.mark.parametrize("name", ["default", "gauss_1.5_3x3", "gauss_2.5_5x5", "tophat_3.0_3x3", "tophat_5.0_5x5"])
 def test_sextractor_filter_name_accepts_valid(name):
-    with patch("citrascope.settings.citrascope_settings.SettingsFileManager") as MockSFM:
+    with patch("citrasense.settings.citrasense_settings.SettingsFileManager") as MockSFM:
         MockSFM.return_value.load_config.return_value = {"sextractor_filter_name": name}
-        from citrascope.settings.citrascope_settings import CitraScopeSettings
+        from citrasense.settings.citrasense_settings import CitraSenseSettings
 
-        s = CitraScopeSettings.load()
+        s = CitraSenseSettings.load()
 
     assert s.sextractor_filter_name == name
 
 
 def test_sextractor_filter_name_unknown_fallback():
-    with patch("citrascope.settings.citrascope_settings.SettingsFileManager") as MockSFM:
+    with patch("citrasense.settings.citrasense_settings.SettingsFileManager") as MockSFM:
         MockSFM.return_value.load_config.return_value = {"sextractor_filter_name": "nonexistent_kernel"}
-        from citrascope.settings.citrascope_settings import CitraScopeSettings
+        from citrasense.settings.citrasense_settings import CitraSenseSettings
 
-        s = CitraScopeSettings.load()
+        s = CitraSenseSettings.load()
 
     assert s.sextractor_filter_name == "default"
 
 
 def test_sextractor_filter_name_non_string_fallback():
-    with patch("citrascope.settings.citrascope_settings.SettingsFileManager") as MockSFM:
+    with patch("citrasense.settings.citrasense_settings.SettingsFileManager") as MockSFM:
         MockSFM.return_value.load_config.return_value = {"sextractor_filter_name": 12345}
-        from citrascope.settings.citrascope_settings import CitraScopeSettings
+        from citrasense.settings.citrasense_settings import CitraSenseSettings
 
-        s = CitraScopeSettings.load()
+        s = CitraSenseSettings.load()
 
     assert s.sextractor_filter_name == "default"
 
 
 def test_adaptive_exposure_min_gt_max_clamps_min():
     """When adaptive min > max, model validator clamps min down to max."""
-    from citrascope.settings.citrascope_settings import CitraScopeSettings
+    from citrasense.settings.citrasense_settings import CitraSenseSettings
 
-    s = CitraScopeSettings.model_validate({"adaptive_exposure_min_seconds": 20.0, "adaptive_exposure_max_seconds": 5.0})
+    s = CitraSenseSettings.model_validate({"adaptive_exposure_min_seconds": 20.0, "adaptive_exposure_max_seconds": 5.0})
     assert s.adaptive_exposure_min_seconds == s.adaptive_exposure_max_seconds
     assert s.adaptive_exposure_min_seconds == 5.0
 
 
 def test_adaptive_exposure_min_equal_max_accepted():
     """When min == max, no clamping occurs."""
-    from citrascope.settings.citrascope_settings import CitraScopeSettings
+    from citrasense.settings.citrasense_settings import CitraSenseSettings
 
-    s = CitraScopeSettings.model_validate({"adaptive_exposure_min_seconds": 5.0, "adaptive_exposure_max_seconds": 5.0})
+    s = CitraSenseSettings.model_validate({"adaptive_exposure_min_seconds": 5.0, "adaptive_exposure_max_seconds": 5.0})
     assert s.adaptive_exposure_min_seconds == 5.0
     assert s.adaptive_exposure_max_seconds == 5.0
 
 
 def test_adaptive_exposure_min_lt_max_accepted():
     """Normal min < max is preserved as-is."""
-    from citrascope.settings.citrascope_settings import CitraScopeSettings
+    from citrasense.settings.citrasense_settings import CitraSenseSettings
 
-    s = CitraScopeSettings.model_validate({"adaptive_exposure_min_seconds": 0.5, "adaptive_exposure_max_seconds": 30.0})
+    s = CitraSenseSettings.model_validate({"adaptive_exposure_min_seconds": 0.5, "adaptive_exposure_max_seconds": 30.0})
     assert s.adaptive_exposure_min_seconds == 0.5
     assert s.adaptive_exposure_max_seconds == 30.0

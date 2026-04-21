@@ -10,9 +10,9 @@ from unittest.mock import MagicMock
 import pytest
 from dateutil import parser as dtparser
 
-from citrascope.safety.safety_monitor import SafetyAction
-from citrascope.tasks.runner import TaskManager
-from citrascope.tasks.task import Task
+from citrasense.safety.safety_monitor import SafetyAction
+from citrasense.tasks.runner import TaskManager
+from citrasense.tasks.task import Task
 
 
 @pytest.fixture

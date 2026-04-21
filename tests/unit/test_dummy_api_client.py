@@ -6,7 +6,7 @@ from unittest.mock import patch
 import pytest
 from skyfield.api import EarthSatellite, load, wgs84
 
-from citrascope.api.dummy_api_client import (
+from citrasense.api.dummy_api_client import (
     DummyApiClient,
     _parse_3le_text,
 )
@@ -39,7 +39,7 @@ def client():
         norad_id = entry["tle_line1"].split()[1].rstrip("U")
         mock_catalog[f"sat-{norad_id}"] = entry
 
-    with patch("citrascope.api.dummy_api_client.load_satellite_catalog", return_value=mock_catalog):
+    with patch("citrasense.api.dummy_api_client.load_satellite_catalog", return_value=mock_catalog):
         return DummyApiClient()
 
 

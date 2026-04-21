@@ -4,8 +4,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from citrascope.tasks.scope.tracking_telescope_task import TrackingTelescopeTask
-from citrascope.tasks.task import Task
+from citrasense.tasks.scope.tracking_telescope_task import TrackingTelescopeTask
+from citrasense.tasks.task import Task
 
 
 def _make_task_dict(**overrides):
@@ -130,7 +130,7 @@ class TestDirectAdapterTrackingReturn:
     """Verify DirectHardwareAdapter.set_custom_tracking_rate returns the mount's boolean."""
 
     def test_returns_true_when_mount_succeeds(self):
-        from citrascope.hardware.direct.direct_adapter import DirectHardwareAdapter
+        from citrasense.hardware.direct.direct_adapter import DirectHardwareAdapter
 
         adapter = MagicMock()
         adapter._mount = MagicMock()
@@ -140,7 +140,7 @@ class TestDirectAdapterTrackingReturn:
         assert result is True
 
     def test_returns_false_when_mount_fails(self):
-        from citrascope.hardware.direct.direct_adapter import DirectHardwareAdapter
+        from citrasense.hardware.direct.direct_adapter import DirectHardwareAdapter
 
         adapter = MagicMock()
         adapter._mount = MagicMock()
@@ -150,7 +150,7 @@ class TestDirectAdapterTrackingReturn:
         assert result is False
 
     def test_returns_false_when_no_mount(self):
-        from citrascope.hardware.direct.direct_adapter import DirectHardwareAdapter
+        from citrasense.hardware.direct.direct_adapter import DirectHardwareAdapter
 
         adapter = MagicMock()
         adapter._mount = None

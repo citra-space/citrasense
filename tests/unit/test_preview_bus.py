@@ -9,7 +9,7 @@ from pathlib import Path
 import numpy as np
 from PIL import Image
 
-from citrascope.preview_bus import PreviewBus, array_to_jpeg_data_url
+from citrasense.preview_bus import PreviewBus, array_to_jpeg_data_url
 
 
 class TestPreviewBus:
