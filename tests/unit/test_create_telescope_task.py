@@ -4,9 +4,9 @@ from unittest.mock import MagicMock, PropertyMock
 
 import pytest
 
-from citrascope.tasks.runner import TaskManager
-from citrascope.tasks.scope.sidereal_telescope_task import SiderealTelescopeTask
-from citrascope.tasks.scope.tracking_telescope_task import TrackingTelescopeTask
+from citrasense.tasks.runner import TaskManager
+from citrasense.tasks.scope.sidereal_telescope_task import SiderealTelescopeTask
+from citrasense.tasks.scope.tracking_telescope_task import TrackingTelescopeTask
 
 
 def _make_manager(observation_mode: str, supports_custom_tracking: bool) -> TaskManager:

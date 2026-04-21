@@ -4,7 +4,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from citrascope.time.time_health import TimeHealth, TimeStatus
+from citrasense.time.time_health import TimeHealth, TimeStatus
 
 # ---------------------------------------------------------------------------
 # TimeStatus
@@ -92,7 +92,7 @@ def test_to_dict():
 
 
 def test_ntp_source_name():
-    from citrascope.time.time_sources import NTPTimeSource
+    from citrasense.time.time_sources import NTPTimeSource
 
     src = NTPTimeSource()
     assert src.get_source_name() == "ntp"
@@ -100,7 +100,7 @@ def test_ntp_source_name():
 
 
 def test_ntp_get_offset_success():
-    from citrascope.time.time_sources import NTPTimeSource
+    from citrasense.time.time_sources import NTPTimeSource
 
     src = NTPTimeSource()
     mock_resp = MagicMock()
@@ -111,7 +111,7 @@ def test_ntp_get_offset_success():
 
 
 def test_ntp_get_offset_failure():
-    from citrascope.time.time_sources import NTPTimeSource
+    from citrasense.time.time_sources import NTPTimeSource
 
     src = NTPTimeSource()
     with patch.object(src.client, "request", side_effect=Exception("timeout")):
@@ -124,14 +124,14 @@ def test_ntp_get_offset_failure():
 
 
 def test_chrony_source_name():
-    from citrascope.time.time_sources import ChronyTimeSource
+    from citrasense.time.time_sources import ChronyTimeSource
 
     src = ChronyTimeSource()
     assert src.get_source_name() == "chrony"
 
 
 def test_chrony_is_available_false():
-    from citrascope.time.time_sources import ChronyTimeSource
+    from citrasense.time.time_sources import ChronyTimeSource
 
     src = ChronyTimeSource()
     with patch("subprocess.run", side_effect=FileNotFoundError):
@@ -139,7 +139,7 @@ def test_chrony_is_available_false():
 
 
 def test_chrony_get_offset_success():
-    from citrascope.time.time_sources import ChronyTimeSource
+    from citrasense.time.time_sources import ChronyTimeSource
 
     src = ChronyTimeSource()
     mock_result = MagicMock()
@@ -151,7 +151,7 @@ def test_chrony_get_offset_success():
 
 
 def test_chrony_get_offset_failure():
-    from citrascope.time.time_sources import ChronyTimeSource
+    from citrasense.time.time_sources import ChronyTimeSource
 
     src = ChronyTimeSource()
     with patch("subprocess.run", side_effect=FileNotFoundError):
@@ -164,21 +164,21 @@ def test_chrony_get_offset_failure():
 
 
 def test_time_monitor_get_current_health_initially_none():
-    from citrascope.time.time_sources import NTPTimeSource
+    from citrasense.time.time_sources import NTPTimeSource
 
     with patch.object(NTPTimeSource, "__init__", lambda self, **kw: None):
-        with patch("citrascope.time.time_monitor.ChronyTimeSource") as MockChrony:
+        with patch("citrasense.time.time_monitor.ChronyTimeSource") as MockChrony:
             MockChrony.return_value.is_available.return_value = False
-            with patch("citrascope.time.time_monitor.NTPTimeSource") as MockNTP:
+            with patch("citrasense.time.time_monitor.NTPTimeSource") as MockNTP:
                 MockNTP.return_value = MagicMock()
-                from citrascope.time.time_monitor import TimeMonitor
+                from citrasense.time.time_monitor import TimeMonitor
 
                 tm = TimeMonitor(check_interval_minutes=60)
     assert tm.get_current_health() is None
 
 
 def test_time_monitor_check_time_sync():
-    from citrascope.time.time_monitor import TimeMonitor
+    from citrasense.time.time_monitor import TimeMonitor
 
     mock_source = MagicMock()
     mock_source.get_offset_ms.return_value = 25.0
@@ -195,7 +195,7 @@ def test_time_monitor_check_time_sync():
 
 
 def test_time_monitor_critical_sets_status():
-    from citrascope.time.time_monitor import TimeMonitor
+    from citrasense.time.time_monitor import TimeMonitor
 
     mock_source = MagicMock()
     mock_source.get_offset_ms.return_value = 9999.0
@@ -211,7 +211,7 @@ def test_time_monitor_critical_sets_status():
 
 
 def test_time_monitor_check_failure_sets_unknown():
-    from citrascope.time.time_monitor import TimeMonitor
+    from citrasense.time.time_monitor import TimeMonitor
 
     mock_source = MagicMock()
     mock_source.get_offset_ms.side_effect = RuntimeError("boom")

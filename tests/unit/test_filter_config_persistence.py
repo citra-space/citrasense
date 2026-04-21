@@ -4,7 +4,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from citrascope.hardware.filter_sync import (
+from citrasense.hardware.filter_sync import (
     TRASH_FILTER_NAMES,
     is_trash_filter_name,
     sync_filters_to_backend,
@@ -80,12 +80,12 @@ class TestUpdateAndSaveFilterPreservation:
     """Verify update_and_save merges adapter settings instead of replacing."""
 
     def _make_settings(self, config_on_disk: dict):
-        with patch("citrascope.settings.citrascope_settings.SettingsFileManager") as MockSFM:
+        with patch("citrasense.settings.citrasense_settings.SettingsFileManager") as MockSFM:
             instance = MockSFM.return_value
             instance.load_config.return_value = config_on_disk
-            from citrascope.settings.citrascope_settings import CitraScopeSettings
+            from citrasense.settings.citrasense_settings import CitraSenseSettings
 
-            s = CitraScopeSettings.load()
+            s = CitraSenseSettings.load()
         return s, instance
 
     def test_filters_preserved_when_not_in_payload(self):
@@ -257,7 +257,7 @@ class TestPopulateFilterMapTrashNames:
         return adapter
 
     def test_new_positions_with_trash_hw_names_get_placeholder(self):
-        from citrascope.hardware.direct.direct_adapter import DirectHardwareAdapter
+        from citrasense.hardware.direct.direct_adapter import DirectHardwareAdapter
 
         adapter = self._make_adapter_with_filter_map({}, ["Undefined", "Undefined", "Undefined"])
         DirectHardwareAdapter._populate_filter_map_from_hardware(adapter)
@@ -267,7 +267,7 @@ class TestPopulateFilterMapTrashNames:
         assert adapter.filter_map[2]["name"] == "Filter 3"
 
     def test_new_positions_with_real_hw_names_use_them(self):
-        from citrascope.hardware.direct.direct_adapter import DirectHardwareAdapter
+        from citrasense.hardware.direct.direct_adapter import DirectHardwareAdapter
 
         adapter = self._make_adapter_with_filter_map({}, ["Luminance", "Red", "Green"])
         DirectHardwareAdapter._populate_filter_map_from_hardware(adapter)
@@ -277,7 +277,7 @@ class TestPopulateFilterMapTrashNames:
         assert adapter.filter_map[2]["name"] == "Green"
 
     def test_saved_real_names_never_overwritten_by_trash(self):
-        from citrascope.hardware.direct.direct_adapter import DirectHardwareAdapter
+        from citrasense.hardware.direct.direct_adapter import DirectHardwareAdapter
 
         saved = {
             0: {"name": "Luminance", "focus_position": 9000, "enabled": True},
@@ -291,7 +291,7 @@ class TestPopulateFilterMapTrashNames:
         assert adapter.filter_map[1]["name"] == "Ha"
 
     def test_saved_trash_names_replaced_by_real_hw_names(self):
-        from citrascope.hardware.direct.direct_adapter import DirectHardwareAdapter
+        from citrasense.hardware.direct.direct_adapter import DirectHardwareAdapter
 
         saved = {
             0: {"name": "Undefined", "focus_position": None, "enabled": True},
@@ -306,7 +306,7 @@ class TestPopulateFilterMapTrashNames:
         assert adapter.filter_map[1]["name"] == "Filter 2"
 
     def test_both_trash_keeps_existing(self):
-        from citrascope.hardware.direct.direct_adapter import DirectHardwareAdapter
+        from citrasense.hardware.direct.direct_adapter import DirectHardwareAdapter
 
         saved = {0: {"name": "Undefined", "focus_position": 5000, "enabled": True}}
         adapter = self._make_adapter_with_filter_map(saved, ["Undefined"])

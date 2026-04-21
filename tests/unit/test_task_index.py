@@ -5,7 +5,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from citrascope.analysis.task_index import (
+from citrasense.analysis.task_index import (
     _MIGRATIONS,
     _SCHEMA,
     _SCHEMA_VERSION,
@@ -14,7 +14,7 @@ from citrascope.analysis.task_index import (
     _bool_int,
     _iso_diff_seconds,
 )
-from citrascope.processors.processor_result import AggregatedResult, ProcessorResult
+from citrasense.processors.processor_result import AggregatedResult, ProcessorResult
 
 # ── Helpers ────────────────────────────────────────────────────────────
 

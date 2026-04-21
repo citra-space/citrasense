@@ -2,8 +2,8 @@
 
 from unittest.mock import MagicMock
 
-from citrascope.safety.hardware_safety_check import HardwareSafetyCheck
-from citrascope.safety.safety_monitor import SafetyAction
+from citrasense.safety.hardware_safety_check import HardwareSafetyCheck
+from citrasense.safety.safety_monitor import SafetyAction
 
 
 class TestHardwareSafetyCheck:

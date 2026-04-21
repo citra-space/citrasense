@@ -2,9 +2,9 @@
 
 from unittest.mock import MagicMock
 
-from citrascope.safety.safety_monitor import SafetyAction
-from citrascope.safety.time_health_check import TimeHealthCheck
-from citrascope.time.time_health import TimeHealth, TimeStatus
+from citrasense.safety.safety_monitor import SafetyAction
+from citrasense.safety.time_health_check import TimeHealthCheck
+from citrasense.time.time_health import TimeHealth, TimeStatus
 
 
 def _make_monitor(health: TimeHealth | None = None):

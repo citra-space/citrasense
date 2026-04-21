@@ -1,4 +1,4 @@
-# Copilot Instructions for CitraScope
+# Copilot Instructions for CitraSense
 
 See **[CLAUDE.md](../CLAUDE.md)** in the project root for the comprehensive agent guide — architecture, conventions, common pitfalls, and the full checklist for adding new settings.
 

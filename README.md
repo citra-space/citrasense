@@ -1,16 +1,16 @@
-# CitraScope
+# CitraSense
 
-[![Pytest](https://github.com/citra-space/citrascope/actions/workflows/pytest.yml/badge.svg)](https://github.com/citra-space/citrascope/actions/workflows/pytest.yml) [![Publish Python Package](https://github.com/citra-space/citrascope/actions/workflows/pypi-publish.yml/badge.svg)](https://github.com/citra-space/citrascope/actions/workflows/pypi-publish.yml) [![PyPI version](https://badge.fury.io/py/citrascope.svg)](https://pypi.org/project/citrascope/) [![PyPI - Downloads](https://img.shields.io/pypi/dm/citrascope)](https://pypi.org/project/citrascope/) [![License](https://img.shields.io/github/license/citra-space/citrascope)](https://github.com/citra-space/citrascope/blob/main/LICENSE)
+[![Pytest](https://github.com/citra-space/citrascope/actions/workflows/pytest.yml/badge.svg)](https://github.com/citra-space/citrascope/actions/workflows/pytest.yml) [![Publish Python Package](https://github.com/citra-space/citrascope/actions/workflows/pypi-publish.yml/badge.svg)](https://github.com/citra-space/citrascope/actions/workflows/pypi-publish.yml) [![PyPI version](https://badge.fury.io/py/citrasense.svg)](https://pypi.org/project/citrasense/) [![PyPI - Downloads](https://img.shields.io/pypi/dm/citrasense)](https://pypi.org/project/citrasense/) [![License](https://img.shields.io/github/license/citra-space/citrascope)](https://github.com/citra-space/citrascope/blob/main/LICENSE)
 
-**[Documentation](https://docs.citra.space/citrascope/)** | **[Citra.space](https://citra.space)** | **[PyPI](https://pypi.org/project/citrascope/)** | **[CitraScope-Pi](https://github.com/citra-space/citrascope-pi)**
+**[Documentation](https://docs.citra.space/citrascope/)** | **[Citra.space](https://citra.space)** | **[PyPI](https://pypi.org/project/citrasense/)** | **[CitraSense-Pi](https://github.com/citra-space/citrascope-pi)**
 
 Photograph satellites from your backyard telescope.
 
-CitraScope turns your astrophotography rig into an autonomous satellite observation station. It connects to [Citra.space](https://citra.space), picks up tasks for specific satellites, slews your telescope, captures images, and processes everything on the edge — plate solving, source extraction, photometry, and satellite matching — before delivering calibrated results back to the platform.
+CitraSense turns your astrophotography rig into an autonomous satellite observation station. It connects to [Citra.space](https://citra.space), picks up tasks for specific satellites, slews your telescope, captures images, and processes everything on the edge — plate solving, source extraction, photometry, and satellite matching — before delivering calibrated results back to the platform.
 
-![CitraScope Web UI](citrascope_screenshot.png)
+![CitraSense Web UI](citrasense_screenshot.png)
 
-Use [Citra.space](https://citra.space) to search for satellites, schedule observation windows, and task your telescope — CitraScope handles the rest. If you already have a mount, a camera, and software like [N.I.N.A.](https://nighttime-imaging.eu/) or [KStars/Ekos](https://kstars.kde.org/), CitraScope plugs right in. Install it, select your hardware adapter, and you're one click away from photographing the ISS.
+Use [Citra.space](https://citra.space) to search for satellites, schedule observation windows, and task your telescope — CitraSense handles the rest. If you already have a mount, a camera, and software like [N.I.N.A.](https://nighttime-imaging.eu/) or [KStars/Ekos](https://kstars.kde.org/), CitraSense plugs right in. Install it, select your hardware adapter, and you're one click away from photographing the ISS.
 
 ## Supported Hardware
 
@@ -27,48 +27,48 @@ Use [Citra.space](https://citra.space) to search for satellites, schedule observ
 
 ```sh
 # Install and run
-uv tool install citrascope
-citrascope
+uv tool install citrasense
+citrasense
 ```
 
 Or with pip:
 
 ```sh
-pip install citrascope
-citrascope
+pip install citrasense
+citrasense
 ```
 
 Open `http://localhost:24872` in your browser to configure your hardware adapter, connect to Citra.space, and start accepting tasks.
 
-**Raspberry Pi?** Check out [citrascope-pi](https://github.com/citra-space/citrascope-pi) for a ready-to-flash SD card image with CitraScope pre-installed.
+**Raspberry Pi?** Check out [citrasense-pi](https://github.com/citra-space/citrascope-pi) for a ready-to-flash SD card image with CitraSense pre-installed.
 
 ### Optional Extras
 
 ```sh
-uv tool install citrascope --with citrascope[indi]        # INDI protocol support
-uv tool install citrascope --with citrascope[kstars]      # KStars/Ekos via D-Bus
-uv tool install citrascope --with citrascope[usb-camera]  # USB cameras via OpenCV
-uv tool install citrascope --with citrascope[rpi]         # Raspberry Pi Camera Module
-uv tool install citrascope --with citrascope[all]         # INDI + KStars
+uv tool install citrasense --with citrasense[indi]        # INDI protocol support
+uv tool install citrasense --with citrasense[kstars]      # KStars/Ekos via D-Bus
+uv tool install citrasense --with citrasense[usb-camera]  # USB cameras via OpenCV
+uv tool install citrasense --with citrasense[rpi]         # Raspberry Pi Camera Module
+uv tool install citrasense --with citrasense[all]         # INDI + KStars
 ```
 
 <details>
 <summary>pip equivalents</summary>
 
 ```sh
-pip install citrascope[indi]
-pip install citrascope[kstars]
-pip install citrascope[usb-camera]
-pip install citrascope[rpi]
-pip install citrascope[all]
+pip install citrasense[indi]
+pip install citrasense[kstars]
+pip install citrasense[usb-camera]
+pip install citrasense[rpi]
+pip install citrasense[all]
 ```
 </details>
 
 ### CLI Options
 
 ```sh
-citrascope --help
-citrascope --web-port 8080    # Custom web UI port (default: 24872)
+citrasense --help
+citrasense --web-port 8080    # Custom web UI port (default: 24872)
 ```
 
 ## Documentation
@@ -113,8 +113,8 @@ uv run pre-commit run --all-files    # Run all checks manually
 ### VS Code Launch Configs
 
 The `.vscode/launch.json` includes pre-configured debug configurations:
-- **Python: citrascope** — Runs the daemon with default settings
-- **Python: citrascope (custom port)** — Runs with web interface on port 8080
+- **Python: citrasense** — Runs the daemon with default settings
+- **Python: citrasense (custom port)** — Runs with web interface on port 8080
 
 ### Releasing
 

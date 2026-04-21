@@ -5,8 +5,8 @@ from unittest.mock import MagicMock, patch
 import pytest
 from fastapi.testclient import TestClient
 
-from citrascope.constants import AUTOFOCUS_TARGET_PRESETS
-from citrascope.web.app import CitraScopeWebApp, ConnectionManager
+from citrasense.constants import AUTOFOCUS_TARGET_PRESETS
+from citrasense.web.app import CitraSenseWebApp, ConnectionManager
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -52,7 +52,7 @@ def mock_settings():
         exists=lambda: False,
     )
     s.directories.processing_dir = MagicMock(__str__=lambda self: "/tmp/processing")
-    s.directories.current_log_path.return_value = "/tmp/citrascope.log"
+    s.directories.current_log_path.return_value = "/tmp/citrasense.log"
     s.is_configured.return_value = True
     s.keep_processing_output = False
     s.alignment_exposure_seconds = 2.0
@@ -149,8 +149,8 @@ def mock_daemon(mock_settings):
 
 @pytest.fixture
 def web_app(mock_daemon):
-    with patch("citrascope.web.app.StaticFiles"):
-        app = CitraScopeWebApp(daemon=mock_daemon)
+    with patch("citrasense.web.app.StaticFiles"):
+        app = CitraSenseWebApp(daemon=mock_daemon)
     return app
 
 
@@ -196,7 +196,7 @@ def test_get_adapter_schema_unknown(client):
 
 def test_scan_hardware_returns_schema(client):
     """POST /api/hardware/scan clears probe caches and returns fresh schema."""
-    from citrascope.hardware.devices.abstract_hardware_device import AbstractHardwareDevice
+    from citrasense.hardware.devices.abstract_hardware_device import AbstractHardwareDevice
 
     AbstractHardwareDevice._hardware_probe_cache["stale:key"] = (["old"], 0)
 
@@ -248,8 +248,8 @@ def test_get_config(client):
 
 
 def test_get_config_no_daemon(mock_daemon):
-    with patch("citrascope.web.app.StaticFiles"):
-        app = CitraScopeWebApp(daemon=None)
+    with patch("citrasense.web.app.StaticFiles"):
+        app = CitraSenseWebApp(daemon=None)
     c = TestClient(app.app)
     resp = c.get("/api/config")
     assert resp.status_code == 503
@@ -262,8 +262,8 @@ def test_get_config_status(client):
 
 
 def test_get_config_status_no_daemon():
-    with patch("citrascope.web.app.StaticFiles"):
-        app = CitraScopeWebApp(daemon=None)
+    with patch("citrasense.web.app.StaticFiles"):
+        app = CitraSenseWebApp(daemon=None)
     c = TestClient(app.app)
     resp = c.get("/api/config/status")
     assert resp.status_code == 200
@@ -291,8 +291,8 @@ def test_post_config_missing_field(client):
 
 
 def test_post_config_no_daemon():
-    with patch("citrascope.web.app.StaticFiles"):
-        app = CitraScopeWebApp(daemon=None)
+    with patch("citrasense.web.app.StaticFiles"):
+        app = CitraSenseWebApp(daemon=None)
     c = TestClient(app.app)
     resp = c.post(
         "/api/config",
@@ -337,8 +337,8 @@ def test_reconnect_hardware_failure(client, mock_daemon):
 
 
 def test_reconnect_hardware_no_daemon():
-    with patch("citrascope.web.app.StaticFiles"):
-        app = CitraScopeWebApp(daemon=None)
+    with patch("citrasense.web.app.StaticFiles"):
+        app = CitraSenseWebApp(daemon=None)
     c = TestClient(app.app)
     assert c.post("/api/hardware/reconnect").status_code == 503
 
@@ -364,8 +364,8 @@ def test_get_status(client):
 
 
 def test_get_status_no_daemon():
-    with patch("citrascope.web.app.StaticFiles"):
-        app = CitraScopeWebApp(daemon=None)
+    with patch("citrasense.web.app.StaticFiles"):
+        app = CitraSenseWebApp(daemon=None)
     c = TestClient(app.app)
     resp = c.get("/api/status")
     assert resp.status_code == 200
@@ -401,8 +401,8 @@ def test_resume_tasks(client, mock_daemon):
 
 
 def test_pause_no_daemon():
-    with patch("citrascope.web.app.StaticFiles"):
-        app = CitraScopeWebApp(daemon=None)
+    with patch("citrasense.web.app.StaticFiles"):
+        app = CitraSenseWebApp(daemon=None)
     c = TestClient(app.app)
     assert c.post("/api/tasks/pause").status_code == 503
 
@@ -435,8 +435,8 @@ def test_cancel_task_active_refused(client, mock_daemon):
 
 def test_cancel_task_no_api_client(mock_daemon):
     mock_daemon.api_client = None
-    with patch("citrascope.web.app.StaticFiles"):
-        app = CitraScopeWebApp(daemon=mock_daemon)
+    with patch("citrasense.web.app.StaticFiles"):
+        app = CitraSenseWebApp(daemon=mock_daemon)
     c = TestClient(app.app)
     assert c.post("/api/tasks/abc/cancel").status_code == 503
 
@@ -461,8 +461,8 @@ def test_emergency_stop(client, mock_daemon):
 
 
 def test_emergency_stop_no_daemon():
-    with patch("citrascope.web.app.StaticFiles"):
-        app = CitraScopeWebApp(daemon=None)
+    with patch("citrasense.web.app.StaticFiles"):
+        app = CitraSenseWebApp(daemon=None)
     c = TestClient(app.app)
     assert c.post("/api/emergency-stop").status_code == 503
 
@@ -470,8 +470,8 @@ def test_emergency_stop_no_daemon():
 def test_emergency_stop_no_task_manager(mock_daemon):
     """Mount halt and operator stop still fire even without a task manager."""
     mock_daemon.task_manager = None
-    with patch("citrascope.web.app.StaticFiles"):
-        app = CitraScopeWebApp(daemon=mock_daemon)
+    with patch("citrasense.web.app.StaticFiles"):
+        app = CitraSenseWebApp(daemon=mock_daemon)
     c = TestClient(app.app)
     resp = c.post("/api/emergency-stop")
     assert resp.status_code == 202
@@ -490,8 +490,8 @@ def test_clear_operator_stop(client, mock_daemon):
 
 
 def test_clear_operator_stop_no_daemon():
-    with patch("citrascope.web.app.StaticFiles"):
-        app = CitraScopeWebApp(daemon=None)
+    with patch("citrasense.web.app.StaticFiles"):
+        app = CitraSenseWebApp(daemon=None)
     c = TestClient(app.app)
     assert c.post("/api/safety/operator-stop/clear").status_code == 503
 
@@ -510,8 +510,8 @@ def test_get_logs_no_handler(client):
 def test_get_logs_with_handler(mock_daemon):
     handler = MagicMock()
     handler.get_recent_logs.return_value = [{"level": "INFO", "message": "hello"}]
-    with patch("citrascope.web.app.StaticFiles"):
-        app = CitraScopeWebApp(daemon=mock_daemon, web_log_handler=handler)
+    with patch("citrasense.web.app.StaticFiles"):
+        app = CitraSenseWebApp(daemon=mock_daemon, web_log_handler=handler)
     c = TestClient(app.app)
     resp = c.get("/api/logs?limit=50")
     assert resp.status_code == 200
@@ -539,8 +539,8 @@ def test_trigger_autofocus(client, mock_daemon):
 
 
 def test_trigger_autofocus_no_daemon():
-    with patch("citrascope.web.app.StaticFiles"):
-        app = CitraScopeWebApp(daemon=None)
+    with patch("citrasense.web.app.StaticFiles"):
+        app = CitraSenseWebApp(daemon=None)
     c = TestClient(app.app)
     assert c.post("/api/adapter/autofocus").status_code == 503
 
@@ -568,8 +568,8 @@ def test_get_filters_no_adapter():
     d.settings = MagicMock()
     d.settings.directories.images_dir = MagicMock(exists=lambda: False)
     d.hardware_adapter = None
-    with patch("citrascope.web.app.StaticFiles"):
-        app = CitraScopeWebApp(daemon=d)
+    with patch("citrasense.web.app.StaticFiles"):
+        app = CitraSenseWebApp(daemon=d)
     c = TestClient(app.app)
     assert c.get("/api/adapter/filters").status_code == 503
 
@@ -652,8 +652,8 @@ def _batch_client(filter_map=None):
     d.hardware_adapter.update_filter_focus.return_value = True
     d.hardware_adapter.update_filter_enabled.return_value = True
     d.hardware_adapter.supports_filter_management.return_value = True
-    with patch("citrascope.web.app.StaticFiles"):
-        app = CitraScopeWebApp(daemon=d)
+    with patch("citrasense.web.app.StaticFiles"):
+        app = CitraSenseWebApp(daemon=d)
     return TestClient(app.app), d
 
 

@@ -8,7 +8,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 import requests
 
-from citrascope.hardware.nina.nina_adapter import NinaAdvancedHttpAdapter
+from citrasense.hardware.nina.nina_adapter import NinaAdvancedHttpAdapter
 
 API = "http://nina:1888/v2/api"
 
@@ -61,8 +61,8 @@ def adapter():
 
 
 class TestConnectSafetyMonitor:
-    @patch("citrascope.hardware.nina.nina_adapter.NinaEventListener")
-    @patch("citrascope.hardware.nina.nina_adapter.requests.get")
+    @patch("citrasense.hardware.nina.nina_adapter.NinaEventListener")
+    @patch("citrasense.hardware.nina.nina_adapter.requests.get")
     def test_safety_monitor_connect_called(self, mock_get, mock_ws, adapter):
         """Safety monitor connect is attempted during connect()."""
         mock_get.side_effect = _all_succeed_responses()
@@ -73,8 +73,8 @@ class TestConnectSafetyMonitor:
         urls = [c.args[0] for c in mock_get.call_args_list]
         assert f"{API}/equipment/safetymonitor/connect" in urls
 
-    @patch("citrascope.hardware.nina.nina_adapter.NinaEventListener")
-    @patch("citrascope.hardware.nina.nina_adapter.requests.get")
+    @patch("citrasense.hardware.nina.nina_adapter.NinaEventListener")
+    @patch("citrasense.hardware.nina.nina_adapter.requests.get")
     def test_safety_monitor_failure_does_not_block_connect(self, mock_get, mock_ws, adapter):
         """A failed safety monitor connect warns but still returns True."""
         responses = _all_succeed_responses()
@@ -86,8 +86,8 @@ class TestConnectSafetyMonitor:
         assert result is True
         adapter.logger.warning.assert_any_call("Failed to connect safety monitor: No device selected")
 
-    @patch("citrascope.hardware.nina.nina_adapter.NinaEventListener")
-    @patch("citrascope.hardware.nina.nina_adapter.requests.get")
+    @patch("citrasense.hardware.nina.nina_adapter.NinaEventListener")
+    @patch("citrasense.hardware.nina.nina_adapter.requests.get")
     def test_safety_monitor_exception_does_not_block_connect(self, mock_get, mock_ws, adapter):
         """A network exception from safety monitor connect doesn't abort connect()."""
         responses = _all_succeed_responses()
@@ -111,8 +111,8 @@ class TestConnectSafetyMonitor:
         assert result is True
         adapter.logger.warning.assert_any_call("Failed to connect safety monitor: Connection refused")
 
-    @patch("citrascope.hardware.nina.nina_adapter.NinaEventListener")
-    @patch("citrascope.hardware.nina.nina_adapter.requests.get")
+    @patch("citrasense.hardware.nina.nina_adapter.NinaEventListener")
+    @patch("citrasense.hardware.nina.nina_adapter.requests.get")
     def test_safety_monitor_called_after_focuser_before_mount(self, mock_get, mock_ws, adapter):
         """Safety monitor connect is sequenced between focuser and mount."""
         mock_get.side_effect = _all_succeed_responses()

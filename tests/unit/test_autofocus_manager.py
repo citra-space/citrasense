@@ -7,8 +7,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from citrascope.constants import AUTOFOCUS_TARGET_PRESETS
-from citrascope.tasks.autofocus_manager import AutofocusManager
+from citrasense.constants import AUTOFOCUS_TARGET_PRESETS
+from citrasense.tasks.autofocus_manager import AutofocusManager
 
 
 @pytest.fixture
@@ -339,7 +339,7 @@ class TestResolveAutofocusTargetName:
     """Tests for _resolve_autofocus_target_name used by the status API."""
 
     def test_named_preset(self):
-        from citrascope.web.app import _resolve_autofocus_target_name
+        from citrasense.web.app import _resolve_autofocus_target_name
 
         settings = MagicMock()
         settings.autofocus_target_preset = "vega"
@@ -347,7 +347,7 @@ class TestResolveAutofocusTargetName:
         assert result == "Vega (Alpha Lyrae)"
 
     def test_current_position(self):
-        from citrascope.web.app import _resolve_autofocus_target_name
+        from citrasense.web.app import _resolve_autofocus_target_name
 
         settings = MagicMock()
         settings.autofocus_target_preset = "current"
@@ -355,7 +355,7 @@ class TestResolveAutofocusTargetName:
         assert result == "Current position"
 
     def test_custom_with_coords(self):
-        from citrascope.web.app import _resolve_autofocus_target_name
+        from citrasense.web.app import _resolve_autofocus_target_name
 
         settings = MagicMock()
         settings.autofocus_target_preset = "custom"
@@ -367,7 +367,7 @@ class TestResolveAutofocusTargetName:
         assert "Custom" in result
 
     def test_custom_missing_coords(self):
-        from citrascope.web.app import _resolve_autofocus_target_name
+        from citrasense.web.app import _resolve_autofocus_target_name
 
         settings = MagicMock()
         settings.autofocus_target_preset = "custom"
@@ -377,7 +377,7 @@ class TestResolveAutofocusTargetName:
         assert "Mirach" in result
 
     def test_unknown_preset(self):
-        from citrascope.web.app import _resolve_autofocus_target_name
+        from citrasense.web.app import _resolve_autofocus_target_name
 
         settings = MagicMock()
         settings.autofocus_target_preset = "nonexistent"
@@ -386,7 +386,7 @@ class TestResolveAutofocusTargetName:
         assert "nonexistent" in result
 
     def test_falsy_preset_defaults_to_mirach(self):
-        from citrascope.web.app import _resolve_autofocus_target_name
+        from citrasense.web.app import _resolve_autofocus_target_name
 
         settings = MagicMock()
         settings.autofocus_target_preset = ""
@@ -402,7 +402,7 @@ class TestResolveAutofocusTargetName:
 def _has_apass_catalog() -> bool:
     """Return True only if the APASS catalog DB exists and is queryable."""
     try:
-        from citrascope.catalogs.apass_catalog import ApassCatalog
+        from citrasense.catalogs.apass_catalog import ApassCatalog
 
         cat = ApassCatalog()
         if not cat.is_available():
@@ -419,7 +419,7 @@ class TestDummyAdapterAutofocusTargeting:
     @pytest.mark.slow
     @pytest.mark.skipif(not _has_apass_catalog(), reason="APASS catalog not available")
     def test_skips_slew_when_both_none(self, tmp_path: Path):
-        from citrascope.hardware.dummy_adapter import DummyAdapter
+        from citrasense.hardware.dummy_adapter import DummyAdapter
 
         adapter = DummyAdapter(MagicMock(), tmp_path)
         adapter.connect()
@@ -428,14 +428,14 @@ class TestDummyAdapterAutofocusTargeting:
     @pytest.mark.slow
     @pytest.mark.skipif(not _has_apass_catalog(), reason="APASS catalog not available")
     def test_uses_provided_coords(self, tmp_path: Path):
-        from citrascope.hardware.dummy_adapter import DummyAdapter
+        from citrasense.hardware.dummy_adapter import DummyAdapter
 
         adapter = DummyAdapter(MagicMock(), tmp_path)
         adapter.connect()
         adapter.do_autofocus(target_ra=100.0, target_dec=30.0)
 
     def test_raises_on_partial_none(self, tmp_path: Path):
-        from citrascope.hardware.dummy_adapter import DummyAdapter
+        from citrasense.hardware.dummy_adapter import DummyAdapter
 
         adapter = DummyAdapter(MagicMock(), tmp_path)
         adapter.connect()
@@ -481,13 +481,13 @@ class TestAfterSunsetScheduling:
 
     def test_fires_when_past_trigger_and_never_run(self, sunset_manager):
         sunset_two_hours_ago = datetime.now(timezone.utc) - timedelta(hours=2)
-        with patch("citrascope.tasks.autofocus_manager.AutofocusManager._compute_sunset_trigger_time") as mock_trigger:
+        with patch("citrasense.tasks.autofocus_manager.AutofocusManager._compute_sunset_trigger_time") as mock_trigger:
             mock_trigger.return_value = sunset_two_hours_ago + timedelta(minutes=60)
             assert sunset_manager._should_run_after_sunset() is True
 
     def test_skips_when_before_trigger_time(self, sunset_manager):
         future_sunset = datetime.now(timezone.utc) + timedelta(hours=2)
-        with patch("citrascope.tasks.autofocus_manager.AutofocusManager._compute_sunset_trigger_time") as mock_trigger:
+        with patch("citrasense.tasks.autofocus_manager.AutofocusManager._compute_sunset_trigger_time") as mock_trigger:
             mock_trigger.return_value = future_sunset + timedelta(minutes=60)
             assert sunset_manager._should_run_after_sunset() is False
 
@@ -495,7 +495,7 @@ class TestAfterSunsetScheduling:
         trigger_time = datetime.now(timezone.utc) - timedelta(hours=1)
         ran_after_trigger = trigger_time + timedelta(minutes=10)
         mock_settings.last_autofocus_timestamp = int(ran_after_trigger.timestamp())
-        with patch("citrascope.tasks.autofocus_manager.AutofocusManager._compute_sunset_trigger_time") as mock_trigger:
+        with patch("citrasense.tasks.autofocus_manager.AutofocusManager._compute_sunset_trigger_time") as mock_trigger:
             mock_trigger.return_value = trigger_time
             assert sunset_manager._should_run_after_sunset() is False
 
@@ -503,7 +503,7 @@ class TestAfterSunsetScheduling:
         trigger_time = datetime.now(timezone.utc) - timedelta(minutes=30)
         ran_before_trigger = trigger_time - timedelta(hours=12)
         mock_settings.last_autofocus_timestamp = int(ran_before_trigger.timestamp())
-        with patch("citrascope.tasks.autofocus_manager.AutofocusManager._compute_sunset_trigger_time") as mock_trigger:
+        with patch("citrasense.tasks.autofocus_manager.AutofocusManager._compute_sunset_trigger_time") as mock_trigger:
             mock_trigger.return_value = trigger_time
             assert sunset_manager._should_run_after_sunset() is True
 
@@ -520,13 +520,13 @@ class TestAfterSunsetScheduling:
         assert mgr._should_run_after_sunset() is False
 
     def test_skips_when_sunset_computation_fails(self, sunset_manager):
-        with patch("citrascope.tasks.autofocus_manager.AutofocusManager._compute_sunset_trigger_time") as mock_trigger:
+        with patch("citrasense.tasks.autofocus_manager.AutofocusManager._compute_sunset_trigger_time") as mock_trigger:
             mock_trigger.return_value = None
             assert sunset_manager._should_run_after_sunset() is False
 
     def test_check_and_execute_uses_sunset_mode(self, sunset_manager, mock_hardware_adapter):
         trigger_time = datetime.now(timezone.utc) - timedelta(hours=1)
-        with patch("citrascope.tasks.autofocus_manager.AutofocusManager._compute_sunset_trigger_time") as mock_trigger:
+        with patch("citrasense.tasks.autofocus_manager.AutofocusManager._compute_sunset_trigger_time") as mock_trigger:
             mock_trigger.return_value = trigger_time
             result = sunset_manager.check_and_execute()
             assert result is True
@@ -564,7 +564,7 @@ class TestGetNextAutofocusMinutes:
 
     def test_sunset_mode_future_trigger(self, sunset_manager):
         future_trigger = datetime.now(timezone.utc) + timedelta(minutes=90)
-        with patch("citrascope.tasks.autofocus_manager.AutofocusManager._compute_sunset_trigger_time") as mock_trigger:
+        with patch("citrasense.tasks.autofocus_manager.AutofocusManager._compute_sunset_trigger_time") as mock_trigger:
             mock_trigger.return_value = future_trigger
             result = sunset_manager.get_next_autofocus_minutes()
             assert result is not None
@@ -572,7 +572,7 @@ class TestGetNextAutofocusMinutes:
 
     def test_sunset_mode_overdue(self, sunset_manager):
         past_trigger = datetime.now(timezone.utc) - timedelta(minutes=30)
-        with patch("citrascope.tasks.autofocus_manager.AutofocusManager._compute_sunset_trigger_time") as mock_trigger:
+        with patch("citrasense.tasks.autofocus_manager.AutofocusManager._compute_sunset_trigger_time") as mock_trigger:
             mock_trigger.return_value = past_trigger
             assert sunset_manager.get_next_autofocus_minutes() == 0
 
@@ -580,6 +580,6 @@ class TestGetNextAutofocusMinutes:
         trigger_time = datetime.now(timezone.utc) - timedelta(hours=1)
         ran_after = trigger_time + timedelta(minutes=5)
         mock_settings.last_autofocus_timestamp = int(ran_after.timestamp())
-        with patch("citrascope.tasks.autofocus_manager.AutofocusManager._compute_sunset_trigger_time") as mock_trigger:
+        with patch("citrasense.tasks.autofocus_manager.AutofocusManager._compute_sunset_trigger_time") as mock_trigger:
             mock_trigger.return_value = trigger_time
             assert sunset_manager.get_next_autofocus_minutes() is None

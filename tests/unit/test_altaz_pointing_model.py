@@ -11,7 +11,7 @@ from unittest.mock import patch
 import numpy as np
 import pytest
 
-from citrascope.hardware.devices.mount.altaz_pointing_model import (
+from citrasense.hardware.devices.mount.altaz_pointing_model import (
     AltAzPointingModel,
     altaz_to_radec,
     generate_calibration_grid,
@@ -33,12 +33,12 @@ def _patch_gast_degrees():
     """Patch ``gast_degrees`` to return a fixed value so tests are deterministic.
 
     Targets the name as imported into ``altaz_pointing_model`` (not the
-    definition in ``citrascope.astro.sidereal``) because the module did
-    ``from citrascope.astro.sidereal import gast_degrees`` at import time;
+    definition in ``citrasense.astro.sidereal``) because the module did
+    ``from citrasense.astro.sidereal import gast_degrees`` at import time;
     that binding is what gets looked up on each call.
     """
     with patch(
-        "citrascope.hardware.devices.mount.altaz_pointing_model.gast_degrees",
+        "citrasense.hardware.devices.mount.altaz_pointing_model.gast_degrees",
         return_value=90.0,
     ):
         yield
@@ -921,7 +921,7 @@ class TestFindNearbyPointIndex:
     def test_default_guard_radius_is_one_degree(self):
         """Regression: the operational feeding guard must stay at 1° unless
         deliberately changed.  See issue #270."""
-        from citrascope.hardware.devices.mount import altaz_pointing_model
+        from citrasense.hardware.devices.mount import altaz_pointing_model
 
         assert altaz_pointing_model._NEARBY_POINT_MIN_SEP == 1.0
 

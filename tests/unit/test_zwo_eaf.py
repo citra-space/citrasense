@@ -17,7 +17,7 @@ class TestEafBindingsConstants:
     """Verify our error code constants match the SDK header values."""
 
     def test_error_code_values(self):
-        from citrascope.hardware.devices.focuser.zwo_eaf_bindings import (
+        from citrasense.hardware.devices.focuser.zwo_eaf_bindings import (
             EAF_ERROR_CLOSED,
             EAF_ERROR_ERROR_STATE,
             EAF_ERROR_GENERAL_ERROR,
@@ -42,13 +42,13 @@ class TestEafBindingsConstants:
         assert EAF_ERROR_CLOSED == 9
 
     def test_error_names_dict(self):
-        from citrascope.hardware.devices.focuser.zwo_eaf_bindings import _ERROR_NAMES
+        from citrasense.hardware.devices.focuser.zwo_eaf_bindings import _ERROR_NAMES
 
         assert _ERROR_NAMES[0] == "EAF_SUCCESS"
         assert _ERROR_NAMES[4] == "EAF_ERROR_REMOVED"
 
     def test_eaf_error_message(self):
-        from citrascope.hardware.devices.focuser.zwo_eaf_bindings import EafError
+        from citrasense.hardware.devices.focuser.zwo_eaf_bindings import EafError
 
         err = EafError("EAFMove", 5)
         assert err.error_code == 5
@@ -60,15 +60,15 @@ class TestEafLibraryLoading:
     """Test library loading behavior when native library is missing."""
 
     def test_library_not_found_raises(self):
-        from citrascope.hardware.devices.focuser.zwo_eaf_bindings import EafLibraryNotFound
+        from citrasense.hardware.devices.focuser.zwo_eaf_bindings import EafLibraryNotFound
 
-        with patch("citrascope.hardware.devices.focuser.zwo_eaf_bindings._lib", None):
-            with patch("citrascope.hardware.devices.focuser.zwo_eaf_bindings.ctypes") as mock_ctypes:
+        with patch("citrasense.hardware.devices.focuser.zwo_eaf_bindings._lib", None):
+            with patch("citrasense.hardware.devices.focuser.zwo_eaf_bindings.ctypes") as mock_ctypes:
                 mock_ctypes.util.find_library.return_value = None
                 mock_ctypes.cdll = MagicMock()
                 with patch("os.environ.get", return_value=None):
                     with patch("os.path.isfile", return_value=False):
-                        import citrascope.hardware.devices.focuser.zwo_eaf_bindings as mod
+                        import citrasense.hardware.devices.focuser.zwo_eaf_bindings as mod
 
                         mod._lib = None
                         with pytest.raises(EafLibraryNotFound):
@@ -79,7 +79,7 @@ class TestZwoEafFocuserConnect:
     """Test ZwoEafFocuser connect/disconnect with mocked native library."""
 
     def _make_focuser(self, **kwargs):
-        from citrascope.hardware.devices.focuser.zwo_eaf import ZwoEafFocuser
+        from citrasense.hardware.devices.focuser.zwo_eaf import ZwoEafFocuser
 
         logger = logging.getLogger("test")
         return ZwoEafFocuser(logger, **kwargs)
@@ -109,7 +109,7 @@ class TestZwoEafFocuserConnect:
         mock_bindings = MagicMock(EafFocuser=MockEafDriver)
         with patch.dict(
             "sys.modules",
-            {"citrascope.hardware.devices.focuser.zwo_eaf_bindings": mock_bindings},
+            {"citrasense.hardware.devices.focuser.zwo_eaf_bindings": mock_bindings},
         ):
             focuser = self._make_focuser(focuser_id=-1, backlash=10, reverse=False, beep=True)
             result = focuser.connect()
@@ -128,7 +128,7 @@ class TestZwoEafFocuserConnect:
 
         with patch.dict(
             "sys.modules",
-            {"citrascope.hardware.devices.focuser.zwo_eaf_bindings": MagicMock(EafFocuser=MockEafDriver)},
+            {"citrasense.hardware.devices.focuser.zwo_eaf_bindings": MagicMock(EafFocuser=MockEafDriver)},
         ):
             focuser = self._make_focuser()
             result = focuser.connect()
@@ -137,7 +137,7 @@ class TestZwoEafFocuserConnect:
 
     def test_connect_import_error(self):
         """Returns False when the SDK library is not installed."""
-        with patch.dict("sys.modules", {"citrascope.hardware.devices.focuser.zwo_eaf_bindings": None}):
+        with patch.dict("sys.modules", {"citrasense.hardware.devices.focuser.zwo_eaf_bindings": None}):
             focuser = self._make_focuser()
             result = focuser.connect()
 
@@ -149,7 +149,7 @@ class TestZwoEafFocuserConnect:
 
         with patch.dict(
             "sys.modules",
-            {"citrascope.hardware.devices.focuser.zwo_eaf_bindings": MagicMock(EafFocuser=MockEafDriver)},
+            {"citrasense.hardware.devices.focuser.zwo_eaf_bindings": MagicMock(EafFocuser=MockEafDriver)},
         ):
             focuser = self._make_focuser()
             focuser.connect()
@@ -164,7 +164,7 @@ class TestZwoEafFocuserMovement:
     """Test focuser movement operations."""
 
     def _connected_focuser(self):
-        from citrascope.hardware.devices.focuser.zwo_eaf import ZwoEafFocuser
+        from citrasense.hardware.devices.focuser.zwo_eaf import ZwoEafFocuser
 
         focuser = ZwoEafFocuser(logging.getLogger("test"))
         mock_eaf = MagicMock()
@@ -235,7 +235,7 @@ class TestZwoEafFocuserMovement:
         assert focuser.get_max_position() == 100000
 
     def test_not_connected_returns_none_or_false(self):
-        from citrascope.hardware.devices.focuser.zwo_eaf import ZwoEafFocuser
+        from citrasense.hardware.devices.focuser.zwo_eaf import ZwoEafFocuser
 
         focuser = ZwoEafFocuser(logging.getLogger("test"))
         assert focuser.move_absolute(100) is False
@@ -250,7 +250,7 @@ class TestZwoEafTemperature:
     """Test temperature reading and the -273 sentinel."""
 
     def _connected_focuser(self):
-        from citrascope.hardware.devices.focuser.zwo_eaf import ZwoEafFocuser
+        from citrasense.hardware.devices.focuser.zwo_eaf import ZwoEafFocuser
 
         focuser = ZwoEafFocuser(logging.getLogger("test"))
         mock_eaf = MagicMock()
@@ -279,7 +279,7 @@ class TestZwoEafSettingsSchema:
     """Test the settings schema generation."""
 
     def test_schema_has_required_fields(self):
-        from citrascope.hardware.devices.focuser.zwo_eaf import ZwoEafFocuser
+        from citrasense.hardware.devices.focuser.zwo_eaf import ZwoEafFocuser
 
         ZwoEafFocuser._focuser_cache = None
         schema = ZwoEafFocuser.get_settings_schema()
@@ -291,7 +291,7 @@ class TestZwoEafSettingsSchema:
         assert "beep" in names
 
     def test_focuser_id_has_auto_option(self):
-        from citrascope.hardware.devices.focuser.zwo_eaf import ZwoEafFocuser
+        from citrasense.hardware.devices.focuser.zwo_eaf import ZwoEafFocuser
 
         ZwoEafFocuser._focuser_cache = None
         schema = ZwoEafFocuser.get_settings_schema()
@@ -305,19 +305,19 @@ class TestZwoEafDeviceRegistry:
     """Test that ZWO EAF is properly registered."""
 
     def test_zwo_eaf_in_focuser_registry(self):
-        from citrascope.hardware.devices.device_registry import FOCUSER_DEVICES
+        from citrasense.hardware.devices.device_registry import FOCUSER_DEVICES
 
         assert "zwo_eaf" in FOCUSER_DEVICES
         assert FOCUSER_DEVICES["zwo_eaf"]["class_name"] == "ZwoEafFocuser"
 
     def test_zwo_eaf_importable_via_registry(self):
-        from citrascope.hardware.devices.device_registry import get_focuser_class
+        from citrasense.hardware.devices.device_registry import get_focuser_class
 
         cls = get_focuser_class("zwo_eaf")
         assert cls.__name__ == "ZwoEafFocuser"
 
     def test_zwo_eaf_in_init_exports(self):
-        from citrascope.hardware.devices.focuser import ZwoEafFocuser
+        from citrasense.hardware.devices.focuser import ZwoEafFocuser
 
         assert ZwoEafFocuser.get_friendly_name() == "ZWO EAF"
 
@@ -326,13 +326,13 @@ class TestZwoEafIsConnected:
     """Test the is_connected property."""
 
     def test_not_connected_initially(self):
-        from citrascope.hardware.devices.focuser.zwo_eaf import ZwoEafFocuser
+        from citrasense.hardware.devices.focuser.zwo_eaf import ZwoEafFocuser
 
         focuser = ZwoEafFocuser(logging.getLogger("test"))
         assert focuser.is_connected() is False
 
     def test_connected_after_open(self):
-        from citrascope.hardware.devices.focuser.zwo_eaf import ZwoEafFocuser
+        from citrasense.hardware.devices.focuser.zwo_eaf import ZwoEafFocuser
 
         focuser = ZwoEafFocuser(logging.getLogger("test"))
         mock_eaf = MagicMock()

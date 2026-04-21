@@ -3,8 +3,8 @@
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-from citrascope.safety.disk_space_check import CRITICAL_BYTES, WARN_BYTES, DiskSpaceCheck
-from citrascope.safety.safety_monitor import SafetyAction
+from citrasense.safety.disk_space_check import CRITICAL_BYTES, WARN_BYTES, DiskSpaceCheck
+from citrasense.safety.safety_monitor import SafetyAction
 
 
 def _usage(free: int):

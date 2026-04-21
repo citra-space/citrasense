@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock, patch
 
-from citrascope.location.twilight import NAUTICAL_DEG, ObservingWindow, compute_observing_window
+from citrasense.location.twilight import NAUTICAL_DEG, ObservingWindow, compute_observing_window
 
 
 class _FakeAltitude:
@@ -63,7 +63,7 @@ def test_observing_window_daytime():
     mock_ts, mock_eph, mock_almanac, mock_wgs84 = _mock_skyfield_env(sun_alt=10.0)
 
     with (
-        patch("citrascope.location.twilight._get_skyfield_objects", return_value=(mock_ts, mock_eph)),
+        patch("citrasense.location.twilight._get_skyfield_objects", return_value=(mock_ts, mock_eph)),
         patch("skyfield.almanac.find_discrete", mock_almanac.find_discrete),
         patch("skyfield.almanac.risings_and_settings", mock_almanac.risings_and_settings),
         patch("skyfield.api.wgs84", mock_wgs84),
@@ -95,7 +95,7 @@ def test_observing_window_dark():
     )
 
     with (
-        patch("citrascope.location.twilight._get_skyfield_objects", return_value=(mock_ts, mock_eph)),
+        patch("citrasense.location.twilight._get_skyfield_objects", return_value=(mock_ts, mock_eph)),
         patch("skyfield.almanac.find_discrete", mock_almanac.find_discrete),
         patch("skyfield.almanac.risings_and_settings", mock_almanac.risings_and_settings),
         patch("skyfield.api.wgs84", mock_wgs84),
@@ -126,7 +126,7 @@ def test_observing_window_daytime_returns_next_dark_start():
     )
 
     with (
-        patch("citrascope.location.twilight._get_skyfield_objects", return_value=(mock_ts, mock_eph)),
+        patch("citrasense.location.twilight._get_skyfield_objects", return_value=(mock_ts, mock_eph)),
         patch("skyfield.almanac.find_discrete", mock_almanac.find_discrete),
         patch("skyfield.almanac.risings_and_settings", mock_almanac.risings_and_settings),
         patch("skyfield.api.wgs84", mock_wgs84),
@@ -143,7 +143,7 @@ def test_observing_window_threshold_boundary():
     mock_ts, mock_eph, mock_almanac, mock_wgs84 = _mock_skyfield_env(sun_alt=-12.0)
 
     with (
-        patch("citrascope.location.twilight._get_skyfield_objects", return_value=(mock_ts, mock_eph)),
+        patch("citrasense.location.twilight._get_skyfield_objects", return_value=(mock_ts, mock_eph)),
         patch("skyfield.almanac.find_discrete", mock_almanac.find_discrete),
         patch("skyfield.almanac.risings_and_settings", mock_almanac.risings_and_settings),
         patch("skyfield.api.wgs84", mock_wgs84),

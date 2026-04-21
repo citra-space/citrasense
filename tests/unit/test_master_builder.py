@@ -7,10 +7,10 @@ import numpy as np
 import pytest
 from astropy.io import fits
 
-from citrascope.calibration import FilterSlot
-from citrascope.calibration.calibration_library import CalibrationLibrary
-from citrascope.calibration.master_builder import MasterBuilder
-from citrascope.hardware.devices.camera.abstract_camera import CalibrationProfile
+from citrasense.calibration import FilterSlot
+from citrasense.calibration.calibration_library import CalibrationLibrary
+from citrasense.calibration.master_builder import MasterBuilder
+from citrasense.hardware.devices.camera.abstract_camera import CalibrationProfile
 
 
 class FakeCamera:

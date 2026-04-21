@@ -4,7 +4,7 @@ import numpy as np
 import pytest
 from astropy.io import fits
 
-from citrascope.calibration.calibration_library import CalibrationLibrary, resolve_camera_id
+from citrasense.calibration.calibration_library import CalibrationLibrary, resolve_camera_id
 
 
 @pytest.fixture

@@ -2,10 +2,10 @@
 
 from unittest.mock import MagicMock
 
-from citrascope.hardware.abstract_astro_hardware_adapter import ObservationStrategy
-from citrascope.tasks.scope.sidereal_telescope_task import SiderealTelescopeTask
-from citrascope.tasks.scope.tracking_telescope_task import TrackingTelescopeTask
-from citrascope.tasks.task import Task
+from citrasense.hardware.abstract_astro_hardware_adapter import ObservationStrategy
+from citrasense.tasks.scope.sidereal_telescope_task import SiderealTelescopeTask
+from citrasense.tasks.scope.tracking_telescope_task import TrackingTelescopeTask
+from citrasense.tasks.task import Task
 
 
 def _make_task_dict(**overrides):
@@ -88,6 +88,6 @@ class TestTrackingTelescopeTaskTrackingMode:
 
 class TestNinaSequenceProvidesTracking:
     def test_nina_adapter_reports_sequence_provides_tracking(self):
-        from citrascope.hardware.nina.nina_adapter import NinaAdvancedHttpAdapter
+        from citrasense.hardware.nina.nina_adapter import NinaAdvancedHttpAdapter
 
         assert NinaAdvancedHttpAdapter.sequence_provides_tracking.fget(None) is True

@@ -1,8 +1,8 @@
-# CLAUDE.md — Agent Guide for CitraScope
+# CLAUDE.md — Agent Guide for CitraSense
 
 ## What is this project?
 
-CitraScope is a Python daemon that runs at a telescope. It polls a backend API for observation tasks, controls hardware (mount, camera, filter wheel, focuser) to capture images, runs an edge-processing pipeline (plate solving, source extraction, photometry, satellite matching), and uploads results. It also serves a local web UI for operators to monitor and configure the system.
+CitraSense is a Python daemon that runs at a telescope. It polls a backend API for observation tasks, controls hardware (mount, camera, filter wheel, focuser) to capture images, runs an edge-processing pipeline (plate solving, source extraction, photometry, satellite matching), and uploads results. It also serves a local web UI for operators to monitor and configure the system.
 
 **Backend API**: https://dev.api.citra.space/docs (Swagger)
 
@@ -11,26 +11,26 @@ CitraScope is a Python daemon that runs at a telescope. It polls a backend API f
 ```bash
 uv sync --extra dev --extra test
 uv run pytest -m "not integration"
-uv run citrascope  # starts the daemon
+uv run citrasense  # starts the daemon
 ```
 
 Web UI runs on port **24872** (CITRA on a phone keypad).
 
-Config lives at `~/Library/Application Support/citrascope/config.json` (macOS) or platform equivalent via `platformdirs`.
+Config lives at `~/Library/Application Support/citrasense/config.json` (macOS) or platform equivalent via `platformdirs`.
 
 ### Useful paths for debugging
 
 The running daemon exposes its file paths via `GET /api/config` (`config_file_path`, `log_file_path`). Typical macOS locations:
 
 - **Local API**: `http://localhost:24872/api/` (try `/api/config`, `/api/status`)
-- **Log file**: `~/Library/Logs/citrascope/citrascope-YYYY-MM-DD.log`
-- **Config file**: `~/Library/Application Support/citrascope/config.json`
+- **Log file**: `~/Library/Logs/citrasense/citrasense-YYYY-MM-DD.log`
+- **Config file**: `~/Library/Application Support/citrasense/config.json`
 
 ## Architecture overview
 
 ```
 __main__.py (CLI via Click)
-  └─ citra_scope_daemon.py (lifecycle, main loop)
+  └─ citrasense_daemon.py (lifecycle, main loop)
        ├─ api/ (CitraApiClient, DummyApiClient for local testing)
        ├─ hardware/ (adapter pattern — abstract base + concrete implementations)
        │    ├─ abstract_astro_hardware_adapter.py (the contract)
@@ -47,7 +47,7 @@ __main__.py (CLI via Click)
        │    ├─ base_work_queue.py → imaging_queue.py, processing_queue.py, upload_queue.py
        │    └─ scope/ (base_telescope_task.py, sidereal/tracking variants)
        ├─ processors/ (pipeline: plate_solver[astrometry.net] → source_extractor[SExtractor] → photometry → satellite_matcher)
-       ├─ settings/ (CitraScopeSettings — Pydantic BaseModel, persisted to JSON)
+       ├─ settings/ (CitraSenseSettings — Pydantic BaseModel, persisted to JSON)
        └─ web/ (FastAPI app, Alpine.js frontend, WebSocket log streaming)
 ```
 
@@ -72,7 +72,7 @@ All adapters implement `AbstractAstroHardwareAdapter`. Key methods:
 - `perform_observation_sequence(task, satellite_data)` — returns file paths
 - `point_telescope(ra, dec)` — degrees
 
-To add a new adapter: create the class in `citrascope/hardware/`, register it in `adapter_registry.py`.
+To add a new adapter: create the class in `citrasense/hardware/`, register it in `adapter_registry.py`.
 
 ### Hardware device probes (GIL-safe detection)
 
@@ -95,9 +95,9 @@ Tasks flow through three serial queues: **ImagingQueue** → **ProcessingQueue**
 
 ### Adding a new setting
 
-`CitraScopeSettings` is a **Pydantic BaseModel**. Each persisted setting is a single field declaration. The API endpoint (`GET /api/config`) and JS save function (`saveConfiguration()`) derive from `to_dict()` / `store.config` automatically — no manual field lists to maintain.
+`CitraSenseSettings` is a **Pydantic BaseModel**. Each persisted setting is a single field declaration. The API endpoint (`GET /api/config`) and JS save function (`saveConfiguration()`) derive from `to_dict()` / `store.config` automatically — no manual field lists to maintain.
 
-1. **`settings/citrascope_settings.py`** — add a Pydantic field with type and default:
+1. **`settings/citrasense_settings.py`** — add a Pydantic field with type and default:
    ```python
    my_setting: str = "default_value"
    ```
@@ -109,7 +109,7 @@ That's it. `to_dict()` (via `model_dump()`), `GET /api/config`, `saveConfigurati
 
 ### Adapter settings persistence
 
-`_all_adapter_settings` in `CitraScopeSettings` is a nested dict keyed by adapter name (e.g., `"NinaAdvancedHttpAdapter"`). Each entry contains adapter-specific settings *including* a `"filters"` key saved by `_save_filter_config()`. The web form sends flat adapter_settings for only the **current** adapter — `update_and_save()` must **merge** incoming settings with existing ones, not replace the entire dict. Replacing it will silently wipe filters and other adapter-specific state.
+`_all_adapter_settings` in `CitraSenseSettings` is a nested dict keyed by adapter name (e.g., `"NinaAdvancedHttpAdapter"`). Each entry contains adapter-specific settings *including* a `"filters"` key saved by `_save_filter_config()`. The web form sends flat adapter_settings for only the **current** adapter — `update_and_save()` must **merge** incoming settings with existing ones, not replace the entire dict. Replacing it will silently wipe filters and other adapter-specific state.
 
 ### Task lifecycle and race conditions
 
@@ -229,12 +229,12 @@ Aim for tests that are roughly 1:1 or shorter than the code they test. If you ne
 - **After renaming a parameter**, search the entire method/file for the old name. Long methods have had stale references survive "first pass" refactors, causing `NameError`s at runtime.
 - **Don't invent redundant settings.** Before adding one, check if an existing setting already controls the same behavior.
 - **Pre-commit hooks**: The repo has a 500KB file size limit. FITS files and large binaries will be rejected.
-- **ZWO AM5 mount protocol** has many gotchas — see the docstring in `citrascope/hardware/devices/mount/zwo_am_protocol.py` for the full reference (supported commands, broken commands, error codes, and authoritative sources).
+- **ZWO AM5 mount protocol** has many gotchas — see the docstring in `citrasense/hardware/devices/mount/zwo_am_protocol.py` for the full reference (supported commands, broken commands, error codes, and authoritative sources).
 - **Encapsulation shortcuts compound.** Before passing a large object, bypassing an abstraction, reading a private field, grabbing another object's lock, or adding an upward import — re-read *Module boundaries and encapsulation* above. Every one of these has caused real bugs here.
 
 ## Key dependencies
 
-- **Click**: CLI entry point (`python -m citrascope`)
+- **Click**: CLI entry point (`python -m citrasense`)
 - **FastAPI** + **Uvicorn**: Web UI and API, runs in a daemon thread
 - **Requests**: HTTP calls to Citra API and NINA REST API
 - **websockets**: NINA WebSocket event listener
@@ -261,4 +261,4 @@ Full dependency list in `pyproject.toml`, pinned versions in `uv.lock`.
 
 ## Documentation
 
-Project documentation is maintained in the [citra-space/docs](https://github.com/citra-space/docs) repository under `docs/citrascope/`.
+Project documentation is maintained in the [citra-space/docs](https://github.com/citra-space/docs) repository under `docs/citrascope/` (docs rename is a separate follow-up).

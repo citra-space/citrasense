@@ -9,7 +9,7 @@ tests break if the production parsing changes.
 
 from datetime import datetime, timedelta, timezone
 
-from citrascope.processors.builtin.satellite_matcher_processor import SatelliteMatcherProcessor
+from citrasense.processors.builtin.satellite_matcher_processor import SatelliteMatcherProcessor
 
 
 def _compute_mid_exposure(timestamp_str: str, exptime: float) -> tuple[datetime, str]:

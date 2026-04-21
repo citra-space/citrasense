@@ -9,8 +9,8 @@ from unittest.mock import MagicMock, patch
 import numpy as np
 import pytest
 
-from citrascope.hardware.devices.mount.altaz_pointing_model import AltAzPointingModel, altaz_to_radec
-from citrascope.tasks.alignment_manager import AlignmentManager
+from citrasense.hardware.devices.mount.altaz_pointing_model import AltAzPointingModel, altaz_to_radec
+from citrasense.tasks.alignment_manager import AlignmentManager
 
 
 @pytest.fixture(autouse=True)
@@ -19,10 +19,10 @@ def _patch_gast_degrees():
 
     See the matching fixture in ``tests/unit/test_altaz_pointing_model.py``
     for the full note on why we target the consumer's namespace rather than
-    ``citrascope.astro.sidereal``.
+    ``citrasense.astro.sidereal``.
     """
     with patch(
-        "citrascope.hardware.devices.mount.altaz_pointing_model.gast_degrees",
+        "citrasense.hardware.devices.mount.altaz_pointing_model.gast_degrees",
         return_value=90.0,
     ):
         yield

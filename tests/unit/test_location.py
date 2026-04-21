@@ -7,9 +7,9 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from citrascope.location.gps_fix import GPSFix
-from citrascope.location.gps_monitor import GPSMonitor
-from citrascope.location.location_service import LocationService
+from citrasense.location.gps_fix import GPSFix
+from citrasense.location.gps_monitor import GPSMonitor
+from citrasense.location.location_service import LocationService
 
 # ---------------------------------------------------------------------------
 # GPSFix dataclass
@@ -587,8 +587,8 @@ class _LogCapture(logging.Handler):
 
 @pytest.fixture
 def location_log_capture():
-    """Temporarily attach a DEBUG-level handler to citrascope.LocationService."""
-    logger = logging.getLogger("citrascope.LocationService")
+    """Temporarily attach a DEBUG-level handler to citrasense.LocationService."""
+    logger = logging.getLogger("citrasense.LocationService")
     original_level = logger.level
     logger.setLevel(logging.DEBUG)
     handler = _LogCapture()

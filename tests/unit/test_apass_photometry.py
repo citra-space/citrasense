@@ -9,9 +9,9 @@ import pytest
 from astropy.io import fits
 from astropy_healpix import HEALPix
 
-from citrascope.catalogs.apass_catalog import ApassCatalog
-from citrascope.processors.builtin.photometry_processor import PhotometryProcessor
-from citrascope.processors.processor_result import ProcessingContext
+from citrasense.catalogs.apass_catalog import ApassCatalog
+from citrasense.processors.builtin.photometry_processor import PhotometryProcessor
+from citrasense.processors.processor_result import ProcessingContext
 
 _HEALPIX_NSIDE = 64
 _HEALPIX_ORDER = "nested"
@@ -28,8 +28,7 @@ def catalog_with_stars(tmp_path):
     """Create a catalog DB with known stars at positions matching the mock SExtractor sources."""
     db_path = tmp_path / "apass_dr10.db"
     conn = sqlite3.connect(db_path)
-    conn.execute(
-        """CREATE TABLE stars (
+    conn.execute("""CREATE TABLE stars (
             ra       REAL NOT NULL,
             dec      REAL NOT NULL,
             healpix  INTEGER NOT NULL,
@@ -47,8 +46,7 @@ def catalog_with_stars(tmp_path):
             rmag_err REAL,
             imag_err REAL,
             zmag_err REAL
-        )"""
-    )
+        )""")
     conn.execute("CREATE INDEX idx_stars_dec_ra ON stars(dec, ra)")
     conn.execute("CREATE INDEX idx_stars_healpix ON stars(healpix)")
 

@@ -4,7 +4,7 @@ import json
 import time
 from unittest.mock import MagicMock
 
-from citrascope.elset_cache import ElsetCache, _normalize_api_response
+from citrasense.elset_cache import ElsetCache, _normalize_api_response
 
 # ---------------------------------------------------------------------------
 # _normalize_api_response

@@ -22,7 +22,7 @@ jobs:
       - name: Install ruff
         run: uv tool install ruff@0.15.10
       - name: Run ruff
-        run: ruff check citrascope/ tests/
+        run: ruff check citrasense/ tests/
 
   typecheck:
     runs-on: ubuntu-latest
@@ -73,7 +73,7 @@ jobs:
           fi
       - name: Run pytest with coverage
         run: |
-          uv run pytest -m "not integration" --import-mode=importlib --override-ini="addopts=" --cov=citrascope --cov-report=term-missing --cov-report=xml --cov-branch
+          uv run pytest -m "not integration" --import-mode=importlib --override-ini="addopts=" --cov=citrasense --cov-report=term-missing --cov-report=xml --cov-branch
       - name: Upload coverage report
         uses: actions/upload-artifact@v7
         if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.12'

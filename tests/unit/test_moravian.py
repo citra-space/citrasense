@@ -18,13 +18,13 @@ class TestMoravianBindingsConstants:
     """Verify our enum constants match the gxccd.h header values."""
 
     def test_boolean_parameter_constants(self):
-        from citrascope.hardware.devices.moravian_bindings import GBP_COOLER, GBP_FILTERS
+        from citrasense.hardware.devices.moravian_bindings import GBP_COOLER, GBP_FILTERS
 
         assert GBP_COOLER == 4
         assert GBP_FILTERS == 6
 
     def test_integer_parameter_constants(self):
-        from citrascope.hardware.devices.moravian_bindings import (
+        from citrasense.hardware.devices.moravian_bindings import (
             GIP_CHIP_D,
             GIP_CHIP_W,
             GIP_DEFAULT_READ_MODE,
@@ -43,7 +43,7 @@ class TestMoravianBindingsConstants:
         assert GIP_MAX_GAIN == 16
 
     def test_string_parameter_constants(self):
-        from citrascope.hardware.devices.moravian_bindings import (
+        from citrasense.hardware.devices.moravian_bindings import (
             GSP_CAMERA_DESCRIPTION,
             GSP_CAMERA_SERIAL,
             GSP_CHIP_DESCRIPTION,
@@ -56,12 +56,12 @@ class TestMoravianBindingsConstants:
         assert GSP_CHIP_DESCRIPTION == 3
 
     def test_value_constants(self):
-        from citrascope.hardware.devices.moravian_bindings import GV_CHIP_TEMPERATURE
+        from citrasense.hardware.devices.moravian_bindings import GV_CHIP_TEMPERATURE
 
         assert GV_CHIP_TEMPERATURE == 0
 
     def test_filter_wheel_constants(self):
-        from citrascope.hardware.devices.moravian_bindings import (
+        from citrasense.hardware.devices.moravian_bindings import (
             FW_GIP_FILTERS,
             FW_GSP_DESCRIPTION,
             FW_GSP_SERIAL_NUMBER,
@@ -76,16 +76,16 @@ class TestGxccdCameraWithoutLibrary:
     """Test GxccdCamera behavior when native library is missing."""
 
     def test_library_not_found_raises(self):
-        from citrascope.hardware.devices.moravian_bindings import GxccdLibraryNotFound
+        from citrasense.hardware.devices.moravian_bindings import GxccdLibraryNotFound
 
-        with patch("citrascope.hardware.devices.moravian_bindings._lib", None):
-            with patch("citrascope.hardware.devices.moravian_bindings.ctypes") as mock_ctypes:
+        with patch("citrasense.hardware.devices.moravian_bindings._lib", None):
+            with patch("citrasense.hardware.devices.moravian_bindings.ctypes") as mock_ctypes:
                 mock_ctypes.util.find_library.return_value = None
                 mock_ctypes.cdll = MagicMock()
                 with patch("os.environ.get", return_value=None):
                     with patch("os.path.isfile", return_value=False):
-                        import citrascope.hardware.devices.moravian_bindings as mod
-                        from citrascope.hardware.devices.moravian_bindings import _load_library
+                        import citrasense.hardware.devices.moravian_bindings as mod
+                        from citrasense.hardware.devices.moravian_bindings import _load_library
 
                         mod._lib = None
                         with pytest.raises(GxccdLibraryNotFound):
@@ -96,7 +96,7 @@ class TestMoravianCameraConnect:
     """Test MoravianCamera connect/disconnect with mocked native library."""
 
     def _make_camera(self, **kwargs):
-        from citrascope.hardware.devices.camera.moravian_camera import MoravianCamera
+        from citrasense.hardware.devices.camera.moravian_camera import MoravianCamera
 
         logger = logging.getLogger("test")
         return MoravianCamera(logger, **kwargs)
@@ -144,7 +144,7 @@ class TestMoravianCameraConnect:
 
         MockGxccdCamera = MagicMock(return_value=mock_cam_instance)
 
-        import citrascope.hardware.devices.moravian_bindings as bindings_mod
+        import citrasense.hardware.devices.moravian_bindings as bindings_mod
 
         with patch.object(bindings_mod, "GxccdCamera", MockGxccdCamera):
             camera = self._make_camera(camera_id=-1, connection_type="usb")
@@ -163,7 +163,7 @@ class TestMoravianCameraConnect:
 
     def test_connect_returns_false_on_error(self):
         """Camera returns False when initialization fails."""
-        import citrascope.hardware.devices.moravian_bindings as bindings_mod
+        import citrasense.hardware.devices.moravian_bindings as bindings_mod
 
         mock_cam_instance = MagicMock()
         mock_cam_instance.initialize_usb.side_effect = bindings_mod.GxccdError("USB error")
@@ -180,7 +180,7 @@ class TestMoravianIntegratedFilterWheel:
     """Test the integrated filter wheel that shares the camera handle."""
 
     def test_set_filter_delegates_to_camera(self):
-        from citrascope.hardware.devices.camera.moravian_camera import MoravianIntegratedFilterWheel
+        from citrasense.hardware.devices.camera.moravian_camera import MoravianIntegratedFilterWheel
 
         mock_cam = MagicMock()
         mock_cam.is_initialized = True
@@ -195,7 +195,7 @@ class TestMoravianIntegratedFilterWheel:
         assert fw.get_filter_position() == 1
 
     def test_disconnect_does_not_release_handle(self):
-        from citrascope.hardware.devices.camera.moravian_camera import MoravianIntegratedFilterWheel
+        from citrasense.hardware.devices.camera.moravian_camera import MoravianIntegratedFilterWheel
 
         mock_cam = MagicMock()
         mock_cam.is_initialized = True
@@ -206,7 +206,7 @@ class TestMoravianIntegratedFilterWheel:
         mock_cam.release.assert_not_called()
 
     def test_set_filter_names(self):
-        from citrascope.hardware.devices.camera.moravian_camera import MoravianIntegratedFilterWheel
+        from citrasense.hardware.devices.camera.moravian_camera import MoravianIntegratedFilterWheel
 
         mock_cam = MagicMock()
         mock_cam.is_initialized = True
@@ -225,8 +225,8 @@ class TestMoravianStandaloneFilterWheel:
     """Test the standalone external filter wheel driver."""
 
     def test_connect_returns_false_on_error(self):
-        import citrascope.hardware.devices.moravian_bindings as bindings_mod
-        from citrascope.hardware.devices.filter_wheel.moravian_filter_wheel import MoravianFilterWheel
+        import citrasense.hardware.devices.moravian_bindings as bindings_mod
+        from citrasense.hardware.devices.filter_wheel.moravian_filter_wheel import MoravianFilterWheel
 
         mock_fw_instance = MagicMock()
         mock_fw_instance.initialize_usb.side_effect = bindings_mod.GxccdError("USB error")
@@ -246,7 +246,7 @@ class TestDirectAdapterFilterAutoDetect:
 
     def test_populate_filter_map_from_hardware(self):
         """When camera has integrated FW, filter_map is populated on connect."""
-        from citrascope.hardware.direct.direct_adapter import DirectHardwareAdapter
+        from citrasense.hardware.direct.direct_adapter import DirectHardwareAdapter
 
         mock_camera = MagicMock()
         mock_camera.connect.return_value = True
@@ -262,8 +262,8 @@ class TestDirectAdapterFilterAutoDetect:
         logger = logging.getLogger("test")
         images_dir = Path("/tmp/test_images")
 
-        with patch("citrascope.hardware.direct.direct_adapter.get_camera_class") as mock_get_cam:
-            with patch("citrascope.hardware.direct.direct_adapter.check_dependencies") as mock_check:
+        with patch("citrasense.hardware.direct.direct_adapter.get_camera_class") as mock_get_cam:
+            with patch("citrasense.hardware.direct.direct_adapter.check_dependencies") as mock_check:
                 mock_check.return_value = {"available": True, "missing": [], "install_cmd": ""}
                 mock_cam_class = MagicMock(return_value=mock_camera)
                 mock_cam_class.get_friendly_name.return_value = "Test Camera"
@@ -283,13 +283,13 @@ class TestDirectAdapterFilterAutoDetect:
 
     def test_update_filter_name(self):
         """DirectHardwareAdapter.update_filter_name() updates both map and hardware."""
-        from citrascope.hardware.direct.direct_adapter import DirectHardwareAdapter
+        from citrasense.hardware.direct.direct_adapter import DirectHardwareAdapter
 
         logger = logging.getLogger("test")
         images_dir = Path("/tmp/test_images")
 
-        with patch("citrascope.hardware.direct.direct_adapter.get_camera_class") as mock_get_cam:
-            with patch("citrascope.hardware.direct.direct_adapter.check_dependencies") as mock_check:
+        with patch("citrasense.hardware.direct.direct_adapter.get_camera_class") as mock_get_cam:
+            with patch("citrasense.hardware.direct.direct_adapter.check_dependencies") as mock_check:
                 mock_check.return_value = {"available": True, "missing": [], "install_cmd": ""}
                 mock_cam_class = MagicMock()
                 mock_cam_class.get_friendly_name.return_value = "Test Camera"
@@ -309,13 +309,13 @@ class TestDirectAdapterFilterAutoDetect:
         mock_fw.set_filter_names.assert_called_once_with(["L-filter"])
 
     def test_update_filter_name_invalid_id(self):
-        from citrascope.hardware.direct.direct_adapter import DirectHardwareAdapter
+        from citrasense.hardware.direct.direct_adapter import DirectHardwareAdapter
 
         logger = logging.getLogger("test")
         images_dir = Path("/tmp/test_images")
 
-        with patch("citrascope.hardware.direct.direct_adapter.get_camera_class") as mock_get_cam:
-            with patch("citrascope.hardware.direct.direct_adapter.check_dependencies") as mock_check:
+        with patch("citrasense.hardware.direct.direct_adapter.get_camera_class") as mock_get_cam:
+            with patch("citrasense.hardware.direct.direct_adapter.check_dependencies") as mock_check:
                 mock_check.return_value = {"available": True, "missing": [], "install_cmd": ""}
                 mock_cam_class = MagicMock()
                 mock_cam_class.get_friendly_name.return_value = "Test Camera"
@@ -331,7 +331,7 @@ class TestAbstractCameraIntegratedFilterWheel:
     """Test the default get_integrated_filter_wheel on AbstractCamera."""
 
     def test_default_returns_none(self):
-        from citrascope.hardware.devices.camera import AbstractCamera
+        from citrasense.hardware.devices.camera import AbstractCamera
 
         class DummyCamera(AbstractCamera):
             @classmethod
@@ -389,13 +389,13 @@ class TestMoravianDeviceRegistry:
     """Test that Moravian devices are properly registered."""
 
     def test_moravian_camera_in_registry(self):
-        from citrascope.hardware.devices.device_registry import CAMERA_DEVICES
+        from citrasense.hardware.devices.device_registry import CAMERA_DEVICES
 
         assert "moravian" in CAMERA_DEVICES
         assert CAMERA_DEVICES["moravian"]["class_name"] == "MoravianCamera"
 
     def test_moravian_filter_wheel_in_registry(self):
-        from citrascope.hardware.devices.device_registry import FILTER_WHEEL_DEVICES
+        from citrasense.hardware.devices.device_registry import FILTER_WHEEL_DEVICES
 
         assert "moravian" in FILTER_WHEEL_DEVICES
         assert FILTER_WHEEL_DEVICES["moravian"]["class_name"] == "MoravianFilterWheel"

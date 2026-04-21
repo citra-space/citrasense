@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from unittest.mock import patch
 
-from citrascope.api.dummy_api_client import DummyApiClient
+from citrasense.api.dummy_api_client import DummyApiClient
 
 
 def test_dummy_client_batch_returns_ok():
@@ -36,7 +36,7 @@ def test_dummy_client_batch_with_filters():
 
 def test_citra_client_batch_constructs_payload():
     """Verify the real client constructs the correct POST payload."""
-    from citrascope.api.citra_api_client import CitraApiClient
+    from citrasense.api.citra_api_client import CitraApiClient
 
     client = CitraApiClient(host="test.api.citra.space", token="fake", logger=logging.getLogger("test"))
 
@@ -67,7 +67,7 @@ def test_citra_client_batch_constructs_payload():
 
 def test_citra_client_batch_characterization_type():
     """Verify request_type='Characterization' lands in the payload as type."""
-    from citrascope.api.citra_api_client import CitraApiClient
+    from citrasense.api.citra_api_client import CitraApiClient
 
     client = CitraApiClient(host="test.api.citra.space", token="fake", logger=logging.getLogger("test"))
 

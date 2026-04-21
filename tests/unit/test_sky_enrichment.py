@@ -24,7 +24,7 @@ from typing import Any
 
 import pytest
 
-from citrascope.web.sky_enrichment import (
+from citrasense.web.sky_enrichment import (
     _SKY_MEMO,
     _angular_distance_deg,
     _clear_memo_for_tests,
@@ -405,7 +405,7 @@ def test_propagate_static_passes_per_sample_gast_override(monkeypatch):
     2. The override values span a range consistent with sampling across the
        task window — i.e. they are per-sample, not frozen to one moment.
     """
-    import citrascope.web.sky_enrichment as se
+    import citrasense.web.sky_enrichment as se
 
     captured_kwargs: list[dict] = []
     real = se.radec_to_altaz

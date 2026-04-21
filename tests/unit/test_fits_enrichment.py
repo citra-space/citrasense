@@ -5,7 +5,7 @@ from unittest.mock import MagicMock
 import pytest
 from astropy.io import fits
 
-from citrascope.tasks.fits_enrichment import (
+from citrasense.tasks.fits_enrichment import (
     _add_location_metadata,
     _add_task_metadata,
     enrich_fits_metadata,
