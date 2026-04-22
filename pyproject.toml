@@ -60,10 +60,10 @@ citrasense = "citrasense.__main__:cli"
 
 [project.urls]
 Homepage = "https://citra.space"
-Documentation = "https://docs.citra.space/citrascope/"
-Repository = "https://github.com/citra-space/citrascope"
-Issues = "https://github.com/citra-space/citrascope/issues"
-Changelog = "https://github.com/citra-space/citrascope/releases"
+Documentation = "https://docs.citra.space/citrasense/"
+Repository = "https://github.com/citra-space/citrasense"
+Issues = "https://github.com/citra-space/citrasense/issues"
+Changelog = "https://github.com/citra-space/citrasense/releases"
 
 [project.optional-dependencies]
 indi = [

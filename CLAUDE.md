@@ -261,4 +261,4 @@ Full dependency list in `pyproject.toml`, pinned versions in `uv.lock`.
 
 ## Documentation
 
-Project documentation is maintained in the [citra-space/docs](https://github.com/citra-space/docs) repository under `docs/citrascope/` (docs rename is a separate follow-up).
+Project documentation is maintained in the [citra-space/docs](https://github.com/citra-space/docs) repository under `docs/citrasense/`.

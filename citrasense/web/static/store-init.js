@@ -357,7 +357,7 @@ function compareVersions(v1, v2) {
 
                     if (installType !== 'pypi' && gitHash) {
                         const compareResponse = await fetch(
-                            `https://api.github.com/repos/citra-space/citrascope/compare/${gitHash}...main`
+                            `https://api.github.com/repos/citra-space/citrasense/compare/${gitHash}...main`
                         );
                         if (!compareResponse.ok) {
                             return { status: 'error', ...base };
@@ -372,7 +372,7 @@ function compareVersions(v1, v2) {
                         return { status: 'up-to-date', ...base };
                     }
 
-                    const githubResponse = await fetch('https://api.github.com/repos/citra-space/citrascope/releases/latest');
+                    const githubResponse = await fetch('https://api.github.com/repos/citra-space/citrasense/releases/latest');
                     if (!githubResponse.ok) {
                         return { status: 'error', ...base };
                     }

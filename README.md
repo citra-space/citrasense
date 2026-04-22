@@ -1,8 +1,8 @@
 # CitraSense
 
-[![Pytest](https://github.com/citra-space/citrascope/actions/workflows/pytest.yml/badge.svg)](https://github.com/citra-space/citrascope/actions/workflows/pytest.yml) [![Publish Python Package](https://github.com/citra-space/citrascope/actions/workflows/pypi-publish.yml/badge.svg)](https://github.com/citra-space/citrascope/actions/workflows/pypi-publish.yml) [![PyPI version](https://badge.fury.io/py/citrasense.svg)](https://pypi.org/project/citrasense/) [![PyPI - Downloads](https://img.shields.io/pypi/dm/citrasense)](https://pypi.org/project/citrasense/) [![License](https://img.shields.io/github/license/citra-space/citrascope)](https://github.com/citra-space/citrascope/blob/main/LICENSE)
+[![Pytest](https://github.com/citra-space/citrasense/actions/workflows/pytest.yml/badge.svg)](https://github.com/citra-space/citrasense/actions/workflows/pytest.yml) [![Publish Python Package](https://github.com/citra-space/citrasense/actions/workflows/pypi-publish.yml/badge.svg)](https://github.com/citra-space/citrasense/actions/workflows/pypi-publish.yml) [![PyPI version](https://badge.fury.io/py/citrasense.svg)](https://pypi.org/project/citrasense/) [![PyPI - Downloads](https://img.shields.io/pypi/dm/citrasense)](https://pypi.org/project/citrasense/) [![License](https://img.shields.io/github/license/citra-space/citrasense)](https://github.com/citra-space/citrasense/blob/main/LICENSE)
 
-**[Documentation](https://docs.citra.space/citrascope/)** | **[Citra.space](https://citra.space)** | **[PyPI](https://pypi.org/project/citrasense/)** | **[CitraSense-Pi](https://github.com/citra-space/citrascope-pi)**
+**[Documentation](https://docs.citra.space/citrasense/)** | **[Citra.space](https://citra.space)** | **[PyPI](https://pypi.org/project/citrasense/)** | **[CitraSense-Pi](https://github.com/citra-space/citrasense-pi)**
 
 Photograph satellites from your backyard telescope.
 
@@ -40,7 +40,7 @@ citrasense
 
 Open `http://localhost:24872` in your browser to configure your hardware adapter, connect to Citra.space, and start accepting tasks.
 
-**Raspberry Pi?** Check out [citrasense-pi](https://github.com/citra-space/citrascope-pi) for a ready-to-flash SD card image with CitraSense pre-installed.
+**Raspberry Pi?** Check out [citrasense-pi](https://github.com/citra-space/citrasense-pi) for a ready-to-flash SD card image with CitraSense pre-installed.
 
 ### Optional Extras
 
@@ -73,7 +73,7 @@ citrasense --web-port 8080    # Custom web UI port (default: 24872)
 
 ## Documentation
 
-Full documentation is available at [docs.citra.space/citrascope](https://docs.citra.space/citrascope/). Documentation source is maintained in the [citra-space/docs](https://github.com/citra-space/docs) repository.
+Full documentation is available at [docs.citra.space/citrasense](https://docs.citra.space/citrasense/). Documentation source is maintained in the [citra-space/docs](https://github.com/citra-space/docs) repository.
 
 ## Developer Setup
 
