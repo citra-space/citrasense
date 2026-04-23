@@ -7,8 +7,8 @@ import pytest
 from astropy.io import fits
 
 from citrasense.calibration.calibration_library import CalibrationLibrary
-from citrasense.pipelines.common.processing_context import ProcessingContext
 from citrasense.pipelines.optical.calibration_processor import CalibrationProcessor
+from citrasense.pipelines.optical.optical_processing_context import OpticalProcessingContext
 
 
 @pytest.fixture
@@ -32,15 +32,13 @@ def _make_fits(path: Path, data: np.ndarray, **header_kwargs) -> Path:
     return path
 
 
-def _make_context(image_path: Path, working_dir: Path) -> ProcessingContext:
-    return ProcessingContext(
+def _make_context(image_path: Path, working_dir: Path) -> OpticalProcessingContext:
+    return OpticalProcessingContext(
         image_path=image_path,
         working_image_path=image_path,
         working_dir=working_dir,
         image_data=None,
         task=None,
-        telescope_record=None,
-        ground_station_record=None,
         settings=None,
     )
 

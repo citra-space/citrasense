@@ -16,12 +16,12 @@ from citrasense.pipelines.common.artifact_writer import (
     dump_processor_result,
     task_to_dict,
 )
-from citrasense.pipelines.common.processing_context import ProcessingContext
 from citrasense.pipelines.common.processor_result import AggregatedResult, ProcessorResult
 from citrasense.pipelines.optical.optical_artifacts import (
     _read_fits_header,
     dump_optical_context_artifacts,
 )
+from citrasense.pipelines.optical.optical_processing_context import OpticalProcessingContext
 from citrasense.tasks.task import Task
 
 
@@ -207,7 +207,7 @@ class TestDumpContextArtifacts:
             ],
         }
 
-        context = ProcessingContext(
+        context = OpticalProcessingContext(
             image_path=sample_fits,
             working_image_path=sample_fits,
             working_dir=working_dir,
@@ -258,14 +258,12 @@ class TestDumpContextArtifacts:
         assert pointing["final_angular_distance_deg"] == 0.15
 
     def test_handles_missing_services(self, working_dir, sample_fits):
-        context = ProcessingContext(
+        context = OpticalProcessingContext(
             image_path=sample_fits,
             working_image_path=sample_fits,
             working_dir=working_dir,
             image_data=None,
             task=None,
-            telescope_record=None,
-            ground_station_record=None,
             settings=None,
         )
         dump_optical_context_artifacts(context)

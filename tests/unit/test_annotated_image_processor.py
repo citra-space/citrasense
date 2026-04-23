@@ -7,8 +7,8 @@ from unittest.mock import MagicMock, patch
 import numpy as np
 from PIL import Image, ImageDraw
 
-from citrasense.pipelines.common.processing_context import ProcessingContext
 from citrasense.pipelines.optical.annotated_image_processor import AnnotatedImageProcessor
+from citrasense.pipelines.optical.optical_processing_context import OpticalProcessingContext
 
 
 def _make_context(
@@ -17,8 +17,8 @@ def _make_context(
     has_wcs: bool = True,
     debug_json: dict | None = None,
     task_name: str | None = "ISS",
-) -> ProcessingContext:
-    """Build a ProcessingContext with test fixtures in tmp_path."""
+) -> OpticalProcessingContext:
+    """Build an OpticalProcessingContext with test fixtures in tmp_path."""
     working_dir = tmp_path / "working"
     working_dir.mkdir(exist_ok=True)
     images_dir = tmp_path / "images"
@@ -36,14 +36,12 @@ def _make_context(
         task.satelliteName = task_name
         task.sensor_type = "telescope"
 
-    return ProcessingContext(
+    return OpticalProcessingContext(
         image_path=fits_path,
         working_image_path=fits_path,
         working_dir=working_dir,
         image_data=image_data if image_data is not None else np.random.randint(0, 65535, (100, 100), dtype=np.uint16),
         task=task,
-        telescope_record=None,
-        ground_station_record=None,
         settings=None,
         logger=MagicMock(),
     )

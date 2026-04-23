@@ -76,6 +76,7 @@ from typing import TYPE_CHECKING, Any
 from astropy.io import fits
 
 from citrasense.pipelines.common.artifact_writer import _safe_value, dump_json, task_to_dict
+from citrasense.pipelines.optical.optical_processing_context import OpticalProcessingContext
 
 if TYPE_CHECKING:
     from citrasense.pipelines.common.processing_context import ProcessingContext
@@ -131,6 +132,7 @@ def dump_optical_context_artifacts(context: ProcessingContext) -> None:
     telescope_record.json, fits_header.json, target_satellite.json,
     pointing_report.json.
     """
+    assert isinstance(context, OpticalProcessingContext)
     wd = context.working_dir
     try:
         dump_json(wd, "task.json", task_to_dict(context.task))

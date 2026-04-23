@@ -1,13 +1,14 @@
-"""Reconstruct a ProcessingContext from a saved debug directory.
+"""Reconstruct an OpticalProcessingContext from a saved debug directory.
 
 When ``keep_processing_output`` is enabled in citrasense settings, each
 processed task retains a directory under ``processing/<task_id>/`` containing
 JSON artifacts and FITS images that fully describe the pipeline inputs.
 
-This module reads those artifacts and rebuilds a :class:`ProcessingContext`
-that can be fed back into :meth:`ProcessorRegistry.process_all` — allowing
-pipeline developers to iterate on processor code and re-run against real
-captured data without needing live hardware.
+This module reads those artifacts and rebuilds an
+:class:`OpticalProcessingContext` that can be fed back into
+:meth:`PipelineRegistry.process_all` — allowing pipeline developers to
+iterate on processor code and re-run against real captured data without
+needing live hardware.
 
 Debug directory layout (files read by this loader)
 ---------------------------------------------------
@@ -42,7 +43,7 @@ from pathlib import Path
 from typing import Any
 
 from citrasense.elset_cache import ElsetCache
-from citrasense.pipelines.common.processing_context import ProcessingContext
+from citrasense.pipelines.optical.optical_processing_context import OpticalProcessingContext
 from citrasense.tasks.task import Task
 
 logger = logging.getLogger("citrasense.ContextLoader")
@@ -130,8 +131,8 @@ def load_context_from_debug_dir(
     settings: Any,
     log: logging.Logger | None = None,
     image_override: Path | None = None,
-) -> ProcessingContext:
-    """Reconstruct a ProcessingContext from a retained debug directory.
+) -> OpticalProcessingContext:
+    """Reconstruct an OpticalProcessingContext from a retained debug directory.
 
     Args:
         debug_dir: Path to the saved ``processing/<task_id>/`` directory.
@@ -208,7 +209,7 @@ def load_context_from_debug_dir(
 
     location_service = FixedLocationService(observer_location)
 
-    return ProcessingContext(
+    return OpticalProcessingContext(
         image_path=dest_fits,
         working_image_path=dest_fits,
         working_dir=output_dir,

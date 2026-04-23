@@ -22,6 +22,7 @@ from citrasense.pipelines.common.abstract_processor import AbstractImageProcesso
 from citrasense.pipelines.common.artifact_writer import dump_json, dump_processor_result
 from citrasense.pipelines.common.processing_context import ProcessingContext
 from citrasense.pipelines.common.processor_result import ProcessorResult
+from citrasense.pipelines.optical.optical_processing_context import OpticalProcessingContext
 from citrasense.pipelines.optical.processor_dependencies import normalize_fits_timestamp, read_source_catalog
 from citrasense.tasks.views.telescope_task_view import TelescopeTaskView
 
@@ -111,7 +112,7 @@ class SatelliteMatcherProcessor(AbstractImageProcessor):
         return ktime.Epoch.from_datetime(dt)
 
     def _match_satellites(
-        self, sources: pd.DataFrame, context: ProcessingContext, tracking_mode: str = "rate"
+        self, sources: pd.DataFrame, context: OpticalProcessingContext, tracking_mode: str = "rate"
     ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
         """Propagate TLEs and match detected sources with predicted satellite positions.
 
@@ -415,6 +416,7 @@ class SatelliteMatcherProcessor(AbstractImageProcessor):
         Returns:
             ProcessorResult with satellite matching outcome
         """
+        assert isinstance(context, OpticalProcessingContext)
         start_time = time.time()
 
         try:

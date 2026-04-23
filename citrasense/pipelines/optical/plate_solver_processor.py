@@ -17,6 +17,7 @@ from citrasense.pipelines.common.abstract_processor import AbstractImageProcesso
 from citrasense.pipelines.common.artifact_writer import dump_processor_result
 from citrasense.pipelines.common.processing_context import ProcessingContext
 from citrasense.pipelines.common.processor_result import ProcessorResult
+from citrasense.pipelines.optical.optical_processing_context import OpticalProcessingContext
 
 from .processor_dependencies import check_astrometry
 
@@ -111,14 +112,13 @@ class PlateSolverProcessor(AbstractImageProcessor):
 
         with tempfile.TemporaryDirectory(prefix="alignment_") as tmp:
             working_dir = Path(tmp)
-            context = ProcessingContext(
+            context = OpticalProcessingContext(
                 image_path=image_path,
                 working_image_path=image_path,
                 working_dir=working_dir,
                 image_data=None,
                 task=None,
                 telescope_record=telescope_record,
-                ground_station_record=None,
                 settings=None,
                 location_service=location_service,
                 logger=_logger,
@@ -134,7 +134,7 @@ class PlateSolverProcessor(AbstractImageProcessor):
     def _solve_field(
         self,
         image_path: Path,
-        context: ProcessingContext,
+        context: OpticalProcessingContext,
     ) -> tuple[Path, dict[str, Any]]:
         """Run astrometry.net solve-field and return the solved FITS path + quality metrics.
 
@@ -294,6 +294,7 @@ class PlateSolverProcessor(AbstractImageProcessor):
 
     def process(self, context: ProcessingContext) -> ProcessorResult:
         """Process image with plate solving via astrometry.net solve-field."""
+        assert isinstance(context, OpticalProcessingContext)
         start_time = time.time()
 
         if not check_astrometry():

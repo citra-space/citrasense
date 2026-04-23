@@ -26,8 +26,8 @@ def run_from_repo_root():
 
 from citrasense.elset_cache import ElsetCache
 from citrasense.pipelines.common.pipeline_registry import PipelineRegistry
-from citrasense.pipelines.common.processing_context import ProcessingContext
 from citrasense.pipelines.common.processor_result import ProcessorResult
+from citrasense.pipelines.optical.optical_processing_context import OpticalProcessingContext
 from citrasense.pipelines.optical.photometry_processor import PhotometryProcessor
 from citrasense.pipelines.optical.plate_solver_processor import PlateSolverProcessor
 from citrasense.pipelines.optical.processor_dependencies import (
@@ -114,14 +114,12 @@ def mock_context(tmp_path, mock_settings):
     working_dir = tmp_path / "working"
     working_dir.mkdir(exist_ok=True)
 
-    return ProcessingContext(
+    return OpticalProcessingContext(
         image_path=image_path,
         working_image_path=image_path,
         working_dir=working_dir,
         image_data=None,
         task=Mock(satelliteName="TEST SAT", satelliteId="12345", assigned_filter_name="Clear"),
-        telescope_record=None,
-        ground_station_record=None,
         settings=mock_settings,
         logger=Mock(),
     )
@@ -344,14 +342,13 @@ class TestAstrometryDemoFits:
         working_dir = tmp_path / "working"
         working_dir.mkdir(exist_ok=True)
 
-        context = ProcessingContext(
+        context = OpticalProcessingContext(
             image_path=self.DEMO_FITS,
             working_image_path=self.DEMO_FITS,
             working_dir=working_dir,
             image_data=None,
             task=Mock(satelliteName="TEST", satelliteId="0", assigned_filter_name="Clear"),
             telescope_record=_PLANEWAVE_TELESCOPE_RECORD,
-            ground_station_record=None,
             settings=mock_settings,
             logger=Mock(),
         )
@@ -417,14 +414,13 @@ class TestFullPipelineDemoFits:
 
         working_dir = tmp_path / "working"
         working_dir.mkdir(exist_ok=True)
-        context = ProcessingContext(
+        context = OpticalProcessingContext(
             image_path=self.DEMO_FITS,
             working_image_path=self.DEMO_FITS,
             working_dir=working_dir,
             image_data=None,
             task=task,
             telescope_record=_PLANEWAVE_TELESCOPE_RECORD,
-            ground_station_record=None,
             settings=settings,
             location_service=FakeLocationService(),
             elset_cache=None,
@@ -556,14 +552,12 @@ class TestSatelliteMatcherProcessor:
             def get_current_location(self):
                 return {"latitude": 31.9070277777778, "longitude": -109.021111111111, "altitude": 1250.0}
 
-        context = ProcessingContext(
+        context = OpticalProcessingContext(
             image_path=self.DEMO_FITS,
             working_image_path=wcs_fits,
             working_dir=working_dir,
             image_data=None,
             task=task,
-            telescope_record=None,
-            ground_station_record=None,
             settings=settings,
             location_service=FakeLocationService(),
             elset_cache=elset_cache,

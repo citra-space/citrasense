@@ -10,6 +10,7 @@ from citrasense.pipelines.common.abstract_processor import AbstractImageProcesso
 from citrasense.pipelines.common.pipeline_registry import PipelineRegistry
 from citrasense.pipelines.common.processing_context import ProcessingContext
 from citrasense.pipelines.common.processor_result import AggregatedResult, ProcessorResult
+from citrasense.pipelines.optical.optical_processing_context import OpticalProcessingContext
 from citrasense.tasks.task import Task
 
 
@@ -110,7 +111,7 @@ def processing_context(tmp_path, mock_task):
     # Create mock image data
     image_data = np.random.randint(0, 1000, size=(100, 100), dtype=np.uint16)
 
-    return ProcessingContext(
+    return OpticalProcessingContext(
         image_path=image_path,
         working_image_path=image_path,
         working_dir=working_dir,
@@ -158,14 +159,12 @@ class TestProcessingContext:
         working_dir = tmp_path / "working"
         working_dir.mkdir(exist_ok=True)
 
-        context = ProcessingContext(
+        context = OpticalProcessingContext(
             image_path=tmp_path / "test.fits",
             working_image_path=tmp_path / "test.fits",
             working_dir=working_dir,
             image_data=None,
             task=None,
-            telescope_record=None,
-            ground_station_record=None,
             settings=None,
         )
 

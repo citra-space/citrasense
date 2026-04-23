@@ -10,7 +10,7 @@ from astropy.io import fits
 from astropy_healpix import HEALPix
 
 from citrasense.catalogs.apass_catalog import ApassCatalog
-from citrasense.pipelines.common.processing_context import ProcessingContext
+from citrasense.pipelines.optical.optical_processing_context import OpticalProcessingContext
 from citrasense.pipelines.optical.photometry_processor import PhotometryProcessor
 
 _HEALPIX_NSIDE = 64
@@ -126,14 +126,12 @@ def _make_context(tmp_path, fits_path, catalog, task=None):
     if task is None:
         task = MagicMock()
         task.assigned_filter_name = "Clear"
-    return ProcessingContext(
+    return OpticalProcessingContext(
         image_path=fits_path,
         working_image_path=fits_path,
         working_dir=working_dir,
         image_data=None,
         task=task,
-        telescope_record=None,
-        ground_station_record=None,
         settings=None,
         apass_catalog=catalog,
     )

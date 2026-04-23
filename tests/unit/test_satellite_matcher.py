@@ -6,7 +6,7 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
-from citrasense.pipelines.common.processing_context import ProcessingContext
+from citrasense.pipelines.optical.optical_processing_context import OpticalProcessingContext
 from citrasense.pipelines.optical.satellite_matcher_processor import (
     _STAR_MATCH_TOLERANCE_DEG,
     SatelliteMatcherProcessor,
@@ -306,27 +306,23 @@ class TestZeroPointFromContext:
     """Verify zero_point flows through ProcessingContext to the satellite matcher."""
 
     def test_context_zero_point_defaults_to_none(self, tmp_path: Path):
-        ctx = ProcessingContext(
+        ctx = OpticalProcessingContext(
             image_path=tmp_path / "img.fits",
             working_image_path=tmp_path / "img.fits",
             working_dir=tmp_path,
             image_data=None,
             task=None,
-            telescope_record=None,
-            ground_station_record=None,
             settings=None,
         )
         assert ctx.zero_point is None
 
     def test_context_zero_point_round_trips(self, tmp_path: Path):
-        ctx = ProcessingContext(
+        ctx = OpticalProcessingContext(
             image_path=tmp_path / "img.fits",
             working_image_path=tmp_path / "img.fits",
             working_dir=tmp_path,
             image_data=None,
             task=None,
-            telescope_record=None,
-            ground_station_record=None,
             settings=None,
         )
         ctx.zero_point = 23.59

@@ -12,6 +12,7 @@ from citrasense.pipelines.common.abstract_processor import AbstractImageProcesso
 from citrasense.pipelines.common.artifact_writer import dump_processor_result
 from citrasense.pipelines.common.processing_context import ProcessingContext
 from citrasense.pipelines.common.processor_result import ProcessorResult
+from citrasense.pipelines.optical.optical_processing_context import OpticalProcessingContext
 
 from .processor_dependencies import check_sextractor
 
@@ -198,6 +199,7 @@ class SourceExtractorProcessor(AbstractImageProcessor):
         Returns:
             ProcessorResult with source extraction outcome
         """
+        assert isinstance(context, OpticalProcessingContext)
         start_time = time.time()
 
         # Check if image has WCS (requires plate solver to have run)

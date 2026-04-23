@@ -49,7 +49,7 @@ __main__.py (CLI via Click)
        │    └─ views/ (TelescopeTaskView, RfTaskView, RadarTaskView — per-modality typed accessors)
        ├─ pipelines/
        │    ├─ common/ (abstract_processor, pipeline_registry, processing_context, processor_result, artifact_writer)
-       │    ├─ optical/ (calibration → plate_solver → source_extractor → photometry → satellite_matcher → annotated_image, optical_artifacts, report_generator)
+       │    ├─ optical/ (optical_processing_context, calibration → plate_solver → source_extractor → photometry → satellite_matcher → annotated_image, optical_artifacts, report_generator)
        │    ├─ radar/ (future — #307)
        │    └─ rf/ (future)
        ├─ settings/ (CitraSenseSettings — Pydantic BaseModel, persisted to JSON)

@@ -5,7 +5,7 @@ import tempfile
 from collections.abc import Callable
 from pathlib import Path
 
-from citrasense.pipelines.common.processing_context import ProcessingContext
+from citrasense.pipelines.optical.optical_processing_context import OpticalProcessingContext
 from citrasense.tasks.base_work_queue import BaseWorkQueue
 
 
@@ -75,7 +75,7 @@ class ProcessingQueue(BaseWorkQueue):
             working_dir.mkdir(parents=True, exist_ok=True)
             self.logger.debug(f"Created working directory: {working_dir}")
 
-            context = ProcessingContext(
+            context = OpticalProcessingContext(
                 image_path=item["image_path"],
                 working_image_path=item["image_path"],
                 working_dir=working_dir,

@@ -18,6 +18,7 @@ from citrasense.pipelines.common.abstract_processor import AbstractImageProcesso
 from citrasense.pipelines.common.artifact_writer import dump_csv, dump_processor_result
 from citrasense.pipelines.common.processing_context import ProcessingContext
 from citrasense.pipelines.common.processor_result import ProcessorResult
+from citrasense.pipelines.optical.optical_processing_context import OpticalProcessingContext
 from citrasense.pipelines.optical.processor_dependencies import read_source_catalog
 from citrasense.tasks.views.telescope_task_view import TelescopeTaskView
 
@@ -145,6 +146,7 @@ class PhotometryProcessor(AbstractImageProcessor):
         Returns:
             ProcessorResult with photometry outcome
         """
+        assert isinstance(context, OpticalProcessingContext)
         start_time = time.time()
 
         try:

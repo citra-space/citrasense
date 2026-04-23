@@ -16,6 +16,7 @@ from PIL import Image, ImageDraw, ImageFont
 from citrasense.pipelines.common.abstract_processor import AbstractImageProcessor
 from citrasense.pipelines.common.processing_context import ProcessingContext
 from citrasense.pipelines.common.processor_result import ProcessorResult
+from citrasense.pipelines.optical.optical_processing_context import OpticalProcessingContext
 from citrasense.tasks.views.telescope_task_view import TelescopeTaskView
 
 if TYPE_CHECKING:
@@ -76,6 +77,7 @@ class AnnotatedImageProcessor(AbstractImageProcessor):
     description = "Renders satellite annotations on captured images for visual review"
 
     def process(self, context: ProcessingContext) -> ProcessorResult:
+        assert isinstance(context, OpticalProcessingContext)
         start_time = time.time()
 
         if context.image_data is None:
