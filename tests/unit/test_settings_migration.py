@@ -1,0 +1,276 @@
+"""Tests for the settings migration from legacy scalar fields to sensors list.
+
+Exercises the one-shot auto-migration introduced in phase 1 (#306) and
+verifies the "merge, don't replace" invariant across round-trips.
+"""
+
+from __future__ import annotations
+
+from typing import Any
+from unittest.mock import patch
+
+import pytest
+
+from citrasense.settings.citrasense_settings import (
+    CONFIG_VERSION,
+    DEFAULT_TELESCOPE_SENSOR_ID,
+    CitraSenseSettings,
+    SensorConfig,
+)
+
+
+def _make_settings(config_on_disk: dict[str, Any]) -> tuple[CitraSenseSettings, Any]:
+    """Load settings from a mock config dict, returning the instance and the mock file manager."""
+    with patch("citrasense.settings.citrasense_settings.SettingsFileManager") as MockSFM:
+        instance = MockSFM.return_value
+        instance.load_config.return_value = config_on_disk
+        s = CitraSenseSettings.load()
+    return s, instance
+
+
+class TestLegacyAutoMigration:
+    def test_legacy_config_produces_sensors_list(self):
+        s, _ = _make_settings(
+            {
+                "hardware_adapter": "nina",
+                "telescope_id": "tel-1",
+                "adapter_settings": {
+                    "nina": {"host": "192.168.1.100", "port": 1888, "filters": {"0": {"name": "Luminance"}}}
+                },
+            }
+        )
+        assert len(s.sensors) == 1
+        head = s.sensors[0]
+        assert head.id == DEFAULT_TELESCOPE_SENSOR_ID
+        assert head.type == "telescope"
+        assert head.adapter == "nina"
+        assert head.citra_sensor_id == "tel-1"
+        assert head.adapter_settings["host"] == "192.168.1.100"
+        assert "filters" in head.adapter_settings
+
+    def test_scalars_still_readable(self):
+        s, _ = _make_settings(
+            {
+                "hardware_adapter": "dummy",
+                "telescope_id": "tel-2",
+            }
+        )
+        assert s.hardware_adapter == "dummy"
+        assert s.telescope_id == "tel-2"
+
+    def test_empty_config_has_no_sensors(self):
+        s, _ = _make_settings({})
+        assert s.sensors == []
+        assert s.hardware_adapter == ""
+
+    def test_forward_shape_round_trips(self):
+        s, mock_sfm = _make_settings(
+            {
+                "hardware_adapter": "dummy",
+                "telescope_id": "tel-3",
+                "adapter_settings": {"dummy": {"simulate_slow_operations": True}},
+            }
+        )
+        s.save()
+        saved: dict = mock_sfm.save_config.call_args[0][0]
+        assert "sensors" in saved
+        assert isinstance(saved["sensors"], list)
+        assert len(saved["sensors"]) == 1
+        assert saved["sensors"][0]["id"] == DEFAULT_TELESCOPE_SENSOR_ID
+        assert saved["config_version"] == CONFIG_VERSION
+
+
+class TestMigrationIdempotency:
+    def test_second_load_with_sensors_key_is_unchanged(self):
+        s1, _ = _make_settings(
+            {
+                "hardware_adapter": "dummy",
+                "telescope_id": "tel-4",
+                "adapter_settings": {"dummy": {}},
+            }
+        )
+        assert len(s1.sensors) == 1
+
+        # Simulate round-tripping the first save's output through a second load
+        s2, _ = _make_settings(
+            {
+                "hardware_adapter": "dummy",
+                "telescope_id": "tel-4",
+                "adapter_settings": {"dummy": {}},
+                "sensors": [s1.sensors[0].model_dump()],
+                "config_version": CONFIG_VERSION,
+            }
+        )
+        assert len(s2.sensors) == 1
+        assert s2.sensors[0].id == DEFAULT_TELESCOPE_SENSOR_ID
+
+
+class TestFilterPreservationAcrossMigration:
+    def test_filters_survive_update_and_save(self):
+        disk = {
+            "hardware_adapter": "nina",
+            "telescope_id": "tel-5",
+            "adapter_settings": {
+                "nina": {
+                    "host": "192.168.1.100",
+                    "filters": {
+                        "0": {"name": "Luminance", "focus_position": 9000, "enabled": True},
+                        "1": {"name": "Ha", "focus_position": 8500, "enabled": True},
+                    },
+                }
+            },
+        }
+        s, mock_sfm = _make_settings(disk)
+
+        s.update_and_save(
+            {
+                "hardware_adapter": "nina",
+                "adapter_settings": {"host": "10.0.0.1"},
+            }
+        )
+
+        saved: dict = mock_sfm.save_config.call_args[0][0]
+        nina_settings = saved["adapter_settings"]["nina"]
+        assert "filters" in nina_settings
+        assert nina_settings["filters"]["0"]["name"] == "Luminance"
+        assert nina_settings["host"] == "10.0.0.1"
+
+    def test_sensors_adapter_settings_updated_on_save(self):
+        s, mock_sfm = _make_settings(
+            {
+                "hardware_adapter": "dummy",
+                "telescope_id": "tel-6",
+                "adapter_settings": {"dummy": {"key": "original"}},
+            }
+        )
+        s.adapter_settings["key"] = "modified"
+        s.save()
+
+        saved: dict = mock_sfm.save_config.call_args[0][0]
+        assert saved["sensors"][0]["adapter_settings"]["key"] == "modified"
+
+
+class TestAllAdapterMigration:
+    """Verify that a legacy config for each registered adapter type auto-migrates cleanly."""
+
+    @pytest.mark.parametrize("adapter_name", ["nina", "kstars", "indi", "direct", "dummy"])
+    def test_legacy_adapter_migrates(self, adapter_name: str):
+        s, _ = _make_settings(
+            {
+                "hardware_adapter": adapter_name,
+                "telescope_id": f"tel-{adapter_name}",
+                "adapter_settings": {adapter_name: {"some_key": "some_value"}},
+            }
+        )
+        assert len(s.sensors) == 1
+        head = s.sensors[0]
+        assert head.id == DEFAULT_TELESCOPE_SENSOR_ID
+        assert head.type == "telescope"
+        assert head.adapter == adapter_name
+        assert head.citra_sensor_id == f"tel-{adapter_name}"
+        assert head.adapter_settings.get("some_key") == "some_value"
+
+    @pytest.mark.parametrize("adapter_name", ["nina", "kstars", "indi", "direct", "dummy"])
+    def test_legacy_adapter_save_round_trips(self, adapter_name: str):
+        s, mock_sfm = _make_settings(
+            {
+                "hardware_adapter": adapter_name,
+                "telescope_id": f"tel-{adapter_name}",
+                "adapter_settings": {adapter_name: {"key": "val"}},
+            }
+        )
+        s.save()
+        saved: dict = mock_sfm.save_config.call_args[0][0]
+        assert saved["config_version"] == CONFIG_VERSION
+        assert len(saved["sensors"]) == 1
+        assert saved["sensors"][0]["adapter"] == adapter_name
+        assert saved["adapter_settings"][adapter_name]["key"] == "val"
+
+
+class TestUpdateAndSaveSyncsCitraSensorId:
+    """Fix 1: ``update_and_save`` must propagate ``telescope_id`` changes to ``sensors[0].citra_sensor_id``."""
+
+    def test_telescope_id_change_updates_sensor(self):
+        s, mock_sfm = _make_settings(
+            {
+                "hardware_adapter": "dummy",
+                "telescope_id": "old-id",
+                "adapter_settings": {"dummy": {}},
+            }
+        )
+        assert s.sensors[0].citra_sensor_id == "old-id"
+
+        s.update_and_save({"telescope_id": "new-id"})
+
+        saved: dict = mock_sfm.save_config.call_args[0][0]
+        assert saved["sensors"][0]["citra_sensor_id"] == "new-id"
+
+    def test_telescope_id_unchanged_preserves_sensor(self):
+        s, mock_sfm = _make_settings(
+            {
+                "hardware_adapter": "dummy",
+                "telescope_id": "keep-me",
+                "adapter_settings": {"dummy": {}},
+            }
+        )
+        s.update_and_save({"hardware_adapter": "dummy"})
+
+        saved: dict = mock_sfm.save_config.call_args[0][0]
+        assert saved["sensors"][0]["citra_sensor_id"] == "keep-me"
+
+
+class TestLoadGuardsForwardShapeAdapterSettings:
+    """Fix 2: ``load()`` must not clobber a forward-shape sensor's populated ``adapter_settings``."""
+
+    def test_forward_shape_adapter_settings_preserved(self):
+        s, _ = _make_settings(
+            {
+                "hardware_adapter": "nina",
+                "telescope_id": "tel-fw",
+                "adapter_settings": {},
+                "sensors": [
+                    {
+                        "id": DEFAULT_TELESCOPE_SENSOR_ID,
+                        "type": "telescope",
+                        "adapter": "nina",
+                        "citra_sensor_id": "tel-fw",
+                        "adapter_settings": {"host": "10.0.0.5", "port": 1888},
+                    }
+                ],
+                "config_version": CONFIG_VERSION,
+            }
+        )
+        head = s.sensors[0]
+        assert head.adapter_settings["host"] == "10.0.0.5"
+        assert head.adapter_settings["port"] == 1888
+
+    def test_synthesized_entry_still_patched(self):
+        s, _ = _make_settings(
+            {
+                "hardware_adapter": "nina",
+                "telescope_id": "tel-synth",
+                "adapter_settings": {"nina": {"host": "192.168.1.1"}},
+            }
+        )
+        head = s.sensors[0]
+        assert head.adapter_settings["host"] == "192.168.1.1"
+
+
+class TestSensorConfigModel:
+    def test_basic_construction(self):
+        cfg = SensorConfig(
+            id="telescope-0",
+            type="telescope",
+            adapter="nina",
+            adapter_settings={"host": "1.2.3.4"},
+            citra_sensor_id="tel-abc",
+        )
+        assert cfg.id == "telescope-0"
+        assert cfg.type == "telescope"
+        assert cfg.adapter_settings["host"] == "1.2.3.4"
+
+    def test_defaults(self):
+        cfg = SensorConfig(id="s1", type="test")
+        assert cfg.adapter == ""
+        assert cfg.adapter_settings == {}
+        assert cfg.citra_sensor_id == ""

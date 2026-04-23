@@ -25,6 +25,8 @@ from citrasense.logging import CITRASENSE_LOGGER
 from citrasense.logging._citrasense_logger import setup_file_logging
 from citrasense.preview_bus import PreviewBus
 from citrasense.processors.processor_registry import ProcessorRegistry
+from citrasense.sensors.bus import InProcessBus
+from citrasense.sensors.sensor_manager import SensorManager
 from citrasense.settings.citrasense_settings import CitraSenseSettings
 from citrasense.startup_checks import check_processor_runtime_deps
 from citrasense.tasks.runner import TaskManager
@@ -68,6 +70,13 @@ class CitraSenseDaemon:
         self.configuration_error: str | None = None
         self.latest_annotated_image_path: str | None = None
         self.preview_bus = PreviewBus()
+
+        # Phase-1 sensor abstraction (#306): the daemon owns a single
+        # SensorBus and a SensorManager. Today the manager holds exactly
+        # one TelescopeSensor; self.hardware_adapter still points to the
+        # same adapter instance so every existing consumer keeps working.
+        self.sensor_bus: InProcessBus = InProcessBus()
+        self.sensor_manager: SensorManager | None = None
         self.calibration_library: CalibrationLibrary | None = None
         self._stop_requested = False
         self._shutdown_done = False
@@ -130,7 +139,13 @@ class CitraSenseDaemon:
         )
 
     def _create_hardware_adapter(self) -> AbstractAstroHardwareAdapter:
-        """Factory method to create the appropriate hardware adapter based on settings."""
+        """Factory method to create the appropriate hardware adapter based on settings.
+
+        .. deprecated:: phase 1 (#306)
+            Prefer :meth:`_initialize_sensors` which builds the adapter
+            through the sensor manager. This method is kept as a fallback
+            for tests that inject a pre-built adapter at construction time.
+        """
         try:
             adapter_class = get_adapter_class(self.settings.hardware_adapter)
             self.settings.directories.ensure_data_directories()
@@ -144,6 +159,43 @@ class CitraSenseDaemon:
                 f"{self.settings.hardware_adapter} adapter requires additional dependencies. "
                 f"Check documentation for installation instructions."
             ) from e
+
+    def _initialize_sensors(self) -> AbstractAstroHardwareAdapter:
+        """Build sensors from ``self.settings.sensors`` via the sensor manager.
+
+        Phase 1: always exactly one telescope sensor. Returns the sensor's
+        inner adapter so the caller can assign it to
+        ``self.hardware_adapter`` — the rest of the daemon is
+        behaviour-identical to before this refactor.
+        """
+        from citrasense.sensors.telescope.telescope_sensor import TelescopeSensor
+
+        self.settings.directories.ensure_data_directories()
+        images_dir = self.settings.directories.images_dir
+
+        try:
+            self.sensor_manager = SensorManager.from_configs(
+                self.settings.sensors,
+                logger=CITRASENSE_LOGGER,
+                images_dir=images_dir,
+            )
+        except ImportError as e:
+            adapter_key = self.settings.hardware_adapter
+            CITRASENSE_LOGGER.error(
+                "%s adapter requested but dependencies not available. Error: %s",
+                adapter_key,
+                e,
+            )
+            raise RuntimeError(
+                f"{adapter_key} adapter requires additional dependencies. "
+                "Check documentation for installation instructions."
+            ) from e
+
+        telescope_sensor = self.sensor_manager.first_of_type("telescope")
+        if telescope_sensor is None:
+            raise RuntimeError("No telescope sensor configured — cannot start daemon (phase 1 requires exactly one)")
+        assert isinstance(telescope_sensor, TelescopeSensor)
+        return telescope_sensor.adapter
 
     def _initialize_components(self, reload_settings: bool = False) -> tuple[bool, str | None]:
         """Initialize or reinitialize all components.
@@ -203,12 +255,15 @@ class CitraSenseDaemon:
                 self.location_service.stop()
                 self.location_service = None
 
-            if self.hardware_adapter:
+            if self.sensor_manager:
+                self.sensor_manager.disconnect_all()
+                self.sensor_manager = None
+            elif self.hardware_adapter:
                 try:
                     self.hardware_adapter.disconnect()
                 except Exception as e:
                     CITRASENSE_LOGGER.warning(f"Error disconnecting hardware: {e}")
-                self.hardware_adapter = None
+            self.hardware_adapter = None
 
             # Check if configuration is complete
             if not self.settings.is_configured():
@@ -243,8 +298,10 @@ class CitraSenseDaemon:
             if self.settings.use_local_apass_catalog:
                 self.apass_catalog.start_background_download(self.api_client)
 
-            # Initialize hardware adapter
-            self.hardware_adapter = self._create_hardware_adapter()
+            # Initialize sensors (phase 1: always exactly one telescope sensor).
+            # The adapter is built through the sensor manager so that
+            # follow-up phases can iterate N sensors without rewiring.
+            self.hardware_adapter = self._initialize_sensors()
 
             # Check for missing dependencies (non-fatal, just warn)
             missing_deps = self.hardware_adapter.get_missing_dependencies()
@@ -834,8 +891,11 @@ class CitraSenseDaemon:
                 cable_check.stop()
             self.safety_monitor.stop_watchdog()
 
-        # 4. Disconnect hardware
-        if self.hardware_adapter:
+        # 4. Disconnect hardware (prefer sensor manager for orderly teardown)
+        if self.sensor_manager:
+            CITRASENSE_LOGGER.info("Disconnecting sensors...")
+            self.sensor_manager.disconnect_all()
+        elif self.hardware_adapter:
             try:
                 CITRASENSE_LOGGER.info("Disconnecting hardware...")
                 self.hardware_adapter.disconnect()
