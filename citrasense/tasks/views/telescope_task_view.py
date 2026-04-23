@@ -19,8 +19,9 @@ class TelescopeTaskView:
     __slots__ = ("_task",)
 
     def __init__(self, task: Task) -> None:
-        if task.sensor_type != "telescope":
-            raise ValueError(f"Expected telescope task, got sensor_type={task.sensor_type!r}")
+        sensor_type = getattr(task, "sensor_type", "telescope")
+        if sensor_type != "telescope":
+            raise ValueError(f"Expected telescope task, got sensor_type={sensor_type!r}")
         self._task = task
 
     @property

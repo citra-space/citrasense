@@ -222,7 +222,7 @@ class SatelliteMatcherProcessor(AbstractImageProcessor):
         # Target satellite comparison: pointing TLE vs cache TLE
         target_sat_id = (
             TelescopeTaskView(context.task).satellite_id
-            if context.task and getattr(context.task, "sensor_type", None) == "telescope"
+            if context.task and getattr(context.task, "sensor_type", "telescope") == "telescope"
             else None
         )
         target_section: dict[str, Any] = {"satellite_id": target_sat_id}
@@ -375,7 +375,7 @@ class SatelliteMatcherProcessor(AbstractImageProcessor):
         # satellite, flooding results with false positives from nearby stars.
         filter_name = (
             TelescopeTaskView(context.task).assigned_filter_name
-            if context.task and getattr(context.task, "sensor_type", None) == "telescope"
+            if context.task and getattr(context.task, "sensor_type", "telescope") == "telescope"
             else None
         ) or "Clear"
         observations: list[dict[str, Any]] = []

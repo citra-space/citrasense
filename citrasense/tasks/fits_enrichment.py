@@ -130,7 +130,7 @@ def _add_task_metadata(
     if hasattr(task, "id") and task.id:
         header["TASKID"] = (task.id, "Citra.space task UUID")
 
-    if not (hasattr(task, "sensor_type") and task.sensor_type == "telescope"):
+    if getattr(task, "sensor_type", "telescope") != "telescope":
         return
 
     tv = TelescopeTaskView(task)

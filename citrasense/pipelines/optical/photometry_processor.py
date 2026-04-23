@@ -167,7 +167,7 @@ class PhotometryProcessor(AbstractImageProcessor):
             # Get filter name
             filter_name = (
                 TelescopeTaskView(context.task).assigned_filter_name
-                if context.task and getattr(context.task, "sensor_type", None) == "telescope"
+                if context.task and getattr(context.task, "sensor_type", "telescope") == "telescope"
                 else None
             )
 

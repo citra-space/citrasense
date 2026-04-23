@@ -112,7 +112,7 @@ class AnnotatedImageProcessor(AbstractImageProcessor):
 
             task_name = (
                 TelescopeTaskView(context.task).satellite_name
-                if context.task and getattr(context.task, "sensor_type", None) == "telescope"
+                if context.task and getattr(context.task, "sensor_type", "telescope") == "telescope"
                 else None
             )
             self._draw_overlay(draw, img.width, task_name, epoch_str, match_count, font)

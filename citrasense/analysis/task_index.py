@@ -222,7 +222,7 @@ class TaskIndex:
         """INSERT a completed-task row from the processing thread."""
         now = datetime.now(timezone.utc).isoformat()
         ed = result.extracted_data if result else {}
-        tv = TelescopeTaskView(task) if task and getattr(task, "sensor_type", None) == "telescope" else None
+        tv = TelescopeTaskView(task) if task and getattr(task, "sensor_type", "telescope") == "telescope" else None
 
         # Per-processor timing from individual results
         proc_times: dict[str, float] = {}
