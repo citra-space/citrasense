@@ -187,6 +187,75 @@ class TestAllAdapterMigration:
         assert saved["adapter_settings"][adapter_name]["key"] == "val"
 
 
+class TestUpdateAndSaveSyncsCitraSensorId:
+    """Fix 1: ``update_and_save`` must propagate ``telescope_id`` changes to ``sensors[0].citra_sensor_id``."""
+
+    def test_telescope_id_change_updates_sensor(self):
+        s, mock_sfm = _make_settings(
+            {
+                "hardware_adapter": "dummy",
+                "telescope_id": "old-id",
+                "adapter_settings": {"dummy": {}},
+            }
+        )
+        assert s.sensors[0].citra_sensor_id == "old-id"
+
+        s.update_and_save({"telescope_id": "new-id"})
+
+        saved: dict = mock_sfm.save_config.call_args[0][0]
+        assert saved["sensors"][0]["citra_sensor_id"] == "new-id"
+
+    def test_telescope_id_unchanged_preserves_sensor(self):
+        s, mock_sfm = _make_settings(
+            {
+                "hardware_adapter": "dummy",
+                "telescope_id": "keep-me",
+                "adapter_settings": {"dummy": {}},
+            }
+        )
+        s.update_and_save({"hardware_adapter": "dummy"})
+
+        saved: dict = mock_sfm.save_config.call_args[0][0]
+        assert saved["sensors"][0]["citra_sensor_id"] == "keep-me"
+
+
+class TestLoadGuardsForwardShapeAdapterSettings:
+    """Fix 2: ``load()`` must not clobber a forward-shape sensor's populated ``adapter_settings``."""
+
+    def test_forward_shape_adapter_settings_preserved(self):
+        s, _ = _make_settings(
+            {
+                "hardware_adapter": "nina",
+                "telescope_id": "tel-fw",
+                "adapter_settings": {},
+                "sensors": [
+                    {
+                        "id": DEFAULT_TELESCOPE_SENSOR_ID,
+                        "type": "telescope",
+                        "adapter": "nina",
+                        "citra_sensor_id": "tel-fw",
+                        "adapter_settings": {"host": "10.0.0.5", "port": 1888},
+                    }
+                ],
+                "config_version": CONFIG_VERSION,
+            }
+        )
+        head = s.sensors[0]
+        assert head.adapter_settings["host"] == "10.0.0.5"
+        assert head.adapter_settings["port"] == 1888
+
+    def test_synthesized_entry_still_patched(self):
+        s, _ = _make_settings(
+            {
+                "hardware_adapter": "nina",
+                "telescope_id": "tel-synth",
+                "adapter_settings": {"nina": {"host": "192.168.1.1"}},
+            }
+        )
+        head = s.sensors[0]
+        assert head.adapter_settings["host"] == "192.168.1.1"
+
+
 class TestSensorConfigModel:
     def test_basic_construction(self):
         cfg = SensorConfig(

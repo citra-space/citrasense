@@ -106,10 +106,10 @@ class _InProcessSubscription:
 class InProcessBus:
     """Phase-1 in-process pub/sub. Synchronous dispatch on publish.
 
-    Thread-safe for concurrent ``publish`` / ``subscribe`` / unsubscribe. The
-    internal table is copied on write under a lock so handler dispatch
-    happens without holding the lock (avoids reentrancy deadlocks if a
-    handler publishes during its own execution).
+    Thread-safe for concurrent ``publish`` / ``subscribe`` / unsubscribe.
+    ``publish`` snapshots the handlers matching the current subject while
+    holding the lock, then dispatches outside the lock (avoids reentrancy
+    deadlocks if a handler publishes during its own execution).
     """
 
     def __init__(self) -> None:

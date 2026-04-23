@@ -622,8 +622,9 @@ class CitraSenseSettings(BaseModel):
         # consumers (``SensorManager.from_configs``) see the real settings.
         if instance.sensors and instance.hardware_adapter:
             head = instance.sensors[0]
-            if head.adapter == instance.hardware_adapter:
-                head.adapter_settings = all_adapter_settings.get(instance.hardware_adapter, {})
+            legacy_settings = all_adapter_settings.get(instance.hardware_adapter)
+            if head.adapter == instance.hardware_adapter and not head.adapter_settings and legacy_settings is not None:
+                head.adapter_settings = legacy_settings
         return instance
 
     # ── Public helpers ────────────────────────────────────────────────
@@ -711,6 +712,9 @@ class CitraSenseSettings(BaseModel):
                 head.adapter = adapter
             if adapter:
                 head.adapter_settings = self._all_adapter_settings.get(adapter, {})
+            telescope_id = config.get("telescope_id", self.telescope_id)
+            if telescope_id:
+                head.citra_sensor_id = telescope_id
             merged["sensors"] = [s.model_dump() for s in self.sensors]
         merged["config_version"] = CONFIG_VERSION
 
