@@ -73,7 +73,7 @@ def build_mount_router(ctx: CitraSenseWebApp) -> APIRouter:
 
         import threading
 
-        from citrasense.safety.cable_wrap_check import CableWrapCheck
+        from citrasense.sensors.telescope.safety.cable_wrap_check import CableWrapCheck
 
         chk = ctx.daemon.safety_monitor.get_check("cable_wrap")
         if not isinstance(chk, CableWrapCheck):

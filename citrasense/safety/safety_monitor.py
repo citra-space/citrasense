@@ -99,12 +99,39 @@ class SafetyMonitor:
         self.operator_stop = OperatorStopCheck()
         self._checks: list[SafetyCheck] = [self.operator_stop, *checks]
 
+        self._sensor_checks: dict[str, list[SafetyCheck]] = {}
+
         self._watchdog_thread: threading.Thread | None = None
         self._watchdog_stop = threading.Event()
         self._watchdog_interval: float = 1.0
         self._watchdog_last_heartbeat: float = 0.0
         self._last_watchdog_action: SafetyAction = SafetyAction.SAFE
         self._action_threads: list[threading.Thread] = []
+
+    # ------------------------------------------------------------------
+    # Per-sensor check registration
+    # ------------------------------------------------------------------
+
+    def register_sensor_check(self, sensor_id: str, check: SafetyCheck) -> None:
+        """Register a safety check owned by a specific sensor."""
+        self._sensor_checks.setdefault(sensor_id, []).append(check)
+        self._checks.append(check)
+        self._logger.info("Registered sensor check %r for sensor %s", check.name, sensor_id)
+
+    def unregister_sensor_check(self, sensor_id: str, check_name: str) -> SafetyCheck | None:
+        """Remove a sensor check by name. Returns the check or None."""
+        sensor_list = self._sensor_checks.get(sensor_id, [])
+        for chk in sensor_list:
+            if chk.name == check_name:
+                sensor_list.remove(chk)
+                self._checks.remove(chk)
+                self._logger.info("Unregistered sensor check %r for sensor %s", check_name, sensor_id)
+                return chk
+        return None
+
+    def get_sensor_checks(self, sensor_id: str) -> list[SafetyCheck]:
+        """Return a copy of checks registered for a given sensor."""
+        return list(self._sensor_checks.get(sensor_id, []))
 
     # ------------------------------------------------------------------
     # Operator stop  (convenience pass-throughs)

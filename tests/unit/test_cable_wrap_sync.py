@@ -12,7 +12,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from citrasense.hardware.devices.mount.mount_state_cache import MountSnapshot, MountStateCache
-from citrasense.safety.cable_wrap_check import CableWrapCheck
+from citrasense.sensors.telescope.safety.cable_wrap_check import CableWrapCheck
 
 # ------------------------------------------------------------------
 # Helpers

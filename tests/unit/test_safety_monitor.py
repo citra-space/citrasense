@@ -275,6 +275,106 @@ class TestOperatorStop:
         assert triggered is monitor.operator_stop
 
 
+class TestSensorCheckRegistration:
+    """Tests for per-sensor check registration/unregistration."""
+
+    def test_register_adds_to_both_collections(self):
+        monitor = SafetyMonitor(MagicMock(), [])
+        check = _StubCheck("cable_wrap", SafetyAction.WARN)
+        monitor.register_sensor_check("telescope-0", check)
+
+        assert check in monitor._checks
+        assert monitor.get_sensor_checks("telescope-0") == [check]
+
+    def test_registered_check_participates_in_evaluate(self):
+        monitor = SafetyMonitor(MagicMock(), [])
+        check = _StubCheck("cable_wrap", SafetyAction.QUEUE_STOP)
+        monitor.register_sensor_check("telescope-0", check)
+
+        action, triggered = monitor.evaluate()
+        assert action == SafetyAction.QUEUE_STOP
+        assert triggered is check
+
+    def test_unregister_removes_from_both_collections(self):
+        monitor = SafetyMonitor(MagicMock(), [])
+        check = _StubCheck("cable_wrap")
+        monitor.register_sensor_check("telescope-0", check)
+
+        removed = monitor.unregister_sensor_check("telescope-0", "cable_wrap")
+        assert removed is check
+        assert check not in monitor._checks
+        assert monitor.get_sensor_checks("telescope-0") == []
+
+    def test_unregister_nonexistent_returns_none(self):
+        monitor = SafetyMonitor(MagicMock(), [])
+        assert monitor.unregister_sensor_check("telescope-0", "nope") is None
+
+    def test_unregister_wrong_sensor_returns_none(self):
+        monitor = SafetyMonitor(MagicMock(), [])
+        check = _StubCheck("cable_wrap")
+        monitor.register_sensor_check("telescope-0", check)
+        assert monitor.unregister_sensor_check("other-sensor", "cable_wrap") is None
+        assert check in monitor._checks
+
+    def test_get_sensor_checks_returns_copy(self):
+        monitor = SafetyMonitor(MagicMock(), [])
+        check = _StubCheck("cable_wrap")
+        monitor.register_sensor_check("telescope-0", check)
+
+        result = monitor.get_sensor_checks("telescope-0")
+        result.clear()
+        assert monitor.get_sensor_checks("telescope-0") == [check]
+
+    def test_get_sensor_checks_empty_sensor(self):
+        monitor = SafetyMonitor(MagicMock(), [])
+        assert monitor.get_sensor_checks("nonexistent") == []
+
+    def test_multiple_sensor_checks(self):
+        monitor = SafetyMonitor(MagicMock(), [])
+        c1 = _StubCheck("check_a")
+        c2 = _StubCheck("check_b")
+        monitor.register_sensor_check("telescope-0", c1)
+        monitor.register_sensor_check("telescope-0", c2)
+
+        assert len(monitor.get_sensor_checks("telescope-0")) == 2
+        monitor.unregister_sensor_check("telescope-0", "check_a")
+        assert monitor.get_sensor_checks("telescope-0") == [c2]
+
+    def test_checks_from_different_sensors(self):
+        monitor = SafetyMonitor(MagicMock(), [])
+        t_check = _StubCheck("cable_wrap")
+        r_check = _StubCheck("rfi_check")
+        monitor.register_sensor_check("telescope-0", t_check)
+        monitor.register_sensor_check("rf-0", r_check)
+
+        assert monitor.get_sensor_checks("telescope-0") == [t_check]
+        assert monitor.get_sensor_checks("rf-0") == [r_check]
+        assert t_check in monitor._checks
+        assert r_check in monitor._checks
+
+    def test_get_check_finds_sensor_check_by_name(self):
+        monitor = SafetyMonitor(MagicMock(), [])
+        check = _StubCheck("cable_wrap")
+        monitor.register_sensor_check("telescope-0", check)
+        assert monitor.get_check("cable_wrap") is check
+
+    def test_is_action_safe_includes_sensor_check(self):
+        monitor = SafetyMonitor(MagicMock(), [])
+        monitor.register_sensor_check("telescope-0", _BlockingCheck())
+        assert monitor.is_action_safe("slew") is False
+        assert monitor.is_action_safe("capture") is True
+
+    def test_get_status_includes_sensor_check(self):
+        monitor = SafetyMonitor(MagicMock(), [])
+        check = _StubCheck("cable_wrap", SafetyAction.WARN)
+        monitor.register_sensor_check("telescope-0", check)
+        monitor.evaluate()
+
+        status = monitor.get_status()
+        names = [c["name"] for c in status["checks"]]
+        assert "cable_wrap" in names
+
+
 class TestOperatorStopCheck:
     """Isolated tests for OperatorStopCheck as a standalone SafetyCheck."""
 

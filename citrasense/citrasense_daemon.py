@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from citrasense.calibration.calibration_library import CalibrationLibrary
-    from citrasense.sensors.abstract_sensor import AbstractSensor
+    from citrasense.sensors.telescope.telescope_sensor import TelescopeSensor
 
 from citrasense.analysis.retention import cleanup_previews, cleanup_processing_output
 from citrasense.analysis.task_index import TaskIndex
@@ -162,7 +162,7 @@ class CitraSenseDaemon:
                 f"Check documentation for installation instructions."
             ) from e
 
-    def _initialize_sensors(self) -> tuple[AbstractAstroHardwareAdapter, AbstractSensor]:
+    def _initialize_sensors(self) -> tuple[AbstractAstroHardwareAdapter, TelescopeSensor]:
         """Build sensors from ``self.settings.sensors`` via the sensor manager.
 
         Phase 1: always exactly one telescope sensor. Returns
@@ -245,6 +245,8 @@ class CitraSenseDaemon:
                 self.task_manager = None
 
             if self.safety_monitor:
+                if self._telescope_sensor:
+                    self._telescope_sensor.unregister_safety_checks(self.safety_monitor)
                 self.safety_monitor.stop_watchdog()
                 self.safety_monitor = None
 
@@ -478,6 +480,25 @@ class CitraSenseDaemon:
 
             self._initialize_safety_monitor()
 
+            # Register telescope-specific safety checks (cable wrap)
+            import platformdirs
+
+            data_dir = Path(platformdirs.user_data_dir("citrasense", appauthor="citrasense"))
+            state_file = data_dir / f"cable_wrap_state_{self._telescope_sensor.sensor_id}.json"
+
+            # Migrate legacy un-keyed state file → sensor-keyed filename
+            legacy_state = data_dir / "cable_wrap_state.json"
+            if legacy_state.exists() and not state_file.exists():
+                legacy_state.rename(state_file)
+                CITRASENSE_LOGGER.info("Migrated cable wrap state file → %s", state_file.name)
+
+            assert self.safety_monitor is not None
+            self._telescope_sensor.register_safety_checks(
+                self.safety_monitor,
+                logger=CITRASENSE_LOGGER,
+                state_file=state_file,
+            )
+
             # Create SensorRuntime for the telescope sensor
             telescope_runtime = SensorRuntime(
                 self._telescope_sensor,
@@ -624,8 +645,11 @@ class CitraSenseDaemon:
         self._retention_timer.start()
 
     def _initialize_safety_monitor(self) -> None:
-        """Create SafetyMonitor with applicable checks and wire to hardware."""
-        from citrasense.safety.cable_wrap_check import CableWrapCheck
+        """Create SafetyMonitor with site-level checks and wire to hardware.
+
+        Sensor-specific checks (e.g. cable wrap) are registered separately
+        by each sensor via ``safety_monitor.register_sensor_check()``.
+        """
         from citrasense.safety.disk_space_check import DiskSpaceCheck
         from citrasense.safety.safety_monitor import SafetyMonitor
         from citrasense.safety.time_health_check import TimeHealthCheck
@@ -633,28 +657,6 @@ class CitraSenseDaemon:
         assert self.hardware_adapter is not None
 
         checks: list = []
-
-        # Cable wrap check — only for adapters with a direct mount
-        cable_check: CableWrapCheck | None = None
-        needs_startup_unwind = False
-        mount = self.hardware_adapter.mount
-        if mount is not None:
-            import platformdirs
-
-            data_dir = Path(platformdirs.user_data_dir("citrasense", appauthor="citrasense"))
-            state_file = data_dir / "cable_wrap_state.json"
-            cable_check = CableWrapCheck(CITRASENSE_LOGGER, mount, state_file=state_file)
-            cable_check.start()
-            mount.register_sync_listener(cable_check.notify_sync)
-
-            if cable_check.needs_startup_unwind():
-                CITRASENSE_LOGGER.warning(
-                    "Persisted cable wrap at %.1f° exceeds hard limit — will unwind after safety gate is wired",
-                    cable_check.cumulative_deg,
-                )
-                needs_startup_unwind = True
-
-            checks.append(cable_check)
 
         # Disk space check
         checks.append(DiskSpaceCheck(CITRASENSE_LOGGER, self.hardware_adapter.images_dir))
@@ -691,31 +693,8 @@ class CitraSenseDaemon:
         self.safety_monitor = SafetyMonitor(CITRASENSE_LOGGER, checks, abort_callback=abort_callback)
         self.hardware_adapter.set_safety_monitor(self.safety_monitor)
 
-        # Wire safety gate so cable unwind respects operator stop.
-        # Must check operator_stop directly — is_action_safe() would ask
-        # cable_wrap itself, which returns False while _unwinding is True.
-        # IMPORTANT: this must happen BEFORE any execute_action() call so
-        # the unwind can be interrupted by operator stop.
-        op_stop = self.safety_monitor.operator_stop
-        if cable_check is not None:
-            cable_check.safety_gate = lambda: not op_stop.is_active
-
         self.safety_monitor.start_watchdog()
-        CITRASENSE_LOGGER.info("Safety monitor started with %d check(s)", len(checks))
-
-        # Now that the safety gate is wired, attempt the startup unwind.
-        if needs_startup_unwind and cable_check is not None:
-            CITRASENSE_LOGGER.info("Starting deferred cable unwind (safety gate active)")
-            cable_check.execute_action()
-            if cable_check.did_last_unwind_fail():
-                cable_check.mark_intervention_required()
-                CITRASENSE_LOGGER.critical(
-                    "Startup unwind did not converge (%.1f° remaining) — "
-                    "manual intervention required before the system can "
-                    "operate. Use web UI to reset after physically "
-                    "verifying cables.",
-                    cable_check.cumulative_deg,
-                )
+        CITRASENSE_LOGGER.info("Safety monitor started with %d site-level check(s)", len(checks))
 
     def save_filter_config(self):
         """Save filter configuration from adapter to settings if supported.
@@ -900,12 +879,8 @@ class CitraSenseDaemon:
 
         # 3. Stop safety (watchdog last — it was guarding steps 1-2)
         if self.safety_monitor:
-            from citrasense.safety.cable_wrap_check import CableWrapCheck
-
-            cable_check = self.safety_monitor.get_check("cable_wrap")
-            if isinstance(cable_check, CableWrapCheck):
-                cable_check.join_unwind(timeout=10.0)
-                cable_check.stop()
+            if self._telescope_sensor:
+                self._telescope_sensor.unregister_safety_checks(self.safety_monitor)
             self.safety_monitor.stop_watchdog()
 
         # 4. Disconnect hardware (prefer sensor manager for orderly teardown)

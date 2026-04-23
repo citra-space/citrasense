@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 from pathlib import Path
-from unittest.mock import create_autospec
+from unittest.mock import MagicMock, PropertyMock, create_autospec, patch
 
 import pytest
 
 from citrasense.hardware.abstract_astro_hardware_adapter import AbstractAstroHardwareAdapter
+from citrasense.safety.safety_monitor import SafetyMonitor
 from citrasense.sensors.abstract_sensor import (
     AcquisitionContext,
     SensorAcquisitionMode,
@@ -136,3 +137,98 @@ class TestTelescopeSensorFromConfig:
         )
         sensor = TelescopeSensor.from_config(cfg, logger=getLogger("test"), images_dir=tmp_path)
         assert sensor.adapter is not None
+
+
+class TestTelescopeSensorSafetyChecks:
+    """Tests for register_safety_checks / unregister_safety_checks."""
+
+    def _make_sensor_with_mount(self):
+        adapter = _make_mock_adapter()
+        mount = MagicMock()
+        type(adapter).mount = PropertyMock(return_value=mount)
+        return TelescopeSensor("telescope-0", adapter), mount
+
+    @patch(
+        "citrasense.sensors.telescope.safety.cable_wrap_check.CableWrapCheck",
+    )
+    def test_register_creates_and_registers(self, MockCableWrap, tmp_path):
+        sensor, mount = self._make_sensor_with_mount()
+        mock_check = MockCableWrap.return_value
+        mock_check.needs_startup_unwind.return_value = False
+        mock_check.name = "cable_wrap"
+
+        monitor = SafetyMonitor(MagicMock(), [])
+        sensor.register_safety_checks(monitor, logger=MagicMock(), state_file=tmp_path / "state.json")
+
+        MockCableWrap.assert_called_once()
+        mock_check.start.assert_called_once()
+        mount.register_sync_listener.assert_called_once_with(mock_check.notify_sync)
+        assert monitor.get_sensor_checks("telescope-0") == [mock_check]
+        assert mock_check.safety_gate is not None
+
+    @patch(
+        "citrasense.sensors.telescope.safety.cable_wrap_check.CableWrapCheck",
+    )
+    def test_register_handles_startup_unwind(self, MockCableWrap, tmp_path):
+        sensor, _mount = self._make_sensor_with_mount()
+        mock_check = MockCableWrap.return_value
+        mock_check.needs_startup_unwind.return_value = True
+        mock_check.did_last_unwind_fail.return_value = False
+        mock_check.cumulative_deg = 400.0
+        mock_check.name = "cable_wrap"
+
+        monitor = SafetyMonitor(MagicMock(), [])
+        sensor.register_safety_checks(monitor, logger=MagicMock(), state_file=tmp_path / "state.json")
+
+        mock_check.execute_action.assert_called_once()
+
+    @patch(
+        "citrasense.sensors.telescope.safety.cable_wrap_check.CableWrapCheck",
+    )
+    def test_register_marks_intervention_on_failed_unwind(self, MockCableWrap, tmp_path):
+        sensor, _mount = self._make_sensor_with_mount()
+        mock_check = MockCableWrap.return_value
+        mock_check.needs_startup_unwind.return_value = True
+        mock_check.did_last_unwind_fail.return_value = True
+        mock_check.cumulative_deg = 400.0
+        mock_check.name = "cable_wrap"
+
+        monitor = SafetyMonitor(MagicMock(), [])
+        sensor.register_safety_checks(monitor, logger=MagicMock(), state_file=tmp_path / "state.json")
+
+        mock_check.mark_intervention_required.assert_called_once()
+
+    @patch(
+        "citrasense.sensors.telescope.safety.cable_wrap_check.CableWrapCheck",
+    )
+    def test_unregister_stops_and_removes(self, MockCableWrap, tmp_path):
+        sensor, _mount = self._make_sensor_with_mount()
+        mock_check = MockCableWrap.return_value
+        mock_check.needs_startup_unwind.return_value = False
+        mock_check.name = "cable_wrap"
+
+        monitor = SafetyMonitor(MagicMock(), [])
+        sensor.register_safety_checks(monitor, logger=MagicMock(), state_file=tmp_path / "state.json")
+
+        sensor.unregister_safety_checks(monitor)
+        mock_check.join_unwind.assert_called_once_with(timeout=10.0)
+        mock_check.stop.assert_called_once()
+        assert monitor.get_sensor_checks("telescope-0") == []
+        assert sensor._cable_wrap_check is None
+
+    def test_register_skips_when_no_mount(self, tmp_path):
+        adapter = _make_mock_adapter()
+        type(adapter).mount = PropertyMock(return_value=None)
+        sensor = TelescopeSensor("telescope-0", adapter)
+
+        monitor = SafetyMonitor(MagicMock(), [])
+        sensor.register_safety_checks(monitor, logger=MagicMock(), state_file=tmp_path / "state.json")
+
+        assert monitor.get_sensor_checks("telescope-0") == []
+        assert sensor._cable_wrap_check is None
+
+    def test_unregister_noop_when_no_check(self):
+        adapter = _make_mock_adapter()
+        sensor = TelescopeSensor("telescope-0", adapter)
+        monitor = SafetyMonitor(MagicMock(), [])
+        sensor.unregister_safety_checks(monitor)

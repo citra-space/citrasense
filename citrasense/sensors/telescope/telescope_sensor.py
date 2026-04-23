@@ -37,7 +37,11 @@ from citrasense.sensors.abstract_sensor import (
 )
 
 if TYPE_CHECKING:
+    import logging
+
     from citrasense.hardware.abstract_astro_hardware_adapter import AbstractAstroHardwareAdapter
+    from citrasense.safety.safety_monitor import SafetyMonitor
+    from citrasense.sensors.telescope.safety.cable_wrap_check import CableWrapCheck
     from citrasense.settings.citrasense_settings import SensorConfig
     from citrasense.tasks.task import Task
 
@@ -72,6 +76,7 @@ class TelescopeSensor(AbstractSensor):
         super().__init__(sensor_id=sensor_id)
         self.adapter = adapter
         self.adapter_key = adapter_key
+        self._cable_wrap_check: CableWrapCheck | None = None
 
     # ── Factory ───────────────────────────────────────────────────────
 
@@ -135,12 +140,66 @@ class TelescopeSensor(AbstractSensor):
     def acquire(self, task: Task, ctx: AcquisitionContext) -> AcquisitionResult:
         """Wired in phase 4.
 
-        Today the daemon still routes through ``TaskManager`` →
+        Today the daemon still routes through ``TaskDispatcher`` →
         ``AbstractBaseTelescopeTask`` → ``self.hardware_adapter.*``. Calling
         ``TelescopeSensor.acquire`` in phase 1 is a programming error.
         """
         raise NotImplementedError(
             "TelescopeSensor.acquire() is wired in phase 4 of the multi-sensor "
             "migration; today the daemon still drives acquisition via "
-            "TaskManager and the underlying hardware adapter."
+            "TaskDispatcher and the underlying hardware adapter."
         )
+
+    # ── Safety checks ─────────────────────────────────────────────────
+
+    def register_safety_checks(
+        self,
+        safety_monitor: SafetyMonitor,
+        *,
+        logger: logging.Logger,
+        state_file: Path,
+    ) -> None:
+        """Create and register telescope-specific safety checks.
+
+        Creates a :class:`CableWrapCheck` for the mount (if one exists),
+        registers it with ``safety_monitor``, wires the operator-stop gate,
+        and performs a deferred startup unwind if the persisted cable state
+        exceeds the hard limit.
+        """
+        from citrasense.sensors.telescope.safety.cable_wrap_check import CableWrapCheck as _CableWrapCheck
+
+        mount = self.adapter.mount
+        if mount is None:
+            return
+
+        self._cable_wrap_check = _CableWrapCheck(logger, mount, state_file=state_file)
+        self._cable_wrap_check.start()
+        mount.register_sync_listener(self._cable_wrap_check.notify_sync)
+
+        op_stop = safety_monitor.operator_stop
+        self._cable_wrap_check.safety_gate = lambda: not op_stop.is_active
+
+        safety_monitor.register_sensor_check(self.sensor_id, self._cable_wrap_check)
+
+        if self._cable_wrap_check.needs_startup_unwind():
+            logger.warning(
+                "Persisted cable wrap at %.1f° exceeds hard limit — starting deferred unwind",
+                self._cable_wrap_check.cumulative_deg,
+            )
+            self._cable_wrap_check.execute_action()
+            if self._cable_wrap_check.did_last_unwind_fail():
+                self._cable_wrap_check.mark_intervention_required()
+                logger.critical(
+                    "Startup unwind did not converge (%.1f° remaining) — "
+                    "manual intervention required before the system can "
+                    "operate. Use web UI to reset after physically verifying cables.",
+                    self._cable_wrap_check.cumulative_deg,
+                )
+
+    def unregister_safety_checks(self, safety_monitor: SafetyMonitor) -> None:
+        """Unregister and stop telescope-specific safety checks."""
+        if self._cable_wrap_check is not None:
+            self._cable_wrap_check.join_unwind(timeout=10.0)
+            self._cable_wrap_check.stop()
+            safety_monitor.unregister_sensor_check(self.sensor_id, "cable_wrap")
+            self._cable_wrap_check = None

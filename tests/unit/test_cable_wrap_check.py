@@ -7,14 +7,14 @@ from unittest.mock import MagicMock, PropertyMock
 import pytest
 
 from citrasense.hardware.devices.mount.mount_state_cache import MountSnapshot
-from citrasense.safety.cable_wrap_check import (
+from citrasense.safety.safety_monitor import SafetyAction
+from citrasense.sensors.telescope.safety.cable_wrap_check import (
     _MAX_AZ_DELTA_PER_TICK_DEG,
     HARD_LIMIT_DEG,
     SOFT_LIMIT_DEG,
     CableWrapCheck,
     _shortest_arc,
 )
-from citrasense.safety.safety_monitor import SafetyAction
 
 # ------------------------------------------------------------------
 # Shortest-arc math
@@ -273,7 +273,7 @@ class TestCableWrapCheckUnwindBehavior:
 @pytest.fixture
 def _fast_unwind_sleep(monkeypatch):
     """Eliminate real time.sleep() in unwind loops so tests run at CPU speed."""
-    monkeypatch.setattr("citrasense.safety.cable_wrap_check.time.sleep", lambda _: None)
+    monkeypatch.setattr("citrasense.sensors.telescope.safety.cable_wrap_check.time.sleep", lambda _: None)
 
 
 @pytest.mark.usefixtures("_fast_unwind_sleep")
@@ -545,7 +545,7 @@ class TestCableWrapMultiSegmentUnwind:
     def test_max_restarts_respected(self):
         """Even if every segment looks like a firmware limit, we stop after
         _MAX_SEGMENT_RESTARTS + 1 segments."""
-        from citrasense.safety.cable_wrap_check import _MAX_SEGMENT_RESTARTS
+        from citrasense.sensors.telescope.safety.cable_wrap_check import _MAX_SEGMENT_RESTARTS
 
         # 7 polls per segment (same pattern as segment 1 above)
         segment_polls = [80.0, 60.0, 60.0, 60.0, 60.0, 60.0, 60.0]

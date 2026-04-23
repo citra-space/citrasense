@@ -657,7 +657,7 @@ class AlignmentManager:
         if not self.safety_monitor:
             return
 
-        from citrasense.safety.cable_wrap_check import CableWrapCheck
+        from citrasense.sensors.telescope.safety.cable_wrap_check import CableWrapCheck
 
         check = self.safety_monitor.get_check("cable_wrap")
         if not isinstance(check, CableWrapCheck):
@@ -725,7 +725,7 @@ class AlignmentManager:
         if not self.safety_monitor:
             return 0.0
         try:
-            from citrasense.safety.cable_wrap_check import CableWrapCheck
+            from citrasense.sensors.telescope.safety.cable_wrap_check import CableWrapCheck
 
             check = self.safety_monitor.get_check("cable_wrap")
             if isinstance(check, CableWrapCheck):
