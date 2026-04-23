@@ -6,9 +6,10 @@ from unittest.mock import Mock
 import numpy as np
 import pytest
 
-from citrasense.processors.abstract_processor import AbstractImageProcessor
-from citrasense.processors.processor_registry import ProcessorRegistry
-from citrasense.processors.processor_result import AggregatedResult, ProcessingContext, ProcessorResult
+from citrasense.pipelines.common.abstract_processor import AbstractImageProcessor
+from citrasense.pipelines.common.pipeline_registry import PipelineRegistry
+from citrasense.pipelines.common.processing_context import ProcessingContext
+from citrasense.pipelines.common.processor_result import AggregatedResult, ProcessorResult
 from citrasense.tasks.task import Task
 
 
@@ -171,19 +172,19 @@ class TestProcessingContext:
         assert context.task is None
 
 
-class TestProcessorRegistry:
-    """Tests for ProcessorRegistry."""
+class TestPipelineRegistry:
+    """Tests for PipelineRegistry."""
 
     def test_registry_initialization(self, mock_settings, mock_logger):
         """Test registry initialization."""
-        registry = ProcessorRegistry(mock_settings, mock_logger)
+        registry = PipelineRegistry(mock_settings, mock_logger)
         assert registry.settings == mock_settings
-        assert registry.logger == mock_logger.getChild("ProcessorRegistry")
+        assert registry.logger == mock_logger.getChild("PipelineRegistry")
         assert isinstance(registry.processors, list)
 
     def test_process_all_with_pass_processor(self, mock_settings, mock_logger, processing_context):
         """Test processing with a processor that passes."""
-        registry = ProcessorRegistry(mock_settings, mock_logger)
+        registry = PipelineRegistry(mock_settings, mock_logger)
         registry.processors = [MockPassProcessor()]
 
         result = registry.process_all(processing_context)
@@ -196,7 +197,7 @@ class TestProcessorRegistry:
 
     def test_process_all_with_reject_processor(self, mock_settings, mock_logger, processing_context):
         """Test processing with a processor that rejects."""
-        registry = ProcessorRegistry(mock_settings, mock_logger)
+        registry = PipelineRegistry(mock_settings, mock_logger)
         registry.processors = [MockRejectProcessor()]
 
         result = registry.process_all(processing_context)
@@ -207,7 +208,7 @@ class TestProcessorRegistry:
 
     def test_process_all_with_multiple_processors(self, mock_settings, mock_logger, processing_context):
         """Test processing with multiple processors."""
-        registry = ProcessorRegistry(mock_settings, mock_logger)
+        registry = PipelineRegistry(mock_settings, mock_logger)
         registry.processors = [MockPassProcessor(), MockPassProcessor()]
 
         result = registry.process_all(processing_context)
@@ -217,7 +218,7 @@ class TestProcessorRegistry:
 
     def test_process_all_reject_wins(self, mock_settings, mock_logger, processing_context):
         """Test that any rejection causes upload to be skipped."""
-        registry = ProcessorRegistry(mock_settings, mock_logger)
+        registry = PipelineRegistry(mock_settings, mock_logger)
         registry.processors = [MockPassProcessor(), MockRejectProcessor(), MockPassProcessor()]
 
         result = registry.process_all(processing_context)
@@ -227,7 +228,7 @@ class TestProcessorRegistry:
 
     def test_process_all_error_handling(self, mock_settings, mock_logger, processing_context):
         """Test that processor errors propagate (triggering retry logic in ProcessingQueue)."""
-        registry = ProcessorRegistry(mock_settings, mock_logger)
+        registry = PipelineRegistry(mock_settings, mock_logger)
         registry.processors = [MockErrorProcessor(), MockPassProcessor()]
 
         # Error should propagate and not be caught
@@ -236,7 +237,7 @@ class TestProcessorRegistry:
 
     def test_aggregated_result_name_prefixing(self, mock_settings, mock_logger, processing_context):
         """Test that extracted data keys are prefixed with processor name."""
-        registry = ProcessorRegistry(mock_settings, mock_logger)
+        registry = PipelineRegistry(mock_settings, mock_logger)
 
         # Create two processors with same key name
         class Processor1(MockPassProcessor):
@@ -278,7 +279,7 @@ class TestProcessorRegistry:
 
     def test_timing_measurement(self, mock_settings, mock_logger, processing_context):
         """Test that total processing time is measured."""
-        registry = ProcessorRegistry(mock_settings, mock_logger)
+        registry = PipelineRegistry(mock_settings, mock_logger)
         registry.processors = [MockPassProcessor()]
 
         start = time.time()

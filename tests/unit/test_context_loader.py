@@ -6,7 +6,7 @@ import numpy as np
 import pytest
 from astropy.io import fits
 
-from citrasense.processors.context_loader import (
+from citrasense.pipelines.common.context_loader import (
     FixedLocationService,
     _discover_fits,
     _task_from_saved_dict,

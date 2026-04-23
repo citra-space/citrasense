@@ -25,15 +25,16 @@ def run_from_repo_root():
 
 
 from citrasense.elset_cache import ElsetCache
-from citrasense.processors.builtin.photometry_processor import PhotometryProcessor
-from citrasense.processors.builtin.plate_solver_processor import PlateSolverProcessor
-from citrasense.processors.builtin.processor_dependencies import (
+from citrasense.pipelines.common.pipeline_registry import PipelineRegistry
+from citrasense.pipelines.common.processing_context import ProcessingContext
+from citrasense.pipelines.common.processor_result import ProcessorResult
+from citrasense.pipelines.optical.photometry_processor import PhotometryProcessor
+from citrasense.pipelines.optical.plate_solver_processor import PlateSolverProcessor
+from citrasense.pipelines.optical.processor_dependencies import (
     check_astrometry,
     check_sextractor,
 )
-from citrasense.processors.builtin.satellite_matcher_processor import SatelliteMatcherProcessor
-from citrasense.processors.processor_registry import ProcessorRegistry
-from citrasense.processors.processor_result import ProcessingContext, ProcessorResult
+from citrasense.pipelines.optical.satellite_matcher_processor import SatelliteMatcherProcessor
 
 # Telescope record matching the PlaneWave scope used to capture the demo FITS.
 _PLANEWAVE_TELESCOPE_RECORD = {
@@ -136,7 +137,7 @@ class TestPlateSolverProcessor:
         assert processor.friendly_name == "Plate Solver"
         assert "astrometry" in processor.description.lower()
 
-    @patch("citrasense.processors.builtin.plate_solver_processor.check_astrometry")
+    @patch("citrasense.pipelines.optical.plate_solver_processor.check_astrometry")
     def test_astrometry_not_available(self, mock_check, mock_context):
         """Test processor fails gracefully when solve-field not available."""
         mock_check.return_value = False
@@ -149,8 +150,8 @@ class TestPlateSolverProcessor:
         assert result.confidence == 0.0
         assert "not available" in result.reason
 
-    @patch("citrasense.processors.builtin.plate_solver_processor.check_astrometry")
-    @patch("citrasense.processors.builtin.plate_solver_processor.PlateSolverProcessor._solve_field")
+    @patch("citrasense.pipelines.optical.plate_solver_processor.check_astrometry")
+    @patch("citrasense.pipelines.optical.plate_solver_processor.PlateSolverProcessor._solve_field")
     @patch("astropy.io.fits.open")
     def test_successful_plate_solve(self, mock_fits_open, mock_solve, mock_check, mock_context, tmp_path):
         """Test successful plate solving with astrometry.net."""
@@ -180,8 +181,8 @@ class TestPlateSolverProcessor:
         assert result.extracted_data["dec_center"] == 45.3
         assert mock_context.working_image_path == new_file
 
-    @patch("citrasense.processors.builtin.plate_solver_processor.check_astrometry")
-    @patch("citrasense.processors.builtin.plate_solver_processor.PlateSolverProcessor._solve_field")
+    @patch("citrasense.pipelines.optical.plate_solver_processor.check_astrometry")
+    @patch("citrasense.pipelines.optical.plate_solver_processor.PlateSolverProcessor._solve_field")
     def test_plate_solve_failure(self, mock_solve, mock_check, mock_context):
         """Test plate solving failure handling (fail-open)."""
         mock_check.return_value = True
@@ -214,7 +215,7 @@ class TestPhotometryProcessor:
         assert result.confidence == 0.0
         assert "source catalog not found" in result.reason.lower()
 
-    @patch("citrasense.processors.builtin.photometry_processor.PhotometryProcessor._calibrate_photometry")
+    @patch("citrasense.pipelines.optical.photometry_processor.PhotometryProcessor._calibrate_photometry")
     @patch("pandas.read_csv")
     def test_successful_calibration(self, mock_read, mock_calibrate, mock_context, tmp_path):
         """Test successful photometric calibration."""
@@ -271,7 +272,7 @@ class TestDependencyChecks:
         result = check_astrometry()
         assert isinstance(result, bool)
 
-    @patch("citrasense.processors.builtin.processor_dependencies.shutil.which")
+    @patch("citrasense.pipelines.optical.processor_dependencies.shutil.which")
     def test_check_astrometry_mocked(self, mock_which):
         """Test astrometry.net detection with mocked which."""
         mock_which.side_effect = lambda cmd: "/usr/local/bin/solve-field" if cmd == "solve-field" else None
@@ -281,7 +282,7 @@ class TestDependencyChecks:
         mock_which.side_effect = lambda cmd: None
         assert check_astrometry() is False
 
-    @patch("citrasense.processors.builtin.processor_dependencies.shutil.which")
+    @patch("citrasense.pipelines.optical.processor_dependencies.shutil.which")
     def test_check_sextractor(self, mock_which):
         """Test SExtractor detection."""
         # Test source-extractor command
@@ -304,7 +305,7 @@ class TestPlateScaleComputation:
 
     def test_compute_plate_scale_planewave(self):
         """Verify plate scale computation for the PlaneWave CDK14."""
-        from citrasense.processors.builtin.plate_solver_processor import _compute_plate_scale
+        from citrasense.pipelines.optical.plate_solver_processor import _compute_plate_scale
 
         scale = _compute_plate_scale(_PLANEWAVE_TELESCOPE_RECORD, x_binning=4, y_binning=4)
         assert scale is not None
@@ -312,7 +313,7 @@ class TestPlateScaleComputation:
         assert 1.5 < scale < 2.5
 
     def test_compute_plate_scale_no_binning(self):
-        from citrasense.processors.builtin.plate_solver_processor import _compute_plate_scale
+        from citrasense.pipelines.optical.plate_solver_processor import _compute_plate_scale
 
         scale = _compute_plate_scale(_PLANEWAVE_TELESCOPE_RECORD)
         assert scale is not None
@@ -320,7 +321,7 @@ class TestPlateScaleComputation:
         assert 0.3 < scale < 0.7
 
     def test_compute_plate_scale_missing_fields(self):
-        from citrasense.processors.builtin.plate_solver_processor import _compute_plate_scale
+        from citrasense.pipelines.optical.plate_solver_processor import _compute_plate_scale
 
         assert _compute_plate_scale({}) is None
         assert _compute_plate_scale({"pixelSize": 3.76}) is None
@@ -386,7 +387,7 @@ class TestFullPipelineDemoFits:
     TLE_FILE = Path(__file__).parent / "test_assets" / "space-track-2025-11-12--2025-11-13.tle"
 
     def test_full_pipeline_solves_demo_fits(self, tmp_path, run_from_repo_root):
-        """Run ProcessorRegistry.process_all() on the demo FITS with a TLE from test assets; assert full chain."""
+        """Run PipelineRegistry.process_all() on the demo FITS with a TLE from test assets; assert full chain."""
         if not self.DEMO_FITS.exists():
             pytest.skip("Demo FITS not found")
         if not self.TLE_FILE.exists():
@@ -432,7 +433,7 @@ class TestFullPipelineDemoFits:
             logger=Mock(),
         )
 
-        registry = ProcessorRegistry(settings, Mock())
+        registry = PipelineRegistry(settings, Mock())
         result = registry.process_all(context)
 
         assert result.should_upload is True

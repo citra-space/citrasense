@@ -8,7 +8,7 @@ import pytest
 
 @pytest.fixture
 def processor():
-    from citrasense.processors.builtin.source_extractor_processor import SourceExtractorProcessor
+    from citrasense.pipelines.optical.source_extractor_processor import SourceExtractorProcessor
 
     return SourceExtractorProcessor()
 
@@ -16,7 +16,7 @@ def processor():
 @pytest.fixture
 def config_dir():
     """Real config directory with bundled SExtractor configs."""
-    return Path(__file__).resolve().parents[2] / "citrasense" / "processors" / "builtin" / "sextractor_configs"
+    return Path(__file__).resolve().parents[2] / "citrasense" / "pipelines" / "optical" / "sextractor_configs"
 
 
 @pytest.fixture
@@ -51,7 +51,7 @@ def _run_extract(processor, image_path, config_dir, working_dir, **kwargs):
         )
         return mock_result
 
-    with patch("citrasense.processors.builtin.source_extractor_processor.subprocess.run", side_effect=fake_run):
+    with patch("citrasense.pipelines.optical.source_extractor_processor.subprocess.run", side_effect=fake_run):
         processor._extract_sources(
             image_path,
             config_dir,

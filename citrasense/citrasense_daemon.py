@@ -23,8 +23,8 @@ from citrasense.hardware.filter_sync import sync_filters_to_backend
 from citrasense.location import LocationService
 from citrasense.logging import CITRASENSE_LOGGER
 from citrasense.logging._citrasense_logger import setup_file_logging
+from citrasense.pipelines.common.pipeline_registry import PipelineRegistry
 from citrasense.preview_bus import PreviewBus
-from citrasense.processors.processor_registry import ProcessorRegistry
 from citrasense.sensors.bus import InProcessBus
 from citrasense.sensors.sensor_manager import SensorManager
 from citrasense.settings.citrasense_settings import CitraSenseSettings
@@ -86,7 +86,7 @@ class CitraSenseDaemon:
         self._processor_dep_issues: list[dict] = []
 
         # Initialize processor registry
-        self.processor_registry = ProcessorRegistry(settings=self.settings, logger=CITRASENSE_LOGGER)
+        self.processor_registry = PipelineRegistry(settings=self.settings, logger=CITRASENSE_LOGGER)
 
         # Elset cache for satellite matcher (file-backed; warm-start from disk, full refresh at init)
         self.elset_cache = ElsetCache()
@@ -566,7 +566,7 @@ class CitraSenseDaemon:
             # Initialize CalibrationManager if direct camera control is available
             if self.hardware_adapter.supports_direct_camera_control():
                 from citrasense.calibration.calibration_library import CalibrationLibrary
-                from citrasense.processors.builtin.calibration_processor import CalibrationProcessor
+                from citrasense.pipelines.optical.calibration_processor import CalibrationProcessor
                 from citrasense.tasks.calibration_manager import CalibrationManager
 
                 self.calibration_library = CalibrationLibrary()

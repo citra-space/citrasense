@@ -2,7 +2,8 @@
 
 from abc import ABC, abstractmethod
 
-from citrasense.processors.processor_result import ProcessingContext, ProcessorResult
+from citrasense.pipelines.common.processing_context import ProcessingContext
+from citrasense.pipelines.common.processor_result import ProcessorResult
 
 
 class AbstractImageProcessor(ABC):

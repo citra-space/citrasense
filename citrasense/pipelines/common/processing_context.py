@@ -1,4 +1,4 @@
-"""Data classes for image processor input and output."""
+"""Processing context shared across all pipeline modalities."""
 
 from __future__ import annotations
 
@@ -15,47 +15,38 @@ if TYPE_CHECKING:
 
 
 @dataclass
-class ProcessorResult:
-    """Result returned by processors."""
-
-    should_upload: bool  # False = skip upload
-    extracted_data: dict  # Metrics to attach to upload
-    confidence: float  # 0.0-1.0 quality score
-    reason: str  # Human-readable explanation
-    processing_time_seconds: float  # For metrics
-    processor_name: str  # Which processor returned this
-
-
-@dataclass
-class AggregatedResult:
-    """Combined results from all processors."""
-
-    should_upload: bool  # AND of all processor results
-    extracted_data: dict  # Merged extracted data
-    all_results: list[ProcessorResult]  # Individual results
-    total_time: float  # Total processing time
-    skip_reason: str | None  # Why upload was skipped (if any)
-
-
-@dataclass
 class ProcessingContext:
-    """Rich context provided to image processors."""
+    """Rich context provided to pipeline processors.
 
-    # Image data
-    image_path: Path  # Original captured image
-    working_image_path: Path  # Current working image (processors can update this)
-    working_dir: Path  # Task-specific temp directory for intermediate files
-    image_data: np.ndarray | None  # Pre-loaded for performance
+    Shared fields (image paths, task, settings, services) are used by every
+    modality.  Optical-specific fields (``detected_sources``, ``zero_point``,
+    etc.) remain here for backward compatibility; future modalities will use
+    ``payload`` for their own data.
+    """
+
+    # -- Modality tag --------------------------------------------------------
+    modality: str = "optical"
+
+    # Modality-specific data bag.  Optical processors ignore this and use the
+    # typed fields below; radar / RF processors will populate it with their own
+    # detection-record dicts.
+    payload: Any = None
+
+    # -- Image data ----------------------------------------------------------
+    image_path: Path = field(default_factory=Path)
+    working_image_path: Path = field(default_factory=Path)
+    working_dir: Path = field(default_factory=Path)
+    image_data: np.ndarray | None = None
 
     # Task context (None for manual captures)
-    task: Task | None
+    task: Task | None = None
 
     # Observatory context
-    telescope_record: dict | None
-    ground_station_record: dict | None
+    telescope_record: dict | None = None
+    ground_station_record: dict | None = None
 
     # Settings
-    settings: Any | None  # CitraSenseSettings instance
+    settings: Any | None = None  # CitraSenseSettings instance
 
     # Services injected by ProcessingQueue (None when not available or in tests)
     location_service: Any | None = None  # LocationService instance

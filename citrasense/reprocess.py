@@ -57,9 +57,9 @@ from pathlib import Path
 
 import click
 
-from citrasense.processors.context_loader import load_context_from_debug_dir
-from citrasense.processors.processor_registry import ProcessorRegistry
-from citrasense.processors.processor_result import AggregatedResult
+from citrasense.pipelines.common.context_loader import load_context_from_debug_dir
+from citrasense.pipelines.common.pipeline_registry import PipelineRegistry
+from citrasense.pipelines.common.processor_result import AggregatedResult
 from citrasense.settings.citrasense_settings import CitraSenseSettings
 
 
@@ -117,7 +117,7 @@ def reprocess_bundle(
             else:
                 log.warning("Unknown settings override ignored: %s", key)
 
-    registry = ProcessorRegistry(settings=settings, logger=log)
+    registry = PipelineRegistry(settings=settings, logger=log)
 
     context = load_context_from_debug_dir(
         debug_dir=debug_dir,

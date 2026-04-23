@@ -334,7 +334,7 @@ class AbstractAstroHardwareAdapter(ABC):
             self.logger.warning("No telescope_record available — cannot plate-solve for alignment")
             return False
 
-        from citrasense.processors.builtin.plate_solver_processor import PlateSolverProcessor
+        from citrasense.pipelines.optical.plate_solver_processor import PlateSolverProcessor
 
         exposure_attempts = [2.0, 4.0, 8.0]
         for exposure_s in exposure_attempts:

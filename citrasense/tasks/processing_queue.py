@@ -5,7 +5,7 @@ import tempfile
 from collections.abc import Callable
 from pathlib import Path
 
-from citrasense.processors.processor_result import ProcessingContext
+from citrasense.pipelines.common.processing_context import ProcessingContext
 from citrasense.tasks.base_work_queue import BaseWorkQueue
 
 

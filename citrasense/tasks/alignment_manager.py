@@ -178,7 +178,7 @@ class AlignmentManager:
                 self.logger.error("Cannot align — camera and mount are both required")
                 return
 
-            from citrasense.processors.builtin.plate_solver_processor import PlateSolverProcessor
+            from citrasense.pipelines.optical.plate_solver_processor import PlateSolverProcessor
 
             if self.safety_monitor and not self.safety_monitor.is_action_safe("capture"):
                 self.logger.warning("Alignment aborted — safety monitor blocked capture")
@@ -695,7 +695,7 @@ class AlignmentManager:
         Tries increasing exposure times (2s, 4s, 8s).  Returns (ra, dec)
         on success or None.
         """
-        from citrasense.processors.builtin.plate_solver_processor import PlateSolverProcessor
+        from citrasense.pipelines.optical.plate_solver_processor import PlateSolverProcessor
 
         exposure_attempts = [2.0, 4.0, 8.0]
         for exposure_s in exposure_attempts:

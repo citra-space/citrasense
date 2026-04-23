@@ -14,7 +14,7 @@ from citrasense.analysis.task_index import (
     _bool_int,
     _iso_diff_seconds,
 )
-from citrasense.processors.processor_result import AggregatedResult, ProcessorResult
+from citrasense.pipelines.common.processor_result import AggregatedResult, ProcessorResult
 
 # ── Helpers ────────────────────────────────────────────────────────────
 

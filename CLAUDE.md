@@ -46,7 +46,11 @@ __main__.py (CLI via Click)
        │    ├─ autofocus_manager.py (dedicated autofocus scheduling/execution)
        │    ├─ base_work_queue.py → imaging_queue.py, processing_queue.py, upload_queue.py
        │    └─ scope/ (base_telescope_task.py, sidereal/tracking variants)
-       ├─ processors/ (pipeline: plate_solver[astrometry.net] → source_extractor[SExtractor] → photometry → satellite_matcher)
+       ├─ pipelines/
+       │    ├─ common/ (abstract_processor, pipeline_registry, processing_context, processor_result, artifact_writer)
+       │    ├─ optical/ (calibration → plate_solver → source_extractor → photometry → satellite_matcher → annotated_image, optical_artifacts, report_generator)
+       │    ├─ radar/ (future — #307)
+       │    └─ rf/ (future)
        ├─ settings/ (CitraSenseSettings — Pydantic BaseModel, persisted to JSON)
        └─ web/ (FastAPI app, Alpine.js frontend, WebSocket log streaming)
 ```

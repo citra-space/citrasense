@@ -14,7 +14,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from citrasense.processors.processor_result import AggregatedResult
+from citrasense.pipelines.common.processor_result import AggregatedResult
 
 logger = logging.getLogger("citrasense.TaskIndex")
 
