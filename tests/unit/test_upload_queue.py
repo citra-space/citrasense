@@ -4,7 +4,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from citrasense.tasks.upload_queue import UploadQueue
+from citrasense.acquisition.upload_queue import UploadQueue
 
 
 @pytest.fixture

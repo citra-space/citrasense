@@ -1,36 +1,37 @@
-"""Tests for TaskManager._create_telescope_task observation mode selection."""
+"""Tests for SensorRuntime._create_telescope_task observation mode selection."""
 
 from unittest.mock import MagicMock, PropertyMock
 
 import pytest
 
-from citrasense.tasks.runner import TaskManager
+from citrasense.sensors.sensor_runtime import SensorRuntime
 from citrasense.tasks.scope.sidereal_telescope_task import SiderealTelescopeTask
 from citrasense.tasks.scope.tracking_telescope_task import TrackingTelescopeTask
 
 
-def _make_manager(observation_mode: str, supports_custom_tracking: bool) -> TaskManager:
-    """Build a TaskManager with just enough mocks to call _create_telescope_task."""
+def _make_runtime(observation_mode: str, supports_custom_tracking: bool) -> SensorRuntime:
+    """Build a SensorRuntime with just enough mocks to call _create_telescope_task."""
     settings = MagicMock()
     settings.observation_mode = observation_mode
 
     adapter = MagicMock()
     type(adapter).supports_custom_tracking = PropertyMock(return_value=supports_custom_tracking)
 
-    mgr = TaskManager.__new__(TaskManager)
-    mgr.api_client = MagicMock()
-    mgr.logger = MagicMock()
-    mgr.hardware_adapter = adapter
-    mgr.settings = settings
-    mgr.processor_registry = MagicMock()
-    mgr.location_service = MagicMock()
-    mgr.telescope_record = {"id": "tel-1"}
-    mgr.ground_station = {"id": "gs-1"}
-    mgr.elset_cache = None
-    mgr.apass_catalog = None
-    mgr._on_annotated_image = None
-    mgr.task_index = None
-    return mgr
+    rt = SensorRuntime.__new__(SensorRuntime)
+    rt.api_client = MagicMock()
+    rt.logger = MagicMock()
+    rt.hardware_adapter = adapter
+    rt.settings = settings
+    rt.sensor_type = "telescope"
+    rt.processor_registry = MagicMock()
+    rt.location_service = MagicMock()
+    rt.telescope_record = {"id": "tel-1"}
+    rt.ground_station = {"id": "gs-1"}
+    rt.elset_cache = None
+    rt.apass_catalog = None
+    rt._on_annotated_image = None
+    rt.task_index = None
+    return rt
 
 
 def _telescope_mock_task():
@@ -41,29 +42,29 @@ def _telescope_mock_task():
 
 class TestCreateTelescopeTask:
     def test_sidereal_mode_always_returns_sidereal(self):
-        mgr = _make_manager("sidereal", supports_custom_tracking=True)
-        result = mgr._create_telescope_task(_telescope_mock_task())
+        rt = _make_runtime("sidereal", supports_custom_tracking=True)
+        result = rt._create_telescope_task(_telescope_mock_task())
         assert isinstance(result, SiderealTelescopeTask)
 
     def test_tracking_mode_always_returns_tracking(self):
-        mgr = _make_manager("tracking", supports_custom_tracking=False)
-        result = mgr._create_telescope_task(_telescope_mock_task())
+        rt = _make_runtime("tracking", supports_custom_tracking=False)
+        result = rt._create_telescope_task(_telescope_mock_task())
         assert isinstance(result, TrackingTelescopeTask)
 
     def test_auto_mode_returns_tracking_when_supported(self):
-        mgr = _make_manager("auto", supports_custom_tracking=True)
-        result = mgr._create_telescope_task(_telescope_mock_task())
+        rt = _make_runtime("auto", supports_custom_tracking=True)
+        result = rt._create_telescope_task(_telescope_mock_task())
         assert isinstance(result, TrackingTelescopeTask)
 
     def test_auto_mode_returns_sidereal_when_unsupported(self):
-        mgr = _make_manager("auto", supports_custom_tracking=False)
-        result = mgr._create_telescope_task(_telescope_mock_task())
+        rt = _make_runtime("auto", supports_custom_tracking=False)
+        result = rt._create_telescope_task(_telescope_mock_task())
         assert isinstance(result, SiderealTelescopeTask)
 
     @pytest.mark.parametrize("mode", ["auto", "sidereal", "tracking"])
     def test_all_modes_log_selection(self, mode):
-        mgr = _make_manager(mode, supports_custom_tracking=True)
-        mgr._create_telescope_task(_telescope_mock_task())
-        mgr.logger.info.assert_called()
-        logged = mgr.logger.info.call_args[0][0]
+        rt = _make_runtime(mode, supports_custom_tracking=True)
+        rt._create_telescope_task(_telescope_mock_task())
+        rt.logger.info.assert_called()
+        logged = rt.logger.info.call_args[0][0]
         assert "TelescopeTask" in logged

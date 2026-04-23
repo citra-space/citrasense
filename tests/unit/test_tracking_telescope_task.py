@@ -52,7 +52,7 @@ def _make_tracking_task():
         logger,
         task_obj,
         settings=settings,
-        task_manager=task_manager,
+        runtime=task_manager,
         location_service=location_service,
         telescope_record={"id": "tel-1"},
         ground_station={"id": "gs-1"},

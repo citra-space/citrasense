@@ -41,10 +41,19 @@ __main__.py (CLI via Click)
        │    ├─ indi/ (adapter)
        │    ├─ direct/ (adapter)
        │    └─ devices/ (direct USB/RPi/Ximea cameras)
+       ├─ sensors/
+       │    ├─ abstract_sensor.py (AbstractSensor, SensorCapabilities, acquisition modes)
+       │    ├─ sensor_manager.py (manages multiple AbstractSensor instances)
+       │    ├─ sensor_runtime.py (SensorRuntime — per-sensor execution silo: owns queues + managers)
+       │    └─ telescope_sensor.py (adapter bridge to AbstractAstroHardwareAdapter)
+       ├─ acquisition/
+       │    ├─ base_work_queue.py (BaseWorkQueue — retry, backoff, threading)
+       │    ├─ acquisition_queue.py (AcquisitionQueue — imaging/capture stage)
+       │    ├─ processing_queue.py (ProcessingQueue — edge-processing stage)
+       │    └─ upload_queue.py (UploadQueue — result upload stage)
        ├─ tasks/
-       │    ├─ runner.py (TaskManager — orchestrates the main loop)
+       │    ├─ task_dispatcher.py (TaskDispatcher — site-level: API polling, heap, routing, safety, web facade)
        │    ├─ autofocus_manager.py (dedicated autofocus scheduling/execution)
-       │    ├─ base_work_queue.py → imaging_queue.py, processing_queue.py, upload_queue.py
        │    ├─ scope/ (base_telescope_task.py, sidereal/tracking variants)
        │    └─ views/ (TelescopeTaskView, RfTaskView, RadarTaskView — per-modality typed accessors)
        ├─ pipelines/
@@ -87,7 +96,7 @@ The NINA adapter uses a **WebSocket event listener** (`nina/event_listener.py`) 
 
 ### Work queues
 
-Tasks flow through three serial queues: **ImagingQueue** → **ProcessingQueue** → **UploadQueue**. Each has background worker threads. Use `queue.is_idle()` to check if a queue has pending work.
+Tasks flow through three serial queues owned by a **SensorRuntime**: **AcquisitionQueue** → **ProcessingQueue** → **UploadQueue**. Each has background worker threads. Use `queue.is_idle()` to check if a queue has pending work. The **TaskDispatcher** sits above runtimes handling API polling, task scheduling (heap), routing tasks to the right runtime, safety evaluation, and stage tracking. It exposes web-compat facade properties (`imaging_queue`, `autofocus_manager`, etc.) that delegate to the default runtime so existing web routes work unchanged.
 
 ### Web UI
 

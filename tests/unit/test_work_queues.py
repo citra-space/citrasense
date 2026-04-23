@@ -5,7 +5,7 @@ import time
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-from citrasense.tasks.base_work_queue import BaseWorkQueue
+from citrasense.acquisition.base_work_queue import BaseWorkQueue
 
 # ---------------------------------------------------------------------------
 # Concrete subclass for testing BaseWorkQueue
@@ -182,7 +182,7 @@ def test_clear_epoch_discards_in_flight_result():
 
 
 def test_imaging_queue_clear_cancels_in_flight_task():
-    from citrasense.tasks.imaging_queue import ImagingQueue
+    from citrasense.acquisition.acquisition_queue import AcquisitionQueue as ImagingQueue
 
     cancel_event = threading.Event()
 
@@ -199,7 +199,7 @@ def test_imaging_queue_clear_cancels_in_flight_task():
         settings=MagicMock(max_task_retries=3, initial_retry_delay_seconds=1, max_retry_delay_seconds=10),
         logger=MagicMock(),
         api_client=MagicMock(),
-        task_manager=MagicMock(),
+        runtime=MagicMock(),
     )
     iq.start()
     iq.submit("t1", MagicMock(), FakeTelescopeTask(), MagicMock())
@@ -213,14 +213,14 @@ def test_imaging_queue_clear_cancels_in_flight_task():
 
 
 def test_imaging_queue_submit():
-    from citrasense.tasks.imaging_queue import ImagingQueue
+    from citrasense.acquisition.acquisition_queue import AcquisitionQueue as ImagingQueue
 
     iq = ImagingQueue(
         num_workers=1,
         settings=MagicMock(max_task_retries=3, initial_retry_delay_seconds=1, max_retry_delay_seconds=10),
         logger=MagicMock(),
         api_client=MagicMock(),
-        task_manager=MagicMock(),
+        runtime=MagicMock(),
     )
     task = MagicMock()
     tele_task = MagicMock()
@@ -230,7 +230,7 @@ def test_imaging_queue_submit():
 
 
 def test_imaging_queue_success():
-    from citrasense.tasks.imaging_queue import ImagingQueue
+    from citrasense.acquisition.acquisition_queue import AcquisitionQueue as ImagingQueue
 
     mock_tm = MagicMock()
     iq = ImagingQueue(
@@ -238,7 +238,7 @@ def test_imaging_queue_success():
         settings=MagicMock(max_task_retries=3, initial_retry_delay_seconds=1, max_retry_delay_seconds=10),
         logger=MagicMock(),
         api_client=MagicMock(),
-        task_manager=mock_tm,
+        runtime=mock_tm,
     )
     task = MagicMock()
     tele_task = MagicMock()
@@ -254,14 +254,14 @@ def test_imaging_queue_success():
 
 
 def test_imaging_queue_get_task_from_item():
-    from citrasense.tasks.imaging_queue import ImagingQueue
+    from citrasense.acquisition.acquisition_queue import AcquisitionQueue as ImagingQueue
 
     iq = ImagingQueue(
         num_workers=1,
         settings=MagicMock(),
         logger=MagicMock(),
         api_client=MagicMock(),
-        task_manager=MagicMock(),
+        runtime=MagicMock(),
     )
     task = MagicMock()
     assert iq._get_task_from_item({"task": task}) is task
@@ -273,7 +273,7 @@ def test_imaging_queue_get_task_from_item():
 
 
 def test_processing_queue_get_working_dir_with_settings():
-    from citrasense.tasks.processing_queue import ProcessingQueue
+    from citrasense.acquisition.processing_queue import ProcessingQueue
 
     pq = ProcessingQueue(
         num_workers=1,
@@ -287,7 +287,7 @@ def test_processing_queue_get_working_dir_with_settings():
 
 
 def test_processing_queue_get_working_dir_no_settings():
-    from citrasense.tasks.processing_queue import ProcessingQueue
+    from citrasense.acquisition.processing_queue import ProcessingQueue
 
     pq = ProcessingQueue(num_workers=1, settings=MagicMock(), logger=MagicMock())
     wd = pq._get_working_dir("task-123", None)
@@ -295,7 +295,7 @@ def test_processing_queue_get_working_dir_no_settings():
 
 
 def test_processing_queue_cleanup(tmp_path):
-    from citrasense.tasks.processing_queue import ProcessingQueue
+    from citrasense.acquisition.processing_queue import ProcessingQueue
 
     pq = ProcessingQueue(num_workers=1, settings=MagicMock(), logger=MagicMock())
     mock_settings = MagicMock()
@@ -310,7 +310,7 @@ def test_processing_queue_cleanup(tmp_path):
 
 
 def test_processing_queue_get_task_from_item():
-    from citrasense.tasks.processing_queue import ProcessingQueue
+    from citrasense.acquisition.processing_queue import ProcessingQueue
 
     pq = ProcessingQueue(num_workers=1, settings=MagicMock(), logger=MagicMock())
     task = MagicMock()
@@ -318,7 +318,7 @@ def test_processing_queue_get_task_from_item():
 
 
 def test_processing_queue_submit():
-    from citrasense.tasks.processing_queue import ProcessingQueue
+    from citrasense.acquisition.processing_queue import ProcessingQueue
 
     pq = ProcessingQueue(num_workers=1, settings=MagicMock(), logger=MagicMock())
     pq.submit("t1", Path("/img.fits"), {"task": MagicMock()}, MagicMock())
@@ -326,7 +326,7 @@ def test_processing_queue_submit():
 
 
 def test_processing_queue_execute_success(tmp_path):
-    from citrasense.tasks.processing_queue import ProcessingQueue
+    from citrasense.acquisition.processing_queue import ProcessingQueue
 
     pq = ProcessingQueue(
         num_workers=1,
@@ -361,7 +361,7 @@ def test_processing_queue_execute_success(tmp_path):
 
 
 def test_processing_queue_execute_exception(tmp_path):
-    from citrasense.tasks.processing_queue import ProcessingQueue
+    from citrasense.acquisition.processing_queue import ProcessingQueue
 
     pq = ProcessingQueue(num_workers=1, settings=MagicMock(), logger=MagicMock())
     mock_processor_registry = MagicMock()
@@ -387,7 +387,7 @@ def test_processing_queue_execute_exception(tmp_path):
 
 
 def test_processing_queue_on_success():
-    from citrasense.tasks.processing_queue import ProcessingQueue
+    from citrasense.acquisition.processing_queue import ProcessingQueue
 
     pq = ProcessingQueue(num_workers=1, settings=MagicMock(), logger=MagicMock())
     on_complete = MagicMock()
@@ -407,7 +407,7 @@ def test_processing_queue_on_success():
 
 
 def test_processing_queue_on_success_keeps_output():
-    from citrasense.tasks.processing_queue import ProcessingQueue
+    from citrasense.acquisition.processing_queue import ProcessingQueue
 
     pq = ProcessingQueue(num_workers=1, settings=MagicMock(), logger=MagicMock())
     on_complete = MagicMock()
@@ -425,7 +425,7 @@ def test_processing_queue_on_success_keeps_output():
 
 
 def test_processing_queue_on_permanent_failure():
-    from citrasense.tasks.processing_queue import ProcessingQueue
+    from citrasense.acquisition.processing_queue import ProcessingQueue
 
     pq = ProcessingQueue(num_workers=1, settings=MagicMock(), logger=MagicMock())
     on_complete = MagicMock()
@@ -444,7 +444,7 @@ def test_processing_queue_on_permanent_failure():
 
 
 def test_processing_queue_on_permanent_failure_keeps_output():
-    from citrasense.tasks.processing_queue import ProcessingQueue
+    from citrasense.acquisition.processing_queue import ProcessingQueue
 
     pq = ProcessingQueue(num_workers=1, settings=MagicMock(), logger=MagicMock())
     on_complete = MagicMock()

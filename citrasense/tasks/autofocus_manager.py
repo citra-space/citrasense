@@ -22,9 +22,9 @@ from citrasense.preview_bus import PreviewBus
 if TYPE_CHECKING:
     import numpy as np
 
+    from citrasense.acquisition.base_work_queue import BaseWorkQueue
     from citrasense.location.location_service import LocationService
     from citrasense.settings.citrasense_settings import CitraSenseSettings
-    from citrasense.tasks.base_work_queue import BaseWorkQueue
 
 
 class AutofocusManager:

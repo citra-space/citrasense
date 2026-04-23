@@ -7,7 +7,7 @@ telescope task's _on_image_done callback after all images for a task finish.
 from collections.abc import Callable
 from pathlib import Path
 
-from citrasense.tasks.base_work_queue import BaseWorkQueue
+from citrasense.acquisition.base_work_queue import BaseWorkQueue
 
 
 class UploadQueue(BaseWorkQueue):

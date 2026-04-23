@@ -5,8 +5,8 @@ import tempfile
 from collections.abc import Callable
 from pathlib import Path
 
+from citrasense.acquisition.base_work_queue import BaseWorkQueue
 from citrasense.pipelines.optical.optical_processing_context import OpticalProcessingContext
-from citrasense.tasks.base_work_queue import BaseWorkQueue
 
 
 class ProcessingQueue(BaseWorkQueue):

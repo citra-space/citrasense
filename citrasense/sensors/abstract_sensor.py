@@ -95,7 +95,7 @@ class AcquisitionContext:
     into any sensor at runtime.
 
     The telescope's existing data flow continues to run through
-    :class:`~citrasense.tasks.runner.TaskManager`; this context is the seam
+    :class:`~citrasense.tasks.task_dispatcher.TaskDispatcher`; this context is the seam
     that will carry those services into sensors in phase 4/5.
     """
 

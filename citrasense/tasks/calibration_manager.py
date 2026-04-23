@@ -17,8 +17,8 @@ from citrasense.calibration.calibration_library import CalibrationLibrary
 from citrasense.calibration.master_builder import MasterBuilder
 
 if TYPE_CHECKING:
+    from citrasense.acquisition.base_work_queue import BaseWorkQueue
     from citrasense.hardware.abstract_astro_hardware_adapter import AbstractAstroHardwareAdapter
-    from citrasense.tasks.base_work_queue import BaseWorkQueue
 
 
 class CalibrationManager:

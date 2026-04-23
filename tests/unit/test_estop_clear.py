@@ -5,12 +5,12 @@ import threading
 import time
 from unittest.mock import MagicMock
 
-from citrasense.tasks.imaging_queue import ImagingQueue
-from citrasense.tasks.runner import TaskManager
+from citrasense.acquisition.acquisition_queue import AcquisitionQueue as ImagingQueue
+from citrasense.tasks.task_dispatcher import TaskDispatcher
 
 
-def _make_task_manager() -> TaskManager:
-    """Build a TaskManager with minimal mocks, without starting worker threads."""
+def _make_task_dispatcher() -> TaskDispatcher:
+    """Build a TaskDispatcher with a mock runtime, without starting worker threads."""
 
     settings = MagicMock()
     settings.task_processing_paused = False
@@ -18,15 +18,24 @@ def _make_task_manager() -> TaskManager:
     settings.initial_retry_delay_seconds = 1
     settings.max_retry_delay_seconds = 10
 
-    tm = TaskManager(
+    td = TaskDispatcher(
         api_client=MagicMock(),
         logger=MagicMock(),
-        hardware_adapter=MagicMock(),
         settings=settings,
-        processor_registry=MagicMock(),
         telescope_record={"id": "test-scope"},
     )
-    return tm
+
+    # Register a mock runtime with real-ish queues
+    runtime = MagicMock()
+    runtime.sensor_id = "test-scope"
+    runtime.sensor_type = "telescope"
+    runtime.acquisition_queue = MagicMock()
+    runtime.acquisition_queue.is_idle.return_value = True
+    runtime.processing_queue = MagicMock()
+    runtime.upload_queue = MagicMock()
+    runtime.are_queues_idle.return_value = True
+    td._runtimes["test-scope"] = runtime
+    return td
 
 
 def _make_task(name="TestSat"):
@@ -44,58 +53,58 @@ def _make_task(name="TestSat"):
 
 class TestClearPendingTasks:
     def test_preserves_heap(self):
-        tm = _make_task_manager()
+        td = _make_task_dispatcher()
         task = _make_task()
-        heapq.heappush(tm.task_heap, (1000, 2000, "t1", task))
-        tm.task_ids.add("t1")
-        tm.task_dict["t1"] = task
+        heapq.heappush(td.task_heap, (1000, 2000, "t1", task))
+        td.task_ids.add("t1")
+        td.task_dict["t1"] = task
 
-        tm.clear_pending_tasks()
+        td.clear_pending_tasks()
 
-        assert len(tm.task_heap) == 1
-        assert "t1" in tm.task_ids
-        assert "t1" in tm.task_dict
+        assert len(td.task_heap) == 1
+        assert "t1" in td.task_ids
+        assert "t1" in td.task_dict
 
     def test_clears_imaging_tasks(self):
-        tm = _make_task_manager()
-        tm.imaging_tasks["t1"] = time.time()
-        tm.imaging_tasks["t2"] = time.time()
+        td = _make_task_dispatcher()
+        td.imaging_tasks["t1"] = time.time()
+        td.imaging_tasks["t2"] = time.time()
 
-        tm.clear_pending_tasks()
+        td.clear_pending_tasks()
 
-        assert len(tm.imaging_tasks) == 0
+        assert len(td.imaging_tasks) == 0
 
     def test_does_not_clear_processing_or_upload_stages(self):
-        tm = _make_task_manager()
-        tm.processing_tasks["t1"] = time.time()
-        tm.uploading_tasks["t2"] = time.time()
+        td = _make_task_dispatcher()
+        td.processing_tasks["t1"] = time.time()
+        td.uploading_tasks["t2"] = time.time()
 
-        tm.clear_pending_tasks()
+        td.clear_pending_tasks()
 
-        assert "t1" in tm.processing_tasks
-        assert "t2" in tm.uploading_tasks
+        assert "t1" in td.processing_tasks
+        assert "t2" in td.uploading_tasks
 
     def test_calls_imaging_queue_clear(self):
-        tm = _make_task_manager()
-        tm.imaging_queue.clear = MagicMock(return_value=2)
+        td = _make_task_dispatcher()
+        td._default_runtime.acquisition_queue.clear = MagicMock(return_value=2)
 
-        count = tm.clear_pending_tasks()
+        count = td.clear_pending_tasks()
 
-        tm.imaging_queue.clear.assert_called_once()
+        td._default_runtime.acquisition_queue.clear.assert_called_once()
         assert count == 2
 
     def test_no_orphan_guids_after_clear(self):
         """After clear, get_tasks_by_stage should not return bare-GUID entries."""
-        tm = _make_task_manager()
+        td = _make_task_dispatcher()
         task = _make_task("MySat")
-        heapq.heappush(tm.task_heap, (1000, 2000, "t1", task))
-        tm.task_ids.add("t1")
-        tm.task_dict["t1"] = task
-        tm.imaging_tasks["t1"] = time.time()
+        heapq.heappush(td.task_heap, (1000, 2000, "t1", task))
+        td.task_ids.add("t1")
+        td.task_dict["t1"] = task
+        td.imaging_tasks["t1"] = time.time()
 
-        tm.clear_pending_tasks()
+        td.clear_pending_tasks()
 
-        stages = tm.get_tasks_by_stage()
+        stages = td.get_tasks_by_stage()
         assert stages["imaging"] == []
 
 
@@ -107,80 +116,78 @@ class TestClearPendingTasks:
 class TestExpiredTaskGuard:
     def test_skips_expired_task(self):
         """Tasks whose stop_epoch < now should be discarded, not executed."""
-        tm = _make_task_manager()
+        td = _make_task_dispatcher()
         now = int(time.time())
         past_stop = now - 100
         task = _make_task("Expired")
-        heapq.heappush(tm.task_heap, (now - 200, past_stop, "t-expired", task))
-        tm.task_ids.add("t-expired")
-        tm.task_dict["t-expired"] = task
+        heapq.heappush(td.task_heap, (now - 200, past_stop, "t-expired", task))
+        td.task_ids.add("t-expired")
+        td.task_dict["t-expired"] = task
 
-        # Also add a valid task after the expired one
         valid_task = _make_task("Valid")
-        heapq.heappush(tm.task_heap, (now - 100, now + 3600, "t-valid", valid_task))
-        tm.task_ids.add("t-valid")
-        tm.task_dict["t-valid"] = valid_task
+        heapq.heappush(td.task_heap, (now - 100, now + 3600, "t-valid", valid_task))
+        td.task_ids.add("t-valid")
+        td.task_dict["t-valid"] = valid_task
 
-        # Run one iteration of the task runner's pop logic manually
         popped = []
-        while tm.task_heap and tm.task_heap[0][0] <= now:
-            _start_epoch, stop_epoch, tid, _task = tm.task_heap[0]
+        while td.task_heap and td.task_heap[0][0] <= now:
+            _start_epoch, stop_epoch, tid, _task = td.task_heap[0]
             if stop_epoch and stop_epoch < now:
-                heapq.heappop(tm.task_heap)
-                tm.task_ids.discard(tid)
-                tm.task_dict.pop(tid, None)
+                heapq.heappop(td.task_heap)
+                td.task_ids.discard(tid)
+                td.task_dict.pop(tid, None)
                 continue
-            heapq.heappop(tm.task_heap)
-            tm.task_ids.discard(tid)
+            heapq.heappop(td.task_heap)
+            td.task_ids.discard(tid)
             popped.append(tid)
 
         assert "t-expired" not in popped
-        assert "t-expired" not in tm.task_ids
-        assert "t-expired" not in tm.task_dict
+        assert "t-expired" not in td.task_ids
+        assert "t-expired" not in td.task_dict
         assert "t-valid" in popped
 
     def test_zero_stop_epoch_means_no_expiry(self):
         """Tasks with stop_epoch=0 (no end time) should always execute."""
-        tm = _make_task_manager()
+        td = _make_task_dispatcher()
         now = int(time.time())
         task = _make_task("NoExpiry")
-        heapq.heappush(tm.task_heap, (now - 100, 0, "t1", task))
-        tm.task_ids.add("t1")
-        tm.task_dict["t1"] = task
+        heapq.heappush(td.task_heap, (now - 100, 0, "t1", task))
+        td.task_ids.add("t1")
+        td.task_dict["t1"] = task
 
         popped = []
-        while tm.task_heap and tm.task_heap[0][0] <= now:
-            _start_epoch, stop_epoch, tid, _task = tm.task_heap[0]
+        while td.task_heap and td.task_heap[0][0] <= now:
+            _start_epoch, stop_epoch, tid, _task = td.task_heap[0]
             if stop_epoch and stop_epoch < now:
-                heapq.heappop(tm.task_heap)
-                tm.task_ids.discard(tid)
-                tm.task_dict.pop(tid, None)
+                heapq.heappop(td.task_heap)
+                td.task_ids.discard(tid)
+                td.task_dict.pop(tid, None)
                 continue
-            heapq.heappop(tm.task_heap)
-            tm.task_ids.discard(tid)
+            heapq.heappop(td.task_heap)
+            td.task_ids.discard(tid)
             popped.append(tid)
 
         assert "t1" in popped
 
     def test_future_stop_epoch_not_skipped(self):
         """Tasks whose stop_epoch is in the future should execute normally."""
-        tm = _make_task_manager()
+        td = _make_task_dispatcher()
         now = int(time.time())
         task = _make_task("Future")
-        heapq.heappush(tm.task_heap, (now - 50, now + 3600, "t1", task))
-        tm.task_ids.add("t1")
-        tm.task_dict["t1"] = task
+        heapq.heappush(td.task_heap, (now - 50, now + 3600, "t1", task))
+        td.task_ids.add("t1")
+        td.task_dict["t1"] = task
 
         popped = []
-        while tm.task_heap and tm.task_heap[0][0] <= now:
-            _start_epoch, stop_epoch, tid, _task = tm.task_heap[0]
+        while td.task_heap and td.task_heap[0][0] <= now:
+            _start_epoch, stop_epoch, tid, _task = td.task_heap[0]
             if stop_epoch and stop_epoch < now:
-                heapq.heappop(tm.task_heap)
-                tm.task_ids.discard(tid)
-                tm.task_dict.pop(tid, None)
+                heapq.heappop(td.task_heap)
+                td.task_ids.discard(tid)
+                td.task_dict.pop(tid, None)
                 continue
-            heapq.heappop(tm.task_heap)
-            tm.task_ids.discard(tid)
+            heapq.heappop(td.task_heap)
+            td.task_ids.discard(tid)
             popped.append(tid)
 
         assert "t1" in popped
@@ -201,19 +208,19 @@ class TestImagingCancelledNotFailed:
         settings.max_retry_delay_seconds = 10
         logger = MagicMock()
         api_client = MagicMock()
-        task_manager = MagicMock()
+        runtime = MagicMock()
         iq = ImagingQueue(
             num_workers=0,
             settings=settings,
             logger=logger,
             api_client=api_client,
-            task_manager=task_manager,
+            runtime=runtime,
         )
-        return iq, api_client, task_manager
+        return iq, api_client, runtime
 
     def test_on_cancelled_does_not_mark_failed(self):
         """_on_cancelled should NOT call mark_task_failed on the API."""
-        iq, api_client, task_manager = self._make_imaging_queue()
+        iq, api_client, runtime = self._make_imaging_queue()
         item = {
             "task_id": "t1",
             "task": _make_task("CancelMe"),
@@ -223,12 +230,12 @@ class TestImagingCancelledNotFailed:
         iq._on_cancelled(item)
 
         api_client.mark_task_failed.assert_not_called()
-        task_manager.remove_task_from_all_stages.assert_called_once_with("t1")
+        runtime.remove_task_from_all_stages.assert_called_once_with("t1")
         item["on_complete"].assert_called_once_with("t1", success=False)
 
     def test_on_permanent_failure_still_marks_failed(self):
         """Genuine permanent failures should still hit the API."""
-        iq, api_client, task_manager = self._make_imaging_queue()
+        iq, api_client, runtime = self._make_imaging_queue()
         item = {
             "task_id": "t2",
             "task": _make_task("RealFail"),
@@ -238,12 +245,12 @@ class TestImagingCancelledNotFailed:
         iq._on_permanent_failure(item)
 
         api_client.mark_task_failed.assert_called_once_with("t2")
-        task_manager.remove_task_from_all_stages.assert_called_once_with("t2")
+        runtime.remove_task_from_all_stages.assert_called_once_with("t2")
 
     def test_epoch_mismatch_routes_to_on_cancelled(self):
         """When clear() bumps the epoch during execution, the worker should
         call _on_cancelled (not _on_permanent_failure)."""
-        iq, api_client, _task_manager = self._make_imaging_queue()
+        iq, api_client, _runtime = self._make_imaging_queue()
 
         completed = threading.Event()
         on_complete = MagicMock(side_effect=lambda *a, **kw: completed.set())

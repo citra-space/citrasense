@@ -1,31 +1,32 @@
-"""Background imaging queue for telescope operations."""
+"""Background acquisition queue for sensor operations."""
 
 from collections.abc import Callable
 from typing import Any
 
-from citrasense.tasks.base_work_queue import BaseWorkQueue
+from citrasense.acquisition.base_work_queue import BaseWorkQueue
 
 
-class ImagingQueue(BaseWorkQueue):
+class AcquisitionQueue(BaseWorkQueue):
+    """Background worker queue for sensor acquisition operations.
+
+    Generalises the former ImagingQueue: telescope tasks submit imaging work,
+    future sensors may submit different acquisition work items.
     """
-    Background worker queue for telescope imaging operations.
-    Allows telescope operations to be queued and retried with exponential backoff.
-    """
 
-    def __init__(self, num_workers: int, settings, logger, api_client, task_manager):
+    def __init__(self, num_workers: int, settings, logger, api_client, runtime):
         """
-        Initialize imaging queue.
+        Initialize acquisition queue.
 
         Args:
             num_workers: Number of concurrent imaging threads (default: 1)
             settings: Settings instance
             logger: Logger instance
             api_client: API client for marking tasks failed
-            task_manager: TaskManager instance for stage tracking
+            runtime: SensorRuntime instance for stage tracking
         """
         super().__init__(num_workers, settings, logger)
         self.api_client = api_client
-        self.task_manager = task_manager
+        self.runtime = runtime
 
     def submit(self, task_id: str, task, telescope_task_instance, on_complete: Callable):
         """
@@ -60,7 +61,7 @@ class ImagingQueue(BaseWorkQueue):
 
         self.logger.info(f"Imaging task {task_id}")
 
-        self.task_manager.update_task_stage(task_id, "imaging")
+        self.runtime.update_task_stage(task_id, "imaging")
 
         if task:
             task.set_status_msg("Starting imaging...")
@@ -96,7 +97,7 @@ class ImagingQueue(BaseWorkQueue):
         if task:
             task.set_status_msg("Imaging cancelled (emergency stop)")
 
-        self.task_manager.remove_task_from_all_stages(task_id)
+        self.runtime.remove_task_from_all_stages(task_id)
         on_complete(task_id, success=False)
 
     def _on_permanent_failure(self, item):
@@ -115,7 +116,7 @@ class ImagingQueue(BaseWorkQueue):
         except Exception as e:
             self.logger.error(f"Failed to mark task {task_id} as failed in API: {e}")
 
-        self.task_manager.remove_task_from_all_stages(task_id)
+        self.runtime.remove_task_from_all_stages(task_id)
         on_complete(task_id, success=False)
 
     def _get_task_from_item(self, item):

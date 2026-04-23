@@ -8,8 +8,8 @@ import time
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
+    from citrasense.acquisition.base_work_queue import BaseWorkQueue
     from citrasense.hardware.abstract_astro_hardware_adapter import AbstractAstroHardwareAdapter
-    from citrasense.tasks.base_work_queue import BaseWorkQueue
 
 _HOME_POLL_INTERVAL_S = 1.0
 _HOME_TIMEOUT_S = 120.0

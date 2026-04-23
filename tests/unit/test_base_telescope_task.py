@@ -68,10 +68,10 @@ def _make_daemon():
         "longitude": -122.0,
         "altitude": 100.0,
     }
-    daemon.task_manager = MagicMock()
-    daemon.task_manager.record_task_started = MagicMock()
-    daemon.task_manager.record_task_succeeded = MagicMock()
-    daemon.task_manager.record_task_failed = MagicMock()
+    daemon.runtime = MagicMock()
+    daemon.runtime.record_task_started = MagicMock()
+    daemon.runtime.record_task_succeeded = MagicMock()
+    daemon.runtime.record_task_failed = MagicMock()
     daemon.hardware_adapter = _make_hardware_adapter()
     return daemon
 
@@ -80,7 +80,7 @@ def _daemon_kwargs(daemon):
     """Extract keyword args for AbstractBaseTelescopeTask from a daemon mock."""
     return {
         "settings": daemon.settings,
-        "task_manager": daemon.task_manager,
+        "runtime": daemon.runtime,
         "location_service": daemon.location_service,
         "telescope_record": daemon.telescope_record,
         "ground_station": daemon.ground_station,
@@ -357,7 +357,7 @@ class TestUploadImageAndMarkComplete:
             result = ct.upload_image_and_mark_complete(["/path/to/img.fits"])
 
         assert result is True
-        daemon.task_manager.record_task_started.assert_called_once()
+        daemon.runtime.record_task_started.assert_called_once()
 
     def test_multiple_filepaths(self):
         from citrasense.tasks.scope.base_telescope_task import AbstractBaseTelescopeTask
@@ -374,7 +374,7 @@ class TestUploadImageAndMarkComplete:
             result = ct.upload_image_and_mark_complete(["/a.fits", "/b.fits"])
 
         assert result is True
-        assert daemon.task_manager.processing_queue.submit.call_count == 2
+        assert daemon.runtime.processing_queue.submit.call_count == 2
 
     def test_processors_disabled_goes_to_upload(self):
         from citrasense.tasks.scope.base_telescope_task import AbstractBaseTelescopeTask
@@ -443,7 +443,7 @@ class TestOnProcessingComplete:
         result.extracted_data = {}
         ct._on_processing_complete("/img.fits", "task-1", result)
         ct.api_client.mark_task_complete.assert_not_called()
-        ct.task_manager.remove_task_from_all_stages.assert_called_once_with("task-1")
+        ct.runtime.remove_task_from_all_stages.assert_called_once_with("task-1")
 
     def test_feeds_plate_solve_to_adapter(self):
         ct = self._make_concrete()
@@ -495,7 +495,7 @@ class TestQueueForUpload:
         daemon = _make_daemon()
         ct = ConcreteTask(MagicMock(), MagicMock(), MagicMock(), _make_task_dict(), **_daemon_kwargs(daemon))
         ct._queue_for_upload("/img.fits", processing_result=None)
-        daemon.task_manager.upload_queue.submit.assert_called_once()
+        daemon.runtime.upload_queue.submit.assert_called_once()
 
     def test_location_service_failure_passes_none(self):
         from citrasense.tasks.scope.base_telescope_task import AbstractBaseTelescopeTask
@@ -508,7 +508,7 @@ class TestQueueForUpload:
         daemon.location_service.get_current_location.side_effect = Exception("no GPS")
         ct = ConcreteTask(MagicMock(), MagicMock(), MagicMock(), _make_task_dict(), **_daemon_kwargs(daemon))
         ct._queue_for_upload("/img.fits", processing_result=None)
-        call_kwargs = daemon.task_manager.upload_queue.submit.call_args
+        call_kwargs = daemon.runtime.upload_queue.submit.call_args
         assert call_kwargs[1]["sensor_location"] is None
 
 
@@ -527,13 +527,13 @@ class TestOnImageDone:
         ct = self._make_concrete()
         ct._pending_images = 1
         ct._on_image_done("task-1", True)
-        ct.task_manager.record_task_succeeded.assert_called_once()
+        ct.runtime.record_task_succeeded.assert_called_once()
 
     def test_failure(self):
         ct = self._make_concrete()
         ct._pending_images = 1
         ct._on_image_done("task-1", False)
-        ct.task_manager.record_task_failed.assert_called_once()
+        ct.runtime.record_task_failed.assert_called_once()
 
 
 class TestCancellation:

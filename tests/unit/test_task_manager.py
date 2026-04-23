@@ -1,5 +1,5 @@
 """
-Unit tests for TaskManager task queue management.
+Unit tests for TaskDispatcher task queue management.
 """
 
 import heapq
@@ -11,8 +11,8 @@ import pytest
 from dateutil import parser as dtparser
 
 from citrasense.safety.safety_monitor import SafetyAction
-from citrasense.tasks.runner import TaskManager
 from citrasense.tasks.task import Task
+from citrasense.tasks.task_dispatcher import TaskDispatcher
 
 
 @pytest.fixture
@@ -71,21 +71,25 @@ def mock_daemon(mock_api_client, mock_hardware_adapter, mock_logger, mock_settin
 
 
 @pytest.fixture
-def task_manager(
-    mock_api_client, mock_hardware_adapter, mock_logger, mock_daemon, mock_settings, mock_processor_registry
-):
-    """Create a TaskManager instance for testing."""
-    tm = TaskManager(
+def task_manager(mock_api_client, mock_logger, mock_daemon, mock_settings):
+    """Create a TaskDispatcher instance for testing."""
+    td = TaskDispatcher(
         api_client=mock_api_client,
         logger=mock_logger,
-        hardware_adapter=mock_hardware_adapter,
         settings=mock_settings,
-        processor_registry=mock_processor_registry,
         telescope_record=mock_daemon.telescope_record,
-        ground_station=mock_daemon.ground_station,
-        location_service=mock_daemon.location_service,
     )
-    return tm
+
+    runtime = MagicMock()
+    runtime.sensor_id = "test-telescope-123"
+    runtime.sensor_type = "telescope"
+    runtime.acquisition_queue = MagicMock()
+    runtime.acquisition_queue.is_idle.return_value = True
+    runtime.processing_queue = MagicMock()
+    runtime.upload_queue = MagicMock()
+    runtime.are_queues_idle.return_value = True
+    td._runtimes["test-telescope-123"] = runtime
+    return td
 
 
 def create_test_task(task_id, status="Pending", start_offset_seconds=60):
@@ -369,8 +373,7 @@ class TestEvaluateSafetyQueueStop:
         mock_monitor = MagicMock()
         mock_monitor.evaluate.return_value = (action, triggered_check)
         task_manager.safety_monitor = mock_monitor
-        task_manager.imaging_queue = MagicMock()
-        task_manager.imaging_queue.is_idle.return_value = queue_idle
+        task_manager._default_runtime.acquisition_queue.is_idle.return_value = queue_idle
         return task_manager._evaluate_safety()
 
     def test_unwind_fires_after_queue_drains(self, task_manager):
