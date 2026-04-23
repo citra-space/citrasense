@@ -33,36 +33,37 @@ def _make_manager(observation_mode: str, supports_custom_tracking: bool) -> Task
     return mgr
 
 
+def _telescope_mock_task():
+    task = MagicMock()
+    task.sensor_type = "telescope"
+    return task
+
+
 class TestCreateTelescopeTask:
     def test_sidereal_mode_always_returns_sidereal(self):
         mgr = _make_manager("sidereal", supports_custom_tracking=True)
-        task = MagicMock()
-        result = mgr._create_telescope_task(task)
+        result = mgr._create_telescope_task(_telescope_mock_task())
         assert isinstance(result, SiderealTelescopeTask)
 
     def test_tracking_mode_always_returns_tracking(self):
         mgr = _make_manager("tracking", supports_custom_tracking=False)
-        task = MagicMock()
-        result = mgr._create_telescope_task(task)
+        result = mgr._create_telescope_task(_telescope_mock_task())
         assert isinstance(result, TrackingTelescopeTask)
 
     def test_auto_mode_returns_tracking_when_supported(self):
         mgr = _make_manager("auto", supports_custom_tracking=True)
-        task = MagicMock()
-        result = mgr._create_telescope_task(task)
+        result = mgr._create_telescope_task(_telescope_mock_task())
         assert isinstance(result, TrackingTelescopeTask)
 
     def test_auto_mode_returns_sidereal_when_unsupported(self):
         mgr = _make_manager("auto", supports_custom_tracking=False)
-        task = MagicMock()
-        result = mgr._create_telescope_task(task)
+        result = mgr._create_telescope_task(_telescope_mock_task())
         assert isinstance(result, SiderealTelescopeTask)
 
     @pytest.mark.parametrize("mode", ["auto", "sidereal", "tracking"])
     def test_all_modes_log_selection(self, mode):
         mgr = _make_manager(mode, supports_custom_tracking=True)
-        task = MagicMock()
-        mgr._create_telescope_task(task)
+        mgr._create_telescope_task(_telescope_mock_task())
         mgr.logger.info.assert_called()
         logged = mgr.logger.info.call_args[0][0]
         assert "TelescopeTask" in logged

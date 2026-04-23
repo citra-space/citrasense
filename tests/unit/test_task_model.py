@@ -39,6 +39,41 @@ def test_from_dict_missing_fields():
     assert t.assigned_filter_name is None
 
 
+def test_from_dict_telescope_inference():
+    """telescopeId present, no sensorType -> telescope."""
+    t = Task.from_dict(_sample_dict())
+    assert t.sensor_type == "telescope"
+    assert t.sensor_id == "tel-1"
+
+
+def test_from_dict_explicit_sensor_type():
+    """Explicit sensorType/sensorId override inference."""
+    data = {**_sample_dict(), "sensorType": "rf", "sensorId": "ant-5"}
+    t = Task.from_dict(data)
+    assert t.sensor_type == "rf"
+    assert t.sensor_id == "ant-5"
+
+
+def test_from_dict_antenna_inference():
+    """antennaId present, no sensorType -> rf."""
+    data = {
+        "id": "task-rf-1",
+        "type": "TDOA",
+        "status": "Pending",
+        "antennaId": "ant-3",
+    }
+    t = Task.from_dict(data)
+    assert t.sensor_type == "rf"
+    assert t.sensor_id == "ant-3"
+
+
+def test_from_dict_empty_defaults_to_telescope():
+    """No telescopeId or antennaId -> defaults to telescope with empty sensor_id."""
+    t = Task.from_dict({})
+    assert t.sensor_type == "telescope"
+    assert t.sensor_id == ""
+
+
 def test_set_get_status_msg():
     t = Task.from_dict(_sample_dict())
     t.set_status_msg("Processing...")
@@ -78,3 +113,4 @@ def test_repr():
     r = repr(t)
     assert "abc-123" in r
     assert "tracking" in r
+    assert "[telescope]" in r

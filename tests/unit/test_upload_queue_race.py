@@ -40,6 +40,7 @@ def _make_stub_task(upload_queue_running: bool) -> _StubTelescopeTask:
 
     task = MagicMock()
     task.id = "task-1"
+    task.sensor_type = "telescope"
 
     return _StubTelescopeTask(
         api_client=MagicMock(),

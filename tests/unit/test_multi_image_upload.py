@@ -23,6 +23,7 @@ def _make_task_instance():
     logger = MagicMock()
     task = MagicMock()
     task.id = "task-abc"
+    task.sensor_type = "telescope"
     task_manager = MagicMock()
     settings = MagicMock()
     location_service = MagicMock()

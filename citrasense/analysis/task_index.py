@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any
 
 from citrasense.pipelines.common.processor_result import AggregatedResult
+from citrasense.tasks.views.telescope_task_view import TelescopeTaskView
 
 logger = logging.getLogger("citrasense.TaskIndex")
 
@@ -221,6 +222,7 @@ class TaskIndex:
         """INSERT a completed-task row from the processing thread."""
         now = datetime.now(timezone.utc).isoformat()
         ed = result.extracted_data if result else {}
+        tv = TelescopeTaskView(task) if task and getattr(task, "sensor_type", "telescope") == "telescope" else None
 
         # Per-processor timing from individual results
         proc_times: dict[str, float] = {}
@@ -260,7 +262,7 @@ class TaskIndex:
 
         # Satellite matching
         observations = ed.get("satellite_matcher.satellite_observations") or []
-        target_sat_id = task.satelliteId if task else None
+        target_sat_id = tv.satellite_id if tv else None
         target_matched = False
         target_mag: float | None = None
         incidental = 0
@@ -307,9 +309,9 @@ class TaskIndex:
 
         row = {
             "task_id": task.id if task else "unknown",
-            "target_name": task.satelliteName if task else None,
+            "target_name": tv.satellite_name if tv else None,
             "completed_at": now,
-            "filter_name": _str(ed.get("photometry.filter")) or (task.assigned_filter_name if task else None),
+            "filter_name": _str(ed.get("photometry.filter")) or (tv.assigned_filter_name if tv else None),
             "calibration_applied": _bool_int(calibration_applied),
             "requested_ra": requested_ra,
             "requested_dec": requested_dec,
@@ -344,7 +346,7 @@ class TaskIndex:
             "zero_point": _float(ed.get("photometry.zero_point")),
             "calibration_star_count": _int(ed.get("photometry.num_calibration_stars")),
             "target_satellite_id": target_sat_id,
-            "target_satellite_name": task.satelliteName if task else None,
+            "target_satellite_name": tv.satellite_name if tv else None,
             "target_matched": _bool_int(target_matched),
             "target_satellite_mag": target_mag,
             "incidental_matches": incidental,

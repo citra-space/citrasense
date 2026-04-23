@@ -23,6 +23,7 @@ from citrasense.pipelines.common.artifact_writer import dump_json, dump_processo
 from citrasense.pipelines.common.processing_context import ProcessingContext
 from citrasense.pipelines.common.processor_result import ProcessorResult
 from citrasense.pipelines.optical.processor_dependencies import normalize_fits_timestamp, read_source_catalog
+from citrasense.tasks.views.telescope_task_view import TelescopeTaskView
 
 _ELONGATION_THRESHOLD = 1.5
 _FIELD_RADIUS_DEG = 2.0
@@ -212,13 +213,18 @@ class SatelliteMatcherProcessor(AbstractImageProcessor):
             tle_data = most_recent_elset.get("tle", [])
             if len(tle_data) < 2:
                 raise RuntimeError("Invalid TLE format")
-            elsets = [{"satellite_id": context.task.satelliteId, "name": context.task.satelliteName, "tle": tle_data}]
+            tv = TelescopeTaskView(context.task)
+            elsets = [{"satellite_id": tv.satellite_id, "name": tv.satellite_name, "tle": tle_data}]
 
         debug["elset_count"] = len(elsets)
         debug["elset_source"] = elset_source
 
         # Target satellite comparison: pointing TLE vs cache TLE
-        target_sat_id = context.task.satelliteId if context.task else None
+        target_sat_id = (
+            TelescopeTaskView(context.task).satellite_id
+            if context.task and getattr(context.task, "sensor_type", "telescope") == "telescope"
+            else None
+        )
         target_section: dict[str, Any] = {"satellite_id": target_sat_id}
         if context.satellite_data:
             mre = context.satellite_data.get("most_recent_elset")
@@ -367,7 +373,11 @@ class SatelliteMatcherProcessor(AbstractImageProcessor):
         # Build observations from reverse match: one best source per prediction.
         # The forward match (source->prediction) allows many sources to match the same
         # satellite, flooding results with false positives from nearby stars.
-        filter_name = (context.task.assigned_filter_name if context.task else None) or "Clear"
+        filter_name = (
+            TelescopeTaskView(context.task).assigned_filter_name
+            if context.task and getattr(context.task, "sensor_type", "telescope") == "telescope"
+            else None
+        ) or "Clear"
         observations: list[dict[str, Any]] = []
         for i, p in enumerate(predictions):
             dist_deg = float(np.asarray(pred_distances)[i])

@@ -16,6 +16,7 @@ from keplemon.enums import ReferenceFrame
 from citrasense.astro.sidereal import SIDEREAL_RATE_DEG_PER_S, make_observatory
 from citrasense.hardware.abstract_astro_hardware_adapter import AbstractAstroHardwareAdapter
 from citrasense.tasks.fits_enrichment import enrich_fits_metadata
+from citrasense.tasks.views.telescope_task_view import TelescopeTaskView
 
 
 @dataclass
@@ -92,6 +93,7 @@ class AbstractBaseTelescopeTask(ABC):
         self.hardware_adapter: AbstractAstroHardwareAdapter = hardware_adapter
         self.logger = logger.getChild(type(self).__name__)
         self.task = task
+        self.tv = TelescopeTaskView(task)
         self.settings = settings
         self.task_manager = task_manager
         self.location_service = location_service
@@ -132,24 +134,23 @@ class AbstractBaseTelescopeTask(ABC):
         return self._cancelled.is_set()
 
     def fetch_satellite(self) -> dict | None:
-        satellite_data = self.api_client.get_satellite(self.task.satelliteId)
+        satellite_data = self.api_client.get_satellite(self.tv.satellite_id)
         if not satellite_data:
-            self.logger.error(f"Could not fetch satellite data for {self.task.satelliteId}")
+            self.logger.error(f"Could not fetch satellite data for {self.tv.satellite_id}")
             return None
 
         types = self.hardware_adapter.select_elset_types()
-        best_elset = self.api_client.get_best_elset(self.task.satelliteId, types=types)
+        best_elset = self.api_client.get_best_elset(self.tv.satellite_id, types=types)
         if best_elset:
             satellite_data["most_recent_elset"] = best_elset
         else:
             self.logger.warning(
-                f"get_best_elset returned nothing for {self.task.satelliteId}, "
-                f"falling back to client-side selection"
+                f"get_best_elset returned nothing for {self.tv.satellite_id}, " f"falling back to client-side selection"
             )
             satellite_data["most_recent_elset"] = self._get_most_recent_elset(satellite_data, types=types)
 
         if not satellite_data.get("most_recent_elset"):
-            self.logger.error(f"No elsets found for satellite {self.task.satelliteId}")
+            self.logger.error(f"No elsets found for satellite {self.tv.satellite_id}")
             return None
 
         return satellite_data
@@ -291,7 +292,7 @@ class AbstractBaseTelescopeTask(ABC):
             hfr = result.extracted_data.get("plate_solver.hfr_median")
             if hfr is not None:
                 try:
-                    filter_name = self.task.assigned_filter_name or "" if self.task else ""
+                    filter_name = self.tv.assigned_filter_name or "" if self.task else ""
                     self.task_manager.autofocus_manager.record_hfr(float(hfr), filter_name)
                     self.logger.debug(f"Recorded HFR {hfr:.2f} for filter '{filter_name}'")
                 except Exception as e:

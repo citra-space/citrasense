@@ -25,6 +25,7 @@ def fits_file(tmp_path):
 def mock_task():
     t = MagicMock()
     t.id = "task-uuid-123"
+    t.sensor_type = "telescope"
     t.satelliteName = "ISS (ZARYA)"
     t.groundStationName = "Desert Station"
     t.telescopeName = "PlaneWave CDK14"
@@ -174,7 +175,16 @@ def test_add_task_metadata_full(mock_task):
 
 
 def test_add_task_metadata_fallback_to_records():
-    task = MagicMock(spec=[])
+    task = MagicMock()
+    task.sensor_type = "telescope"
+    task.id = ""
+    task.satelliteId = ""
+    task.satelliteName = ""
+    task.telescopeId = ""
+    task.telescopeName = ""
+    task.groundStationId = ""
+    task.groundStationName = ""
+    task.assigned_filter_name = None
     header = fits.Header()
     _add_task_metadata(
         header,
@@ -188,6 +198,7 @@ def test_add_task_metadata_fallback_to_records():
 
 def test_add_task_metadata_minimal():
     task = MagicMock()
+    task.sensor_type = "telescope"
     task.satelliteName = None
     task.groundStationName = None
     task.telescopeName = None

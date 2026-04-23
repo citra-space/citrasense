@@ -19,6 +19,7 @@ from citrasense.pipelines.common.artifact_writer import dump_csv, dump_processor
 from citrasense.pipelines.common.processing_context import ProcessingContext
 from citrasense.pipelines.common.processor_result import ProcessorResult
 from citrasense.pipelines.optical.processor_dependencies import read_source_catalog
+from citrasense.tasks.views.telescope_task_view import TelescopeTaskView
 
 if TYPE_CHECKING:
     from citrasense.catalogs.apass_catalog import ApassCatalog
@@ -164,7 +165,11 @@ class PhotometryProcessor(AbstractImageProcessor):
                 sources_df = read_source_catalog(catalog_path)
 
             # Get filter name
-            filter_name = context.task.assigned_filter_name if context.task else None
+            filter_name = (
+                TelescopeTaskView(context.task).assigned_filter_name
+                if context.task and getattr(context.task, "sensor_type", "telescope") == "telescope"
+                else None
+            )
 
             # Calibrate
             zero_point, num_matched, apass_catalog_df, crossmatch_df = self._calibrate_photometry(
