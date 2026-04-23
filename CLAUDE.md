@@ -46,11 +46,12 @@ __main__.py (CLI via Click)
        │    ├─ sensor_manager.py (manages multiple AbstractSensor instances)
        │    ├─ sensor_runtime.py (SensorRuntime — per-sensor execution silo: owns queues + managers)
        │    └─ telescope/
-       │         ├─ telescope_sensor.py (adapter bridge to AbstractAstroHardwareAdapter)
+       │         ├─ telescope_sensor.py (adapter bridge; owns safety check lifecycle)
        │         ├─ fits_enrichment.py (FITS header enrichment for telescope observations)
        │         ├─ observing_session.py (ObservingSessionManager — night lifecycle state machine)
        │         ├─ self_tasking_manager.py (SelfTaskingManager — autonomous task requests)
        │         ├─ managers/ (AutofocusManager, AlignmentManager, HomingManager, CalibrationManager)
+       │         ├─ safety/ (CableWrapCheck — telescope-specific, registered via SafetyMonitor)
        │         └─ tasks/ (AbstractBaseTelescopeTask, SiderealTelescopeTask, TrackingTelescopeTask)
        ├─ acquisition/
        │    ├─ base_work_queue.py (BaseWorkQueue — retry, backoff, threading)
@@ -65,6 +66,8 @@ __main__.py (CLI via Click)
        │    ├─ optical/ (optical_processing_context, calibration → plate_solver → source_extractor → photometry → satellite_matcher → annotated_image, optical_artifacts, report_generator)
        │    ├─ radar/ (future — #307)
        │    └─ rf/ (future)
+       ├─ safety/ (SafetyMonitor — site-level checks: disk_space, time_health, hardware_safety, operator_stop)
+       │    └─ SafetyMonitor.register_sensor_check() / unregister_sensor_check() for per-sensor checks
        ├─ settings/ (CitraSenseSettings — Pydantic BaseModel, persisted to JSON)
        └─ web/ (FastAPI app, Alpine.js frontend, WebSocket log streaming)
 ```

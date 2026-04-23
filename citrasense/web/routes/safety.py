@@ -34,7 +34,7 @@ def build_safety_router(ctx: CitraSenseWebApp) -> APIRouter:
         if not ctx.daemon or not ctx.daemon.safety_monitor:
             return JSONResponse({"error": "Safety monitor not available"}, status_code=503)
 
-        from citrasense.safety.cable_wrap_check import CableWrapCheck
+        from citrasense.sensors.telescope.safety.cable_wrap_check import CableWrapCheck
 
         chk = ctx.daemon.safety_monitor.get_check("cable_wrap")
         if not isinstance(chk, CableWrapCheck):
