@@ -24,6 +24,7 @@ from citrasense.sensors.sensor_registry import (
     get_sensor_class,
     list_sensors,
 )
+from citrasense.sensors.sensor_runtime import SensorRuntime
 
 __all__ = [
     "REGISTERED_SENSORS",
@@ -36,6 +37,7 @@ __all__ = [
     "SensorBus",
     "SensorCapabilities",
     "SensorManager",
+    "SensorRuntime",
     "Subscription",
     "get_sensor_class",
     "list_sensors",

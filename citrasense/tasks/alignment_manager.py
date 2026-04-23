@@ -22,10 +22,10 @@ from typing import TYPE_CHECKING, Any
 from citrasense.preview_bus import PreviewBus
 
 if TYPE_CHECKING:
+    from citrasense.acquisition.base_work_queue import BaseWorkQueue
     from citrasense.hardware.abstract_astro_hardware_adapter import AbstractAstroHardwareAdapter
     from citrasense.hardware.devices.mount.altaz_pointing_model import AltAzPointingModel
     from citrasense.settings.citrasense_settings import CitraSenseSettings
-    from citrasense.tasks.base_work_queue import BaseWorkQueue
 
 
 class AlignmentManager:

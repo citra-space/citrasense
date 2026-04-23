@@ -79,7 +79,7 @@ class AbstractBaseTelescopeTask(ABC):
         logger,
         task,
         settings,
-        task_manager,
+        runtime,
         location_service,
         telescope_record: dict | None,
         ground_station: dict | None,
@@ -95,7 +95,7 @@ class AbstractBaseTelescopeTask(ABC):
         self.task = task
         self.tv = TelescopeTaskView(task)
         self.settings = settings
-        self.task_manager = task_manager
+        self.runtime = runtime
         self.location_service = location_service
         self.telescope_record = telescope_record
         self.ground_station = ground_station
@@ -201,11 +201,11 @@ class AbstractBaseTelescopeTask(ABC):
             self._any_upload_succeeded = False
             self._finalized = False
 
-        self.task_manager.record_task_started()
+        self.runtime.record_task_started()
 
         if self.settings.processors_enabled:
             self.task.set_status_msg("Queued for processing...")
-            self.task_manager.update_task_stage(self.task.id, "processing")
+            self.runtime.update_task_stage(self.task.id, "processing")
 
         for image_path in filepaths:
             # 1. Enrich FITS metadata (quick, keep synchronous)
@@ -223,7 +223,7 @@ class AbstractBaseTelescopeTask(ABC):
             # 2. Queue for background processing
             if self.settings.processors_enabled:
                 self.timing_info.stamp_now("processing_queued_at")
-                self.task_manager.processing_queue.submit(
+                self.runtime.processing_queue.submit(
                     task_id=self.task.id,
                     image_path=Path(image_path),
                     context={
@@ -293,7 +293,7 @@ class AbstractBaseTelescopeTask(ABC):
             if hfr is not None:
                 try:
                     filter_name = self.tv.assigned_filter_name or "" if self.task else ""
-                    self.task_manager.autofocus_manager.record_hfr(float(hfr), filter_name)
+                    self.runtime.autofocus_manager.record_hfr(float(hfr), filter_name)
                     self.logger.debug(f"Recorded HFR {hfr:.2f} for filter '{filter_name}'")
                 except Exception as e:
                     self.logger.warning(f"Failed to record HFR: {e}")
@@ -316,7 +316,7 @@ class AbstractBaseTelescopeTask(ABC):
 
     def _queue_for_upload(self, filepath: str, processing_result):
         """Queue image for background upload."""
-        if not self.task_manager.upload_queue.running:
+        if not self.runtime.upload_queue.running:
             self.logger.warning(f"Upload queue is stopped — not queueing upload for task {self.task.id}")
             return
 
@@ -328,8 +328,8 @@ class AbstractBaseTelescopeTask(ABC):
             sensor_location = None
 
         self.task.set_status_msg("Queued for upload...")
-        self.task_manager.update_task_stage(self.task.id, "uploading")
-        self.task_manager.upload_queue.submit(
+        self.runtime.update_task_stage(self.task.id, "uploading")
+        self.runtime.upload_queue.submit(
             task_id=self.task.id,
             task=self.task,
             image_path=filepath,
@@ -376,13 +376,13 @@ class AbstractBaseTelescopeTask(ABC):
         if self._any_upload_succeeded:
             marked = self._mark_complete_with_retry(task_id)
             if marked:
-                self.task_manager.record_task_succeeded()
+                self.runtime.record_task_succeeded()
                 self.logger.info(f"Task {task_id} fully complete ({self._completed_images} image(s) processed)")
             else:
-                self.task_manager.record_task_failed()
+                self.runtime.record_task_failed()
                 self.logger.error(f"Task {task_id}: data uploaded but failed to mark complete after retries")
         else:
-            self.task_manager.record_task_failed()
+            self.runtime.record_task_failed()
             self.logger.error(f"Task {task_id} failed — all {self._completed_images} image(s) failed to upload")
 
         if self.task_index:
@@ -391,7 +391,7 @@ class AbstractBaseTelescopeTask(ABC):
             except Exception as e:
                 self.logger.warning(f"Failed to update analysis index upload result for {task_id}: {e}")
 
-        self.task_manager.remove_task_from_all_stages(task_id)
+        self.runtime.remove_task_from_all_stages(task_id)
 
     def _finalize_skipped_upload(self, task_id: str) -> None:
         """Advance the image counter and clean up tracking without calling the API.
@@ -413,7 +413,7 @@ class AbstractBaseTelescopeTask(ABC):
                 f"Task {task_id}: all {self._completed_images} image(s) processed, upload skipped — "
                 "not marking complete on API"
             )
-            self.task_manager.remove_task_from_all_stages(task_id)
+            self.runtime.remove_task_from_all_stages(task_id)
 
     def _record_to_analysis_index(self, task_id: str, result) -> None:
         """Persist task metrics to the local analysis SQLite index."""

@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from citrasense.calibration.calibration_library import CalibrationLibrary
+    from citrasense.sensors.abstract_sensor import AbstractSensor
 
 from citrasense.analysis.retention import cleanup_previews, cleanup_processing_output
 from citrasense.analysis.task_index import TaskIndex
@@ -27,9 +28,10 @@ from citrasense.pipelines.common.pipeline_registry import PipelineRegistry
 from citrasense.preview_bus import PreviewBus
 from citrasense.sensors.bus import InProcessBus
 from citrasense.sensors.sensor_manager import SensorManager
+from citrasense.sensors.sensor_runtime import SensorRuntime
 from citrasense.settings.citrasense_settings import CitraSenseSettings
 from citrasense.startup_checks import check_processor_runtime_deps
-from citrasense.tasks.runner import TaskManager
+from citrasense.tasks.task_dispatcher import TaskDispatcher
 from citrasense.time.time_monitor import TimeMonitor
 from citrasense.web.server import CitraSenseWebServer
 
@@ -99,7 +101,7 @@ class CitraSenseDaemon:
         self.task_index = TaskIndex(db_path)
         self._retention_timer: threading.Timer | None = None
 
-        # Note: Work queues and stage tracking now managed by TaskManager
+        # Note: Work queues and stage tracking now managed by TaskDispatcher + SensorRuntime
 
         # Create web server instance (always enabled)
         self.web_server = CitraSenseWebServer(daemon=self, host="0.0.0.0", port=self.settings.web_port)
@@ -160,13 +162,12 @@ class CitraSenseDaemon:
                 f"Check documentation for installation instructions."
             ) from e
 
-    def _initialize_sensors(self) -> AbstractAstroHardwareAdapter:
+    def _initialize_sensors(self) -> tuple[AbstractAstroHardwareAdapter, AbstractSensor]:
         """Build sensors from ``self.settings.sensors`` via the sensor manager.
 
-        Phase 1: always exactly one telescope sensor. Returns the sensor's
-        inner adapter so the caller can assign it to
-        ``self.hardware_adapter`` — the rest of the daemon is
-        behaviour-identical to before this refactor.
+        Phase 1: always exactly one telescope sensor. Returns
+        ``(adapter, telescope_sensor)`` so the caller can assign the adapter to
+        ``self.hardware_adapter`` and pass the sensor to ``SensorRuntime``.
         """
         from citrasense.sensors.telescope.telescope_sensor import TelescopeSensor
 
@@ -195,7 +196,7 @@ class CitraSenseDaemon:
         if telescope_sensor is None:
             raise RuntimeError("No telescope sensor configured — cannot start daemon (phase 1 requires exactly one)")
         assert isinstance(telescope_sensor, TelescopeSensor)
-        return telescope_sensor.adapter
+        return telescope_sensor.adapter, telescope_sensor
 
     def _initialize_components(self, reload_settings: bool = False) -> tuple[bool, str | None]:
         """Initialize or reinitialize all components.
@@ -301,7 +302,7 @@ class CitraSenseDaemon:
             # Initialize sensors (phase 1: always exactly one telescope sensor).
             # The adapter is built through the sensor manager so that
             # follow-up phases can iterate N sensors without rewiring.
-            self.hardware_adapter = self._initialize_sensors()
+            self.hardware_adapter, self._telescope_sensor = self._initialize_sensors()
 
             # Check for missing dependencies (non-fatal, just warn)
             missing_deps = self.hardware_adapter.get_missing_dependencies()
@@ -388,10 +389,10 @@ class CitraSenseDaemon:
         """Initialize telescope connection and task manager.
 
         Args:
-            old_task_dict: Preserved task_dict from previous TaskManager (for config reload)
-            old_imaging_tasks: Preserved imaging_tasks from previous TaskManager (for config reload)
-            old_processing_tasks: Preserved processing_tasks from previous TaskManager (for config reload)
-            old_uploading_tasks: Preserved uploading_tasks from previous TaskManager (for config reload)
+            old_task_dict: Preserved task_dict from previous TaskDispatcher (for config reload)
+            old_imaging_tasks: Preserved imaging_tasks from previous TaskDispatcher (for config reload)
+            old_processing_tasks: Preserved processing_tasks from previous TaskDispatcher (for config reload)
+            old_uploading_tasks: Preserved uploading_tasks from previous TaskDispatcher (for config reload)
 
         Returns:
             Tuple of (success, error_message)
@@ -477,23 +478,37 @@ class CitraSenseDaemon:
 
             self._initialize_safety_monitor()
 
-            # Create TaskManager (now owns all queues and stage tracking)
-            self.task_manager = TaskManager(
-                self.api_client,
-                CITRASENSE_LOGGER,
-                self.hardware_adapter,
-                self.settings,
-                self.processor_registry,
+            # Create SensorRuntime for the telescope sensor
+            telescope_runtime = SensorRuntime(
+                self._telescope_sensor,
+                logger=CITRASENSE_LOGGER,
+                settings=self.settings,
+                api_client=self.api_client,
+                hardware_adapter=self.hardware_adapter,
+                processor_registry=self.processor_registry,
                 elset_cache=self.elset_cache,
                 apass_catalog=self.apass_catalog,
-                safety_monitor=self.safety_monitor,
                 location_service=self.location_service,
                 telescope_record=self.telescope_record,
                 ground_station=self.ground_station,
                 on_annotated_image=self._on_annotated_image,
                 preview_bus=self.preview_bus,
                 task_index=self.task_index,
+                safety_monitor=self.safety_monitor,
+                sensor_bus=self.sensor_bus,
             )
+
+            # Create TaskDispatcher (site-level orchestration)
+            self.task_manager = TaskDispatcher(
+                self.api_client,
+                CITRASENSE_LOGGER,
+                self.settings,
+                hardware_adapter=self.hardware_adapter,
+                safety_monitor=self.safety_monitor,
+                telescope_record=self.telescope_record,
+                elset_cache=self.elset_cache,
+            )
+            self.task_manager.register_runtime(telescope_runtime)
 
             # Wire backend→frontend toast notifications
             if self.web_server:
@@ -547,7 +562,7 @@ class CitraSenseDaemon:
 
             # Restore preserved task metadata
             if old_task_dict:
-                CITRASENSE_LOGGER.info(f"Restoring {len(old_task_dict)} task(s) from previous TaskManager")
+                CITRASENSE_LOGGER.info(f"Restoring {len(old_task_dict)} task(s) from previous TaskDispatcher")
                 self.task_manager.task_dict.update(old_task_dict)
             if old_imaging_tasks:
                 CITRASENSE_LOGGER.info(f"Restoring {len(old_imaging_tasks)} imaging task(s)")

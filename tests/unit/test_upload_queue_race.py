@@ -35,8 +35,8 @@ def _make_stub_task(upload_queue_running: bool) -> _StubTelescopeTask:
     upload_queue = MagicMock()
     upload_queue.running = upload_queue_running
 
-    task_manager = MagicMock()
-    task_manager.upload_queue = upload_queue
+    runtime = MagicMock()
+    runtime.upload_queue = upload_queue
 
     task = MagicMock()
     task.id = "task-1"
@@ -48,7 +48,7 @@ def _make_stub_task(upload_queue_running: bool) -> _StubTelescopeTask:
         logger=MagicMock(),
         task=task,
         settings=MagicMock(),
-        task_manager=task_manager,
+        runtime=runtime,
         location_service=MagicMock(),
         telescope_record={},
         ground_station=None,
@@ -69,8 +69,8 @@ class TestQueueForUploadGuard:
         stub = _make_stub_task(upload_queue_running=False)
         stub._queue_for_upload("/fake/image.fits", MagicMock())
 
-        stub.task_manager.upload_queue.submit.assert_not_called()
-        stub.task_manager.update_task_stage.assert_not_called()
+        stub.runtime.upload_queue.submit.assert_not_called()
+        stub.runtime.update_task_stage.assert_not_called()
 
     def test_dead_queue_logs_warning(self):
         stub = _make_stub_task(upload_queue_running=False)
@@ -85,8 +85,8 @@ class TestQueueForUploadGuard:
         stub = _make_stub_task(upload_queue_running=True)
         stub._queue_for_upload("/fake/image.fits", MagicMock())
 
-        stub.task_manager.upload_queue.submit.assert_called_once()
-        stub.task_manager.update_task_stage.assert_called_once_with("task-1", "uploading")
+        stub.runtime.upload_queue.submit.assert_called_once()
+        stub.runtime.update_task_stage.assert_called_once_with("task-1", "uploading")
 
 
 # ---------------------------------------------------------------------------
@@ -131,8 +131,12 @@ class TestConfigReloadDropsInFlightStages:
         daemon.latest_annotated_image_path = None
         daemon.preview_bus = MagicMock()
         daemon.task_index = MagicMock()
+        daemon.sensor_bus = MagicMock()
         daemon._retention_timer = None
         daemon._stop_requested = False
+        daemon._telescope_sensor = MagicMock()
+        daemon._telescope_sensor.sensor_id = "t1"
+        daemon._telescope_sensor.sensor_type = "telescope"
         return daemon
 
     def test_processing_and_uploading_not_restored(self):
@@ -142,17 +146,19 @@ class TestConfigReloadDropsInFlightStages:
         old_uploading = {"task-u1": MagicMock(), "task-u2": MagicMock()}
 
         with (
-            patch("citrasense.citrasense_daemon.TaskManager") as MockTM,
+            patch("citrasense.citrasense_daemon.SensorRuntime") as MockRT,
+            patch("citrasense.citrasense_daemon.TaskDispatcher") as MockTD,
             patch.object(daemon, "_initialize_safety_monitor"),
             patch.object(daemon, "save_filter_config"),
             patch.object(daemon, "sync_filters_to_backend"),
         ):
-            mock_tm_instance = MagicMock()
-            mock_tm_instance.task_dict = {}
-            mock_tm_instance.imaging_tasks = {}
-            mock_tm_instance.processing_tasks = {}
-            mock_tm_instance.uploading_tasks = {}
-            MockTM.return_value = mock_tm_instance
+            mock_td_instance = MagicMock()
+            mock_td_instance.task_dict = {}
+            mock_td_instance.imaging_tasks = {}
+            mock_td_instance.processing_tasks = {}
+            mock_td_instance.uploading_tasks = {}
+            MockTD.return_value = mock_td_instance
+            MockRT.return_value = MagicMock()
 
             success, _error = daemon._initialize_telescope(
                 old_task_dict={"task-1": MagicMock()},
@@ -162,7 +168,7 @@ class TestConfigReloadDropsInFlightStages:
             )
 
         assert success is True
-        assert mock_tm_instance.processing_tasks == {}
-        assert mock_tm_instance.uploading_tasks == {}
-        assert "task-1" in mock_tm_instance.task_dict
-        assert "task-i1" in mock_tm_instance.imaging_tasks
+        assert mock_td_instance.processing_tasks == {}
+        assert mock_td_instance.uploading_tasks == {}
+        assert "task-1" in mock_td_instance.task_dict
+        assert "task-i1" in mock_td_instance.imaging_tasks
