@@ -41,15 +41,20 @@ def _task_to_dict(task: Any) -> dict:
     (``{app_url}/satellites/{satelliteId}``).  ``app_url`` is exposed
     separately via ``GET /api/config``.
     """
-    return {
+    d: dict[str, Any] = {
         "id": task.id,
-        "satelliteId": task.satelliteId,
         "start_time": task.taskStart,
         "stop_time": task.taskStop or None,
         "status": task.status,
-        "target": task.satelliteName,
-        "filter": task.assigned_filter_name,
+        "sensor_type": getattr(task, "sensor_type", "telescope"),
     }
+    if getattr(task, "sensor_type", "telescope") == "telescope":
+        d["satelliteId"] = task.satelliteId
+        d["target"] = task.satelliteName
+        d["filter"] = task.assigned_filter_name
+    else:
+        d["target"] = getattr(task, "sensor_id", "") or task.id[:8]
+    return d
 
 
 def _resolve_autofocus_target_name(settings: Any) -> str:

@@ -34,6 +34,7 @@ def _make_context(
     if task_name:
         task = MagicMock()
         task.satelliteName = task_name
+        task.sensor_type = "telescope"
 
     return ProcessingContext(
         image_path=fits_path,

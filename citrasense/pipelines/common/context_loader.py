@@ -118,6 +118,8 @@ def _task_from_saved_dict(data: dict[str, Any]) -> Task:
         telescopeName=data.get("telescopeName", ""),
         groundStationId=data.get("groundStationId", ""),
         groundStationName=data.get("groundStationName", ""),
+        sensor_type=data.get("sensor_type", "telescope"),
+        sensor_id=data.get("sensor_id", ""),
         assigned_filter_name=data.get("assigned_filter_name"),
     )
 

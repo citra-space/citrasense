@@ -16,6 +16,7 @@ from PIL import Image, ImageDraw, ImageFont
 from citrasense.pipelines.common.abstract_processor import AbstractImageProcessor
 from citrasense.pipelines.common.processing_context import ProcessingContext
 from citrasense.pipelines.common.processor_result import ProcessorResult
+from citrasense.tasks.views.telescope_task_view import TelescopeTaskView
 
 if TYPE_CHECKING:
     import pandas as pd
@@ -109,7 +110,11 @@ class AnnotatedImageProcessor(AbstractImageProcessor):
                 self._draw_predictions(draw, wcs, unmatched_preds, font, original_height, pixel_scale)
                 self._draw_matches(draw, wcs, matched_sats, font, original_height, pixel_scale)
 
-            task_name = context.task.satelliteName if context.task else None
+            task_name = (
+                TelescopeTaskView(context.task).satellite_name
+                if context.task and getattr(context.task, "sensor_type", None) == "telescope"
+                else None
+            )
             self._draw_overlay(draw, img.width, task_name, epoch_str, match_count, font)
 
             image_bytes = self._encode_image(img)

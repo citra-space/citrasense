@@ -19,6 +19,8 @@ class Task:
     telescopeName: str
     groundStationId: str
     groundStationName: str
+    sensor_type: str = "telescope"
+    sensor_id: str = ""
     assigned_filter_name: str | None = None
 
     # Local execution state (not from API, never sent to server)
@@ -31,6 +33,16 @@ class Task:
 
     @classmethod
     def from_dict(cls, data: dict) -> "Task":
+        sensor_type = data.get("sensorType", "")
+        sensor_id = data.get("sensorId", "")
+        if not sensor_type:
+            if data.get("antennaId"):
+                sensor_type = "rf"
+                sensor_id = sensor_id or data.get("antennaId", "")
+            else:
+                sensor_type = "telescope"
+                sensor_id = sensor_id or data.get("telescopeId", "")
+
         return cls(
             id=str(data.get("id", "")),
             type=data.get("type", ""),
@@ -47,6 +59,8 @@ class Task:
             telescopeName=data.get("telescopeName", ""),
             groundStationId=data.get("groundStationId", ""),
             groundStationName=data.get("groundStationName", ""),
+            sensor_type=sensor_type,
+            sensor_id=sensor_id,
             assigned_filter_name=data.get("assignedFilterName"),
         )
 
@@ -86,4 +100,5 @@ class Task:
             return (self.local_status_msg, self.retry_scheduled_time, self.is_being_executed)
 
     def __repr__(self):
-        return f"<Task {self.id[:8]} {self.type} '{self.satelliteName}' {self.status}>"
+        label = self.satelliteName or self.sensor_id or self.id[:8]
+        return f"<Task {self.id[:8]} {self.type} [{self.sensor_type}] '{label}' {self.status}>"

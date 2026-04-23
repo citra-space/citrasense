@@ -254,7 +254,7 @@ class TaskManager:
                 # Look up task from task manager
                 task = self.get_task_by_id(task_id)
                 if task:
-                    result["target_name"] = task.satelliteName
+                    result["target_name"] = task.satelliteName if task.sensor_type == "telescope" else task.sensor_id
                     # Use thread-safe getters for status fields
                     status_msg, retry_time, is_executing = task.get_status_info()
                     result["status_msg"] = status_msg

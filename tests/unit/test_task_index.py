@@ -23,8 +23,13 @@ def _make_task(**overrides):
     """Return a mock Task with sensible defaults."""
     t = MagicMock()
     t.id = overrides.get("id", "task-001")
+    t.sensor_type = overrides.get("sensor_type", "telescope")
     t.satelliteId = overrides.get("satelliteId", "25544")
     t.satelliteName = overrides.get("satelliteName", "ISS")
+    t.telescopeId = overrides.get("telescopeId", "tel-1")
+    t.telescopeName = overrides.get("telescopeName", "CDK14")
+    t.groundStationId = overrides.get("groundStationId", "gs-1")
+    t.groundStationName = overrides.get("groundStationName", "Desert")
     t.taskStart = overrides.get("taskStart", "2026-04-13T02:00:00+00:00")
     t.taskStop = overrides.get("taskStop", "2026-04-13T02:05:00+00:00")
     t.assigned_filter_name = overrides.get("assigned_filter_name", "V")

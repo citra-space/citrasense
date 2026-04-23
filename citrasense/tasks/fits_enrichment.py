@@ -8,6 +8,7 @@ on capture-time intrinsic metadata (DATE-OBS, EXPTIME, etc.).
 from pathlib import Path
 
 from citrasense.logging import CITRASENSE_LOGGER
+from citrasense.tasks.views.telescope_task_view import TelescopeTaskView
 
 
 def enrich_fits_metadata(
@@ -126,26 +127,26 @@ def _add_task_metadata(
 
     Includes target name, observatory info, filter, and task ID for traceability.
     """
-    # Target name (satellite being observed)
-    if hasattr(task, "satelliteName") and task.satelliteName:
-        header["OBJECT"] = (task.satelliteName, "Target name")
+    if hasattr(task, "id") and task.id:
+        header["TASKID"] = (task.id, "Citra.space task UUID")
 
-    # Observatory/Ground station name
-    if hasattr(task, "groundStationName") and task.groundStationName:
-        header["OBSERVER"] = (task.groundStationName, "Ground station name")
+    if not (hasattr(task, "sensor_type") and task.sensor_type == "telescope"):
+        return
+
+    tv = TelescopeTaskView(task)
+
+    if tv.satellite_name:
+        header["OBJECT"] = (tv.satellite_name, "Target name")
+
+    if tv.ground_station_name:
+        header["OBSERVER"] = (tv.ground_station_name, "Ground station name")
     elif ground_station_record and ground_station_record.get("name"):
         header["OBSERVER"] = (ground_station_record["name"], "Ground station name")
 
-    # Telescope name
-    if hasattr(task, "telescopeName") and task.telescopeName:
-        header["TELESCOP"] = (task.telescopeName, "Telescope name")
+    if tv.telescope_name:
+        header["TELESCOP"] = (tv.telescope_name, "Telescope name")
     elif telescope_record and telescope_record.get("name"):
         header["TELESCOP"] = (telescope_record["name"], "Telescope name")
 
-    # Filter (if assigned to this observation)
-    if hasattr(task, "assigned_filter_name") and task.assigned_filter_name:
-        header["FILTER"] = (task.assigned_filter_name, "Filter name")
-
-    # Task ID for database traceability
-    if hasattr(task, "id") and task.id:
-        header["TASKID"] = (task.id, "Citra.space task UUID")
+    if tv.assigned_filter_name:
+        header["FILTER"] = (tv.assigned_filter_name, "Filter name")
