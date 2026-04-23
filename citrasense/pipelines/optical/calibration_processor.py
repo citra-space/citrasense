@@ -14,8 +14,9 @@ import numpy as np
 from astropy.io import fits  # type: ignore[attr-defined]
 
 from citrasense.calibration.calibration_library import CalibrationLibrary, resolve_camera_id
-from citrasense.processors.abstract_processor import AbstractImageProcessor
-from citrasense.processors.processor_result import ProcessingContext, ProcessorResult
+from citrasense.pipelines.common.abstract_processor import AbstractImageProcessor
+from citrasense.pipelines.common.processing_context import ProcessingContext
+from citrasense.pipelines.common.processor_result import ProcessorResult
 
 if TYPE_CHECKING:
     pass

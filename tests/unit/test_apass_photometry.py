@@ -10,8 +10,8 @@ from astropy.io import fits
 from astropy_healpix import HEALPix
 
 from citrasense.catalogs.apass_catalog import ApassCatalog
-from citrasense.processors.builtin.photometry_processor import PhotometryProcessor
-from citrasense.processors.processor_result import ProcessingContext
+from citrasense.pipelines.common.processing_context import ProcessingContext
+from citrasense.pipelines.optical.photometry_processor import PhotometryProcessor
 
 _HEALPIX_NSIDE = 64
 _HEALPIX_ORDER = "nested"

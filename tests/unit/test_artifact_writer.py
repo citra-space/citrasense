@@ -9,16 +9,19 @@ import pandas as pd
 import pytest
 from astropy.io import fits
 
-from citrasense.processors.artifact_writer import (
-    _read_fits_header,
-    _task_to_dict,
-    dump_context_artifacts,
+from citrasense.pipelines.common.artifact_writer import (
     dump_csv,
     dump_json,
     dump_processing_summary,
     dump_processor_result,
+    task_to_dict,
 )
-from citrasense.processors.processor_result import AggregatedResult, ProcessingContext, ProcessorResult
+from citrasense.pipelines.common.processing_context import ProcessingContext
+from citrasense.pipelines.common.processor_result import AggregatedResult, ProcessorResult
+from citrasense.pipelines.optical.optical_artifacts import (
+    _read_fits_header,
+    dump_optical_context_artifacts,
+)
 from citrasense.tasks.task import Task
 
 
@@ -127,14 +130,14 @@ class TestDumpCsv:
 
 class TestTaskToDict:
     def test_serializes_task_fields(self, sample_task):
-        d = _task_to_dict(sample_task)
+        d = task_to_dict(sample_task)
         assert d["id"] == "task-abc-123"
         assert d["satelliteName"] == "STARLINK-1234"
         assert d["assigned_filter_name"] == "Clear"
         assert "_status_lock" not in d
 
     def test_none_task(self):
-        assert _task_to_dict(None) == {}
+        assert task_to_dict(None) == {}
 
 
 class TestReadFitsHeader:
@@ -219,7 +222,7 @@ class TestDumpContextArtifacts:
             pointing_report=pointing_report,
         )
 
-        dump_context_artifacts(context)
+        dump_optical_context_artifacts(context)
 
         assert (working_dir / "task.json").exists()
         assert (working_dir / "elset_cache_snapshot.json").exists()
@@ -265,7 +268,7 @@ class TestDumpContextArtifacts:
             ground_station_record=None,
             settings=None,
         )
-        dump_context_artifacts(context)
+        dump_optical_context_artifacts(context)
 
         assert json.loads((working_dir / "task.json").read_text()) == {}
         assert json.loads((working_dir / "elset_cache_snapshot.json").read_text()) == []

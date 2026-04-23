@@ -42,7 +42,7 @@ from pathlib import Path
 from typing import Any
 
 from citrasense.elset_cache import ElsetCache
-from citrasense.processors.processor_result import ProcessingContext
+from citrasense.pipelines.common.processing_context import ProcessingContext
 from citrasense.tasks.task import Task
 
 logger = logging.getLogger("citrasense.ContextLoader")
@@ -97,7 +97,7 @@ def _discover_fits(debug_dir: Path) -> Path | None:
 
 
 def _task_from_saved_dict(data: dict[str, Any]) -> Task:
-    """Construct a Task from the field names used by artifact_writer._task_to_dict.
+    """Construct a Task from the field names used by artifact_writer.task_to_dict.
 
     The saved JSON uses dataclass field names (e.g. ``assigned_filter_name``),
     not the camelCase API keys that ``Task.from_dict()`` expects.

@@ -8,9 +8,10 @@ from pathlib import Path
 import pandas as pd
 from astropy.io import fits
 
-from citrasense.processors.abstract_processor import AbstractImageProcessor
-from citrasense.processors.artifact_writer import dump_processor_result
-from citrasense.processors.processor_result import ProcessingContext, ProcessorResult
+from citrasense.pipelines.common.abstract_processor import AbstractImageProcessor
+from citrasense.pipelines.common.artifact_writer import dump_processor_result
+from citrasense.pipelines.common.processing_context import ProcessingContext
+from citrasense.pipelines.common.processor_result import ProcessorResult
 
 from .processor_dependencies import check_sextractor
 

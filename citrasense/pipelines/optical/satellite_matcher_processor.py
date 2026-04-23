@@ -18,11 +18,11 @@ from keplemon.elements import TLE
 from keplemon.enums import ReferenceFrame
 from scipy.spatial import KDTree
 
-from citrasense.processors.abstract_processor import AbstractImageProcessor
-from citrasense.processors.artifact_writer import dump_json, dump_processor_result
-from citrasense.processors.processor_result import ProcessingContext, ProcessorResult
-
-from .processor_dependencies import normalize_fits_timestamp, read_source_catalog
+from citrasense.pipelines.common.abstract_processor import AbstractImageProcessor
+from citrasense.pipelines.common.artifact_writer import dump_json, dump_processor_result
+from citrasense.pipelines.common.processing_context import ProcessingContext
+from citrasense.pipelines.common.processor_result import ProcessorResult
+from citrasense.pipelines.optical.processor_dependencies import normalize_fits_timestamp, read_source_catalog
 
 _ELONGATION_THRESHOLD = 1.5
 _FIELD_RADIUS_DEG = 2.0

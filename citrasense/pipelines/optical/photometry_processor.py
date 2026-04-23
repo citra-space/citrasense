@@ -14,10 +14,11 @@ from astropy.io import fits
 from astropy.wcs import WCS
 from scipy.spatial import KDTree
 
-from citrasense.processors.abstract_processor import AbstractImageProcessor
-from citrasense.processors.artifact_writer import dump_csv, dump_processor_result
-from citrasense.processors.builtin.processor_dependencies import read_source_catalog
-from citrasense.processors.processor_result import ProcessingContext, ProcessorResult
+from citrasense.pipelines.common.abstract_processor import AbstractImageProcessor
+from citrasense.pipelines.common.artifact_writer import dump_csv, dump_processor_result
+from citrasense.pipelines.common.processing_context import ProcessingContext
+from citrasense.pipelines.common.processor_result import ProcessorResult
+from citrasense.pipelines.optical.processor_dependencies import read_source_catalog
 
 if TYPE_CHECKING:
     from citrasense.catalogs.apass_catalog import ApassCatalog

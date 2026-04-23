@@ -13,9 +13,10 @@ from astropy.io import fits
 from astropy.wcs import WCS
 from astropy.wcs.utils import proj_plane_pixel_scales
 
-from citrasense.processors.abstract_processor import AbstractImageProcessor
-from citrasense.processors.artifact_writer import dump_processor_result
-from citrasense.processors.processor_result import ProcessingContext, ProcessorResult
+from citrasense.pipelines.common.abstract_processor import AbstractImageProcessor
+from citrasense.pipelines.common.artifact_writer import dump_processor_result
+from citrasense.pipelines.common.processing_context import ProcessingContext
+from citrasense.pipelines.common.processor_result import ProcessorResult
 
 from .processor_dependencies import check_astrometry
 

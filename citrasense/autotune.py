@@ -39,17 +39,17 @@ import pandas as pd
 from astropy.io import fits
 from scipy.spatial import KDTree
 
-from citrasense.processors.builtin.photometry_processor import cross_match_catalogs
-from citrasense.processors.builtin.satellite_matcher_processor import (
+from citrasense.pipelines.optical.photometry_processor import cross_match_catalogs
+from citrasense.pipelines.optical.satellite_matcher_processor import (
     _ELONGATION_THRESHOLD,
     _MATCH_RADIUS_DEG,
 )
-from citrasense.processors.builtin.source_extractor_processor import SourceExtractorProcessor
+from citrasense.pipelines.optical.source_extractor_processor import SourceExtractorProcessor
 from citrasense.settings.citrasense_settings import CitraSenseSettings
 
 logger = logging.getLogger("citrasense.Autotune")
 
-SEXTRACTOR_CONFIG_DIR = Path(__file__).parent / "processors" / "builtin" / "sextractor_configs"
+SEXTRACTOR_CONFIG_DIR = Path(__file__).parent / "pipelines" / "optical" / "sextractor_configs"
 
 PARAM_GRID: dict[str, list] = {
     "detect_thresh": [1.5, 2.0, 2.5, 3.0, 4.0, 5.0, 7.0, 10.0],

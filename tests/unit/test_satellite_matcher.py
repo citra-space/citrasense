@@ -6,11 +6,11 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
-from citrasense.processors.builtin.satellite_matcher_processor import (
+from citrasense.pipelines.common.processing_context import ProcessingContext
+from citrasense.pipelines.optical.satellite_matcher_processor import (
     _STAR_MATCH_TOLERANCE_DEG,
     SatelliteMatcherProcessor,
 )
-from citrasense.processors.processor_result import ProcessingContext
 
 
 # ===================================================================
@@ -136,7 +136,7 @@ class TestElongationFilterAlwaysApplied:
     def test_sidereal_keeps_elongated_sources(self):
         """Sidereal tracking: satellites streak, so keep elongation >= threshold."""
         sources = self._make_mixed_sources()
-        from citrasense.processors.builtin.satellite_matcher_processor import (
+        from citrasense.pipelines.optical.satellite_matcher_processor import (
             _ELONGATION_THRESHOLD,
         )
 
@@ -146,7 +146,7 @@ class TestElongationFilterAlwaysApplied:
     def test_rate_keeps_point_like_sources(self):
         """Rate tracking: satellite is point-like, so keep elongation < threshold."""
         sources = self._make_mixed_sources()
-        from citrasense.processors.builtin.satellite_matcher_processor import (
+        from citrasense.pipelines.optical.satellite_matcher_processor import (
             _ELONGATION_THRESHOLD,
         )
 

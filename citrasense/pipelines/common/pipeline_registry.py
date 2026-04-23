@@ -1,56 +1,129 @@
-"""Registry for managing and executing image processors."""
+"""Modality-keyed pipeline registry for managing and executing processors."""
+
+from __future__ import annotations
 
 import copy
 import threading
 import time
+from collections.abc import Callable
+from dataclasses import dataclass, field
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import numpy as np
 from astropy.io import fits
 
-from citrasense.processors.abstract_processor import AbstractImageProcessor
-from citrasense.processors.artifact_writer import dump_context_artifacts, dump_processing_summary
-from citrasense.processors.builtin.annotated_image_processor import AnnotatedImageProcessor
-from citrasense.processors.builtin.calibration_processor import CalibrationProcessor
-from citrasense.processors.builtin.photometry_processor import PhotometryProcessor
-from citrasense.processors.builtin.plate_solver_processor import PlateSolverProcessor
-from citrasense.processors.builtin.satellite_matcher_processor import SatelliteMatcherProcessor
-from citrasense.processors.builtin.source_extractor_processor import SourceExtractorProcessor
-from citrasense.processors.processor_result import AggregatedResult, ProcessingContext, ProcessorResult
-from citrasense.processors.report_generator import generate_html_report
+from citrasense.pipelines.common.abstract_processor import AbstractImageProcessor
+from citrasense.pipelines.common.artifact_writer import dump_processing_summary
+from citrasense.pipelines.common.processing_context import ProcessingContext
+from citrasense.pipelines.common.processor_result import AggregatedResult, ProcessorResult
+
+if TYPE_CHECKING:
+    pass
+
+ContextHook = Callable[[ProcessingContext], None]
+SummaryHook = Callable[[Path, AggregatedResult], None]
 
 
-class ProcessorRegistry:
-    """Manages and executes image processors."""
+@dataclass
+class PipelineDefinition:
+    """Everything needed to instantiate a pipeline for a given modality."""
 
-    def __init__(self, settings, logger):
-        """Initialize the processor registry.
+    factory: Callable[[], list[AbstractImageProcessor]]
+    pre_hooks: list[ContextHook] = field(default_factory=list)
+    post_hooks: list[SummaryHook] = field(default_factory=list)
+
+
+def _build_optical_pipeline() -> PipelineDefinition:
+    """Lazy-import and return the optical pipeline definition."""
+    from citrasense.pipelines.optical.optical_artifacts import dump_optical_context_artifacts
+    from citrasense.pipelines.optical.report_generator import generate_html_report
+
+    def _build_processors() -> list[AbstractImageProcessor]:
+        from citrasense.pipelines.optical.annotated_image_processor import AnnotatedImageProcessor
+        from citrasense.pipelines.optical.calibration_processor import CalibrationProcessor
+        from citrasense.pipelines.optical.photometry_processor import PhotometryProcessor
+        from citrasense.pipelines.optical.plate_solver_processor import PlateSolverProcessor
+        from citrasense.pipelines.optical.satellite_matcher_processor import SatelliteMatcherProcessor
+        from citrasense.pipelines.optical.source_extractor_processor import SourceExtractorProcessor
+
+        return [
+            CalibrationProcessor(),
+            PlateSolverProcessor(),
+            SourceExtractorProcessor(),
+            PhotometryProcessor(),
+            SatelliteMatcherProcessor(),
+            AnnotatedImageProcessor(),
+        ]
+
+    def _post_report(working_dir: Path, _aggregated: AggregatedResult) -> None:
+        generate_html_report(working_dir)
+
+    return PipelineDefinition(
+        factory=_build_processors,
+        pre_hooks=[dump_optical_context_artifacts],
+        post_hooks=[_post_report],
+    )
+
+
+_PIPELINE_DEFS: dict[str, Callable[[], PipelineDefinition]] = {
+    "optical": _build_optical_pipeline,
+    "radar": lambda: PipelineDefinition(factory=lambda: []),
+    "rf": lambda: PipelineDefinition(factory=lambda: []),
+}
+
+
+def get_pipeline(modality: str) -> list[AbstractImageProcessor]:
+    """Return an ordered processor list for *modality*.
+
+    Raises:
+        ValueError: If *modality* is not registered.
+    """
+    return _get_definition(modality).factory()
+
+
+def _get_definition(modality: str) -> PipelineDefinition:
+    builder = _PIPELINE_DEFS.get(modality)
+    if builder is None:
+        available = ", ".join(f"'{m}'" for m in _PIPELINE_DEFS)
+        raise ValueError(f"Unknown pipeline modality: '{modality}'. Valid options are: {available}")
+    return builder()
+
+
+def list_pipelines() -> list[str]:
+    """Return all registered pipeline modality keys."""
+    return list(_PIPELINE_DEFS.keys())
+
+
+class PipelineRegistry:
+    """Manages and executes processors for a given modality."""
+
+    def __init__(self, settings, logger, modality: str = "optical"):
+        """Initialize the pipeline registry.
 
         Args:
             settings: CitraSenseSettings instance
             logger: Logger instance for diagnostics
+            modality: Pipeline modality key (default ``"optical"``)
         """
         self.settings = settings
         self.logger = logger.getChild(type(self).__name__)
+        self.modality = modality
 
-        self.processors: list[AbstractImageProcessor] = [
-            CalibrationProcessor(),  # Step 0: apply bias/dark/flat calibration
-            PlateSolverProcessor(),  # Step 1: astrometry.net WCS
-            SourceExtractorProcessor(),  # Step 2: SExtractor catalog
-            PhotometryProcessor(),  # Step 3: APASS zero point
-            SatelliteMatcherProcessor(),  # Step 4: TLE matching
-            AnnotatedImageProcessor(),  # Step 5: visual overlay
-        ]
+        defn = _get_definition(modality)
+        self.processors: list[AbstractImageProcessor] = defn.factory()
+        self._pre_hooks: list[ContextHook] = defn.pre_hooks
+        self._post_hooks: list[SummaryHook] = defn.post_hooks
 
-        # Per-processor lifetime stats — lock gives atomic multi-field snapshots in get_processor_stats().
         self._stats_lock = threading.Lock()
         self._processor_stats: dict = {
             p.name: {"runs": 0, "failures": 0, "last_failure_reason": None} for p in self.processors
         }
 
-        # Log registered processors on startup
         processor_names = [p.name for p in self.processors]
-        self.logger.info(f"ProcessorRegistry initialized with {len(self.processors)} processors: {processor_names}")
+        self.logger.info(
+            f"PipelineRegistry[{modality}] initialized with {len(self.processors)} processors: {processor_names}"
+        )
 
     def get_processor_stats(self) -> dict:
         """Return a consistent snapshot of per-processor lifetime stats."""
@@ -68,7 +141,7 @@ class ProcessorRegistry:
                 "name": p.name,
                 "friendly_name": p.friendly_name,
                 "description": p.description,
-                "enabled": self.settings.enabled_processors.get(p.name, True),  # Default to enabled
+                "enabled": self.settings.enabled_processors.get(p.name, True),
             }
             for p in self.processors
         ]
@@ -84,18 +157,14 @@ class ProcessorRegistry:
         """
         start_time = time.time()
 
-        # Load image once for all processors if not already loaded
         if context.image_data is None:
             context.image_data = self._load_image(context.image_path)
 
-        dump_context_artifacts(context)
+        for hook in self._pre_hooks:
+            hook(context)
 
-        # Filter to only enabled processors
-        enabled_processors = [
-            p for p in self.processors if self.settings.enabled_processors.get(p.name, True)  # Default to enabled
-        ]
+        enabled_processors = [p for p in self.processors if self.settings.enabled_processors.get(p.name, True)]
 
-        # Log enabled vs disabled processors
         enabled_names = [p.name for p in enabled_processors]
         disabled_names = [p.name for p in self.processors if p not in enabled_processors]
         self.logger.info(f"Processing with {len(enabled_processors)} enabled processors: {enabled_names}")
@@ -104,21 +173,17 @@ class ProcessorRegistry:
 
         results = []
         for processor in enabled_processors:
-            # Update status message to show which processor is running
             if context.task:
                 context.task.set_status_msg(f"Running {processor.friendly_name}...")
 
             self.logger.info(f"Starting processor: {processor.name} ({processor.friendly_name})")
             proc_start = time.time()
 
-            # Let exceptions propagate - they will trigger retries in ProcessingQueue
-            # After max retries, ProcessingQueue will fail-open and upload raw image
             result = processor.process(context)
             results.append(result)
 
             proc_elapsed = time.time() - proc_start
 
-            # Update per-processor stats (key may be absent for processors injected after __init__)
             with self._stats_lock:
                 s = self._processor_stats.get(processor.name)
                 if s is not None:
@@ -127,7 +192,6 @@ class ProcessorRegistry:
                         s["failures"] += 1
                         s["last_failure_reason"] = result.reason
 
-            # Log failures as warnings, successes as info
             if result.confidence == 0.0 or not result.should_upload:
                 self.logger.warning(
                     f"Processor {processor.name} FAILED in {proc_elapsed:.2f}s: "
@@ -149,34 +213,21 @@ class ProcessorRegistry:
         )
 
         dump_processing_summary(context.working_dir, aggregated)
-        generate_html_report(context.working_dir)
+        for hook in self._post_hooks:
+            hook(context.working_dir, aggregated)
 
         return aggregated
 
     def _aggregate_results(self, results: list[ProcessorResult], total_time: float) -> AggregatedResult:
-        """Combine processor results into upload decision.
-
-        Logic:
-        - If ANY processor says don't upload → don't upload
-        - Combine extracted_data with processor name prefixes
-
-        Args:
-            results: List of individual processor results
-            total_time: Total processing time in seconds
-
-        Returns:
-            AggregatedResult with combined decision and data
-        """
+        """Combine processor results into upload decision."""
         should_upload = all(r.should_upload for r in results) if results else True
 
-        # Combine extracted data with processor name prefixes to avoid collisions
         combined_data = {}
         for result in results:
             for key, value in result.extracted_data.items():
                 prefixed_key = f"{result.processor_name}.{key}"
                 combined_data[prefixed_key] = value
 
-        # Find first rejection reason if any
         skip_reason = None
         for result in results:
             if not result.should_upload:
@@ -192,13 +243,9 @@ class ProcessorRegistry:
         )
 
     def _load_image(self, image_path: Path) -> np.ndarray:
-        """Load image from FITS file.
-
-        Args:
-            image_path: Path to FITS file
-
-        Returns:
-            Numpy array with image data
-        """
+        """Load image from FITS file."""
         data = fits.getdata(image_path)
         return np.asarray(data)
+
+
+ProcessorRegistry = PipelineRegistry

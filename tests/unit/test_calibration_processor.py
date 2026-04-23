@@ -7,8 +7,8 @@ import pytest
 from astropy.io import fits
 
 from citrasense.calibration.calibration_library import CalibrationLibrary
-from citrasense.processors.builtin.calibration_processor import CalibrationProcessor
-from citrasense.processors.processor_result import ProcessingContext
+from citrasense.pipelines.common.processing_context import ProcessingContext
+from citrasense.pipelines.optical.calibration_processor import CalibrationProcessor
 
 
 @pytest.fixture
