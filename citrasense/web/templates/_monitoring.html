@@ -218,7 +218,7 @@
                 <div class="mb-2">
                     <div class="d-flex align-items-center gap-2"
                          role="button"
-                         @click="$store.citrasense.sensorCollapse[sensor.id] = !$store.citrasense.sensorCollapse[sensor.id]"
+                         @click="$store.citrasense.sensorCollapse = { ...$store.citrasense.sensorCollapse, [sensor.id]: !$store.citrasense.sensorCollapse[sensor.id] }"
                          style="user-select: none;">
                         <i class="bi" :class="$store.citrasense.sensorCollapse[sensor.id] ? 'bi-chevron-right' : 'bi-chevron-down'"></i>
                         <span class="fw-semibold" x-text="sensor.name"></span>
@@ -303,6 +303,81 @@
                                   :data-bs-title="'Cable wrap at ' + Math.abs(alert.cumulative_deg ?? 0) + '\u00b0'">
                                 <i class="bi bi-exclamation-triangle-fill me-1"></i>Cable Wrap</span>
                         </template>
+
+                        <!-- ─── Collapsed compact summary (right of switches) ─── -->
+                        <div class="d-flex align-items-center gap-3 ms-auto flex-wrap"
+                             x-show="$store.citrasense.sensorCollapse[sensor.id]"
+                             x-data="{
+                                 get _preview() { return $store.citrasense.previewDataUrls?.[sensor.id]; },
+                                 get _activeTask() {
+                                     const stages = ['imaging', 'processing', 'uploading'];
+                                     for (const s of stages) {
+                                         const list = sensor?.tasks_by_stage?.[s];
+                                         if (list?.length) return { stage: s, ...list[0] };
+                                     }
+                                     return null;
+                                 },
+                                 get _nextTask() {
+                                     const sid = sensor.api_id || sensor.id;
+                                     const upcoming = $store.citrasense.tasks
+                                         .filter(t => t.sensor_id === sid)
+                                         .sort((a, b) => new Date(a.start_time) - new Date(b.start_time));
+                                     return upcoming[0] || null;
+                                 },
+                                 get _countdown() {
+                                     if (!this._nextTask) return '';
+                                     const diff = Math.max(0, Math.floor((new Date(this._nextTask.start_time) - Date.now()) / 1000));
+                                     if (diff <= 0) return 'Now';
+                                     if (diff < 60) return diff + 's';
+                                     if (diff < 3600) return Math.floor(diff / 60) + 'm ' + (diff % 60) + 's';
+                                     return Math.floor(diff / 3600) + 'h ' + Math.floor((diff % 3600) / 60) + 'm';
+                                 },
+                                 get _hasStats() {
+                                     const u = sensor?.pipeline_stats?.uploading;
+                                     return u && ((u.successes || 0) + (u.satellites_identified || 0) + (u.observation_uploads || 0) + (u.image_uploads || 0)) > 0;
+                                 }
+                             }">
+
+                            <!-- Thumbnail -->
+                            <div style="width: 40px; height: 40px; min-width: 40px; background: #111; border-radius: .375rem; overflow: hidden;"
+                                 class="d-flex align-items-center justify-content-center">
+                                <template x-if="_preview">
+                                    <img :src="_preview" alt="Preview"
+                                         style="width: 40px; height: 40px; object-fit: cover; cursor: pointer;"
+                                         @click="$store.citrasense.previewDataUrl = _preview; $dispatch('open-preview-modal')">
+                                </template>
+                                <template x-if="!_preview">
+                                    <i class="bi bi-camera text-muted" style="font-size: 1rem;"></i>
+                                </template>
+                            </div>
+
+                            <!-- Pipeline counters -->
+                            <div class="d-flex gap-2 small text-muted" x-show="_hasStats">
+                                <span><i class="bi bi-check-circle me-1 text-success"></i><span x-text="sensor?.pipeline_stats?.uploading?.successes || 0"></span></span>
+                                <span><i class="bi bi-rocket me-1 text-info"></i><span x-text="sensor?.pipeline_stats?.uploading?.satellites_identified || 0"></span></span>
+                                <span><i class="bi bi-eye me-1 text-success"></i><span x-text="sensor?.pipeline_stats?.uploading?.observation_uploads || 0"></span></span>
+                                <span><i class="bi bi-image me-1 text-warning"></i><span x-text="sensor?.pipeline_stats?.uploading?.image_uploads || 0"></span></span>
+                            </div>
+
+                            <!-- Active task status OR next-task countdown -->
+                            <template x-if="_activeTask">
+                                <div class="small text-truncate" style="max-width: 280px;">
+                                    <span class="badge rounded-pill me-1"
+                                          :class="_activeTask.stage === 'imaging' ? 'bg-primary' : _activeTask.stage === 'processing' ? 'bg-warning text-dark' : 'bg-success'"
+                                          x-text="_activeTask.stage.charAt(0).toUpperCase() + _activeTask.stage.slice(1)"
+                                          style="font-size: .65rem;"></span>
+                                    <span class="fw-semibold" x-text="_activeTask.target_name || _activeTask.task_id"></span>
+                                    <span class="text-muted ms-1" x-show="_activeTask.status_msg" x-text="'— ' + _activeTask.status_msg"></span>
+                                </div>
+                            </template>
+                            <template x-if="!_activeTask && _nextTask">
+                                <div class="small text-muted">
+                                    <i class="bi bi-clock me-1"></i>
+                                    <span>Next in <span class="fw-semibold" x-text="_countdown"></span></span>
+                                    <span class="ms-1 text-muted" x-text="'— ' + (_nextTask.target || _nextTask.id?.substring(0, 8))"></span>
+                                </div>
+                            </template>
+                        </div>
                     </div>
                 </div>
                 <div x-show="!$store.citrasense.sensorCollapse[sensor.id]" x-collapse>
