@@ -15,6 +15,7 @@ import uuid
 from collections.abc import Sequence
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from typing import ClassVar
 
 import platformdirs
 import requests
@@ -162,15 +163,38 @@ def load_satellite_catalog() -> dict[str, dict[str, str]]:
 
 
 class DummyApiClient(AbstractCitraApiClient):
-    """
-    Dummy API client that keeps all data in memory.
+    """Dummy API client that keeps all data in memory.
 
-    Perfect for testing the task pipeline without needing the real API server.
-    Automatically maintains ~10 upcoming tasks at all times.
+    Multi-sensor aware: each ``telescope_id`` gets its own telescope record
+    and independent task pool, auto-created on first access.  Shared state
+    (ground station, satellite catalog, keplemon objects) is site-level.
     """
 
-    # Simulated failure rate for testing retry logic (30% chance of upload failure)
     UPLOAD_FAILURE_RATE = 0.1
+
+    _TELESCOPE_TEMPLATE: ClassVar[dict] = {
+        "groundStationId": "dummy-gs-001",
+        "automatedScheduling": True,
+        "maxSlewRate": 5.0,
+        "pixelSize": 5.86,
+        "focalLength": 200.0,
+        "focalRatio": 3.4,
+        "horizontalPixelCount": 1280,
+        "verticalPixelCount": 1024,
+        "imageCircleDiameter": None,
+        "angularNoise": 2.0,
+        "spectralMinWavelengthNm": None,
+        "spectralMaxWavelengthNm": None,
+        "spectralConfig": {
+            "type": "discrete",
+            "filters": [
+                {"name": "Luminance", "central_wavelength_nm": 550.0, "bandwidth_nm": 300.0},
+                {"name": "Red", "central_wavelength_nm": 658.0, "bandwidth_nm": 138.0},
+                {"name": "Green", "central_wavelength_nm": 551.0, "bandwidth_nm": 88.0},
+                {"name": "Blue", "central_wavelength_nm": 445.0, "bandwidth_nm": 94.0},
+            ],
+        },
+    }
 
     @property
     def cache_source_key(self) -> str:
@@ -180,23 +204,23 @@ class DummyApiClient(AbstractCitraApiClient):
         """Initialize dummy API client with in-memory data."""
         self.logger = logger.getChild(type(self).__name__) if logger else None
 
-        # Thread-safe data access
         self._data_lock = threading.Lock()
 
-        # Initialize in-memory data structures
         self._initialize_data()
 
         if self.logger:
             self.logger.info("DummyApiClient initialized (in-memory mode)")
+
+    # ── Data initialisation ────────────────────────────────────────────
 
     def _initialize_data(self):
         """Initialize in-memory data structures with fresh TLEs from CelesTrak."""
         self._satellite_catalog = load_satellite_catalog()
         now_iso = datetime.now(timezone.utc).isoformat()
 
-        satellites: dict[str, dict] = {}
+        self._satellites: dict[str, dict] = {}
         for sat_id, cat in self._satellite_catalog.items():
-            satellites[sat_id] = {
+            self._satellites[sat_id] = {
                 "id": sat_id,
                 "name": cat["name"],
                 "elsets": [
@@ -210,42 +234,19 @@ class DummyApiClient(AbstractCitraApiClient):
                 ],
             }
 
-        self.data: dict = {
-            "telescope": {
-                "id": "dummy-telescope-001",
-                "name": "Dummy Telescope",
-                "groundStationId": "dummy-gs-001",
-                "automatedScheduling": True,
-                "maxSlewRate": 5.0,
-                "pixelSize": 5.86,
-                "focalLength": 200.0,
-                "focalRatio": 3.4,
-                "horizontalPixelCount": 1280,
-                "verticalPixelCount": 1024,
-                "imageCircleDiameter": None,
-                "angularNoise": 2.0,
-                "spectralMinWavelengthNm": None,
-                "spectralMaxWavelengthNm": None,
-                "spectralConfig": {
-                    "type": "discrete",
-                    "filters": [
-                        {"name": "Luminance", "central_wavelength_nm": 550.0, "bandwidth_nm": 300.0},
-                        {"name": "Red", "central_wavelength_nm": 658.0, "bandwidth_nm": 138.0},
-                        {"name": "Green", "central_wavelength_nm": 551.0, "bandwidth_nm": 88.0},
-                        {"name": "Blue", "central_wavelength_nm": 445.0, "bandwidth_nm": 94.0},
-                    ],
-                },
-            },
-            "ground_station": {
-                "id": "dummy-gs-001",
-                "name": "Pikes Peak Observatory",
-                "latitude": _DEFAULT_STATION_LAT,
-                "longitude": _DEFAULT_STATION_LON,
-                "altitude": _DEFAULT_STATION_ALT,
-            },
-            "tasks": [],
-            "satellites": satellites,
+        self._ground_station: dict = {
+            "id": "dummy-gs-001",
+            "name": "Pikes Peak Observatory",
+            "latitude": _DEFAULT_STATION_LAT,
+            "longitude": _DEFAULT_STATION_LON,
+            "altitude": _DEFAULT_STATION_ALT,
         }
+
+        # Per-telescope records and task pools, keyed by telescope_id.
+        # Auto-created on first access via _ensure_telescope().
+        self._telescopes: dict[str, dict] = {}
+        self._tasks: dict[str, list[dict]] = {}
+        self._telescope_counter = 0
 
         self._keplemon_sats: dict[str, Satellite] = {}
         for sat_id, cat in self._satellite_catalog.items():
@@ -260,7 +261,30 @@ class DummyApiClient(AbstractCitraApiClient):
                         exc,
                     )
 
-    # Abstract methods implementation
+    def _ensure_telescope(self, telescope_id: str) -> dict:
+        """Return the telescope record for *telescope_id*, creating one on first access."""
+        if telescope_id not in self._telescopes:
+            self._telescope_counter += 1
+            ordinal = self._telescope_counter
+            rec = dict(self._TELESCOPE_TEMPLATE)
+            rec["spectralConfig"] = {
+                k: (list(v) if isinstance(v, list) else v)
+                for k, v in self._TELESCOPE_TEMPLATE["spectralConfig"].items()
+            }
+            rec["spectralConfig"]["filters"] = [dict(f) for f in self._TELESCOPE_TEMPLATE["spectralConfig"]["filters"]]
+            rec["id"] = telescope_id
+            rec["name"] = f"Dummy Telescope {ordinal}"
+            self._telescopes[telescope_id] = rec
+            self._tasks[telescope_id] = []
+            if self.logger:
+                self.logger.info(
+                    "DummyApiClient: auto-created telescope record '%s' (%s)",
+                    telescope_id,
+                    rec["name"],
+                )
+        return self._telescopes[telescope_id]
+
+    # ── Abstract methods implementation ──────────────────────────────
 
     def does_api_server_accept_key(self):
         """Check if the API key is valid (always True for dummy)."""
@@ -269,16 +293,9 @@ class DummyApiClient(AbstractCitraApiClient):
         return True
 
     def get_telescope(self, telescope_id):
-        """Get telescope details."""
+        """Get telescope details.  Auto-creates a record on first access."""
         with self._data_lock:
-            telescope = self.data.get("telescope", {})
-
-            # Ensure required fields exist
-            if "maxSlewRate" not in telescope:
-                telescope["maxSlewRate"] = 5.0
-                if self.logger:
-                    self.logger.info("DummyApiClient: Added missing maxSlewRate to telescope data")
-
+            telescope = self._ensure_telescope(telescope_id)
             if self.logger:
                 self.logger.debug(f"DummyApiClient: get_telescope({telescope_id})")
             return telescope
@@ -289,9 +306,7 @@ class DummyApiClient(AbstractCitraApiClient):
         Auto-populates missing satellites from the fetched catalog.
         """
         with self._data_lock:
-            satellites = self.data.get("satellites", {})
-
-            if satellite_id not in satellites:
+            if satellite_id not in self._satellites:
                 if satellite_id not in self._satellite_catalog:
                     if self.logger:
                         self.logger.warning(f"DummyApiClient: Unknown satellite {satellite_id}")
@@ -300,7 +315,7 @@ class DummyApiClient(AbstractCitraApiClient):
                 cat = self._satellite_catalog[satellite_id]
                 line1, line2 = cat["tle_line1"], cat["tle_line2"]
                 now_iso = datetime.now(timezone.utc).isoformat()
-                satellite = {
+                self._satellites[satellite_id] = {
                     "id": satellite_id,
                     "name": cat["name"],
                     "elsets": [
@@ -313,15 +328,12 @@ class DummyApiClient(AbstractCitraApiClient):
                         }
                     ],
                 }
-                satellites[satellite_id] = satellite
                 if self.logger:
                     self.logger.info(f"DummyApiClient: Auto-populated satellite {satellite_id}")
-            else:
-                satellite = satellites[satellite_id]
 
             if self.logger:
                 self.logger.debug(f"DummyApiClient: get_satellite({satellite_id})")
-            return satellite
+            return self._satellites[satellite_id]
 
     def get_best_elset(self, satellite_id, types: Sequence[str] | None = None) -> dict | None:
         """Return the single elset for a dummy satellite (mimics server's best-elset logic).
@@ -332,8 +344,7 @@ class DummyApiClient(AbstractCitraApiClient):
         """
         del types  # dummy data is always classic SGP4
         with self._data_lock:
-            satellites = self.data.get("satellites", {})
-            satellite = satellites.get(satellite_id)
+            satellite = self._satellites.get(satellite_id)
             if not satellite:
                 if satellite_id in self._satellite_catalog:
                     cat = self._satellite_catalog[satellite_id]
@@ -350,14 +361,15 @@ class DummyApiClient(AbstractCitraApiClient):
             return elsets[0]
 
     def get_telescope_tasks(self, telescope_id, statuses=None, task_stop_after=None):
-        """Fetch tasks for telescope (returns only Pending/Scheduled).
+        """Fetch tasks for a specific telescope.
 
-        Automatically maintains ~10 upcoming tasks at all times for easy testing.
+        Each telescope_id maintains its own independent task pool.
+        Automatically generates ~10 upcoming tasks when the pool runs low.
         """
         with self._data_lock:
-            tasks = self.data.get("tasks", [])
+            telescope = self._ensure_telescope(telescope_id)
+            tasks = self._tasks[telescope_id]
 
-            # Clean up old completed/failed tasks (keep last 20 for history)
             now = datetime.now(timezone.utc)
             active_tasks = []
             completed_tasks = []
@@ -365,11 +377,9 @@ class DummyApiClient(AbstractCitraApiClient):
             for task in tasks:
                 status = task.get("status")
                 if status in ["Pending", "Scheduled"]:
-                    # Check if task is too old (expired)
                     try:
                         task_stop = datetime.fromisoformat(task.get("taskStop", "").replace("Z", "+00:00"))
                         if task_stop < now:
-                            # Task expired, mark as failed
                             task["status"] = "Failed"
                             completed_tasks.append(task)
                         else:
@@ -379,46 +389,53 @@ class DummyApiClient(AbstractCitraApiClient):
                 else:
                     completed_tasks.append(task)
 
-            completed_tasks = completed_tasks[-20:] if len(completed_tasks) > 20 else completed_tasks
+            completed_tasks = completed_tasks[-20:]
 
-            telescope = self.data.get("telescope", {})
             scheduling_enabled = telescope.get("automatedScheduling", True)
             target_task_count = 10
             if scheduling_enabled and len(active_tasks) < target_task_count:
-                ground_station = self.data.get("ground_station", {})
                 new_tasks = self._find_upcoming_passes(
-                    ground_station, telescope, target_task_count - len(active_tasks), active_tasks
+                    self._ground_station, telescope, target_task_count - len(active_tasks), active_tasks
                 )
                 active_tasks.extend(new_tasks)
-                self.data["tasks"] = active_tasks + completed_tasks
+                self._tasks[telescope_id] = active_tasks + completed_tasks
 
                 if new_tasks and self.logger:
-                    self.logger.debug(f"DummyApiClient: Auto-generated {len(new_tasks)} new tasks")
+                    self.logger.debug(
+                        "DummyApiClient: Auto-generated %d new tasks for %s", len(new_tasks), telescope_id
+                    )
 
             if self.logger:
                 self.logger.debug(f"DummyApiClient: get_telescope_tasks({telescope_id}) -> {len(active_tasks)} tasks")
             return active_tasks
 
+    def _find_task_across_pools(self, task_id: str) -> dict | None:
+        """Find a task by ID across all telescope task pools.  Caller must hold _data_lock."""
+        for pool in self._tasks.values():
+            for task in pool:
+                if task.get("id") == task_id:
+                    return task
+        return None
+
     def cancel_task(self, task_id) -> bool:
         """Cancel a task in the dummy store by setting status=Canceled.
 
         Returns True if the task was found and cancellable (i.e. not already
-        in a terminal state), False otherwise. Mirrors the real Citra API's
-        rejection of terminal-state mutations.
+        in a terminal state), False otherwise.
         """
         with self._data_lock:
-            for task in self.data.get("tasks", []):
-                if task.get("id") == task_id:
-                    if task.get("status") in ("Canceled", "Failed", "Succeeded"):
-                        if self.logger:
-                            self.logger.warning(
-                                f"DummyApiClient: cancel_task({task_id}) refused — already {task['status']}"
-                            )
-                        return False
-                    task["status"] = "Canceled"
+            task = self._find_task_across_pools(task_id)
+            if task is not None:
+                if task.get("status") in ("Canceled", "Failed", "Succeeded"):
                     if self.logger:
-                        self.logger.info(f"DummyApiClient: cancel_task({task_id}) -> Canceled")
-                    return True
+                        self.logger.warning(
+                            f"DummyApiClient: cancel_task({task_id}) refused — already {task['status']}"
+                        )
+                    return False
+                task["status"] = "Canceled"
+                if self.logger:
+                    self.logger.info(f"DummyApiClient: cancel_task({task_id}) -> Canceled")
+                return True
         if self.logger:
             self.logger.warning(f"DummyApiClient: cancel_task({task_id}) — task not found")
         return False
@@ -449,12 +466,12 @@ class DummyApiClient(AbstractCitraApiClient):
             "groundStationName": ground_station.get("name", "Test Ground Station"),
             "userId": "dummy-user",
             "username": "Test User",
-            "assignedFilterName": self._random_filter_name(),
+            "assignedFilterName": self._random_filter_name(telescope),
         }
 
-    def _random_filter_name(self) -> str | None:
+    def _random_filter_name(self, telescope: dict) -> str | None:
         """Pick a random filter from the telescope's spectralConfig, if any."""
-        spec = self.data.get("telescope", {}).get("spectralConfig", {})
+        spec = telescope.get("spectralConfig", {})
         filters = spec.get("filters", [])
         if not filters:
             return None
@@ -626,10 +643,9 @@ class DummyApiClient(AbstractCitraApiClient):
     def get_ground_station(self, ground_station_id):
         """Fetch ground station details."""
         with self._data_lock:
-            ground_station = self.data.get("ground_station", {})
             if self.logger:
                 self.logger.debug(f"DummyApiClient: get_ground_station({ground_station_id})")
-            return ground_station
+            return self._ground_station
 
     def put_telescope_status(self, body):
         """Report telescope online status."""
@@ -694,11 +710,9 @@ class DummyApiClient(AbstractCitraApiClient):
                     f"DummyApiClient: update_ground_station_location({ground_station_id}, "
                     f"lat={latitude}, lon={longitude}, alt={altitude})"
                 )
-            # Update in-memory data
-            if "ground_station" in self.data:
-                self.data["ground_station"]["latitude"] = latitude
-                self.data["ground_station"]["longitude"] = longitude
-                self.data["ground_station"]["altitude"] = altitude
+            self._ground_station["latitude"] = latitude
+            self._ground_station["longitude"] = longitude
+            self._ground_station["altitude"] = altitude
             return {"status": "ok"}
 
     def get_elsets_latest(self, days: int = 14):
@@ -720,10 +734,14 @@ class DummyApiClient(AbstractCitraApiClient):
 
     def update_telescope_automated_scheduling(self, telescope_id: str, enabled: bool) -> bool:
         with self._data_lock:
-            telescope = self.data.get("telescope", {})
+            telescope = self._ensure_telescope(telescope_id)
             telescope["automatedScheduling"] = enabled
         if self.logger:
-            self.logger.info(f"DummyApiClient: automated scheduling {'enabled' if enabled else 'disabled'}")
+            self.logger.info(
+                "DummyApiClient: automated scheduling %s for %s",
+                "enabled" if enabled else "disabled",
+                telescope_id,
+            )
         return True
 
     def upload_optical_observations(
@@ -787,35 +805,28 @@ class DummyApiClient(AbstractCitraApiClient):
 
     def mark_task_complete(self, task_id):
         """Mark a task as complete with simulated random failures for testing retry logic."""
-        # Randomly fail to test retry logic
         if random.random() < self.UPLOAD_FAILURE_RATE:
             if self.logger:
                 self.logger.warning(f"DummyApiClient: Simulated mark_complete failure for task {task_id}")
-            return False  # Indicate failure to mark complete
+            return False
 
         with self._data_lock:
-            tasks = self.data.get("tasks", [])
+            task = self._find_task_across_pools(task_id)
+            if task is not None:
+                task["status"] = "Succeeded"
+                task["updateEpoch"] = datetime.now(timezone.utc).isoformat()
+                if self.logger:
+                    self.logger.info(f"DummyApiClient: Marked task {task_id} as Succeeded")
 
-            for task in tasks:
-                if task.get("id") == task_id:
-                    task["status"] = "Succeeded"
-                    task["updateEpoch"] = datetime.now(timezone.utc).isoformat()
-                    if self.logger:
-                        self.logger.info(f"DummyApiClient: Marked task {task_id} as Succeeded")
-                    break
-
-        return True  # Success
+        return True
 
     def mark_task_failed(self, task_id):
         """Mark a task as failed (updates in-memory)."""
         with self._data_lock:
-            tasks = self.data.get("tasks", [])
-
-            for task in tasks:
-                if task.get("id") == task_id:
-                    task["status"] = "Failed"
-                    task["updateEpoch"] = datetime.now(timezone.utc).isoformat()
-                    break
+            task = self._find_task_across_pools(task_id)
+            if task is not None:
+                task["status"] = "Failed"
+                task["updateEpoch"] = datetime.now(timezone.utc).isoformat()
 
             if self.logger:
                 self.logger.info(f"DummyApiClient: Marked task {task_id} as Failed")
