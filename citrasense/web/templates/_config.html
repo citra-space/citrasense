@@ -1,7 +1,7 @@
     <div class="container my-4" id="configSection" x-show="$store.citrasense.currentSection === 'config'" x-cloak
          x-data="{ configTab: $persist('api').as('configTab') }"
-         x-effect="if (configTab === 'calibration' && !($store.citrasense.status?.supports_direct_camera_control)) configTab = 'api';
-                  if (configTab === 'autofocus' && !($store.citrasense.status?.supports_autofocus)) configTab = 'hardware'">
+         x-effect="if (configTab === 'calibration' && !($store.citrasense.configSensorStatus?.supports_direct_camera_control)) configTab = 'api';
+                  if (configTab === 'autofocus' && !($store.citrasense.configSensorStatus?.supports_autofocus)) configTab = 'hardware'">
         <form @submit.prevent="window.saveConfiguration($event)"
               @invalid.capture="window.handleInvalidConfigField($event, (tab) => configTab = tab)">
             <div class="row">
@@ -18,12 +18,12 @@
                         </a>
                         <a class="nav-link" href="#" :class="{ active: configTab === 'autofocus' }"
                            @click.prevent="configTab = 'autofocus'"
-                           x-show="$store.citrasense.status?.supports_autofocus">
+                           x-show="$store.citrasense.configSensorStatus?.supports_autofocus">
                             <i class="bi bi-arrows-expand me-2"></i>Autofocus
                         </a>
                         <a class="nav-link" href="#" :class="{ active: configTab === 'calibration' }"
                            @click.prevent="configTab = 'calibration'"
-                           x-show="$store.citrasense.status?.supports_direct_camera_control">
+                           x-show="$store.citrasense.configSensorStatus?.supports_direct_camera_control">
                             <i class="bi bi-grid-3x3 me-2"></i>Calibration
                         </a>
                         <a class="nav-link" href="#" :class="{ active: configTab === 'observation' }"
@@ -90,19 +90,10 @@
                                     </div>
                                 </div>
                             </div>
-                            <div class="col-12 col-md-6">
+                            <div class="col-12">
                                 <label for="personal_access_token" class="form-label">Personal Access Token <span class="text-danger">*</span></label>
                                 <input type="password" id="personal_access_token" class="form-control" placeholder="Enter your Citra API token" required x-model="$store.citrasense.config.personal_access_token">
-                                <small class="text-muted">Get your token and telescope ID from <a :href="$store.citrasense.config.app_url || ''" target="_blank" rel="noopener noreferrer" x-text="($store.citrasense.config.app_url || '').replace('https://', '')"></a></small>
-                            </div>
-                            <div class="col-12 col-md-6">
-                                <label for="telescopeId" class="form-label">Sensor ID <span class="text-danger">*</span></label>
-                                <input type="text" id="telescopeId" class="form-control" placeholder="Enter Citra sensor ID" required
-                                       x-model="$store.citrasense.config.sensors[$store.citrasense.configSensorIndex].citra_sensor_id">
-                                <small class="text-muted">
-                                    Sensor:
-                                    <span x-text="$store.citrasense.config.sensors?.[$store.citrasense.configSensorIndex]?.id || 'default'"></span>
-                                </small>
+                                <small class="text-muted">Get your token from <a :href="$store.citrasense.config.app_url || ''" target="_blank" rel="noopener noreferrer" x-text="($store.citrasense.config.app_url || '').replace('https://', '')"></a></small>
                             </div>
                         </div>
                     </div>
@@ -299,19 +290,19 @@
                                 </div>
 
                                 <!-- Calibration readiness for current settings -->
-                                <div class="mb-3" x-show="$store.citrasense.status?.calibration_status?.calibration_applicable">
-                                    <template x-if="$store.citrasense.status?.calibration_status?.has_bias && $store.citrasense.status?.calibration_status?.has_dark && $store.citrasense.status?.calibration_status?.has_flat">
+                                <div class="mb-3" x-show="$store.citrasense.configSensorStatus?.calibration_status?.calibration_applicable">
+                                    <template x-if="$store.citrasense.configSensorStatus?.calibration_status?.has_bias && $store.citrasense.configSensorStatus?.calibration_status?.has_dark && $store.citrasense.configSensorStatus?.calibration_status?.has_flat">
                                         <div class="alert alert-success py-2 mb-0 small">
                                             <i class="bi bi-check-circle-fill me-1"></i>
                                             All calibration masters available for current settings.
                                         </div>
                                     </template>
-                                    <template x-if="$store.citrasense.status?.calibration_status && !($store.citrasense.status.calibration_status.has_bias && $store.citrasense.status.calibration_status.has_dark && $store.citrasense.status.calibration_status.has_flat)">
+                                    <template x-if="$store.citrasense.configSensorStatus?.calibration_status && !($store.citrasense.configSensorStatus.calibration_status.has_bias && $store.citrasense.configSensorStatus.calibration_status.has_dark && $store.citrasense.configSensorStatus.calibration_status.has_flat)">
                                         <div class="alert alert-warning py-2 mb-0 small">
                                             <i class="bi bi-exclamation-triangle-fill me-1"></i>
                                             <strong>Missing for current settings:</strong>
                                             <ul class="mb-0 ps-3 mt-1">
-                                                <template x-for="m in ($store.citrasense.status?.calibration_status?.missing || [])" :key="m">
+                                                <template x-for="m in ($store.citrasense.configSensorStatus?.calibration_status?.missing || [])" :key="m">
                                                     <li x-text="m"></li>
                                                 </template>
                                             </ul>

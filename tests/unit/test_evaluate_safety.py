@@ -149,3 +149,76 @@ class TestEvaluateSafetyEmergencyClear:
         td._evaluate_safety()
 
         assert td.imaging_tasks == {}
+
+
+class TestMultiRuntimeEmergency:
+    """Emergency safety must clear ALL runtimes, not just the first."""
+
+    @staticmethod
+    def _make_multi_runtime_dispatcher(safety_monitor):
+        from citrasense.tasks.task_dispatcher import TaskDispatcher
+
+        td = TaskDispatcher(
+            api_client=MagicMock(),
+            logger=MagicMock(),
+            settings=MagicMock(),
+            safety_monitor=safety_monitor,
+        )
+        runtimes = {}
+        for sid in ("scope-0", "scope-1"):
+            rt = MagicMock()
+            rt.sensor_id = sid
+            rt.sensor_type = "telescope"
+            rt.acquisition_queue = MagicMock()
+            rt.acquisition_queue.is_idle.return_value = True
+            rt.acquisition_queue.clear.return_value = 2
+            rt.processing_queue = MagicMock()
+            rt.upload_queue = MagicMock()
+            rt.are_queues_idle.return_value = True
+            runtimes[sid] = rt
+        td._runtimes = runtimes
+        return td
+
+    def test_emergency_clears_all_runtime_queues(self):
+        monitor = SafetyMonitor(MagicMock(), [_StubCheck("hw", SafetyAction.EMERGENCY)])
+        td = self._make_multi_runtime_dispatcher(monitor)
+
+        td._evaluate_safety()
+
+        for rt in td._runtimes.values():
+            rt.acquisition_queue.clear.assert_called_once()
+
+    def test_emergency_aborts_slew_on_all_runtimes(self):
+        monitor = SafetyMonitor(MagicMock(), [_StubCheck("hw", SafetyAction.EMERGENCY)])
+        td = self._make_multi_runtime_dispatcher(monitor)
+
+        td._evaluate_safety()
+
+        for rt in td._runtimes.values():
+            rt.hardware_adapter.abort_slew.assert_called()
+
+    def test_queue_stop_checks_all_runtimes_idle(self):
+        check = _StubCheck("hw", SafetyAction.QUEUE_STOP)
+        monitor = SafetyMonitor(MagicMock(), [check])
+        td = self._make_multi_runtime_dispatcher(monitor)
+
+        td._runtimes["scope-0"].acquisition_queue.is_idle.return_value = True
+        td._runtimes["scope-1"].acquisition_queue.is_idle.return_value = False
+
+        td._evaluate_safety()
+
+        check.execute_action = MagicMock()
+        td._evaluate_safety()
+        check.execute_action.assert_not_called()
+
+    def test_clear_pending_drains_all_runtimes(self):
+        monitor = SafetyMonitor(MagicMock(), [_StubCheck("hw", SafetyAction.SAFE)])
+        td = self._make_multi_runtime_dispatcher(monitor)
+        td._runtimes["scope-0"].acquisition_queue.clear.return_value = 3
+        td._runtimes["scope-1"].acquisition_queue.clear.return_value = 5
+
+        cleared = td.clear_pending_tasks()
+
+        assert cleared == 8
+        for rt in td._runtimes.values():
+            rt.acquisition_queue.clear.assert_called_once()

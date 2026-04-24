@@ -131,7 +131,7 @@ class CitraSenseWebApp:
         """
         if not self.daemon or not getattr(self.daemon, "task_dispatcher", None):
             return
-        tasks = get_web_tasks(self.daemon, self.status)
+        tasks = get_web_tasks(self.daemon)
         await self.connection_manager.broadcast({"type": "tasks", "data": tasks})
 
     async def broadcast_preview(self):

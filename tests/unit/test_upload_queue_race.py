@@ -124,6 +124,7 @@ class TestConfigReloadDropsInFlightStages:
 
         sensor_manager = MagicMock()
         sensor_manager.first_of_type.return_value = telescope_sensor
+        sensor_manager.iter_by_type.return_value = iter([telescope_sensor])
 
         daemon.sensor_manager = sensor_manager
         daemon.location_service = MagicMock()

@@ -57,9 +57,17 @@ def mock_settings():
     s.keep_processing_output = False
     s.alignment_exposure_seconds = 2.0
     s.last_alignment_timestamp = None
-    s.task_processing_paused = False
     s.observation_mode = "auto"
     s.elset_refresh_interval_hours = 6
+
+    sc = MagicMock()
+    sc.id = "scope-0"
+    sc.task_processing_paused = False
+    sc.observing_session_enabled = False
+    sc.self_tasking_enabled = False
+    s.sensors = [sc]
+    s.get_sensor_config = lambda sid: next((c for c in s.sensors if c.id == sid), None)
+
     s.to_dict.return_value = {
         "host": s.host,
         "port": s.port,
@@ -91,7 +99,7 @@ def mock_settings():
         "time_offset_pause_ms": s.time_offset_pause_ms,
         "gps_location_updates_enabled": s.gps_location_updates_enabled,
         "gps_update_interval_minutes": s.gps_update_interval_minutes,
-        "task_processing_paused": s.task_processing_paused,
+        "task_processing_paused": False,
         "observation_mode": s.observation_mode,
         "elset_refresh_interval_hours": s.elset_refresh_interval_hours,
     }
@@ -151,15 +159,20 @@ def mock_daemon(mock_settings):
     mock_sensor.is_connected.return_value = True
     mock_sensor.adapter = d.hardware_adapter
     mock_sensor.name = "Test Scope"
+    mock_sensor.adapter_key = "nina"
+    mock_sensor.citra_record = {"id": "tel-1", "automated_scheduling": False}
 
     mock_sm = MagicMock()
+    mock_sm.get.return_value = mock_sensor
     mock_sm.get_sensor.return_value = mock_sensor
     mock_sm.first_of_type.return_value = mock_sensor
     mock_sm.__iter__ = lambda self: iter([mock_sensor])
+    mock_sm.iter_by_type.return_value = iter([mock_sensor])
     d.sensor_manager = mock_sm
 
     mock_runtime = MagicMock()
     mock_runtime.sensor_id = "scope-0"
+    mock_runtime.sensor = mock_sensor
     mock_runtime.homing_manager = d.task_dispatcher.homing_manager
     mock_runtime.alignment_manager = d.task_dispatcher.alignment_manager
     mock_runtime.autofocus_manager = d.task_dispatcher.autofocus_manager
@@ -167,7 +180,11 @@ def mock_daemon(mock_settings):
     mock_runtime.processing_queue = d.task_dispatcher.processing_queue
     mock_runtime.upload_queue = d.task_dispatcher.upload_queue
     mock_runtime.calibration_manager = None
+    mock_runtime.observing_session_manager = None
+    mock_runtime.self_tasking_manager = None
     d.task_dispatcher.get_runtime.return_value = mock_runtime
+    d.task_dispatcher._telescope_runtimes.return_value = [mock_runtime]
+    d.task_dispatcher._runtimes = {"scope-0": mock_runtime}
     return d
 
 
@@ -394,8 +411,9 @@ def test_get_status(client):
     resp = client.get("/api/status")
     assert resp.status_code == 200
     data = resp.json()
-    assert data["telescope_connected"] is True
-    assert data["camera_connected"] is True
+    sensor = data["sensors"]["scope-0"]
+    assert sensor["telescope_connected"] is True
+    assert sensor["camera_connected"] is True
 
 
 def test_get_status_no_daemon():
@@ -491,7 +509,7 @@ def test_emergency_stop(client, mock_daemon):
     mock_daemon.safety_monitor.activate_operator_stop.assert_called_once()
     mock_daemon.task_dispatcher.pause.assert_called_once()
     mock_daemon.task_dispatcher.clear_pending_tasks.assert_called_once()
-    assert mock_daemon.settings.task_processing_paused is True
+    assert mock_daemon.settings.sensors[0].task_processing_paused is True
     mock_daemon.settings.save.assert_called_once()
 
 
@@ -510,7 +528,7 @@ def test_emergency_stop_no_task_dispatcher(mock_daemon):
     c = TestClient(app.app)
     resp = c.post("/api/emergency-stop")
     assert resp.status_code == 202
-    assert mock_daemon.settings.task_processing_paused is True
+    assert mock_daemon.settings.sensors[0].task_processing_paused is True
     mock_daemon.safety_monitor.activate_operator_stop.assert_called_once()
 
 
@@ -813,7 +831,8 @@ def test_status_with_ground_station(client, mock_daemon):
 def test_status_telescope_disconnected(client, mock_daemon):
     mock_daemon.hardware_adapter.is_telescope_connected.side_effect = Exception("no connection")
     resp = client.get("/api/status")
-    assert resp.json()["telescope_connected"] is False
+    sensor = resp.json()["sensors"]["scope-0"]
+    assert sensor["telescope_connected"] is False
 
 
 def test_status_with_processors(client, mock_daemon):
@@ -829,8 +848,8 @@ def test_status_scheduled_autofocus(client, mock_daemon):
     mock_daemon.settings.last_autofocus_timestamp = int(__import__("time").time()) - 1800
     mock_daemon.task_dispatcher.autofocus_manager.get_next_autofocus_minutes.return_value = 30
     resp = client.get("/api/status")
-    data = resp.json()
-    assert data["next_autofocus_minutes"] is not None
+    sensor = resp.json()["sensors"]["scope-0"]
+    assert sensor["next_autofocus_minutes"] is not None
 
 
 def test_status_scheduled_autofocus_never_run(client, mock_daemon):
@@ -838,7 +857,8 @@ def test_status_scheduled_autofocus_never_run(client, mock_daemon):
     mock_daemon.settings.last_autofocus_timestamp = None
     mock_daemon.task_dispatcher.autofocus_manager.get_next_autofocus_minutes.return_value = 0
     resp = client.get("/api/status")
-    assert resp.json()["next_autofocus_minutes"] == 0
+    sensor = resp.json()["sensors"]["scope-0"]
+    assert sensor["next_autofocus_minutes"] == 0
 
 
 # ---------------------------------------------------------------------------
@@ -871,3 +891,72 @@ def test_post_config_validates_int_range(client, mock_daemon):
         },
     )
     assert resp.status_code == 400
+
+
+# ---------------------------------------------------------------------------
+# Config sensor CRUD
+# ---------------------------------------------------------------------------
+
+
+def test_list_sensor_configs(client, mock_daemon):
+    mock_daemon.settings.sensors[0].model_dump = MagicMock(return_value={"id": "scope-0", "type": "telescope"})
+    resp = client.get("/api/config/sensors")
+    assert resp.status_code == 200
+    assert len(resp.json()["sensors"]) == 1
+
+
+def test_add_sensor_config(client, mock_daemon):
+    resp = client.post(
+        "/api/config/sensors",
+        json={"id": "scope-1", "type": "telescope", "adapter": "nina"},
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["success"] is True
+    assert data["sensor"]["id"] == "scope-1"
+    assert len(mock_daemon.settings.sensors) == 2
+    mock_daemon.settings.save.assert_called()
+
+
+def test_add_sensor_config_duplicate(client, mock_daemon):
+    resp = client.post(
+        "/api/config/sensors",
+        json={"id": "scope-0", "type": "telescope", "adapter": "nina"},
+    )
+    assert resp.status_code == 409
+
+
+def test_add_sensor_config_missing_id(client):
+    resp = client.post("/api/config/sensors", json={"type": "telescope"})
+    assert resp.status_code == 400
+
+
+def test_add_sensor_config_invalid_id(client):
+    resp = client.post(
+        "/api/config/sensors",
+        json={"id": "bad id!", "type": "telescope", "adapter": "nina"},
+    )
+    assert resp.status_code == 400
+
+
+def test_remove_sensor_config(client, mock_daemon):
+    from citrasense.settings.citrasense_settings import SensorConfig
+
+    mock_daemon.settings.sensors.append(SensorConfig(id="scope-1", type="telescope", adapter="nina"))
+    resp = client.delete("/api/config/sensors/scope-1")
+    assert resp.status_code == 200
+    assert resp.json()["success"] is True
+    assert len(mock_daemon.settings.sensors) == 1
+    mock_daemon.settings.save.assert_called()
+
+
+def test_remove_sensor_config_not_found(client):
+    resp = client.delete("/api/config/sensors/nonexistent")
+    assert resp.status_code == 404
+
+
+def test_remove_last_sensor_blocked(client, mock_daemon):
+    assert len(mock_daemon.settings.sensors) == 1
+    resp = client.delete("/api/config/sensors/scope-0")
+    assert resp.status_code == 400
+    assert "last sensor" in resp.json()["error"].lower()

@@ -1,13 +1,122 @@
-<!-- Sensor picker — shown only when 2+ sensors are registered -->
-<div class="mb-3" x-show="$store.citrasense.config?.sensors?.length > 1">
-    <label class="form-label small text-muted">Sensor</label>
-    <div class="d-flex flex-wrap gap-2">
+<!-- Sensor picker + add/remove controls -->
+<div class="mb-3"
+     x-effect="
+        /* Reload adapter schema + filters when the selected sensor changes */
+        const sid = $store.citrasense.configSensorId;
+        const idx = $store.citrasense.configSensorIndex;
+        const sc  = $store.citrasense.config?.sensors?.[idx];
+        if (sc?.adapter) {
+            import('../static/config.js').then(m => {
+                m.loadAdapterSchema(sc.adapter, sc.adapter_settings || {});
+                m.loadFilterConfig();
+            });
+        }
+     "
+     x-data="{
+        showAddForm: false,
+        newId: '',
+        newAdapter: '',
+        addError: '',
+        adding: false,
+        removing: false,
+
+        async addSensor() {
+            this.addError = '';
+            const id = this.newId.trim();
+            if (!id) { this.addError = 'Sensor ID is required'; return; }
+            this.adding = true;
+            try {
+                const resp = await fetch('/api/config/sensors', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ id, type: 'telescope', adapter: this.newAdapter })
+                });
+                const data = await resp.json();
+                if (!resp.ok) { this.addError = data.error || 'Failed to add sensor'; return; }
+                $store.citrasense.config.sensors.push(data.sensor);
+                $store.citrasense.configSensorId = id;
+                $store.citrasense.savedAdapters[id] = this.newAdapter;
+                this.newId = '';
+                this.newAdapter = '';
+                this.showAddForm = false;
+            } catch (e) {
+                this.addError = e.message;
+            } finally {
+                this.adding = false;
+            }
+        },
+
+        async removeSensor(sid) {
+            if (!confirm('Remove sensor \'' + sid + '\'? You will need to Save & Reload to finalize.')) return;
+            this.removing = true;
+            try {
+                const resp = await fetch('/api/config/sensors/' + encodeURIComponent(sid), { method: 'DELETE' });
+                const data = await resp.json();
+                if (!resp.ok) { alert(data.error || 'Failed to remove sensor'); return; }
+                const sensors = $store.citrasense.config.sensors;
+                const idx = sensors.findIndex(s => s.id === sid);
+                if (idx >= 0) sensors.splice(idx, 1);
+                delete $store.citrasense.savedAdapters[sid];
+                if ($store.citrasense.configSensorId === sid) {
+                    $store.citrasense.configSensorId = sensors[0]?.id || null;
+                }
+            } catch (e) {
+                alert(e.message);
+            } finally {
+                this.removing = false;
+            }
+        }
+     }">
+    <label class="form-label small text-muted">Sensors</label>
+    <div class="d-flex flex-wrap gap-2 align-items-center">
         <template x-for="s in ($store.citrasense.config?.sensors || [])" :key="s.id">
-            <button type="button" class="btn btn-sm"
-                    :class="s.id === $store.citrasense.configSensorId ? 'btn-primary' : 'btn-outline-secondary'"
-                    @click="$store.citrasense.configSensorId = s.id"
-                    x-text="s.id">
-            </button>
+            <span class="btn-group btn-group-sm">
+                <button type="button" class="btn"
+                        :class="s.id === $store.citrasense.configSensorId ? 'btn-primary' : 'btn-outline-secondary'"
+                        @click="$store.citrasense.configSensorId = s.id"
+                        x-text="s.id">
+                </button>
+                <button type="button" class="btn btn-outline-danger px-1"
+                        x-show="$store.citrasense.config?.sensors?.length > 1 && s.id === $store.citrasense.configSensorId"
+                        :disabled="removing"
+                        @click="removeSensor(s.id)"
+                        title="Remove this sensor">
+                    <i class="bi bi-x-lg"></i>
+                </button>
+            </span>
         </template>
+        <button type="button" class="btn btn-sm btn-outline-success"
+                @click="showAddForm = !showAddForm"
+                :title="showAddForm ? 'Cancel' : 'Add sensor'">
+            <i class="bi" :class="showAddForm ? 'bi-x-lg' : 'bi-plus-lg'"></i>
+        </button>
+    </div>
+
+    <!-- Inline add-sensor form -->
+    <div class="mt-2 p-2 border border-secondary rounded bg-dark" x-show="showAddForm" x-cloak x-transition>
+        <div class="row g-2 align-items-end">
+            <div class="col-auto">
+                <label class="form-label small mb-0">Sensor ID</label>
+                <input type="text" class="form-control form-control-sm" placeholder="e.g. scope-1"
+                       x-model="newId" style="width:140px">
+            </div>
+            <div class="col-auto">
+                <label class="form-label small mb-0">Adapter</label>
+                <select class="form-select form-select-sm" x-model="newAdapter" style="width:140px">
+                    <option value="">-- select --</option>
+                    <template x-for="a in ($store.citrasense.hardwareAdapters || [])" :key="a.value">
+                        <option :value="a.value" x-text="a.label"></option>
+                    </template>
+                </select>
+            </div>
+            <div class="col-auto">
+                <button type="button" class="btn btn-sm btn-success" :disabled="adding || !newId.trim()"
+                        @click="addSensor()">
+                    <span x-show="!adding">Add</span>
+                    <span x-show="adding"><i class="bi bi-arrow-repeat spin"></i></span>
+                </button>
+            </div>
+        </div>
+        <div class="text-danger small mt-1" x-show="addError" x-text="addError"></div>
     </div>
 </div>

@@ -29,7 +29,7 @@ def build_autofocus_router(ctx: CitraSenseWebApp) -> APIRouter:
             return JSONResponse({"error": "Filter management not supported"}, status_code=404)
 
         try:
-            success, error = ctx.daemon.trigger_autofocus()
+            success, error = ctx.daemon.trigger_autofocus(sensor_id=sensor_id)
             if success:
                 return {"success": True, "message": "Autofocus queued - will run between tasks"}
             return JSONResponse({"error": error}, status_code=500)
@@ -44,7 +44,7 @@ def build_autofocus_router(ctx: CitraSenseWebApp) -> APIRouter:
             return JSONResponse({"error": "Daemon not available"}, status_code=503)
         get_sensor_context(ctx, sensor_id)
         try:
-            was_cancelled = ctx.daemon.cancel_autofocus()
+            was_cancelled = ctx.daemon.cancel_autofocus(sensor_id=sensor_id)
             return {"success": was_cancelled}
         except Exception as e:
             CITRASENSE_LOGGER.error(f"Error cancelling autofocus: {e}", exc_info=True)

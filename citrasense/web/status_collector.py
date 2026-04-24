@@ -20,18 +20,6 @@ class StatusCollector:
     def __init__(self, daemon: Any) -> None:
         self.daemon = daemon
 
-    def _resolve_telescope(self):
-        """Return (sensor, runtime, adapter) for the first telescope, or (None, None, None)."""
-        sm = getattr(self.daemon, "sensor_manager", None)
-        td = getattr(self.daemon, "task_dispatcher", None)
-        if not sm:
-            return None, None, None
-        sensor = sm.first_of_type("telescope")
-        if sensor is None:
-            return None, None, None
-        runtime = td.get_runtime(sensor.sensor_id) if td else None
-        return sensor, runtime, sensor.adapter
-
     def collect(self, status: SystemStatus) -> None:
         """Update `status` in-place from the daemon's current state."""
         if not self.daemon:
@@ -48,10 +36,10 @@ class StatusCollector:
             _prev = now
 
         try:
-            _sensor, runtime, adapter = self._resolve_telescope()
-
-            # Build per-sensor metadata for the sensors dict
             sm = getattr(self.daemon, "sensor_manager", None)
+            td = getattr(self.daemon, "task_dispatcher", None)
+
+            # Build per-sensor skeleton for ALL sensors
             if sm:
                 for s in sm:
                     status.sensors[s.sensor_id] = {
@@ -61,176 +49,43 @@ class StatusCollector:
                         "adapter_key": getattr(s, "adapter_key", None),
                     }
 
-            if adapter:
-                mount = adapter.mount
+            # Enrich each telescope sensor with hw/manager/session state
+            self._enrich_sensors(status, sm, td)
+            _mark("sensor_enrichment")
 
-                try:
-                    status.telescope_connected = adapter.is_telescope_connected()
-                    if status.telescope_connected:
-                        snap = mount.cached_state if mount is not None else None
-                        if snap is not None:
-                            status.telescope_ra = snap.ra_deg
-                            status.telescope_dec = snap.dec_deg
-                            status.telescope_az = snap.az_deg
-                            status.telescope_alt = snap.alt_deg
-                            status.mount_tracking = snap.is_tracking
-                            status.mount_slewing = snap.is_slewing
-                        else:
-                            ra, dec = adapter.get_telescope_direction()
-                            status.telescope_ra = ra
-                            status.telescope_dec = dec
-                            status.mount_tracking = False
-                            status.mount_slewing = False
-                    else:
-                        status.mount_tracking = False
-                        status.mount_slewing = False
-                except Exception:
-                    status.telescope_connected = False
-                    status.mount_tracking = False
-                    status.mount_slewing = False
-                _mark("hw.telescope")
-
-                try:
-                    status.camera_connected = adapter.is_camera_connected()
-                    camera = adapter.camera
-                    if status.camera_connected and camera is not None:
-                        status.camera_temperature = camera.get_temperature()
-                    else:
-                        status.camera_temperature = None
-                except Exception:
-                    status.camera_connected = False
-                    status.camera_temperature = None
-                _mark("hw.camera")
-
-                try:
-                    status.supports_direct_camera_control = adapter.supports_direct_camera_control()
-                except Exception:
-                    status.supports_direct_camera_control = False
-
-                status.supports_direct_mount_control = mount is not None and status.telescope_connected
-                status.supports_autofocus = adapter.supports_autofocus()
-                status.supports_hardware_safety_monitor = adapter.supports_hardware_safety_monitor
-                _mark("hw.capabilities")
-
-                try:
-                    pos = adapter.get_filter_position()
-                    status.current_filter_position = pos
-                    if pos is not None and pos in adapter.filter_map:
-                        status.current_filter_name = adapter.filter_map[pos].get("name")
-                    else:
-                        status.current_filter_name = None
-                except Exception:
-                    status.current_filter_position = None
-                    status.current_filter_name = None
-                _mark("hw.filter")
-
-                focuser = adapter.focuser
-                if focuser is not None and focuser.is_connected():
-                    status.focuser_connected = True
-                    try:
-                        status.focuser_position = focuser.get_position()
-                    except Exception:
-                        status.focuser_position = None
-                    try:
-                        status.focuser_max_position = focuser.get_max_position()
-                    except Exception:
-                        status.focuser_max_position = None
-                    try:
-                        status.focuser_temperature = focuser.get_temperature()
-                    except Exception:
-                        status.focuser_temperature = None
-                    try:
-                        status.focuser_moving = focuser.is_moving()
-                    except Exception:
-                        status.focuser_moving = False
-                else:
-                    status.focuser_connected = False
-                    status.focuser_position = None
-                    status.focuser_max_position = None
-                    status.focuser_temperature = None
-                    status.focuser_moving = False
-                _mark("hw.focuser")
-
-                status.supports_alignment = status.camera_connected and mount is not None
-
-                if mount is not None and mount.cached_state is not None:
-                    status.supports_manual_sync = mount.cached_mount_info.get("supports_sync", False)
-                    status.mount_at_home = mount.cached_state.is_at_home
-                    h_limit, o_limit = mount.cached_limits
-                    status.mount_horizon_limit = h_limit
-                    status.mount_overhead_limit = o_limit
-                _mark("hw.mount_state")
-
-            # Task dispatcher + per-sensor runtime managers
-            td = getattr(self.daemon, "task_dispatcher", None)
+            # Site-level: task dispatcher aggregate
             if td:
                 status.current_task = td.current_task_id
                 status.tasks_pending = td.pending_task_count
+                status.processing_active = td.is_processing_active()
 
-            if runtime:
-                status.mount_homing = runtime.homing_manager.is_running() or runtime.homing_manager.is_requested()
-                status.autofocus_requested = runtime.autofocus_manager.is_requested()
-                status.autofocus_running = runtime.autofocus_manager.is_running()
-                status.autofocus_progress = runtime.autofocus_manager.progress
-                status.autofocus_points = [
-                    {"pos": p, "hfr": h, "filter": f} for p, h, f in runtime.autofocus_manager.points
-                ]
-                status.autofocus_filter_results = runtime.autofocus_manager.filter_results
-                status.autofocus_last_result = runtime.autofocus_manager.last_result
-                hfr_hist = runtime.autofocus_manager.hfr_history
-                status.hfr_history = [{"hfr": h, "ts": t, "filter": f} for h, t, f in hfr_hist]
-                status.last_hfr_median = hfr_hist[-1][0] if hfr_hist else None
-                if self.daemon.settings:
-                    status.hfr_baseline = self.daemon.settings.adapter_settings.get("hfr_baseline")
-                    status.hfr_increase_percent = self.daemon.settings.autofocus_hfr_increase_percent
-                    status.hfr_refocus_enabled = self.daemon.settings.autofocus_on_hfr_increase_enabled
-                    status.hfr_sample_window = self.daemon.settings.autofocus_hfr_sample_window
-                status.alignment_requested = runtime.alignment_manager.is_requested()
-                status.alignment_running = runtime.alignment_manager.is_running()
-                status.alignment_progress = runtime.alignment_manager.progress
-                status.pointing_calibration_running = runtime.alignment_manager.is_calibrating()
-                status.pointing_calibration_progress = runtime.alignment_manager.calibration_progress
-
-            if td:
-                busy_reasons: list[str] = []
-                if td.is_processing_active():
-                    busy_reasons.append("processing")
-                if runtime and not runtime.acquisition_queue.is_idle():
+            # Aggregate system_busy from all sensor runtimes
+            busy_reasons: list[str] = []
+            if td and td.is_processing_active():
+                busy_reasons.append("processing")
+            for sd in status.sensors.values():
+                if sd.get("type") != "telescope":
+                    continue
+                if not sd.get("acquisition_idle", True):
                     busy_reasons.append("imaging")
-                if status.alignment_running:
+                if sd.get("alignment_running"):
                     busy_reasons.append("alignment")
-                if status.autofocus_running:
+                if sd.get("autofocus_running"):
                     busy_reasons.append("autofocus")
-                if status.pointing_calibration_running:
+                if sd.get("pointing_calibration_running"):
                     busy_reasons.append("calibration")
-                if status.mount_homing:
+                if sd.get("mount_homing"):
                     busy_reasons.append("homing")
-                status.system_busy = bool(busy_reasons)
-                status.system_busy_reason = ", ".join(busy_reasons)
-
+            status.system_busy = bool(busy_reasons)
+            status.system_busy_reason = ", ".join(busy_reasons)
             _mark("task_dispatcher")
 
-            # Autofocus timing
+            # Site-level autofocus timing (global settings)
             if self.daemon.settings:
                 settings = self.daemon.settings
                 status.last_autofocus_timestamp = settings.last_autofocus_timestamp
                 status.last_alignment_timestamp = settings.last_alignment_timestamp
                 status.autofocus_target_name = _resolve_autofocus_target_name(settings)
-
-                if runtime and hasattr(runtime, "autofocus_manager"):
-                    status.next_autofocus_minutes = runtime.autofocus_manager.get_next_autofocus_minutes()
-                elif settings.scheduled_autofocus_enabled:
-                    last_ts = settings.last_autofocus_timestamp
-                    interval_minutes = settings.autofocus_interval_minutes
-                    if last_ts is not None:
-                        elapsed_minutes = (int(time.time()) - last_ts) / 60
-                        remaining = max(0, interval_minutes - elapsed_minutes)
-                        status.next_autofocus_minutes = int(remaining)
-                    else:
-                        status.next_autofocus_minutes = 0
-                else:
-                    status.next_autofocus_minutes = None
-
             _mark("autofocus")
 
             # Time sync status
@@ -290,59 +145,46 @@ class StatusCollector:
 
             _mark("time_gps_location")
 
-            # Task processing state
-            if td:
-                status.processing_active = td.is_processing_active()
-                status.automated_scheduling = td.automated_scheduling
-
-                osm = td.observing_session_manager
-                stm = td.self_tasking_manager
-                if osm:
-                    sd = osm.status_dict()
-                    status.observing_session_state = sd.get("observing_session_state", "daytime")
-                    status.session_activity = sd.get("session_activity")
-                    status.observing_session_threshold = sd.get("observing_session_threshold", -12.0)
-                    status.sun_altitude = sd.get("sun_altitude")
-                    status.dark_window_start = sd.get("dark_window_start")
-                    status.dark_window_end = sd.get("dark_window_end")
-                if stm:
-                    st = stm.status_dict()
-                    status.last_batch_request = st.get("last_batch_request")
-                    status.last_batch_created = st.get("last_batch_created")
-                    status.next_request_seconds = st.get("next_request_seconds")
-
-            status.observing_session_enabled = self.daemon.settings.observing_session_enabled
-            status.self_tasking_enabled = self.daemon.settings.self_tasking_enabled
-
-            _mark("session")
-
-            # Missing dependencies
+            # Aggregate missing dependencies from all telescope adapters
             status.missing_dependencies = []
-            if adapter:
-                try:
-                    status.missing_dependencies.extend(adapter.get_missing_dependencies())
-                except Exception as e:
-                    CITRASENSE_LOGGER.debug(f"Could not read hardware missing dependencies: {e}")
+            if sm:
+                for s in sm.iter_by_type("telescope"):
+                    adapter = getattr(s, "adapter", None)
+                    if adapter:
+                        try:
+                            status.missing_dependencies.extend(adapter.get_missing_dependencies())
+                        except Exception as e:
+                            CITRASENSE_LOGGER.debug(f"Could not read hardware missing dependencies: {e}")
             status.missing_dependencies.extend(getattr(self.daemon, "_processor_dep_issues", []) or [])
 
-            # Active processors
+            # Active processors (site-level)
             if hasattr(self.daemon, "processor_registry") and self.daemon.processor_registry:
                 status.active_processors = [p.name for p in self.daemon.processor_registry.processors]
             else:
                 status.active_processors = []
 
-            # Tasks by pipeline stage
+            # Tasks by pipeline stage (site-wide aggregate)
             if td:
                 status.tasks_by_stage = td.get_tasks_by_stage()
             else:
                 status.tasks_by_stage = None
 
-            # Lifetime pipeline stats
-            if td and runtime:
+            # Aggregate pipeline stats across all runtimes
+            if td:
+                agg_imaging: dict[str, int] = {}
+                agg_processing: dict[str, int] = {}
+                agg_uploading: dict[str, int] = {}
+                for rt in td._runtimes.values():
+                    for k, v in rt.acquisition_queue.get_stats().items():
+                        agg_imaging[k] = agg_imaging.get(k, 0) + v
+                    for k, v in rt.processing_queue.get_stats().items():
+                        agg_processing[k] = agg_processing.get(k, 0) + v
+                    for k, v in rt.upload_queue.get_stats().items():
+                        agg_uploading[k] = agg_uploading.get(k, 0) + v
                 status.pipeline_stats = {
-                    "imaging": runtime.acquisition_queue.get_stats(),
-                    "processing": runtime.processing_queue.get_stats(),
-                    "uploading": runtime.upload_queue.get_stats(),
+                    "imaging": agg_imaging,
+                    "processing": agg_processing,
+                    "uploading": agg_uploading,
                     "tasks": td.get_task_stats(),
                 }
             else:
@@ -354,7 +196,7 @@ class StatusCollector:
 
             _mark("pipeline")
 
-            # Safety monitor status
+            # Safety monitor status (site-level)
             if hasattr(self.daemon, "safety_monitor") and self.daemon.safety_monitor:
                 try:
                     status.safety_status = self.daemon.safety_monitor.get_status()
@@ -363,7 +205,7 @@ class StatusCollector:
             else:
                 status.safety_status = None
 
-            # Elset cache health
+            # Elset cache health (site-level)
             if hasattr(self.daemon, "elset_cache") and self.daemon.elset_cache:
                 status.elset_health = self.daemon.elset_cache.get_health()
             else:
@@ -379,47 +221,7 @@ class StatusCollector:
             else:
                 status.latest_task_image_url = None
 
-            # Calibration status
-            status.calibration_status = self._build_calibration_status(adapter, runtime)
-
-            # Pointing model status
-            status.pointing_model = adapter.get_pointing_model_status() if adapter else None
-            status.fov_short_deg = adapter.observed_fov_short_deg if adapter else None
-
-            status.telescope_min_elevation = None
-            telescope_record = _sensor.citra_record if _sensor else None
-            if telescope_record:
-                min_el = telescope_record.get("minElevation")
-                if min_el is not None:
-                    try:
-                        status.telescope_min_elevation = float(min_el)
-                    except (TypeError, ValueError):
-                        pass
-
-            # Config health
-            if telescope_record and adapter:
-                from citrasense.hardware.config_health import assess_config_health
-
-                camera_info = adapter.get_camera_info()
-                binning = adapter.get_current_binning()
-                health = assess_config_health(
-                    telescope_record=telescope_record,
-                    camera_info=camera_info,
-                    binning=binning,
-                    observed_pixel_scale=adapter.observed_pixel_scale_arcsec,
-                    observed_fov_w=adapter.observed_fov_w_deg,
-                    observed_fov_h=adapter.observed_fov_h_deg,
-                    observed_slew_rate=adapter.observed_slew_rate_deg_per_s,
-                    slew_rate_samples=adapter.slew_rate_tracker.count,
-                )
-                status.config_health = health.to_dict()
-            else:
-                status.config_health = None
-
             _mark("optics_calibration")
-
-            self._enrich_sensors(status, _sensor, runtime, td)
-            _mark("sensor_enrichment")
 
             status.last_update = datetime.now().isoformat()
             status.status_collection_ms = round((time.perf_counter() - _t0) * 1000, 2)
@@ -428,128 +230,316 @@ class StatusCollector:
         except Exception:
             CITRASENSE_LOGGER.exception("Error updating status")
 
+    # ── Per-sensor enrichment ─────────────────────────────────────────
+
     def _enrich_sensors(
         self,
         status: SystemStatus,
-        telescope_sensor: Any,
-        telescope_runtime: Any,
+        sm: Any,
         td: Any,
     ) -> None:
-        """Bundle per-sensor operational state into status.sensors[id].
-
-        The monitoring page renders per-sensor card groups via ``x-for``.
-        Each sensor entry needs its own pipeline stats, tasks-by-stage, and
-        (for telescopes) hardware / manager / session state.
-        """
+        """Independently collect hardware, manager, and session state for every sensor."""
         if not status.sensors:
             return
 
         site_tasks = status.tasks_by_stage or {}
 
-        # Attach the remote Citra API telescope record ID so both backend
-        # task filtering and frontend scheduled-task filtering can match
-        # tasks (which carry the API's telescopeId/sensorId) to the local
-        # sensor card group whose key is a local id like "telescope-0".
-        if telescope_sensor and telescope_sensor.sensor_id in status.sensors:
-            tr = getattr(telescope_sensor, "citra_record", None)
-            if tr:
-                status.sensors[telescope_sensor.sensor_id]["api_id"] = tr.get("id")
-
         for sensor_id, sd in status.sensors.items():
-            api_id = sd.get("api_id")
-            sd["tasks_by_stage"] = {
-                stage: [t for t in tasks if t.get("sensor_id") in (sensor_id, api_id)]
-                for stage, tasks in site_tasks.items()
-            }
-
             s_runtime = td.get_runtime(sensor_id) if td else None
+
+            # Per-runtime pipeline stats
             if s_runtime:
                 sd["pipeline_stats"] = {
                     "imaging": s_runtime.acquisition_queue.get_stats(),
                     "processing": s_runtime.processing_queue.get_stats(),
                     "uploading": s_runtime.upload_queue.get_stats(),
                 }
+                sd["acquisition_idle"] = s_runtime.acquisition_queue.is_idle()
             else:
                 sd["pipeline_stats"] = None
+                sd["acquisition_idle"] = True
 
-        if not telescope_sensor or telescope_sensor.sensor_id not in status.sensors:
+            if sd.get("type") != "telescope":
+                continue
+
+            # Resolve the actual sensor and adapter objects
+            try:
+                sensor = sm.get(sensor_id) if sm else None
+            except KeyError:
+                sensor = None
+            if sensor is None:
+                continue
+            adapter = getattr(sensor, "adapter", None)
+            if adapter is None:
+                continue
+
+            # Attach Citra API record ID for task matching
+            tr = getattr(sensor, "citra_record", None)
+            if tr:
+                sd["api_id"] = tr.get("id")
+
+            # Per-task-stage filtering
+            api_id = sd.get("api_id")
+            sd["tasks_by_stage"] = {
+                stage: [t for t in tasks if t.get("sensor_id") in (sensor_id, api_id)]
+                for stage, tasks in site_tasks.items()
+            }
+
+            self._collect_telescope_hardware(sd, adapter)
+            self._collect_telescope_managers(sd, s_runtime)
+            self._collect_telescope_autofocus_timing(sd, s_runtime)
+            self._collect_telescope_session(sd, sensor_id, s_runtime, td)
+            self._collect_telescope_optics(sd, sensor, adapter, s_runtime)
+
+    def _collect_telescope_hardware(self, sd: dict, adapter: Any) -> None:
+        """Populate hardware connection and telemetry fields for one telescope."""
+        mount = adapter.mount
+
+        try:
+            sd["telescope_connected"] = adapter.is_telescope_connected()
+            if sd["telescope_connected"]:
+                snap = mount.cached_state if mount is not None else None
+                if snap is not None:
+                    sd["telescope_ra"] = snap.ra_deg
+                    sd["telescope_dec"] = snap.dec_deg
+                    sd["telescope_az"] = snap.az_deg
+                    sd["telescope_alt"] = snap.alt_deg
+                    sd["mount_tracking"] = snap.is_tracking
+                    sd["mount_slewing"] = snap.is_slewing
+                else:
+                    ra, dec = adapter.get_telescope_direction()
+                    sd["telescope_ra"] = ra
+                    sd["telescope_dec"] = dec
+                    sd["mount_tracking"] = False
+                    sd["mount_slewing"] = False
+            else:
+                sd["mount_tracking"] = False
+                sd["mount_slewing"] = False
+        except Exception:
+            sd["telescope_connected"] = False
+            sd["mount_tracking"] = False
+            sd["mount_slewing"] = False
+
+        try:
+            sd["camera_connected"] = adapter.is_camera_connected()
+            camera = adapter.camera
+            if sd["camera_connected"] and camera is not None:
+                sd["camera_temperature"] = camera.get_temperature()
+            else:
+                sd["camera_temperature"] = None
+        except Exception:
+            sd["camera_connected"] = False
+            sd["camera_temperature"] = None
+
+        try:
+            sd["supports_direct_camera_control"] = adapter.supports_direct_camera_control()
+        except Exception:
+            sd["supports_direct_camera_control"] = False
+
+        sd["supports_direct_mount_control"] = mount is not None and sd.get("telescope_connected", False)
+        sd["supports_autofocus"] = adapter.supports_autofocus()
+        sd["supports_hardware_safety_monitor"] = adapter.supports_hardware_safety_monitor
+
+        try:
+            pos = adapter.get_filter_position()
+            sd["current_filter_position"] = pos
+            if pos is not None and pos in adapter.filter_map:
+                sd["current_filter_name"] = adapter.filter_map[pos].get("name")
+            else:
+                sd["current_filter_name"] = None
+        except Exception:
+            sd["current_filter_position"] = None
+            sd["current_filter_name"] = None
+
+        focuser = adapter.focuser
+        if focuser is not None and focuser.is_connected():
+            sd["focuser_connected"] = True
+            try:
+                sd["focuser_position"] = focuser.get_position()
+            except Exception:
+                sd["focuser_position"] = None
+            try:
+                sd["focuser_max_position"] = focuser.get_max_position()
+            except Exception:
+                sd["focuser_max_position"] = None
+            try:
+                sd["focuser_temperature"] = focuser.get_temperature()
+            except Exception:
+                sd["focuser_temperature"] = None
+            try:
+                sd["focuser_moving"] = focuser.is_moving()
+            except Exception:
+                sd["focuser_moving"] = False
+        else:
+            sd["focuser_connected"] = False
+            sd["focuser_position"] = None
+            sd["focuser_max_position"] = None
+            sd["focuser_temperature"] = None
+            sd["focuser_moving"] = False
+
+        sd["supports_alignment"] = sd.get("camera_connected", False) and mount is not None
+
+        if mount is not None and mount.cached_state is not None:
+            sd["supports_manual_sync"] = mount.cached_mount_info.get("supports_sync", False)
+            sd["mount_at_home"] = mount.cached_state.is_at_home
+            try:
+                h_limit, o_limit = mount.cached_limits
+                sd["mount_horizon_limit"] = h_limit
+                sd["mount_overhead_limit"] = o_limit
+            except (TypeError, ValueError):
+                sd["mount_horizon_limit"] = None
+                sd["mount_overhead_limit"] = None
+        else:
+            sd.setdefault("supports_manual_sync", False)
+            sd.setdefault("mount_at_home", False)
+            sd.setdefault("mount_horizon_limit", None)
+            sd.setdefault("mount_overhead_limit", None)
+
+    def _collect_telescope_managers(self, sd: dict, runtime: Any) -> None:
+        """Populate autofocus/alignment/homing manager state for one telescope."""
+        if not runtime:
             return
 
-        ts = status.sensors[telescope_sensor.sensor_id]
+        sd["mount_homing"] = runtime.homing_manager.is_running() or runtime.homing_manager.is_requested()
+        sd["autofocus_requested"] = runtime.autofocus_manager.is_requested()
+        sd["autofocus_running"] = runtime.autofocus_manager.is_running()
+        sd["autofocus_progress"] = runtime.autofocus_manager.progress
+        sd["autofocus_points"] = [{"pos": p, "hfr": h, "filter": f} for p, h, f in runtime.autofocus_manager.points]
+        sd["autofocus_filter_results"] = runtime.autofocus_manager.filter_results
+        sd["autofocus_last_result"] = runtime.autofocus_manager.last_result
+        hfr_hist = runtime.autofocus_manager.hfr_history
+        sd["hfr_history"] = [{"hfr": h, "ts": t, "filter": f} for h, t, f in hfr_hist]
+        sd["last_hfr_median"] = hfr_hist[-1][0] if hfr_hist else None
 
-        ts["telescope_connected"] = status.telescope_connected
-        ts["telescope_ra"] = status.telescope_ra
-        ts["telescope_dec"] = status.telescope_dec
-        ts["telescope_az"] = status.telescope_az
-        ts["telescope_alt"] = status.telescope_alt
-        ts["mount_tracking"] = status.mount_tracking
-        ts["mount_slewing"] = status.mount_slewing
-        ts["mount_at_home"] = status.mount_at_home
-        ts["mount_horizon_limit"] = status.mount_horizon_limit
-        ts["mount_overhead_limit"] = status.mount_overhead_limit
-        ts["camera_connected"] = status.camera_connected
-        ts["camera_temperature"] = status.camera_temperature
-        ts["focuser_connected"] = status.focuser_connected
-        ts["focuser_position"] = status.focuser_position
-        ts["focuser_max_position"] = status.focuser_max_position
-        ts["focuser_temperature"] = status.focuser_temperature
-        ts["focuser_moving"] = status.focuser_moving
-        ts["current_filter_position"] = status.current_filter_position
-        ts["current_filter_name"] = status.current_filter_name
+        # Per-sensor HFR baseline from the sensor's adapter_settings
+        sensor_cfg = (
+            self.daemon.settings.get_sensor_config(runtime.sensor_id) if self.daemon and self.daemon.settings else None
+        )
+        if sensor_cfg:
+            sd["hfr_baseline"] = sensor_cfg.adapter_settings.get("hfr_baseline")
+        else:
+            sd["hfr_baseline"] = None
 
-        ts["supports_direct_camera_control"] = status.supports_direct_camera_control
-        ts["supports_direct_mount_control"] = status.supports_direct_mount_control
-        ts["supports_autofocus"] = status.supports_autofocus
-        ts["supports_alignment"] = status.supports_alignment
-        ts["supports_manual_sync"] = status.supports_manual_sync
-        ts["supports_hardware_safety_monitor"] = status.supports_hardware_safety_monitor
+        if self.daemon and self.daemon.settings:
+            sd["hfr_increase_percent"] = self.daemon.settings.autofocus_hfr_increase_percent
+            sd["hfr_refocus_enabled"] = self.daemon.settings.autofocus_on_hfr_increase_enabled
+            sd["hfr_sample_window"] = self.daemon.settings.autofocus_hfr_sample_window
 
-        ts["mount_homing"] = status.mount_homing
-        ts["autofocus_requested"] = status.autofocus_requested
-        ts["autofocus_running"] = status.autofocus_running
-        ts["autofocus_progress"] = status.autofocus_progress
-        ts["autofocus_points"] = status.autofocus_points
-        ts["autofocus_filter_results"] = status.autofocus_filter_results
-        ts["autofocus_last_result"] = status.autofocus_last_result
-        ts["hfr_history"] = status.hfr_history
-        ts["last_hfr_median"] = status.last_hfr_median
-        ts["hfr_baseline"] = status.hfr_baseline
-        ts["alignment_requested"] = status.alignment_requested
-        ts["alignment_running"] = status.alignment_running
-        ts["alignment_progress"] = status.alignment_progress
-        ts["pointing_calibration_running"] = status.pointing_calibration_running
-        ts["pointing_calibration_progress"] = status.pointing_calibration_progress
-        ts["last_autofocus_timestamp"] = status.last_autofocus_timestamp
-        ts["next_autofocus_minutes"] = status.next_autofocus_minutes
-        ts["autofocus_target_name"] = status.autofocus_target_name
+        sd["alignment_requested"] = runtime.alignment_manager.is_requested()
+        sd["alignment_running"] = runtime.alignment_manager.is_running()
+        sd["alignment_progress"] = runtime.alignment_manager.progress
+        sd["pointing_calibration_running"] = runtime.alignment_manager.is_calibrating()
+        sd["pointing_calibration_progress"] = runtime.alignment_manager.calibration_progress
 
-        ts["observing_session_state"] = status.observing_session_state
-        ts["session_activity"] = status.session_activity
-        ts["sun_altitude"] = status.sun_altitude
-        ts["dark_window_start"] = status.dark_window_start
-        ts["dark_window_end"] = status.dark_window_end
-        ts["last_batch_request"] = status.last_batch_request
-        ts["last_batch_created"] = status.last_batch_created
-        ts["next_request_seconds"] = status.next_request_seconds
+    def _collect_telescope_autofocus_timing(self, sd: dict, runtime: Any) -> None:
+        """Populate autofocus timing fields for one telescope."""
+        if not self.daemon or not self.daemon.settings:
+            return
+        settings = self.daemon.settings
+        sd["last_autofocus_timestamp"] = settings.last_autofocus_timestamp
+        sd["last_alignment_timestamp"] = settings.last_alignment_timestamp
+        sd["autofocus_target_name"] = _resolve_autofocus_target_name(settings)
 
-        sensor_cfg = self.daemon.settings.get_sensor_config(telescope_sensor.sensor_id) if self.daemon else None
-        ts["task_processing_paused"] = sensor_cfg.task_processing_paused if sensor_cfg else False
-        ts["observing_session_enabled"] = sensor_cfg.observing_session_enabled if sensor_cfg else False
-        ts["self_tasking_enabled"] = sensor_cfg.self_tasking_enabled if sensor_cfg else False
-        tr = getattr(telescope_sensor, "citra_record", None)
-        ts["automated_scheduling"] = (tr or {}).get("automated_scheduling", False)
+        if runtime and hasattr(runtime, "autofocus_manager"):
+            sd["next_autofocus_minutes"] = runtime.autofocus_manager.get_next_autofocus_minutes()
+        elif settings.scheduled_autofocus_enabled:
+            last_ts = settings.last_autofocus_timestamp
+            interval_minutes = settings.autofocus_interval_minutes
+            if last_ts is not None:
+                elapsed_minutes = (int(time.time()) - last_ts) / 60
+                remaining = max(0, interval_minutes - elapsed_minutes)
+                sd["next_autofocus_minutes"] = int(remaining)
+            else:
+                sd["next_autofocus_minutes"] = 0
+        else:
+            sd["next_autofocus_minutes"] = None
 
-        ts["last_alignment_timestamp"] = status.last_alignment_timestamp
-        ts["hfr_increase_percent"] = status.hfr_increase_percent
-        ts["hfr_refocus_enabled"] = status.hfr_refocus_enabled
+    def _collect_telescope_session(self, sd: dict, sensor_id: str, runtime: Any, td: Any) -> None:
+        """Populate observing session and self-tasking state for one telescope."""
+        sensor_cfg = self.daemon.settings.get_sensor_config(sensor_id) if self.daemon and self.daemon.settings else None
+        sd["task_processing_paused"] = sensor_cfg.task_processing_paused if sensor_cfg else False
+        sd["observing_session_enabled"] = sensor_cfg.observing_session_enabled if sensor_cfg else False
+        sd["self_tasking_enabled"] = sensor_cfg.self_tasking_enabled if sensor_cfg else False
 
-        ts["calibration_status"] = status.calibration_status
-        ts["pointing_model"] = status.pointing_model
-        ts["fov_short_deg"] = status.fov_short_deg
-        ts["config_health"] = status.config_health
-        ts["telescope_min_elevation"] = status.telescope_min_elevation
-        ts["latest_task_image_url"] = status.latest_task_image_url
-        ts["missing_dependencies"] = status.missing_dependencies
+        if runtime:
+            osm = runtime.observing_session_manager
+            stm = runtime.self_tasking_manager
+            if osm:
+                osm_dict = osm.status_dict()
+                sd["observing_session_state"] = osm_dict.get("observing_session_state", "daytime")
+                sd["session_activity"] = osm_dict.get("session_activity")
+                sd["observing_session_threshold"] = osm_dict.get("observing_session_threshold", -12.0)
+                sd["sun_altitude"] = osm_dict.get("sun_altitude")
+                sd["dark_window_start"] = osm_dict.get("dark_window_start")
+                sd["dark_window_end"] = osm_dict.get("dark_window_end")
+            if stm:
+                stm_dict = stm.status_dict()
+                sd["last_batch_request"] = stm_dict.get("last_batch_request")
+                sd["last_batch_created"] = stm_dict.get("last_batch_created")
+                sd["next_request_seconds"] = stm_dict.get("next_request_seconds")
+
+        # Automated scheduling from the Citra API record
+        sm = getattr(self.daemon, "sensor_manager", None)
+        if sm:
+            try:
+                s = sm.get(sensor_id)
+                tr = getattr(s, "citra_record", None)
+                sd["automated_scheduling"] = (tr or {}).get("automated_scheduling", False)
+            except KeyError:
+                sd["automated_scheduling"] = False
+
+    def _collect_telescope_optics(self, sd: dict, sensor: Any, adapter: Any, runtime: Any) -> None:
+        """Populate calibration, pointing model, and config health for one telescope."""
+        sd["calibration_status"] = self._build_calibration_status(adapter, runtime)
+        sd["pointing_model"] = adapter.get_pointing_model_status() if adapter else None
+        sd["fov_short_deg"] = adapter.observed_fov_short_deg if adapter else None
+
+        tr = getattr(sensor, "citra_record", None)
+        sd["telescope_min_elevation"] = None
+        if tr:
+            min_el = tr.get("minElevation")
+            if min_el is not None:
+                try:
+                    sd["telescope_min_elevation"] = float(min_el)
+                except (TypeError, ValueError):
+                    pass
+
+        if tr and adapter:
+            try:
+                from citrasense.hardware.config_health import assess_config_health
+
+                camera_info = adapter.get_camera_info()
+                binning = adapter.get_current_binning()
+                health = assess_config_health(
+                    telescope_record=tr,
+                    camera_info=camera_info,
+                    binning=binning,
+                    observed_pixel_scale=adapter.observed_pixel_scale_arcsec,
+                    observed_fov_w=adapter.observed_fov_w_deg,
+                    observed_fov_h=adapter.observed_fov_h_deg,
+                    observed_slew_rate=adapter.observed_slew_rate_deg_per_s,
+                    slew_rate_samples=adapter.slew_rate_tracker.count,
+                )
+                sd["config_health"] = health.to_dict()
+            except Exception:
+                sd["config_health"] = None
+        else:
+            sd["config_health"] = None
+
+        sd["latest_task_image_url"] = getattr(self.daemon, "latest_annotated_image_path", None)
+        ann_path = sd["latest_task_image_url"]
+        if ann_path and Path(ann_path).exists():
+            mtime_ns = Path(ann_path).stat().st_mtime_ns
+            sd["latest_task_image_url"] = f"/api/task-preview/latest?t={mtime_ns}"
+        else:
+            sd["latest_task_image_url"] = None
+
+        # Per-sensor missing dependencies
+        sd["missing_dependencies"] = []
+        try:
+            sd["missing_dependencies"].extend(adapter.get_missing_dependencies())
+        except Exception:
+            pass
 
     def _build_calibration_status(self, adapter: Any, runtime: Any) -> dict[str, Any] | None:
         """Build calibration status dict for SystemStatus."""

@@ -191,8 +191,8 @@ async function loadConfiguration() {
                 store.previewExposure = config.exposure_seconds || 2.0;
             }
             // Track per-sensor saved adapter for change detection
-            if (firstSensor) {
-                store.savedAdapters[firstSensor.id] = firstSensor.adapter;
+            for (const s of (config.sensors || [])) {
+                store.savedAdapters[s.id] = s.adapter;
             }
             store.apiEndpoint =
                 config.host === PROD_API_HOST ? 'production' :
@@ -233,7 +233,7 @@ function buildAdapterFields(schema, currentSettings = {}) {
 /**
  * Load adapter schema and merge with current values
  */
-async function loadAdapterSchema(adapterName, currentSettings = {}) {
+export async function loadAdapterSchema(adapterName, currentSettings = {}) {
     try {
         const settingsParam = Object.keys(currentSettings).length > 0
             ? `?current_settings=${encodeURIComponent(JSON.stringify(currentSettings))}`
@@ -555,7 +555,7 @@ export function showConfigSection() {
 /**
  * Load and display filter configuration
  */
-async function loadFilterConfig() {
+export async function loadFilterConfig() {
     const store = Alpine.store('citrasense');
 
     // Check if selected adapter matches saved adapter for this sensor
@@ -695,7 +695,8 @@ async function saveModifiedFilters() {
  */
 async function triggerAutofocus(sensorId) {
     const store = Alpine.store('citrasense');
-    const shouldCancel = store.status?.autofocus_requested || store.status?.autofocus_running;
+    const ss = store.configSensorStatus;
+    const shouldCancel = ss?.autofocus_requested || ss?.autofocus_running;
 
     if (shouldCancel) {
         try {
@@ -751,7 +752,7 @@ export async function initFilterConfig() {
 
 async function triggerAlignment(sensorId) {
     const store = Alpine.store('citrasense');
-    const isCancel = store.status?.alignment_requested;
+    const isCancel = store.configSensorStatus?.alignment_requested;
 
     if (isCancel) {
         try {
@@ -1033,7 +1034,8 @@ async function mountSetTracking(sensorId, enabled) {
         const data = await response.json();
         if (response.ok) {
             const store = Alpine.store('citrasense');
-            if (store.status) store.status.mount_tracking = enabled;
+            const sd = store.status?.sensors?.[sensorId];
+            if (sd) sd.mount_tracking = enabled;
             showToast(enabled ? 'Sidereal tracking started' : 'Tracking stopped', 'info');
         } else {
             showToast(data.error || 'Tracking command failed', 'danger');

@@ -135,7 +135,7 @@ def build_filters_router(ctx: CitraSenseWebApp) -> APIRouter:
                         return JSONResponse({"error": f"Failed to update filter {filter_id_int} name"}, status_code=500)
 
             if ctx.daemon:
-                ctx.daemon.save_filter_config()
+                ctx.daemon.save_filter_config(sensor)
 
             return {"success": True, "updated_count": len(validated_updates)}
 
@@ -146,11 +146,11 @@ def build_filters_router(ctx: CitraSenseWebApp) -> APIRouter:
     @router.post("/filters/sync")
     async def sync_filters_to_backend(sensor_id: str):
         """Explicitly sync filter configuration to backend API."""
-        get_sensor_context(ctx, sensor_id)
+        sensor, _runtime = get_sensor_context(ctx, sensor_id)
         if not ctx.daemon:
             return JSONResponse({"error": "Daemon not available"}, status_code=503)
         try:
-            ctx.daemon.sync_filters_to_backend()
+            ctx.daemon.sync_filters_to_backend(sensor)
             return {"success": True, "message": "Filters synced to backend"}
         except Exception as e:
             CITRASENSE_LOGGER.error(f"Error syncing filters to backend: {e}", exc_info=True)

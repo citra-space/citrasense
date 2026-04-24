@@ -90,7 +90,7 @@ def build_calibration_router(ctx: CitraSenseWebApp) -> APIRouter:
                 request["filter_position"] = fp_int
                 request["filter_name"] = fm[fp_int].get("name", f"Filter {fp_int}")
 
-            ok, err = ctx.daemon.trigger_calibration(request)
+            ok, err = ctx.daemon.trigger_calibration(request, sensor_id=sensor_id)
             if not ok:
                 return JSONResponse({"error": err}, status_code=400)
             return {"success": True, "message": "Calibration queued"}
@@ -105,7 +105,7 @@ def build_calibration_router(ctx: CitraSenseWebApp) -> APIRouter:
             return JSONResponse({"error": "Daemon not available"}, status_code=503)
         get_sensor_context(ctx, sensor_id)
         try:
-            was_cancelled = ctx.daemon.cancel_calibration()
+            was_cancelled = ctx.daemon.cancel_calibration(sensor_id=sensor_id)
             return {"success": was_cancelled}
         except Exception as e:
             CITRASENSE_LOGGER.error("Error cancelling calibration: %s", e, exc_info=True)
@@ -156,7 +156,7 @@ def build_calibration_router(ctx: CitraSenseWebApp) -> APIRouter:
             if not jobs:
                 return JSONResponse({"error": "Suite generated no jobs"}, status_code=400)
 
-            ok, err = ctx.daemon.trigger_calibration_suite(jobs)
+            ok, err = ctx.daemon.trigger_calibration_suite(jobs, sensor_id=sensor_id)
             if not ok:
                 return JSONResponse({"error": err}, status_code=400)
             return {"success": True, "message": f"Suite queued: {len(jobs)} jobs", "job_count": len(jobs)}

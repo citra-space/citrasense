@@ -10,7 +10,6 @@ from typing import TYPE_CHECKING, cast
 
 if TYPE_CHECKING:
     from citrasense.calibration.calibration_library import CalibrationLibrary
-    from citrasense.hardware.abstract_astro_hardware_adapter import AbstractAstroHardwareAdapter
     from citrasense.sensors.sensor_runtime import SensorRuntime
     from citrasense.sensors.telescope.telescope_sensor import TelescopeSensor
 
@@ -99,27 +98,6 @@ class CitraSenseDaemon:
         # Create web server instance (always enabled)
         self.web_server = CitraSenseWebServer(daemon=self, host="0.0.0.0", port=self.settings.web_port)
 
-    # ── Convenience accessors (resolve from sensor_manager) ────────
-
-    @property
-    def _telescope_sensor(self) -> TelescopeSensor | None:
-        """First telescope sensor, or ``None`` if not yet initialised."""
-        if not self.sensor_manager:
-            return None
-        return self.sensor_manager.first_of_type("telescope")  # type: ignore[return-value]
-
-    @property
-    def hardware_adapter(self) -> AbstractAstroHardwareAdapter | None:
-        """Adapter of the first telescope sensor (legacy compat)."""
-        ts = self._telescope_sensor
-        return ts.adapter if ts else None
-
-    @property
-    def telescope_record(self) -> dict | None:
-        """Citra API record of the first telescope sensor."""
-        ts = self._telescope_sensor
-        return ts.citra_record if ts else None
-
     def _on_annotated_image(self, path: str) -> None:
         """Handle a new annotated task image: store path and notify preview bus via URL.
 
@@ -155,12 +133,7 @@ class CitraSenseDaemon:
         )
 
     def _initialize_sensors(self) -> None:
-        """Build sensors from ``self.settings.sensors`` via the sensor manager.
-
-        After this method completes, ``self.sensor_manager`` is populated and
-        the convenience properties ``_telescope_sensor``, ``hardware_adapter``,
-        and ``telescope_record`` resolve via the manager.
-        """
+        """Build sensors from ``self.settings.sensors`` via the sensor manager."""
         self.settings.directories.ensure_data_directories()
         images_dir = self.settings.directories.images_dir
 
@@ -171,7 +144,7 @@ class CitraSenseDaemon:
                 images_dir=images_dir,
             )
         except ImportError as e:
-            adapter_key = self.settings.hardware_adapter
+            adapter_key = self.settings.sensors[0].adapter if self.settings.sensors else "unknown"
             CITRASENSE_LOGGER.error(
                 "%s adapter requested but dependencies not available. Error: %s",
                 adapter_key,
@@ -643,28 +616,32 @@ class CitraSenseDaemon:
         from citrasense.safety.safety_monitor import SafetyMonitor
         from citrasense.safety.time_health_check import TimeHealthCheck
 
-        assert self.hardware_adapter is not None
+        assert self.sensor_manager is not None
 
         checks: list = []
 
-        # Disk space check
-        checks.append(DiskSpaceCheck(CITRASENSE_LOGGER, self.hardware_adapter.images_dir))
+        # Disk space check (site-level — all sensors share the images dir)
+        images_dir = self.settings.directories.images_dir
+        checks.append(DiskSpaceCheck(CITRASENSE_LOGGER, images_dir))
 
         # Time health check
         if self.time_monitor:
             checks.append(TimeHealthCheck(CITRASENSE_LOGGER, self.time_monitor))
 
-        # Hardware safety check — polls the adapter's external safety monitor device
+        # Hardware safety check — polls each adapter's external safety monitor device
         if self.settings and self.settings.hardware_safety_check_enabled:
-            if self.hardware_adapter.supports_hardware_safety_monitor:
-                from citrasense.safety.hardware_safety_check import HardwareSafetyCheck
+            wired_hw_safety = False
+            for s in self.sensor_manager.iter_by_type("telescope"):
+                adapter = getattr(s, "adapter", None)
+                if adapter and getattr(adapter, "supports_hardware_safety_monitor", False):
+                    from citrasense.safety.hardware_safety_check import HardwareSafetyCheck
 
-                checks.append(HardwareSafetyCheck(CITRASENSE_LOGGER, self.hardware_adapter.query_hardware_safety))
-                CITRASENSE_LOGGER.info("Hardware safety check enabled")
-            else:
+                    checks.append(HardwareSafetyCheck(CITRASENSE_LOGGER, adapter.query_hardware_safety))
+                    CITRASENSE_LOGGER.info("Hardware safety check enabled for %s", s.sensor_id)
+                    wired_hw_safety = True
+            if not wired_hw_safety:
                 CITRASENSE_LOGGER.info(
-                    "Hardware safety check enabled in settings but adapter %s does not support it — skipping",
-                    type(self.hardware_adapter).__name__,
+                    "Hardware safety check enabled in settings but no adapter supports it — skipping"
                 )
 
         def abort_callback() -> None:
@@ -692,14 +669,9 @@ class CitraSenseDaemon:
         self.safety_monitor.start_watchdog()
         CITRASENSE_LOGGER.info("Safety monitor started with %d site-level check(s)", len(checks))
 
-    def save_filter_config(self, sensor: TelescopeSensor | None = None):
-        """Save filter configuration from adapter to settings if supported.
-
-        Args:
-            sensor: Telescope sensor to save for. Falls back to the first
-                telescope sensor if not given (legacy compat).
-        """
-        ts = sensor or self._telescope_sensor
+    def save_filter_config(self, sensor: TelescopeSensor):
+        """Save filter configuration from adapter to settings if supported."""
+        ts = sensor
         if not ts:
             return
         adapter = ts.adapter
@@ -717,14 +689,9 @@ class CitraSenseDaemon:
         except Exception as e:
             CITRASENSE_LOGGER.warning(f"Failed to save filter configuration: {e}")
 
-    def sync_filters_to_backend(self, sensor: TelescopeSensor | None = None):
-        """Sync enabled filters to backend API.
-
-        Args:
-            sensor: Telescope sensor to sync for. Falls back to the first
-                telescope sensor if not given (legacy compat).
-        """
-        ts = sensor or self._telescope_sensor
+    def sync_filters_to_backend(self, sensor: TelescopeSensor):
+        """Sync enabled filters to backend API."""
+        ts = sensor
         if not ts or not self.api_client or not ts.citra_record:
             return
 
@@ -735,15 +702,13 @@ class CitraSenseDaemon:
             CITRASENSE_LOGGER.warning(f"Failed to sync filters to backend: {e}", exc_info=True)
 
     def _resolve_runtime(self, sensor_id: str | None = None) -> SensorRuntime | None:
-        """Resolve a telescope runtime by sensor_id, falling back to the first."""
+        """Resolve a telescope runtime by sensor_id, falling back to the first registered."""
         if not self.task_dispatcher:
             return None
         if sensor_id:
             return self.task_dispatcher.get_runtime(sensor_id)
-        ts = self._telescope_sensor
-        if ts:
-            return self.task_dispatcher.get_runtime(ts.sensor_id)
-        return None
+        rts = self.task_dispatcher._telescope_runtimes()
+        return rts[0] if rts else None
 
     def trigger_autofocus(self, sensor_id: str | None = None) -> tuple[bool, str | None]:
         """Request autofocus to run at next safe point between tasks."""

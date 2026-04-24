@@ -66,6 +66,10 @@ function compareVersions(v1, v2) {
                 const idx = this.config.sensors.findIndex(s => s.id === this.configSensorId);
                 return idx >= 0 ? idx : 0;
             },
+            get configSensorStatus() {
+                const sid = this.configSensorId;
+                return sid ? (this.status?.sensors?.[sid] || {}) : {};
+            },
 
             config: {},
             apiEndpoint: 'production',
@@ -121,9 +125,9 @@ function compareVersions(v1, v2) {
                 return Object.entries(grouped);
             },
 
-            telescopeTooltip() {
-                const s = this.status;
-                if (!s?.telescope_connected) return 'Telescope disconnected';
+            telescopeTooltip(sensorStatus) {
+                const s = sensorStatus || {};
+                if (!s.telescope_connected) return 'Telescope disconnected';
                 let tip = 'Telescope connected';
                 const pm = s.pointing_model;
                 if (pm && pm.state !== 'untrained') {
@@ -188,12 +192,13 @@ function compareVersions(v1, v2) {
                     const result = await response.json();
                     if (!response.ok) {
                         alert(result.error || 'Failed to toggle task processing');
-                        this.status.processing_active = !enabled;
+                        if (sensorId && this.status?.sensors?.[sensorId]) {
+                            this.status.sensors[sensorId].task_processing_paused = enabled;
+                        }
                     }
                 } catch (error) {
                     console.error('Error toggling processing:', error);
                     alert('Error toggling task processing');
-                    this.status.processing_active = !enabled;
                 }
             },
 
@@ -209,12 +214,13 @@ function compareVersions(v1, v2) {
                     const result = await response.json();
                     if (!response.ok) {
                         alert(result.error || 'Failed to toggle observing session');
-                        this.status.observing_session_enabled = !enabled;
+                        if (sensorId && this.status?.sensors?.[sensorId]) {
+                            this.status.sensors[sensorId].observing_session_enabled = !enabled;
+                        }
                     }
                 } catch (error) {
                     console.error('Error toggling observing session:', error);
                     alert('Error toggling observing session');
-                    this.status.observing_session_enabled = !enabled;
                 }
             },
 
@@ -230,12 +236,13 @@ function compareVersions(v1, v2) {
                     const result = await response.json();
                     if (!response.ok) {
                         alert(result.error || 'Failed to toggle self-tasking');
-                        this.status.self_tasking_enabled = !enabled;
+                        if (sensorId && this.status?.sensors?.[sensorId]) {
+                            this.status.sensors[sensorId].self_tasking_enabled = !enabled;
+                        }
                     }
                 } catch (error) {
                     console.error('Error toggling self-tasking:', error);
                     alert('Error toggling self-tasking');
-                    this.status.self_tasking_enabled = !enabled;
                 }
             },
 
@@ -251,12 +258,13 @@ function compareVersions(v1, v2) {
                     const result = await response.json();
                     if (!response.ok) {
                         alert(result.error || 'Failed to toggle automated scheduling');
-                        this.status.automated_scheduling = !enabled;
+                        if (sensorId && this.status?.sensors?.[sensorId]) {
+                            this.status.sensors[sensorId].automated_scheduling = !enabled;
+                        }
                     }
                 } catch (error) {
                     console.error('Error toggling automated scheduling:', error);
                     alert('Error toggling automated scheduling');
-                    this.status.automated_scheduling = !enabled;
                 }
             },
 

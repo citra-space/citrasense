@@ -77,8 +77,8 @@
                 <i class="bi bi-exclamation-triangle text-warning me-1"></i>Location required for sunset scheduling
             </div>
         </div>
-        <div class="small text-muted" x-show="$store.citrasense.status?.next_autofocus_minutes != null">
-            Next autofocus in: <span x-text="$store.citrasense.status?.next_autofocus_minutes === 0 ? 'now (overdue)' : $store.citrasense.formatMinutes($store.citrasense.status?.next_autofocus_minutes || 0)">--</span>
+        <div class="small text-muted" x-show="$store.citrasense.configSensorStatus?.next_autofocus_minutes != null">
+            Next autofocus in: <span x-text="$store.citrasense.configSensorStatus?.next_autofocus_minutes === 0 ? 'now (overdue)' : $store.citrasense.formatMinutes($store.citrasense.configSensorStatus?.next_autofocus_minutes || 0)">--</span>
         </div>
 
         <!-- ─── HFR-triggered refocus ─── -->
@@ -113,14 +113,14 @@
                 </div>
             </div>
         </div>
-        <div class="small text-muted" x-show="$store.citrasense.status?.hfr_baseline != null">
-            Current baseline: <strong x-text="$store.citrasense.status?.hfr_baseline?.toFixed(2)"></strong> px
+        <div class="small text-muted" x-show="$store.citrasense.configSensorStatus?.hfr_baseline != null">
+            Current baseline: <strong x-text="$store.citrasense.configSensorStatus?.hfr_baseline?.toFixed(2)"></strong> px
             <button class="btn btn-link btn-sm p-0 ms-2 text-muted" type="button"
                 @click="$store.citrasense.config.adapter_settings.hfr_baseline = null; $store.citrasense.saveConfiguration()">
                 Clear
             </button>
         </div>
-        <div class="small text-muted fst-italic" x-show="$store.citrasense.status?.hfr_baseline == null">
+        <div class="small text-muted fst-italic" x-show="$store.citrasense.configSensorStatus?.hfr_baseline == null">
             No baseline &mdash; run autofocus to establish one.
         </div>
     </div>

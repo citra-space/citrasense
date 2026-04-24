@@ -3,9 +3,9 @@
 Tests target two layers:
 
 1. ``_enrich_tasks`` -- the worker that mutates task dicts in place.  Covers
-   the happy path, all degraded paths (missing TLE / observer / scope
-   pointing / empty queue), and the memo behavior that lets static fields
-   be computed once per task.id and reused on every emission.
+   the happy path, all degraded paths (missing TLE / observer / empty queue),
+   and the memo behavior that lets static fields be computed once per task.id
+   and reused on every emission.
 
 2. ``get_web_tasks`` -- the single public emitter.  Verified end-to-end with
    a stub daemon to confirm both call sites (HTTP route + WebSocket
@@ -26,7 +26,6 @@ import pytest
 
 from citrasense.web.sky_enrichment import (
     _SKY_MEMO,
-    _angular_distance_deg,
     _clear_memo_for_tests,
     _compass_16pt,
     _enrich_tasks,
@@ -111,10 +110,6 @@ def _make_daemon(*, tasks: list[Any], location: dict | None, elsets: list[dict])
     )
 
 
-def _make_status(scope_ra: float | None = 180.0, scope_dec: float | None = 45.0) -> Any:
-    return SimpleNamespace(telescope_ra=scope_ra, telescope_dec=scope_dec)
-
-
 # ---------------------------------------------------------------------------
 # Pure helpers
 # ---------------------------------------------------------------------------
@@ -136,19 +131,6 @@ class TestCompass16pt:
         assert _compass_16pt(360.0) == "N"
 
 
-class TestAngularDistance:
-    def test_zero_distance_to_self(self):
-        assert _angular_distance_deg(180.0, 30.0, 180.0, 30.0) == 0.0
-
-    def test_one_degree_along_equator(self):
-        d = _angular_distance_deg(180.0, 0.0, 181.0, 0.0)
-        assert abs(d - 1.0) < 1e-6
-
-    def test_antipodal_points(self):
-        d = _angular_distance_deg(0.0, 0.0, 180.0, 0.0)
-        assert abs(d - 180.0) < 1e-6
-
-
 # ---------------------------------------------------------------------------
 # _enrich_tasks -- happy path
 # ---------------------------------------------------------------------------
@@ -162,7 +144,7 @@ def test_happy_path_populates_all_sky_fields():
     )
     tasks = [_task("sat-25544")]
 
-    _enrich_tasks(tasks, daemon=daemon, status=_make_status())
+    _enrich_tasks(tasks, daemon=daemon)
 
     t = tasks[0]
     assert isinstance(t["sky_alt_deg"], float)
@@ -190,22 +172,6 @@ def test_happy_path_populates_all_sky_fields():
     assert t["sky_trend"] in {"rising", "setting", "flat"}
     assert isinstance(t["sky_max_alt_deg"], float)
     assert t["sky_max_alt_deg"] >= t["sky_alt_deg"] - 0.01
-    assert isinstance(t["slew_from_current_deg"], float)
-    assert 0.0 <= t["slew_from_current_deg"] <= 180.0
-
-
-def test_omits_slew_when_scope_pointing_unknown():
-    daemon = _make_daemon(
-        tasks=[],
-        location=_OBSERVER,
-        elsets=[{"satellite_id": "sat-25544", "name": "ISS", "tle": _ISS_TLE}],
-    )
-    tasks = [_task("sat-25544")]
-
-    _enrich_tasks(tasks, daemon=daemon, status=_make_status(scope_ra=None, scope_dec=None))
-
-    assert "sky_alt_deg" in tasks[0]
-    assert "slew_from_current_deg" not in tasks[0]
 
 
 # ---------------------------------------------------------------------------
@@ -217,7 +183,7 @@ def test_missing_tle_for_satellite_is_silent_skip():
     daemon = _make_daemon(tasks=[], location=_OBSERVER, elsets=[])
     tasks = [_task("sat-99999")]
 
-    _enrich_tasks(tasks, daemon=daemon, status=_make_status())
+    _enrich_tasks(tasks, daemon=daemon)
 
     assert "sky_alt_deg" not in tasks[0]
     assert "sky_az_deg" not in tasks[0]
@@ -231,7 +197,7 @@ def test_missing_location_is_no_op():
     )
     tasks = [_task("sat-25544")]
 
-    _enrich_tasks(tasks, daemon=daemon, status=_make_status())
+    _enrich_tasks(tasks, daemon=daemon)
 
     assert "sky_alt_deg" not in tasks[0]
 
@@ -244,10 +210,10 @@ def test_empty_task_list_is_no_op_and_clears_memo():
     )
     # Seed the memo with one entry, then call with [] -- everything should drop.
     tasks = [_task("sat-25544")]
-    _enrich_tasks(tasks, daemon=daemon, status=_make_status())
+    _enrich_tasks(tasks, daemon=daemon)
     assert _SKY_MEMO
 
-    _enrich_tasks([], daemon=daemon, status=_make_status())
+    _enrich_tasks([], daemon=daemon)
     assert not _SKY_MEMO
 
 
@@ -259,7 +225,7 @@ def test_task_without_satellite_id_is_skipped():
     )
     tasks = [{"id": "x", "start_time": datetime.now(timezone.utc).isoformat(), "stop_time": None}]
 
-    _enrich_tasks(tasks, daemon=daemon, status=_make_status(scope_ra=None, scope_dec=None))
+    _enrich_tasks(tasks, daemon=daemon)
 
     assert "sky_alt_deg" not in tasks[0]
 
@@ -278,7 +244,7 @@ def test_second_emission_does_not_repropagate():
     )
 
     tasks_a = [_task("sat-25544", task_id="task-iss")]
-    _enrich_tasks(tasks_a, daemon=daemon, status=_make_status())
+    _enrich_tasks(tasks_a, daemon=daemon)
     first_calls = daemon.elset_cache.calls
     cached_alt = tasks_a[0]["sky_alt_deg"]
 
@@ -289,7 +255,7 @@ def test_second_emission_does_not_repropagate():
     tasks_b[0]["start_time"] = tasks_a[0]["start_time"]
     tasks_b[0]["stop_time"] = tasks_a[0]["stop_time"]
 
-    _enrich_tasks(tasks_b, daemon=daemon, status=_make_status())
+    _enrich_tasks(tasks_b, daemon=daemon)
 
     # No additional elset_cache hit -- propagation skipped entirely.
     assert daemon.elset_cache.calls == first_calls
@@ -306,12 +272,12 @@ def test_signature_change_invalidates_memo():
     )
 
     t1 = _task("sat-25544", task_id="task-iss", start_offset_s=60)
-    _enrich_tasks([t1], daemon=daemon, status=_make_status())
+    _enrich_tasks([t1], daemon=daemon)
     calls_after_first = daemon.elset_cache.calls
 
     # Same task.id, different start time.
     t2 = _task("sat-25544", task_id="task-iss", start_offset_s=120)
-    _enrich_tasks([t2], daemon=daemon, status=_make_status())
+    _enrich_tasks([t2], daemon=daemon)
 
     # Memo miss -> elset cache touched again.
     assert daemon.elset_cache.calls > calls_after_first
@@ -326,38 +292,16 @@ def test_observer_change_invalidates_entire_memo():
         elsets=[{"satellite_id": "sat-25544", "name": "ISS", "tle": _ISS_TLE}],
     )
     t = _task("sat-25544", task_id="task-iss")
-    _enrich_tasks([t], daemon=daemon, status=_make_status())
+    _enrich_tasks([t], daemon=daemon)
     assert _SKY_MEMO
 
     # Same task, but the daemon now reports a new observer location.
     daemon.location_service = _StubLocationService(_OBSERVER_ALT)
     t2 = dict(t)  # same signature
-    _enrich_tasks([t2], daemon=daemon, status=_make_status())
+    _enrich_tasks([t2], daemon=daemon)
 
     # Memo was wiped on observer change, then repopulated for this task.
     assert len(_SKY_MEMO) == 1
-
-
-def test_slew_updates_even_when_static_fields_cached():
-    """The whole point of the memo split: slew is recomputed every call."""
-    daemon = _make_daemon(
-        tasks=[],
-        location=_OBSERVER,
-        elsets=[{"satellite_id": "sat-25544", "name": "ISS", "tle": _ISS_TLE}],
-    )
-    t1 = _task("sat-25544", task_id="task-iss")
-    _enrich_tasks([t1], daemon=daemon, status=_make_status(scope_ra=180.0, scope_dec=45.0))
-    slew_a = t1["slew_from_current_deg"]
-
-    # Same task, different scope pointing -> slew must change while static
-    # fields stay identical (they came from the memo).
-    t2 = dict(t1)  # preserves signature
-    for k in ("sky_alt_deg", "sky_az_deg", "sky_compass", "sky_trend", "sky_max_alt_deg", "slew_from_current_deg"):
-        t2.pop(k, None)
-    _enrich_tasks([t2], daemon=daemon, status=_make_status(scope_ra=0.0, scope_dec=0.0))
-
-    assert t2["sky_alt_deg"] == t1["sky_alt_deg"]  # static cached
-    assert t2["slew_from_current_deg"] != slew_a  # live recomputed
 
 
 def test_evicts_memo_for_tasks_no_longer_in_queue():
@@ -370,11 +314,11 @@ def test_evicts_memo_for_tasks_no_longer_in_queue():
     )
     t_a = _task("sat-25544", task_id="task-a")
     t_b = _task("sat-25544", task_id="task-b")
-    _enrich_tasks([t_a, t_b], daemon=daemon, status=_make_status())
+    _enrich_tasks([t_a, t_b], daemon=daemon)
     assert {"task-a", "task-b"}.issubset(_SKY_MEMO.keys())
 
     # Next snapshot drops task-a -- its memo entry should go too.
-    _enrich_tasks([t_b], daemon=daemon, status=_make_status())
+    _enrich_tasks([t_b], daemon=daemon)
     assert "task-a" not in _SKY_MEMO
     assert "task-b" in _SKY_MEMO
 
@@ -385,8 +329,8 @@ def test_evicts_memo_for_tasks_no_longer_in_queue():
 
 
 def test_get_web_tasks_returns_empty_when_daemon_not_ready():
-    assert get_web_tasks(None, _make_status()) == []
-    assert get_web_tasks(SimpleNamespace(task_dispatcher=None), _make_status()) == []
+    assert get_web_tasks(None) == []
+    assert get_web_tasks(SimpleNamespace(task_dispatcher=None)) == []
 
 
 def test_propagate_static_passes_per_sample_gast_override(monkeypatch):
@@ -436,7 +380,7 @@ def test_propagate_static_passes_per_sample_gast_override(monkeypatch):
         "filter": "Red",
     }
 
-    _enrich_tasks([task], daemon=daemon, status=_make_status())
+    _enrich_tasks([task], daemon=daemon)
 
     assert captured_kwargs, "_propagate_static never called radec_to_altaz"
     # Every call must pass a concrete GAST; None would mean we fell back to
@@ -480,7 +424,7 @@ def test_get_web_tasks_emits_dicts_with_sky_fields():
         elsets=[{"satellite_id": "sat-25544", "name": "ISS", "tle": _ISS_TLE}],
     )
 
-    result = get_web_tasks(daemon, _make_status())
+    result = get_web_tasks(daemon)
 
     assert len(result) == 1
     t = result[0]
@@ -488,4 +432,3 @@ def test_get_web_tasks_emits_dicts_with_sky_fields():
     assert t["satelliteId"] == "sat-25544"
     assert "sky_alt_deg" in t
     assert "sky_compass" in t
-    assert "slew_from_current_deg" in t

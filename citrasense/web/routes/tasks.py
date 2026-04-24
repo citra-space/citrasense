@@ -26,10 +26,10 @@ def build_tasks_router(ctx: CitraSenseWebApp) -> APIRouter:
 
         Delegates to :func:`get_web_tasks` so this route and the WebSocket
         broadcaster in :mod:`citrasense.web.app` produce identical wire
-        formats.  Sky enrichment (alt/az/compass/trend/peak + slew distance)
-        and any future derived fields live there.
+        formats.  Sky enrichment (alt/az/compass/trend/peak) and any future
+        derived fields live there.
         """
-        return get_web_tasks(ctx.daemon, ctx.status, exclude_active=True)
+        return get_web_tasks(ctx.daemon, exclude_active=True)
 
     @router.get("/tasks/active")
     async def get_active_tasks():
@@ -127,8 +127,8 @@ def build_tasks_router(ctx: CitraSenseWebApp) -> APIRouter:
         return {"status": "active", "message": "Task processing resumed"}
 
     @router.patch("/telescope/automated-scheduling")
-    async def update_automated_scheduling(request: dict[str, bool]):
-        """Toggle automated scheduling on/off."""
+    async def update_automated_scheduling(request: dict[str, Any]):
+        """Toggle automated scheduling on/off for a sensor (or all sensors)."""
         if not ctx.daemon or not ctx.daemon.task_dispatcher:
             return JSONResponse({"error": "Task manager not available"}, status_code=503)
 
@@ -139,19 +139,32 @@ def build_tasks_router(ctx: CitraSenseWebApp) -> APIRouter:
         if enabled is None:
             return JSONResponse({"error": "Missing 'enabled' field in request body"}, status_code=400)
 
-        try:
-            tr = ctx.daemon.telescope_record
-            if not tr:
-                return JSONResponse({"error": "Telescope record not available"}, status_code=503)
-            telescope_id = tr["id"]
-            success = ctx.daemon.api_client.update_telescope_automated_scheduling(telescope_id, enabled)
+        sensor_id = request.get("sensor_id")
 
-            if success:
-                ctx.daemon.task_dispatcher.automated_scheduling = enabled
-                CITRASENSE_LOGGER.info(f"Automated scheduling set to {'enabled' if enabled else 'disabled'}")
-                await ctx.broadcast_status()
-                return {"status": "success", "enabled": enabled}
-            return JSONResponse({"error": "Failed to update telescope on server"}, status_code=500)
+        try:
+            updated = 0
+            for trt in ctx.daemon.task_dispatcher._telescope_runtimes():
+                ts = trt.sensor
+                if not getattr(ts, "citra_record", None):
+                    continue
+                if sensor_id is not None and ts.sensor_id != sensor_id:
+                    continue
+                telescope_api_id = ts.citra_record["id"]
+                success = ctx.daemon.api_client.update_telescope_automated_scheduling(telescope_api_id, enabled)
+                if success:
+                    ts.citra_record["automated_scheduling"] = enabled
+                    updated += 1
+
+            if updated == 0:
+                return JSONResponse({"error": "No matching telescope found"}, status_code=404)
+
+            CITRASENSE_LOGGER.info(
+                "Automated scheduling set to %s for %d telescope(s)",
+                "enabled" if enabled else "disabled",
+                updated,
+            )
+            await ctx.broadcast_status()
+            return {"status": "success", "enabled": enabled}
 
         except Exception as e:
             CITRASENSE_LOGGER.error(f"Error updating automated scheduling: {e}", exc_info=True)
@@ -214,17 +227,21 @@ def build_tasks_router(ctx: CitraSenseWebApp) -> APIRouter:
 
             if not ctx.daemon.task_dispatcher.automated_scheduling:
                 try:
-                    tr = ctx.daemon.telescope_record
-                    telescope_id = tr["id"] if tr else None
-                    if not telescope_id:
-                        CITRASENSE_LOGGER.warning("Self-tasking: no telescope record available")
-                        return {"status": "success", "enabled": enabled}
-                    success = ctx.daemon.api_client.update_telescope_automated_scheduling(telescope_id, True)
-                    if success:
-                        ctx.daemon.task_dispatcher.automated_scheduling = True
-                        CITRASENSE_LOGGER.info("Self-tasking: auto-enabled scheduling")
-                    else:
-                        CITRASENSE_LOGGER.warning("Self-tasking: failed to enable scheduling on server")
+                    for trt in ctx.daemon.task_dispatcher._telescope_runtimes():
+                        ts = trt.sensor
+                        if not getattr(ts, "citra_record", None):
+                            continue
+                        if sensor_id is not None and ts.sensor_id != sensor_id:
+                            continue
+                        tid = ts.citra_record["id"]
+                        ok = ctx.daemon.api_client.update_telescope_automated_scheduling(tid, True)
+                        if ok:
+                            ts.citra_record["automated_scheduling"] = True
+                            CITRASENSE_LOGGER.info("Self-tasking: auto-enabled scheduling for %s", ts.sensor_id)
+                        else:
+                            CITRASENSE_LOGGER.warning(
+                                "Self-tasking: failed to enable scheduling on server for %s", ts.sensor_id
+                            )
                 except Exception as e:
                     CITRASENSE_LOGGER.warning(f"Self-tasking: could not enable scheduling: {e}")
 
@@ -233,20 +250,32 @@ def build_tasks_router(ctx: CitraSenseWebApp) -> APIRouter:
         return {"status": "success", "enabled": enabled}
 
     @router.post("/self-tasking/request-now")
-    async def request_batch_now():
+    async def request_batch_now(request: dict[str, Any] | None = None):
         """Fire a single batch collection request, bypassing session-state and timer gating."""
-        if not ctx.daemon:
+        if not ctx.daemon or not ctx.daemon.task_dispatcher:
             return JSONResponse({"error": "Daemon not available"}, status_code=503)
 
         gs = getattr(ctx.daemon, "ground_station", None)
-        tr = getattr(ctx.daemon, "telescope_record", None)
-        if not gs or not tr:
-            return JSONResponse({"error": "Ground station or telescope not configured"}, status_code=503)
+        if not gs:
+            return JSONResponse({"error": "Ground station not configured"}, status_code=503)
 
-        ts = ctx.daemon._telescope_sensor
-        sc = ctx.daemon.settings.get_sensor_config(ts.sensor_id) if ts else None
+        req_sensor_id = (request or {}).get("sensor_id")
+
+        target_ts = None
+        for trt in ctx.daemon.task_dispatcher._telescope_runtimes():
+            ts = trt.sensor
+            if not getattr(ts, "citra_record", None):
+                continue
+            if req_sensor_id is None or ts.sensor_id == req_sensor_id:
+                target_ts = ts
+                break
+
+        if not target_ts or not target_ts.citra_record:
+            return JSONResponse({"error": "No matching telescope found"}, status_code=404)
+
+        sc = ctx.daemon.settings.get_sensor_config(target_ts.sensor_id)
         ground_station_id = gs["id"]
-        sensor_id = tr["id"]
+        api_sensor_id = target_ts.citra_record["id"]
 
         group_ids = (sc.self_tasking_satellite_group_ids if sc else []) or None
         exclude_types = (sc.self_tasking_exclude_object_types if sc else []) or None
@@ -263,7 +292,7 @@ def build_tasks_router(ctx: CitraSenseWebApp) -> APIRouter:
             window_start,
             window_stop,
             ground_station_id,
-            sensor_id,
+            api_sensor_id,
         )
 
         try:
@@ -272,7 +301,7 @@ def build_tasks_router(ctx: CitraSenseWebApp) -> APIRouter:
                 window_start=window_start,
                 window_stop=window_stop,
                 ground_station_id=ground_station_id,
-                sensor_id=sensor_id,
+                sensor_id=api_sensor_id,
                 discover_visible=not bool(group_ids),
                 satellite_group_ids=group_ids,
                 request_type=collection_type,
