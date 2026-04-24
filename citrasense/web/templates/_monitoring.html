@@ -296,7 +296,7 @@
                                   return issues.join('\n');
                               })()"><i class="bi bi-exclamation-triangle-fill"></i></span>
                         <!-- Cable-wrap alert (per-sensor) -->
-                        <template x-for="alert in ($store.citrasense.status?.safety_status?.checks || []).filter(c => c.name === 'cable_wrap' && c.action !== 'safe')" :key="'cw-' + sensor.id">
+                        <template x-for="alert in ($store.citrasense.status?.safety_status?.checks || []).filter(c => c.name === 'cable_wrap' && c.sensor_id === sensor.id && c.action !== 'safe')" :key="'cw-' + sensor.id">
                             <span class="badge rounded-pill"
                                   :class="alert.action === 'emergency' ? 'bg-danger' : 'bg-warning text-dark'"
                                   data-bs-toggle="tooltip" data-bs-theme="dark"
@@ -522,7 +522,7 @@
 
                             <!-- Cable Wrap -->
                             <div class="row mb-2"
-                                 x-data="{ get cw() { return ($store.citrasense.status?.safety_status?.checks || []).find(c => c.name === 'cable_wrap'); } }"
+                                 x-data="{ get cw() { return ($store.citrasense.status?.safety_status?.checks || []).find(c => c.name === 'cable_wrap' && c.sensor_id === sensor.id); } }"
                                  x-show="cw">
                                 <div class="col-6 fw-semibold">
                                     <span data-bs-toggle="tooltip" data-bs-theme="dark" data-bs-placement="top"
@@ -971,22 +971,23 @@
                                 </div>
                             </template>
 
-                            <!-- ─── Preview Image (visible for all adapters when an image is available) ─── -->
-                            <div x-show="$store.citrasense.previewDataUrl || (sensor?.camera_connected && sensor?.supports_direct_camera_control)">
+                            <!-- ─── Preview Image (per-sensor, falls back to global) ─── -->
+                            <div x-data="{ get sensorPreview() { return $store.citrasense.previewDataUrls?.[sensor.id] || null; } }"
+                                 x-show="sensorPreview || (sensor?.camera_connected && sensor?.supports_direct_camera_control)">
                                 <div class="text-center mb-2 position-relative"
                                      style="min-height: 80px; background: #111; border-radius: .375rem; overflow: hidden;">
-                                    <template x-if="!$store.citrasense.previewDataUrl">
+                                    <template x-if="!sensorPreview">
                                         <div class="d-flex align-items-center justify-content-center text-muted"
                                              style="min-height: 80px;">
                                             <span>No preview yet</span>
                                         </div>
                                     </template>
-                                    <template x-if="$store.citrasense.previewDataUrl">
-                                        <img :src="$store.citrasense.previewDataUrl"
+                                    <template x-if="sensorPreview">
+                                        <img :src="sensorPreview"
                                              alt="Preview image"
                                              class="img-fluid"
                                              style="max-height: 360px; width: auto; cursor: pointer;"
-                                             @click="$dispatch('open-preview-modal')"
+                                             @click="$store.citrasense.previewDataUrl = sensorPreview; $dispatch('open-preview-modal')"
                                              title="Click to enlarge">
                                     </template>
                                 </div>

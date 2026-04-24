@@ -322,9 +322,16 @@ class SafetyMonitor:
         Uses the cached ``_last_action`` from the most recent ``evaluate()``
         call instead of calling ``check()`` again, because some checks (e.g.
         CableWrapCheck) have side effects in ``check()``.
+
+        Sensor-owned checks include a ``sensor_id`` key so the frontend can
+        associate them with the correct sensor panel.
         """
         with self._checks_lock:
             checks_snapshot = list(self._checks)
+            chk_to_sensor: dict[int, str] = {}
+            for sid, chk_list in self._sensor_checks.items():
+                for chk in chk_list:
+                    chk_to_sensor[id(chk)] = sid
         check_statuses: list[dict] = []
         for chk in checks_snapshot:
             try:
@@ -332,6 +339,9 @@ class SafetyMonitor:
                 status["action"] = chk._last_action.value
             except Exception:
                 status = {"name": chk.name, "action": "error"}
+            sensor_id = chk_to_sensor.get(id(chk))
+            if sensor_id is not None:
+                status["sensor_id"] = sensor_id
             check_statuses.append(status)
         return {
             "checks": check_statuses,

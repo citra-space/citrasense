@@ -104,6 +104,7 @@ function compareVersions(v1, v2) {
             isLooping: false,
             previewDataUrl: null,
             previewSource: '',
+            previewDataUrls: {},
             loopCount: 0,
             previewExposure: null,
             _lastTaskImageUrl: null,
@@ -318,6 +319,7 @@ function compareVersions(v1, v2) {
                     }
                     const data = await response.json();
                     if (response.ok && data.image_data) {
+                        this.previewDataUrls = { ...this.previewDataUrls, [sensorId]: data.image_data };
                         this.previewDataUrl = data.image_data;
                         this.loopCount++;
                     } else {
@@ -360,6 +362,7 @@ function compareVersions(v1, v2) {
                     });
                     const data = await response.json();
                     if (response.ok && data.image_data) {
+                        this.previewDataUrls = { ...this.previewDataUrls, [sensorId]: data.image_data };
                         this.previewDataUrl = data.image_data;
                         this.loopCount++;
                     } else {

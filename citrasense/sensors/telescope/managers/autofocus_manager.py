@@ -51,6 +51,7 @@ class AutofocusManager:
         self.imaging_queue = imaging_queue
         self.location_service = location_service
         self._preview_bus = preview_bus
+        self._sensor_id: str = ""
         self.on_toast = on_toast
         self._requested = False
         self._running = False
@@ -440,7 +441,7 @@ class AutofocusManager:
             from citrasense.preview_bus import array_to_jpeg_data_url
 
             data_url = array_to_jpeg_data_url(image)
-            self._preview_bus.push(data_url, "autofocus")
+            self._preview_bus.push(data_url, "autofocus", sensor_id=self._sensor_id)
         except Exception as e:
             self.logger.debug(f"Failed to push AF preview frame: {e}")
 

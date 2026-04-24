@@ -484,7 +484,7 @@ class StatusCollector:
             try:
                 s = sm.get(sensor_id)
                 tr = getattr(s, "citra_record", None)
-                sd["automated_scheduling"] = (tr or {}).get("automated_scheduling", False)
+                sd["automated_scheduling"] = (tr or {}).get("automatedScheduling", False)
             except KeyError:
                 sd["automated_scheduling"] = False
 

@@ -100,9 +100,9 @@ function connect() {
             } else if (message.type === 'tasks' && onTasksUpdate) {
                 onTasksUpdate(message.data);
             } else if (message.type === 'preview' && onPreviewImage) {
-                onPreviewImage(message.data, message.source);
+                onPreviewImage(message.data, message.source, message.sensor_id);
             } else if (message.type === 'preview_url' && onPreviewImage) {
-                onPreviewImage(message.url, message.source);
+                onPreviewImage(message.url, message.source, message.sensor_id);
             } else if (message.type === 'toast' && onToastMessage) {
                 onToastMessage(message.data);
             }

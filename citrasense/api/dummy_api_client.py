@@ -513,7 +513,9 @@ class DummyApiClient(AbstractCitraApiClient):
         immediate_sats: list[tuple[str, float]] = []
         future_passes: list[tuple[datetime, str, datetime, datetime]] = []
 
-        for sat_id, sat in self._keplemon_sats.items():
+        sat_items = list(self._keplemon_sats.items())
+        random.shuffle(sat_items)
+        for sat_id, sat in sat_items:
             if sat_id in scheduled_sat_ids:
                 continue
 

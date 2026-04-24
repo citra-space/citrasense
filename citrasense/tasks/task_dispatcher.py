@@ -94,9 +94,20 @@ class TaskDispatcher:
         return self._runtimes.get(sensor_id)
 
     def _runtime_for_task(self, task: Task) -> SensorRuntime | None:
-        """Resolve the runtime responsible for this task."""
-        if task.sensor_id and task.sensor_id in self._runtimes:
-            return self._runtimes[task.sensor_id]
+        """Resolve the runtime responsible for this task.
+
+        Matches by config-level sensor_id first, then by API-side telescope
+        ID (from citra_record), then falls back to the first runtime whose
+        sensor_type matches.
+        """
+        sid = task.sensor_id
+        if sid:
+            if sid in self._runtimes:
+                return self._runtimes[sid]
+            for rt in self._runtimes.values():
+                rec = getattr(rt.sensor, "citra_record", None)
+                if rec and rec.get("id") == sid:
+                    return rt
         for rt in self._runtimes.values():
             if rt.sensor_type == task.sensor_type:
                 return rt

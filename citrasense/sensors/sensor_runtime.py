@@ -124,6 +124,7 @@ class SensorRuntime:
                 location_service=location_service,
                 preview_bus=preview_bus,
             )
+            self.autofocus_manager._sensor_id = self.sensor_id
             self.alignment_manager = AlignmentManager(
                 self.logger,
                 hardware_adapter,
@@ -133,6 +134,7 @@ class SensorRuntime:
                 location_service=location_service,
                 preview_bus=preview_bus,
             )
+            self.alignment_manager._sensor_id = self.sensor_id
             self.homing_manager = HomingManager(
                 self.logger,
                 hardware_adapter,

@@ -152,7 +152,7 @@ def build_tasks_router(ctx: CitraSenseWebApp) -> APIRouter:
                 telescope_api_id = ts.citra_record["id"]
                 success = ctx.daemon.api_client.update_telescope_automated_scheduling(telescope_api_id, enabled)
                 if success:
-                    ts.citra_record["automated_scheduling"] = enabled
+                    ts.citra_record["automatedScheduling"] = enabled
                     updated += 1
 
             if updated == 0:
@@ -236,7 +236,7 @@ def build_tasks_router(ctx: CitraSenseWebApp) -> APIRouter:
                         tid = ts.citra_record["id"]
                         ok = ctx.daemon.api_client.update_telescope_automated_scheduling(tid, True)
                         if ok:
-                            ts.citra_record["automated_scheduling"] = True
+                            ts.citra_record["automatedScheduling"] = True
                             CITRASENSE_LOGGER.info("Self-tasking: auto-enabled scheduling for %s", ts.sensor_id)
                         else:
                             CITRASENSE_LOGGER.warning(

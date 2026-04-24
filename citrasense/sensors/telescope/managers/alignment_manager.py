@@ -55,6 +55,7 @@ class AlignmentManager:
         self.safety_monitor = safety_monitor
         self.location_service = location_service
         self._preview_bus = preview_bus
+        self._sensor_id: str = ""
 
         # Quick-align state
         self._requested = False
@@ -196,7 +197,7 @@ class AlignmentManager:
 
             if self._preview_bus:
                 try:
-                    self._preview_bus.push_file(image_path, "alignment")
+                    self._preview_bus.push_file(image_path, "alignment", sensor_id=self._sensor_id)
                 except Exception as e:
                     self.logger.debug(f"Failed to push alignment preview: {e}")
             self._set_progress("Plate solving...")
@@ -707,7 +708,7 @@ class AlignmentManager:
 
             if self._preview_bus:
                 try:
-                    self._preview_bus.push_file(image_path, "calibration")
+                    self._preview_bus.push_file(image_path, "calibration", sensor_id=self._sensor_id)
                 except Exception as e:
                     self.logger.debug(f"Failed to push calibration preview: {e}")
             result = PlateSolverProcessor.solve(

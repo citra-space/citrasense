@@ -64,9 +64,12 @@ function appendLogToStore(log) {
     store.latestLog = log;
 }
 
-function updatePreviewFromPush(dataUrl, source) {
+function updatePreviewFromPush(dataUrl, source, sensorId) {
     const store = Alpine.store('citrasense');
     if (store.isLooping) return;
+    if (sensorId) {
+        store.previewDataUrls = { ...store.previewDataUrls, [sensorId]: dataUrl };
+    }
     store.previewDataUrl = dataUrl;
     store.previewSource = source || '';
 }

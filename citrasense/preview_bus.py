@@ -1,8 +1,9 @@
-"""Thread-safe single-slot bus for pushing preview images to the web UI.
+"""Thread-safe per-sensor preview image bus for the web UI.
 
-Any backend component can call ``push(data_url, source)`` and the image
-will be broadcast to all connected WebSocket clients within ~1 second.
-Only the latest frame is kept — a new push overwrites any unpopped frame.
+Any backend component can call ``push(data_url, source, sensor_id)`` and the
+image will be broadcast to all connected WebSocket clients within ~1 second.
+Each sensor_id maintains its own latest-frame slot so frames from different
+sensors never overwrite each other.
 
 Also contains :func:`array_to_jpeg_data_url`, a pure utility that
 converts numpy pixel arrays into browser-renderable JPEG data URLs.
@@ -69,12 +70,19 @@ def array_to_jpeg_data_url(
     return f"data:image/jpeg;base64,{b64}"
 
 
+# Frame tuple: (payload, source, kind, sensor_id)
+_Frame = tuple[str, str, str, str]
+
+
 class PreviewBus:
-    """Single-slot preview image bus.
+    """Per-sensor preview image bus.
 
     Thread-safe: producers call :meth:`push` from any thread; the web
-    server's broadcast loop calls :meth:`pop` from the asyncio event loop
-    thread.
+    server's broadcast loop calls :meth:`pop_all` from the asyncio event
+    loop thread.
+
+    Each ``sensor_id`` maintains its own latest-frame slot so frames from
+    different sensors never overwrite each other.
 
     Two frame types are supported:
 
@@ -89,35 +97,47 @@ class PreviewBus:
 
     def __init__(self) -> None:
         self._lock = threading.Lock()
-        self._frame: tuple[str, str, str] | None = None  # (payload, source, kind)
+        self._frames: dict[str, _Frame] = {}
 
-    def push(self, data_url: str, source: str = "") -> None:
-        """Store a data-URL preview frame, overwriting any previous unpopped frame."""
+    def push(self, data_url: str, source: str = "", sensor_id: str = "") -> None:
+        """Store a data-URL preview frame for *sensor_id*."""
         with self._lock:
-            self._frame = (data_url, source, "data")
+            self._frames[sensor_id] = (data_url, source, "data", sensor_id)
 
-    def push_url(self, url: str, source: str = "") -> None:
-        """Store a URL notification frame (lightweight — no image payload)."""
+    def push_url(self, url: str, source: str = "", sensor_id: str = "") -> None:
+        """Store a URL notification frame for *sensor_id*."""
         with self._lock:
-            self._frame = (url, source, "url")
+            self._frames[sensor_id] = (url, source, "url", sensor_id)
 
-    def pop(self) -> tuple[str, str, str] | None:
-        """Return and clear the current frame, or None if empty.
+    def pop_all(self) -> list[_Frame]:
+        """Return and clear all pending frames (one per sensor).
 
         Returns:
-            ``(payload, source, kind)`` where *kind* is ``"data"`` or ``"url"``.
+            List of ``(payload, source, kind, sensor_id)`` tuples.
         """
         with self._lock:
-            frame = self._frame
-            self._frame = None
-            return frame
+            frames = list(self._frames.values())
+            self._frames.clear()
+            return frames
+
+    def pop(self) -> tuple[str, str, str] | None:
+        """Legacy single-frame pop -- returns the first pending frame.
+
+        Prefer :meth:`pop_all` for multi-sensor awareness.
+        """
+        with self._lock:
+            if not self._frames:
+                return None
+            key = next(iter(self._frames))
+            payload, source, kind, _sid = self._frames.pop(key)
+            return (payload, source, kind)
 
     def clear(self) -> None:
-        """Discard the current frame without returning it."""
+        """Discard all pending frames."""
         with self._lock:
-            self._frame = None
+            self._frames.clear()
 
-    def push_file(self, path: str | Path, source: str = "") -> None:
+    def push_file(self, path: str | Path, source: str = "", sensor_id: str = "") -> None:
         """Read an image file from disk and push it as a data URL.
 
         Supports JPEG, PNG, and FITS formats. FITS files are auto-stretched
@@ -135,9 +155,9 @@ class PreviewBus:
                 assert isinstance(primary, fits.PrimaryHDU)
                 data = primary.data
             if data is not None:
-                self.push(array_to_jpeg_data_url(data), source)
+                self.push(array_to_jpeg_data_url(data), source, sensor_id)
         else:
             mime = "image/jpeg" if suffix in (".jpg", ".jpeg") else "image/png"
             raw = p.read_bytes()
             b64 = base64.b64encode(raw).decode("ascii")
-            self.push(f"data:{mime};base64,{b64}", source)
+            self.push(f"data:{mime};base64,{b64}", source, sensor_id)

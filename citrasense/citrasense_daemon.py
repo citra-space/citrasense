@@ -98,7 +98,7 @@ class CitraSenseDaemon:
         # Create web server instance (always enabled)
         self.web_server = CitraSenseWebServer(daemon=self, host="0.0.0.0", port=self.settings.web_port)
 
-    def _on_annotated_image(self, path: str) -> None:
+    def _on_annotated_image(self, path: str, sensor_id: str = "") -> None:
         """Handle a new annotated task image: store path and notify preview bus via URL.
 
         Uses a lightweight URL notification instead of base64-encoding the
@@ -108,7 +108,7 @@ class CitraSenseDaemon:
         self.latest_annotated_image_path = path
         try:
             mtime_ns = Path(path).stat().st_mtime_ns
-            self.preview_bus.push_url(f"/api/task-preview/latest?t={mtime_ns}", "task")
+            self.preview_bus.push_url(f"/api/task-preview/latest?t={mtime_ns}", "task", sensor_id=sensor_id)
         except Exception as e:
             CITRASENSE_LOGGER.warning("Failed to publish annotated image preview for %s: %s", path, e)
 
@@ -514,7 +514,7 @@ class CitraSenseDaemon:
             location_service=self.location_service,
             telescope_record=citra_telescope_record,
             ground_station=ground_station,
-            on_annotated_image=self._on_annotated_image,
+            on_annotated_image=lambda path, _sid=telescope_sensor.sensor_id: self._on_annotated_image(path, _sid),
             preview_bus=self.preview_bus,
             task_index=self.task_index,
             safety_monitor=self.safety_monitor,

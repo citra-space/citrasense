@@ -135,20 +135,21 @@ class CitraSenseWebApp:
         await self.connection_manager.broadcast({"type": "tasks", "data": tasks})
 
     async def broadcast_preview(self):
-        """Pop a frame from the PreviewBus and broadcast it to all clients."""
+        """Pop all pending preview frames and broadcast them to all clients."""
         if not self.daemon:
             return
         bus = getattr(self.daemon, "preview_bus", None)
         if not bus:
             return
-        frame = bus.pop()
-        if not frame:
-            return
-        payload, source, kind = frame
-        if kind == "url":
-            await self.connection_manager.broadcast({"type": "preview_url", "url": payload, "source": source})
-        else:
-            await self.connection_manager.broadcast({"type": "preview", "data": payload, "source": source})
+        for payload, source, kind, sensor_id in bus.pop_all():
+            msg = {"source": source, "sensor_id": sensor_id}
+            if kind == "url":
+                msg["type"] = "preview_url"
+                msg["url"] = payload
+            else:
+                msg["type"] = "preview"
+                msg["data"] = payload
+            await self.connection_manager.broadcast(msg)
 
     async def broadcast_log(self, log_entry: dict):
         """Broadcast log entry to all connected clients."""
