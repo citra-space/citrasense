@@ -273,7 +273,7 @@ class StatusCollector:
 
             # Per-sensor task state
             if td:
-                sd["current_task"] = td.current_task_id_for_sensor(sensor_id)
+                sd["current_task"] = td.current_task_ids.get(sensor_id)
                 sd["processing_active"] = not s_runtime.paused if s_runtime else False
             else:
                 sd["current_task"] = None
@@ -443,12 +443,12 @@ class StatusCollector:
         sd["hfr_history"] = [{"hfr": h, "ts": t, "filter": f} for h, t, f in hfr_hist]
         sd["last_hfr_median"] = hfr_hist[-1][0] if hfr_hist else None
 
-        # Per-sensor HFR baseline from the sensor's adapter_settings
+        # Per-sensor HFR baseline (typed field on SensorConfig as of v8).
         sensor_cfg = (
             self.daemon.settings.get_sensor_config(runtime.sensor_id) if self.daemon and self.daemon.settings else None
         )
         if sensor_cfg:
-            sd["hfr_baseline"] = sensor_cfg.adapter_settings.get("hfr_baseline")
+            sd["hfr_baseline"] = sensor_cfg.hfr_baseline
         else:
             sd["hfr_baseline"] = None
 

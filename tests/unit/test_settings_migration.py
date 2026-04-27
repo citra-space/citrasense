@@ -295,3 +295,73 @@ class TestSensorConfigModel:
         assert cfg.adapter == ""
         assert cfg.adapter_settings == {}
         assert cfg.citra_sensor_id == ""
+        assert cfg.hfr_baseline is None
+
+
+class TestHfrBaselinePromotion:
+    """v7 → v8 migration: ``hfr_baseline`` leaves ``adapter_settings``."""
+
+    def test_baseline_moves_out_of_adapter_settings(self):
+        s, _ = _make_settings(
+            {
+                "config_version": 7,
+                "sensors": [
+                    {
+                        "id": "telescope-0",
+                        "type": "telescope",
+                        "adapter": "nina",
+                        "adapter_settings": {
+                            "host": "1.2.3.4",
+                            "hfr_baseline": 1.87,
+                            "filters": {"0": {"name": "Luminance"}},
+                        },
+                    }
+                ],
+            }
+        )
+        head = s.sensors[0]
+        assert head.hfr_baseline == pytest.approx(1.87)
+        assert "hfr_baseline" not in head.adapter_settings
+        # Other adapter_settings keys must survive the migration.
+        assert head.adapter_settings["host"] == "1.2.3.4"
+        assert head.adapter_settings["filters"] == {"0": {"name": "Luminance"}}
+
+    def test_missing_baseline_leaves_field_none(self):
+        s, _ = _make_settings(
+            {
+                "config_version": 7,
+                "sensors": [
+                    {
+                        "id": "telescope-0",
+                        "type": "telescope",
+                        "adapter": "nina",
+                        "adapter_settings": {"host": "1.2.3.4"},
+                    }
+                ],
+            }
+        )
+        assert s.sensors[0].hfr_baseline is None
+        assert "hfr_baseline" not in s.sensors[0].adapter_settings
+
+    def test_explicit_top_level_value_wins(self):
+        # If a sensor already carries a top-level ``hfr_baseline`` and the
+        # adapter_settings blob also has one (e.g. a partial manual edit),
+        # the already-promoted top-level value takes precedence — the
+        # migration uses ``setdefault`` which is a no-op when the key
+        # already exists.
+        s, _ = _make_settings(
+            {
+                "config_version": 7,
+                "sensors": [
+                    {
+                        "id": "telescope-0",
+                        "type": "telescope",
+                        "adapter": "nina",
+                        "hfr_baseline": 2.5,
+                        "adapter_settings": {"hfr_baseline": 9.9},
+                    }
+                ],
+            }
+        )
+        assert s.sensors[0].hfr_baseline == pytest.approx(2.5)
+        assert "hfr_baseline" not in s.sensors[0].adapter_settings

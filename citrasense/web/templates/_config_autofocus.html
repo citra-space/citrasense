@@ -117,7 +117,7 @@
         <div class="small text-muted" x-show="$store.citrasense.configSensorStatus?.hfr_baseline != null">
             Current baseline: <strong x-text="$store.citrasense.configSensorStatus?.hfr_baseline?.toFixed(2)"></strong> px
             <button class="btn btn-link btn-sm p-0 ms-2 text-muted" type="button"
-                @click="sc.adapter_settings.hfr_baseline = null; $store.citrasense.saveConfiguration()">
+                @click="sc.hfr_baseline = null; $store.citrasense.saveConfiguration()">
                 Clear
             </button>
         </div>

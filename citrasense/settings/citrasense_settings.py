@@ -25,7 +25,10 @@ from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, field_validator,
 #     the model; ``load()`` migrates v1/v2 files automatically.
 # v4: operational settings (task_processing_paused, observing_session_*,
 #     self_tasking_*) moved from global to per-sensor.
-CONFIG_VERSION = 7
+# v8: ``hfr_baseline`` promoted from ``adapter_settings["hfr_baseline"]``
+#     to a typed ``SensorConfig.hfr_baseline`` field. The post-autofocus
+#     baseline is a per-sensor measurement, not an adapter setting.
+CONFIG_VERSION = 8
 # Legacy scalar-only shape — synthesized ``sensors`` entries are marked with
 # this id so they round-trip cleanly on resave.
 # Migration-only: default sensor id assigned when upgrading legacy single-sensor configs.
@@ -37,6 +40,26 @@ from citrasense.settings.directory_manager import DirectoryManager
 from citrasense.settings.settings_file_manager import SettingsFileManager
 
 _VALID_SEXTRACTOR_FILTERS = frozenset({"default", "gauss_1.5_3x3", "gauss_2.5_5x5", "tophat_3.0_3x3", "tophat_5.0_5x5"})
+
+
+def _hoist_to_sensors(config: dict[str, Any], fields: tuple[str, ...]) -> None:
+    """Move top-level legacy fields onto each sensor via ``setdefault``.
+
+    Used by the v3→v4, v4→v5, v5→v6, and v6→v7 migration steps, which all
+    share the same shape: pop a tuple of keys off the top-level config and
+    copy them into every sensor entry (synthesizing a default telescope
+    entry if the list is empty).
+    """
+    top = {k: config.pop(k) for k in fields if k in config}
+    if not top:
+        return
+    sensors = config.get("sensors") or []
+    if not sensors:
+        sensors = [{"id": DEFAULT_TELESCOPE_SENSOR_ID, "type": "telescope"}]
+        config["sensors"] = sensors
+    for sd in sensors:
+        for k, v in top.items():
+            sd.setdefault(k, v)
 
 
 class SensorConfig(BaseModel):
@@ -116,6 +139,12 @@ class SensorConfig(BaseModel):
     autofocus_on_hfr_increase_enabled: bool = False
     autofocus_hfr_increase_percent: int = 30
     autofocus_hfr_sample_window: int = 5
+
+    # Post-autofocus HFR baseline — the minimum HFR observed at the end of
+    # the most recent autofocus run. Promoted from ``adapter_settings`` in
+    # config_version 8 because it's a per-sensor measurement, not an
+    # adapter-specific setting.
+    hfr_baseline: float | None = None
 
     # Per-sensor timestamps (moved from global in config_version 6).
     last_autofocus_timestamp: int | None = None
@@ -474,88 +503,83 @@ class CitraSenseSettings(BaseModel):
                     sd["adapter_settings"] = all_adapter_settings[adapter]
 
         # ── v3 → v4: move operational settings into each sensor ───────
-        _OPS_FIELDS = (
-            "task_processing_paused",
-            "observing_session_enabled",
-            "observing_session_sun_altitude_threshold",
-            "observing_session_do_pointing_calibration",
-            "observing_session_do_autofocus",
-            "observing_session_do_park",
-            "self_tasking_enabled",
-            "self_tasking_satellite_group_ids",
-            "self_tasking_include_orbit_regimes",
-            "self_tasking_exclude_object_types",
-            "self_tasking_collection_type",
+        _hoist_to_sensors(
+            config,
+            (
+                "task_processing_paused",
+                "observing_session_enabled",
+                "observing_session_sun_altitude_threshold",
+                "observing_session_do_pointing_calibration",
+                "observing_session_do_autofocus",
+                "observing_session_do_park",
+                "self_tasking_enabled",
+                "self_tasking_satellite_group_ids",
+                "self_tasking_include_orbit_regimes",
+                "self_tasking_exclude_object_types",
+                "self_tasking_collection_type",
+            ),
         )
-        top_ops = {k: config.pop(k) for k in _OPS_FIELDS if k in config}
-        if top_ops:
-            for sd in config.get("sensors") or []:
-                for k, v in top_ops.items():
-                    sd.setdefault(k, v)
 
         # ── v4 → v5: move observation, processing tuning, and autofocus
         #    settings into each sensor ──────────────────────────────────
-        _V5_FIELDS = (
-            # Observation
-            "observation_mode",
-            "exposure_seconds",
-            "num_exposures",
-            "adaptive_exposure",
-            "adaptive_exposure_max_trail_pixels",
-            "adaptive_exposure_min_seconds",
-            "adaptive_exposure_max_seconds",
-            # Processing tuning + toggles
-            "processors_enabled",
-            "enabled_processors",
-            "skip_upload",
-            "plate_solve_timeout",
-            "astrometry_index_path",
-            "sextractor_detect_thresh",
-            "sextractor_detect_minarea",
-            "sextractor_filter_name",
-            # Autofocus
-            "scheduled_autofocus_enabled",
-            "autofocus_schedule_mode",
-            "autofocus_interval_minutes",
-            "autofocus_after_sunset_offset_minutes",
-            "autofocus_target_preset",
-            "autofocus_target_custom_ra",
-            "autofocus_target_custom_dec",
-            "autofocus_on_hfr_increase_enabled",
-            "autofocus_hfr_increase_percent",
-            "autofocus_hfr_sample_window",
+        _hoist_to_sensors(
+            config,
+            (
+                # Observation
+                "observation_mode",
+                "exposure_seconds",
+                "num_exposures",
+                "adaptive_exposure",
+                "adaptive_exposure_max_trail_pixels",
+                "adaptive_exposure_min_seconds",
+                "adaptive_exposure_max_seconds",
+                # Processing tuning + toggles
+                "processors_enabled",
+                "enabled_processors",
+                "skip_upload",
+                "plate_solve_timeout",
+                "astrometry_index_path",
+                "sextractor_detect_thresh",
+                "sextractor_detect_minarea",
+                "sextractor_filter_name",
+                # Autofocus
+                "scheduled_autofocus_enabled",
+                "autofocus_schedule_mode",
+                "autofocus_interval_minutes",
+                "autofocus_after_sunset_offset_minutes",
+                "autofocus_target_preset",
+                "autofocus_target_custom_ra",
+                "autofocus_target_custom_dec",
+                "autofocus_on_hfr_increase_enabled",
+                "autofocus_hfr_increase_percent",
+                "autofocus_hfr_sample_window",
+            ),
         )
-        top_v5 = {k: config.pop(k) for k in _V5_FIELDS if k in config}
-        if top_v5:
-            sensor_list = config.get("sensors") or []
-            if not sensor_list:
-                sensor_list = [{"id": DEFAULT_TELESCOPE_SENSOR_ID, "type": "telescope"}]
-                config["sensors"] = sensor_list
-            for sd in sensor_list:
-                for k, v in top_v5.items():
-                    sd.setdefault(k, v)
 
         # ── v5 → v6: move timestamps into each sensor ─────────────────
-        _V6_FIELDS = ("last_autofocus_timestamp", "last_alignment_timestamp")
-        top_v6 = {k: config.pop(k) for k in _V6_FIELDS if k in config}
-        if top_v6:
-            for sd in config.get("sensors") or []:
-                for k, v in top_v6.items():
-                    sd.setdefault(k, v)
+        _hoist_to_sensors(config, ("last_autofocus_timestamp", "last_alignment_timestamp"))
 
         # ── v6 → v7: move hardware-dependent capture settings into each
         # sensor. These are camera/optics-specific, so every rig needs its
         # own defaults.
-        _V7_FIELDS = (
-            "alignment_exposure_seconds",
-            "calibration_frame_count",
-            "flat_frame_count",
+        _hoist_to_sensors(
+            config,
+            (
+                "alignment_exposure_seconds",
+                "calibration_frame_count",
+                "flat_frame_count",
+            ),
         )
-        top_v7 = {k: config.pop(k) for k in _V7_FIELDS if k in config}
-        if top_v7:
-            for sd in config.get("sensors") or []:
-                for k, v in top_v7.items():
-                    sd.setdefault(k, v)
+
+        # ── v7 → v8: promote ``hfr_baseline`` out of each sensor's
+        # ``adapter_settings`` into a typed top-level field.  The baseline
+        # is a per-sensor post-autofocus measurement, not an
+        # adapter-specific setting, so it belongs next to the other
+        # autofocus timestamps on ``SensorConfig``.
+        for sd in config.get("sensors") or []:
+            aset = sd.get("adapter_settings") or {}
+            if "hfr_baseline" in aset:
+                sd.setdefault("hfr_baseline", aset.pop("hfr_baseline"))
 
         instance = cls.model_validate(config)
         instance._config_manager = mgr

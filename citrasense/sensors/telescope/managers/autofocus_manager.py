@@ -185,10 +185,10 @@ class AutofocusManager:
                 result["position"] = actual_pos
 
     def _update_hfr_baseline(self) -> None:
-        """Persist the best HFR from this AF run as the per-adapter monitoring baseline.
+        """Persist the best HFR from this AF run as the per-sensor monitoring baseline.
 
-        Stored in adapter_settings so each adapter gets its own baseline.
-        Must be called while holding self._lock.
+        Stored as a typed field on :class:`SensorConfig`. Must be called
+        while holding ``self._lock``.
         """
         if not self._filter_results or not self.settings:
             return
@@ -197,7 +197,10 @@ class AutofocusManager:
             return
         baseline = round(min(hfr_values), 2)
         if self._sensor_config:
-            self._sensor_config.adapter_settings["hfr_baseline"] = baseline
+            self._sensor_config.hfr_baseline = baseline
+        # Persistence happens in the autofocus ``finally`` block, which
+        # calls ``self.settings.save()`` once with both the baseline and
+        # the new ``last_autofocus_timestamp``.
         self.logger.info(f"HFR baseline updated to {baseline:.2f} px")
 
     def clear_points(self) -> None:
@@ -244,7 +247,7 @@ class AutofocusManager:
         afs = self._af_settings
         if not afs or not afs.autofocus_on_hfr_increase_enabled:
             return False
-        baseline = self._sensor_config.adapter_settings.get("hfr_baseline") if self._sensor_config else None
+        baseline = self._sensor_config.hfr_baseline if self._sensor_config else None
         if baseline is None or baseline <= 0:
             return False
         if not self.hardware_adapter.supports_autofocus():

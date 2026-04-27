@@ -201,7 +201,7 @@ def mock_daemon(mock_settings, mock_adapter):
     d.task_dispatcher.get_runtime.side_effect = lambda sid: mock_runtime if sid == "scope-0" else None
     d.task_dispatcher.telescope_runtimes.return_value = [mock_runtime]
     d.task_dispatcher.iter_runtimes.return_value = [mock_runtime]
-    d.task_dispatcher.current_task_id_for_sensor.return_value = None
+    d.task_dispatcher.current_task_ids = {}
     return d
 
 
@@ -558,7 +558,7 @@ def test_clear_operator_stop(client, mock_daemon):
     data = resp.json()
     assert data["success"] is True
     mock_daemon.safety_monitor.clear_operator_stop.assert_called_once()
-    mock_daemon.task_dispatcher.resume_all.assert_not_called()
+    mock_daemon.task_dispatcher.resume_sensor.assert_not_called()
     mock_daemon.settings.save.assert_not_called()
 
 
@@ -1082,7 +1082,7 @@ def mock_daemon_two_telescopes(mock_settings):
     d.task_dispatcher.iter_runtimes = lambda: [rt0, rt1]
     d.task_dispatcher.telescope_runtimes = lambda: [rt0, rt1]
     d.task_dispatcher.get_runtime = lambda sid: {"scope-0": rt0, "scope-1": rt1}.get(sid)
-    d.task_dispatcher.current_task_id_for_sensor = lambda _sid: None
+    d.task_dispatcher.current_task_ids = {}
 
     sm = MagicMock()
     sensors = {"scope-0": sensor0, "scope-1": sensor1}

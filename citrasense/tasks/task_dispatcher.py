@@ -111,11 +111,6 @@ class TaskDispatcher:
             if rt.sensor_type == "telescope" and getattr(rt.sensor, "citra_record", None)
         ]
 
-    def current_task_id_for_sensor(self, sensor_id: str) -> str | None:
-        """Return the task id currently executing on *sensor_id* (or ``None``)."""
-        with self.heap_lock:
-            return self._current_task_ids.get(sensor_id)
-
     def _runtime_for_task(self, task: Task) -> SensorRuntime | None:
         """Resolve the runtime responsible for this task.
 
@@ -606,74 +601,91 @@ class TaskDispatcher:
             return True
 
         if action == SafetyAction.EMERGENCY:
-            for rt in self._runtimes.values():
-                adapter = getattr(rt, "hardware_adapter", None)
-                if adapter:
-                    try:
-                        adapter.abort_slew()
-                    except Exception:
-                        pass
-            is_new = self._last_safety_action != SafetyAction.EMERGENCY
-            if is_new:
-                self.clear_pending_tasks()
-                trigger_name = triggered_check.name if triggered_check else "unknown"
-                trigger_sid_raw = getattr(triggered_check, "sensor_id", None) if triggered_check else None
-                trigger_sid = trigger_sid_raw if isinstance(trigger_sid_raw, str) and trigger_sid_raw else None
-                self.logger.critical(
-                    "EMERGENCY — cancelled in-flight imaging (trigger: %s, sensor: %s)",
-                    trigger_name,
-                    trigger_sid or "site",
-                )
-                if self.on_toast:
-                    where = f" on {trigger_sid}" if trigger_sid else ""
-                    toast_id = f"safety-emergency:{trigger_sid}" if trigger_sid else "safety-emergency"
-                    self.on_toast(
-                        f"Safety EMERGENCY: {trigger_name}{where} — imaging cancelled",
-                        "danger",
-                        toast_id,
-                    )
-            if triggered_check and is_new:
-                try:
-                    triggered_check.execute_action()
-                except Exception:
-                    self.logger.error("Safety corrective action failed", exc_info=True)
-            self._last_safety_action = action
-            return True
-
-        if action == SafetyAction.QUEUE_STOP:
-            # Per-sensor isolation: a sensor-scoped check only waits for *its*
-            # acquisition queue to go idle before running its corrective
-            # action.  Site-level checks (``sensor_id is None``) still gate on
-            # every runtime being idle so they don't yank hardware out from
-            # under another rig mid-exposure.
-            if triggered_check is not None:
-                scoped_sid_raw = getattr(triggered_check, "sensor_id", None)
-                # Only treat it as per-sensor if it's an actual string; MagicMock
-                # tests (and site-level checks) leave this as None.
-                scoped_sid = scoped_sid_raw if isinstance(scoped_sid_raw, str) else None
-                if scoped_sid is not None:
-                    rt = self._runtimes.get(scoped_sid)
-                    idle = rt is not None and rt.acquisition_queue.is_idle()
-                else:
-                    idle = all(rt.acquisition_queue.is_idle() for rt in self._runtimes.values())
-                if idle:
-                    is_new = self._last_safety_action != SafetyAction.QUEUE_STOP
-                    if is_new:
-                        self.logger.warning(
-                            "Executing safety action from %r (queue idle, scope=%s)",
-                            triggered_check.name,
-                            scoped_sid or "site",
-                        )
-                    try:
-                        triggered_check.execute_action()
-                    except Exception:
-                        if is_new:
-                            self.logger.error("Safety corrective action failed", exc_info=True)
-            self._last_safety_action = action
-            return True
+            self._handle_emergency(triggered_check)
+        elif action == SafetyAction.QUEUE_STOP:
+            self._handle_queue_stop(triggered_check)
 
         self._last_safety_action = action
-        return False
+        return action in (SafetyAction.EMERGENCY, SafetyAction.QUEUE_STOP)
+
+    def _handle_emergency(self, triggered_check: Any) -> None:
+        """Abort in-flight imaging and fire corrective action on EMERGENCY.
+
+        The corrective action and the operator toast only fire on the edge
+        (first cycle in which EMERGENCY is reported) so repeated evaluation
+        passes don't spam logs or try to re-execute the action.
+        """
+        for rt in self._runtimes.values():
+            adapter = getattr(rt, "hardware_adapter", None)
+            if adapter:
+                try:
+                    adapter.abort_slew()
+                except Exception:
+                    pass
+
+        is_new = self._last_safety_action != SafetyAction.EMERGENCY
+        if not is_new:
+            return
+
+        self.clear_pending_tasks()
+        trigger_name = triggered_check.name if triggered_check else "unknown"
+        trigger_sid_raw = getattr(triggered_check, "sensor_id", None) if triggered_check else None
+        trigger_sid = trigger_sid_raw if isinstance(trigger_sid_raw, str) and trigger_sid_raw else None
+        self.logger.critical(
+            "EMERGENCY — cancelled in-flight imaging (trigger: %s, sensor: %s)",
+            trigger_name,
+            trigger_sid or "site",
+        )
+        if self.on_toast:
+            where = f" on {trigger_sid}" if trigger_sid else ""
+            toast_id = f"safety-emergency:{trigger_sid}" if trigger_sid else "safety-emergency"
+            self.on_toast(
+                f"Safety EMERGENCY: {trigger_name}{where} — imaging cancelled",
+                "danger",
+                toast_id,
+            )
+        if triggered_check:
+            try:
+                triggered_check.execute_action()
+            except Exception:
+                self.logger.error("Safety corrective action failed", exc_info=True)
+
+    def _handle_queue_stop(self, triggered_check: Any) -> None:
+        """Fire the triggered check's corrective action once its queue is idle.
+
+        Per-sensor isolation: a sensor-scoped check only waits for *its*
+        acquisition queue to go idle before running its corrective action.
+        Site-level checks (``sensor_id is None``) still gate on every
+        runtime being idle so they don't yank hardware out from under
+        another rig mid-exposure.
+        """
+        if triggered_check is None:
+            return
+
+        scoped_sid_raw = getattr(triggered_check, "sensor_id", None)
+        # Only treat it as per-sensor if it's an actual string; MagicMock
+        # tests (and site-level checks) leave this as None.
+        scoped_sid = scoped_sid_raw if isinstance(scoped_sid_raw, str) else None
+        if scoped_sid is not None:
+            rt = self._runtimes.get(scoped_sid)
+            idle = rt is not None and rt.acquisition_queue.is_idle()
+        else:
+            idle = all(rt.acquisition_queue.is_idle() for rt in self._runtimes.values())
+        if not idle:
+            return
+
+        is_new = self._last_safety_action != SafetyAction.QUEUE_STOP
+        if is_new:
+            self.logger.warning(
+                "Executing safety action from %r (queue idle, scope=%s)",
+                triggered_check.name,
+                scoped_sid or "site",
+            )
+        try:
+            triggered_check.execute_action()
+        except Exception:
+            if is_new:
+                self.logger.error("Safety corrective action failed", exc_info=True)
 
     # ── Pending task management ────────────────────────────────────────
 
@@ -702,14 +714,6 @@ class TaskDispatcher:
             if sensor_id is None or sid == sensor_id:
                 rt.set_paused(False)
                 self.logger.info("Task processing resumed for sensor %s", sid)
-
-    def pause_all(self) -> None:
-        """Pause every registered sensor (site-wide halt)."""
-        self.pause_sensor(None)
-
-    def resume_all(self) -> None:
-        """Resume every registered sensor (site-wide)."""
-        self.resume_sensor(None)
 
     def is_processing_active(self) -> bool:
         """True if any sensor is not paused."""
