@@ -71,7 +71,8 @@ export function formatLocalTimeShort(isoString) {
  *   * green   -- comfortably above
  *
  * @param {number|null|undefined} altDeg
- * @param {number|null|undefined} minElevationDeg - From status.telescope_min_elevation.
+ * @param {number|null|undefined} minElevationDeg - From the per-sensor
+ *   `sensor.telescope_min_elevation` (populated by `StatusCollector`).
  * @returns {string} Bootstrap text-color utility class.
  */
 export function skyAltClass(altDeg, minElevationDeg = null) {
@@ -89,7 +90,8 @@ export function skyAltClass(altDeg, minElevationDeg = null) {
  * Returns `null` when the threshold is unknown or would coincide with the
  * outer rim, so the template can `x-if` the ring away.
  *
- * @param {number|null|undefined} minElevationDeg - From status.telescope_min_elevation.
+ * @param {number|null|undefined} minElevationDeg - From the per-sensor
+ *   `sensor.telescope_min_elevation` (populated by `StatusCollector`).
  * @param {number} [size=40] - SVG side in px (matches skyCompassDot default).
  * @returns {number|null} Ring radius in px, or null.
  */

@@ -55,13 +55,12 @@ class TestLegacyAutoMigration:
                 "telescope_id": "tel-2",
             }
         )
-        assert s.hardware_adapter == "dummy"
-        assert s.telescope_id == "tel-2"
+        assert s.sensors[0].adapter == "dummy"
+        assert s.sensors[0].citra_sensor_id == "tel-2"
 
     def test_empty_config_has_no_sensors(self):
         s, _ = _make_settings({})
         assert s.sensors == []
-        assert s.hardware_adapter == ""
 
     def test_forward_shape_round_trips(self):
         s, mock_sfm = _make_settings(
@@ -122,15 +121,25 @@ class TestFilterPreservationAcrossMigration:
         }
         s, mock_sfm = _make_settings(disk)
 
+        # Send the update in the modern per-sensor shape (the legacy
+        # top-level ``adapter_settings`` blob is now dropped — see
+        # test_settings_update_and_save_ignores_legacy_adapter_settings).
+        sensor_id = s.sensors[0].id
         s.update_and_save(
             {
                 "hardware_adapter": "nina",
-                "adapter_settings": {"host": "10.0.0.1"},
+                "sensors": [
+                    {
+                        "id": sensor_id,
+                        "adapter": "nina",
+                        "adapter_settings": {"host": "10.0.0.1"},
+                    }
+                ],
             }
         )
 
         saved: dict = mock_sfm.save_config.call_args[0][0]
-        nina_settings = saved["adapter_settings"]["nina"]
+        nina_settings = saved["sensors"][0]["adapter_settings"]
         assert "filters" in nina_settings
         assert nina_settings["filters"]["0"]["name"] == "Luminance"
         assert nina_settings["host"] == "10.0.0.1"
@@ -143,7 +152,7 @@ class TestFilterPreservationAcrossMigration:
                 "adapter_settings": {"dummy": {"key": "original"}},
             }
         )
-        s.adapter_settings["key"] = "modified"
+        s.sensors[0].adapter_settings["key"] = "modified"
         s.save()
 
         saved: dict = mock_sfm.save_config.call_args[0][0]
@@ -184,13 +193,13 @@ class TestAllAdapterMigration:
         assert saved["config_version"] == CONFIG_VERSION
         assert len(saved["sensors"]) == 1
         assert saved["sensors"][0]["adapter"] == adapter_name
-        assert saved["adapter_settings"][adapter_name]["key"] == "val"
+        assert saved["sensors"][0]["adapter_settings"]["key"] == "val"
 
 
 class TestUpdateAndSaveSyncsCitraSensorId:
-    """Fix 1: ``update_and_save`` must propagate ``telescope_id`` changes to ``sensors[0].citra_sensor_id``."""
+    """``update_and_save`` must propagate sensor ID changes via sensors[]."""
 
-    def test_telescope_id_change_updates_sensor(self):
+    def test_citra_sensor_id_change_updates_sensor(self):
         s, mock_sfm = _make_settings(
             {
                 "hardware_adapter": "dummy",
@@ -200,12 +209,24 @@ class TestUpdateAndSaveSyncsCitraSensorId:
         )
         assert s.sensors[0].citra_sensor_id == "old-id"
 
-        s.update_and_save({"telescope_id": "new-id"})
+        s.update_and_save(
+            {
+                "sensors": [
+                    {
+                        "id": DEFAULT_TELESCOPE_SENSOR_ID,
+                        "type": "telescope",
+                        "adapter": "dummy",
+                        "adapter_settings": {},
+                        "citra_sensor_id": "new-id",
+                    }
+                ],
+            }
+        )
 
         saved: dict = mock_sfm.save_config.call_args[0][0]
         assert saved["sensors"][0]["citra_sensor_id"] == "new-id"
 
-    def test_telescope_id_unchanged_preserves_sensor(self):
+    def test_citra_sensor_id_unchanged_preserves_sensor(self):
         s, mock_sfm = _make_settings(
             {
                 "hardware_adapter": "dummy",
@@ -213,7 +234,7 @@ class TestUpdateAndSaveSyncsCitraSensorId:
                 "adapter_settings": {"dummy": {}},
             }
         )
-        s.update_and_save({"hardware_adapter": "dummy"})
+        s.update_and_save({"personal_access_token": "tok"})
 
         saved: dict = mock_sfm.save_config.call_args[0][0]
         assert saved["sensors"][0]["citra_sensor_id"] == "keep-me"
@@ -274,3 +295,73 @@ class TestSensorConfigModel:
         assert cfg.adapter == ""
         assert cfg.adapter_settings == {}
         assert cfg.citra_sensor_id == ""
+        assert cfg.hfr_baseline is None
+
+
+class TestHfrBaselinePromotion:
+    """v7 → v8 migration: ``hfr_baseline`` leaves ``adapter_settings``."""
+
+    def test_baseline_moves_out_of_adapter_settings(self):
+        s, _ = _make_settings(
+            {
+                "config_version": 7,
+                "sensors": [
+                    {
+                        "id": "telescope-0",
+                        "type": "telescope",
+                        "adapter": "nina",
+                        "adapter_settings": {
+                            "host": "1.2.3.4",
+                            "hfr_baseline": 1.87,
+                            "filters": {"0": {"name": "Luminance"}},
+                        },
+                    }
+                ],
+            }
+        )
+        head = s.sensors[0]
+        assert head.hfr_baseline == pytest.approx(1.87)
+        assert "hfr_baseline" not in head.adapter_settings
+        # Other adapter_settings keys must survive the migration.
+        assert head.adapter_settings["host"] == "1.2.3.4"
+        assert head.adapter_settings["filters"] == {"0": {"name": "Luminance"}}
+
+    def test_missing_baseline_leaves_field_none(self):
+        s, _ = _make_settings(
+            {
+                "config_version": 7,
+                "sensors": [
+                    {
+                        "id": "telescope-0",
+                        "type": "telescope",
+                        "adapter": "nina",
+                        "adapter_settings": {"host": "1.2.3.4"},
+                    }
+                ],
+            }
+        )
+        assert s.sensors[0].hfr_baseline is None
+        assert "hfr_baseline" not in s.sensors[0].adapter_settings
+
+    def test_explicit_top_level_value_wins(self):
+        # If a sensor already carries a top-level ``hfr_baseline`` and the
+        # adapter_settings blob also has one (e.g. a partial manual edit),
+        # the already-promoted top-level value takes precedence — the
+        # migration uses ``setdefault`` which is a no-op when the key
+        # already exists.
+        s, _ = _make_settings(
+            {
+                "config_version": 7,
+                "sensors": [
+                    {
+                        "id": "telescope-0",
+                        "type": "telescope",
+                        "adapter": "nina",
+                        "hfr_baseline": 2.5,
+                        "adapter_settings": {"hfr_baseline": 9.9},
+                    }
+                ],
+            }
+        )
+        assert s.sensors[0].hfr_baseline == pytest.approx(2.5)
+        assert "hfr_baseline" not in s.sensors[0].adapter_settings

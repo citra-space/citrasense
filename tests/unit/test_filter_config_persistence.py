@@ -105,19 +105,25 @@ class TestUpdateAndSaveFilterPreservation:
             }
         )
 
+        sensor_id = s.sensors[0].id
         s.update_and_save(
             {
-                "hardware_adapter": "dummy",
-                "adapter_settings": {"simulate_slow_operations": True},
+                "sensors": [
+                    {
+                        "id": sensor_id,
+                        "adapter": "dummy",
+                        "adapter_settings": {"simulate_slow_operations": True},
+                    }
+                ],
             }
         )
 
         saved = mock_sfm.save_config.call_args[0][0]
-        dummy_settings = saved["adapter_settings"]["dummy"]
-        assert "filters" in dummy_settings
-        assert dummy_settings["filters"]["0"]["name"] == "Luminance"
-        assert dummy_settings["filters"]["1"]["name"] == "Red"
-        assert dummy_settings["simulate_slow_operations"] is True
+        sensor_as = saved["sensors"][0]["adapter_settings"]
+        assert "filters" in sensor_as
+        assert sensor_as["filters"]["0"]["name"] == "Luminance"
+        assert sensor_as["filters"]["1"]["name"] == "Red"
+        assert sensor_as["simulate_slow_operations"] is True
 
     def test_filters_updated_when_explicitly_sent(self):
         """If the payload includes filters, they should override."""
@@ -135,18 +141,24 @@ class TestUpdateAndSaveFilterPreservation:
         )
 
         new_filters = {"0": {"name": "Ha", "focus_position": 8500, "enabled": True}}
+        sensor_id = s.sensors[0].id
         s.update_and_save(
             {
-                "hardware_adapter": "dummy",
-                "adapter_settings": {"filters": new_filters},
+                "sensors": [
+                    {
+                        "id": sensor_id,
+                        "adapter": "dummy",
+                        "adapter_settings": {"filters": new_filters},
+                    }
+                ],
             }
         )
 
         saved = mock_sfm.save_config.call_args[0][0]
-        assert saved["adapter_settings"]["dummy"]["filters"]["0"]["name"] == "Ha"
+        assert saved["sensors"][0]["adapter_settings"]["filters"]["0"]["name"] == "Ha"
 
-    def test_switch_adapter_preserves_both_filter_configs(self):
-        """Switching from adapter A to B must not wipe A's filters."""
+    def test_sensors_merge_preserves_filters(self):
+        """Updating a sensor via sensors[] must not wipe keys the UI didn't send."""
         s, mock_sfm = self._make_settings(
             {
                 "hardware_adapter": "NinaAdvancedHttpAdapter",
@@ -157,34 +169,31 @@ class TestUpdateAndSaveFilterPreservation:
                             "0": {"name": "Luminance", "focus_position": 9000, "enabled": True},
                         },
                     },
-                    "dummy": {
-                        "simulate_slow_operations": False,
-                        "filters": {
-                            "0": {"name": "Clear", "focus_position": 5000, "enabled": True},
-                        },
-                    },
                 },
             }
         )
 
         s.update_and_save(
             {
-                "hardware_adapter": "dummy",
-                "adapter_settings": {"simulate_slow_operations": True},
+                "sensors": [
+                    {
+                        "id": "telescope-0",
+                        "type": "telescope",
+                        "adapter": "NinaAdvancedHttpAdapter",
+                        "adapter_settings": {"url_prefix": "http://localhost:9999"},
+                        "citra_sensor_id": "",
+                    }
+                ],
             }
         )
 
         saved = mock_sfm.save_config.call_args[0][0]
-        nina = saved["adapter_settings"]["NinaAdvancedHttpAdapter"]
-        assert nina["filters"]["0"]["name"] == "Luminance"
-        assert nina["url_prefix"] == "http://localhost:1888"
+        sensor_as = saved["sensors"][0]["adapter_settings"]
+        assert sensor_as["url_prefix"] == "http://localhost:9999"
+        assert sensor_as["filters"]["0"]["name"] == "Luminance"
 
-        dummy = saved["adapter_settings"]["dummy"]
-        assert dummy["filters"]["0"]["name"] == "Clear"
-        assert dummy["simulate_slow_operations"] is True
-
-    def test_outgoing_adapter_live_state_flushed(self):
-        """In-memory changes to adapter_settings are captured before switch."""
+    def test_in_memory_adapter_settings_flushed_on_save(self):
+        """In-memory changes to adapter_settings are captured on save."""
         s, mock_sfm = self._make_settings(
             {
                 "hardware_adapter": "NinaAdvancedHttpAdapter",
@@ -198,22 +207,28 @@ class TestUpdateAndSaveFilterPreservation:
             }
         )
 
-        # Simulate an in-memory autofocus update (focus position changed)
-        s.adapter_settings["filters"]["0"]["focus_position"] = 9500
+        s.sensors[0].adapter_settings["filters"]["0"]["focus_position"] = 9500
 
         s.update_and_save(
             {
-                "hardware_adapter": "dummy",
-                "adapter_settings": {},
+                "sensors": [
+                    {
+                        "id": "telescope-0",
+                        "type": "telescope",
+                        "adapter": "NinaAdvancedHttpAdapter",
+                        "adapter_settings": {},
+                        "citra_sensor_id": "",
+                    }
+                ],
             }
         )
 
         saved = mock_sfm.save_config.call_args[0][0]
-        nina = saved["adapter_settings"]["NinaAdvancedHttpAdapter"]
-        assert nina["filters"]["0"]["focus_position"] == 9500
+        sensor_as = saved["sensors"][0]["adapter_settings"]
+        assert sensor_as["filters"]["0"]["focus_position"] == 9500
 
-    def test_first_use_of_new_adapter_no_stale_data(self):
-        """Switching to an adapter that has never been used should start clean."""
+    def test_new_adapter_settings_applied(self):
+        """Switching adapter applies new settings; merge preserves old keys harmlessly."""
         s, mock_sfm = self._make_settings(
             {
                 "hardware_adapter": "dummy",
@@ -225,14 +240,22 @@ class TestUpdateAndSaveFilterPreservation:
 
         s.update_and_save(
             {
-                "hardware_adapter": "DirectHardwareAdapter",
-                "adapter_settings": {"camera_type": "moravian"},
+                "sensors": [
+                    {
+                        "id": "telescope-0",
+                        "type": "telescope",
+                        "adapter": "DirectHardwareAdapter",
+                        "adapter_settings": {"camera_type": "moravian"},
+                        "citra_sensor_id": "",
+                    }
+                ],
             }
         )
 
         saved = mock_sfm.save_config.call_args[0][0]
-        direct = saved["adapter_settings"]["DirectHardwareAdapter"]
-        assert direct == {"camera_type": "moravian"}
+        sensor_as = saved["sensors"][0]["adapter_settings"]
+        assert sensor_as["camera_type"] == "moravian"
+        assert saved["sensors"][0]["adapter"] == "DirectHardwareAdapter"
 
 
 # ---------------------------------------------------------------------------

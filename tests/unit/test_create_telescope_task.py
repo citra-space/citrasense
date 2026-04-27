@@ -11,6 +11,9 @@ from citrasense.sensors.telescope.tasks.tracking_telescope_task import TrackingT
 
 def _make_runtime(observation_mode: str, supports_custom_tracking: bool) -> SensorRuntime:
     """Build a SensorRuntime with just enough mocks to call _create_telescope_task."""
+    sensor_config = MagicMock()
+    sensor_config.observation_mode = observation_mode
+
     settings = MagicMock()
     settings.observation_mode = observation_mode
 
@@ -22,6 +25,7 @@ def _make_runtime(observation_mode: str, supports_custom_tracking: bool) -> Sens
     rt.logger = MagicMock()
     rt.hardware_adapter = adapter
     rt.settings = settings
+    rt.sensor_id = "test-sensor"
     rt.sensor_type = "telescope"
     rt.processor_registry = MagicMock()
     rt.location_service = MagicMock()
@@ -31,6 +35,7 @@ def _make_runtime(observation_mode: str, supports_custom_tracking: bool) -> Sens
     rt.apass_catalog = None
     rt._on_annotated_image = None
     rt.task_index = None
+    rt._sensor_config = sensor_config
     return rt
 
 

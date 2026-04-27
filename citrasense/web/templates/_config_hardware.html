@@ -2,7 +2,8 @@
 <div class="row g-3 mb-3">
     <div class="col">
         <label for="hardwareAdapterSelect" class="form-label">Hardware Adapter <span class="text-danger">*</span></label>
-        <select id="hardwareAdapterSelect" class="form-select" required x-model="$store.citrasense.config.hardware_adapter"
+        <select id="hardwareAdapterSelect" class="form-select" required
+            x-model="$store.citrasense.config.sensors[$store.citrasense.configSensorIndex].adapter"
             @change="$store.citrasense.handleAdapterChange($event.target.value)">
             <option value="">-- Select Hardware Adapter --</option>
             <template x-for="adapter in $store.citrasense.hardwareAdapters" :key="adapter.value">
@@ -11,9 +12,9 @@
         </select>
     </div>
     <div class="col-auto d-flex align-items-end gap-2"
-         x-show="$store.citrasense.config.hardware_adapter">
+         x-show="$store.citrasense.config.sensors?.[$store.citrasense.configSensorIndex]?.adapter">
         <button type="button" class="btn btn-sm btn-outline-secondary"
-                x-show="$store.citrasense.config.hardware_adapter === 'direct'"
+                x-show="$store.citrasense.config.sensors?.[$store.citrasense.configSensorIndex]?.adapter === 'direct'"
                 :disabled="$store.citrasense.isScanning || $store.citrasense.isSavingConfig"
                 @click="$store.citrasense.scanHardware()"
                 data-bs-toggle="tooltip" data-bs-theme="dark" data-bs-placement="bottom"
@@ -29,6 +30,16 @@
             <i class="bi" :class="$store.citrasense.isReconnecting ? 'bi-arrow-repeat spin' : 'bi-arrow-repeat'"></i>
             <span x-text="$store.citrasense.isReconnecting ? 'Reconnecting...' : 'Reconnect'"></span>
         </button>
+    </div>
+</div>
+
+<!-- Citra Sensor ID (per-sensor link to remote telescope record) -->
+<div class="row g-3 mb-3">
+    <div class="col-12 col-md-6">
+        <label for="citraSensorId" class="form-label">Citra Sensor ID <span class="text-danger">*</span></label>
+        <input type="text" id="citraSensorId" class="form-control" placeholder="Enter Citra sensor ID" required
+               x-model="$store.citrasense.config.sensors[$store.citrasense.configSensorIndex].citra_sensor_id">
+        <small class="text-muted">Links this sensor to the matching telescope record on <a :href="$store.citrasense.config.app_url || ''" target="_blank" rel="noopener noreferrer" x-text="($store.citrasense.config.app_url || '').replace('https://', '')"></a></small>
     </div>
 </div>
 
@@ -199,34 +210,34 @@
 </div>
 
 <!-- Mount Alignment -->
-<div x-show="$store.citrasense.status?.supports_alignment || $store.citrasense.status?.supports_manual_sync"
+<div x-show="$store.citrasense.configSensorStatus?.supports_alignment || $store.citrasense.configSensorStatus?.supports_manual_sync"
      class="card bg-dark border-secondary mb-3"
-     x-data="{ syncRa: $store.citrasense.status?.telescope_ra ?? '', syncDec: $store.citrasense.status?.telescope_dec ?? '' }">
+     x-data="{ syncRa: $store.citrasense.configSensorStatus?.telescope_ra ?? '', syncDec: $store.citrasense.configSensorStatus?.telescope_dec ?? '' }">
     <div class="card-header d-flex justify-content-between align-items-center">
         <h6 class="mb-0">Mount Alignment</h6>
         <small class="text-muted font-monospace"
-            x-show="$store.citrasense.status?.telescope_ra != null"
-            x-text="'Position: RA ' + ($store.citrasense.status?.telescope_ra?.toFixed(4) ?? '—') + '°  Dec ' + ($store.citrasense.status?.telescope_dec?.toFixed(4) ?? '—') + '°'">
+            x-show="$store.citrasense.configSensorStatus?.telescope_ra != null"
+            x-text="'Position: RA ' + ($store.citrasense.configSensorStatus?.telescope_ra?.toFixed(4) ?? '—') + '°  Dec ' + ($store.citrasense.configSensorStatus?.telescope_dec?.toFixed(4) ?? '—') + '°'">
         </small>
     </div>
     <div class="card-body">
         <div class="row">
             <!-- Alignment Settings Column -->
-            <div class="col-12 col-md-6" x-show="$store.citrasense.status?.supports_alignment">
+            <div class="col-12 col-md-6" x-show="$store.citrasense.configSensorStatus?.supports_alignment">
                 <h6 class="mb-2">Alignment Settings</h6>
                 <div class="mb-3">
                     <label for="alignment_exposure_seconds" class="form-label small">Alignment Exposure (seconds)</label>
                     <input type="number" id="alignment_exposure_seconds" class="form-control form-control-sm"
                         step="0.5" min="0.5" max="30"
-                        x-model.number="$store.citrasense.config.alignment_exposure_seconds">
+                        x-model.number="$store.citrasense.config.sensors[$store.citrasense.configSensorIndex].alignment_exposure_seconds">
                 </div>
             </div>
 
             <!-- Manual Sync Column -->
-            <div class="col-12 col-md-6" x-show="$store.citrasense.status?.supports_manual_sync">
+            <div class="col-12 col-md-6" x-show="$store.citrasense.configSensorStatus?.supports_manual_sync">
                 <h6 class="mb-2">Manual Sync</h6>
                 <p class="text-muted small mb-2">Tell the mount where it's currently pointing (no camera needed)</p>
-                <div x-show="$store.citrasense.status?.mount_at_home"
+                <div x-show="$store.citrasense.configSensorStatus?.mount_at_home"
                      class="alert alert-warning py-1 px-2 small mb-2">
                     <i class="bi bi-exclamation-triangle me-1"></i>
                     Mount is at home — sync requires a slew first
@@ -246,8 +257,8 @@
                     </div>
                 </div>
                 <button type="button" class="btn btn-sm btn-outline-primary w-100"
-                    :disabled="$store.citrasense.status?.mount_at_home || $store.citrasense.isSystemBusy"
-                    @click="window.manualSync(syncRa, syncDec)">
+                    :disabled="$store.citrasense.configSensorStatus?.mount_at_home || $store.citrasense.isImagingTaskActive($store.citrasense.configSensorId)"
+                    @click="window.manualSync($store.citrasense.configSensorId, syncRa, syncDec)">
                     <i class="bi bi-crosshair me-1"></i> Manually Sync Mount
                 </button>
             </div>
@@ -256,7 +267,7 @@
 </div>
 
 <!-- Hardware Safety Monitor -->
-<div x-show="$store.citrasense.status?.supports_hardware_safety_monitor"
+<div x-show="$store.citrasense.configSensorStatus?.supports_hardware_safety_monitor"
      class="card bg-dark border-secondary mb-3">
     <div class="card-header">
         <h6 class="mb-0"><i class="bi bi-shield-check me-1"></i>Hardware Safety Monitor</h6>

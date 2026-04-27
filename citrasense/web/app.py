@@ -16,7 +16,7 @@ from citrasense.web.helpers import (
     _gps_fix_to_dict,
     _resolve_autofocus_target_name,
 )
-from citrasense.web.models import HardwareConfig, SystemStatus
+from citrasense.web.models import SystemStatus
 from citrasense.web.routes import build_all_routers
 from citrasense.web.sky_enrichment import get_web_tasks
 from citrasense.web.status_collector import StatusCollector
@@ -25,7 +25,6 @@ __all__ = [
     "FILTER_NAME_OPTIONS",
     "CitraSenseWebApp",
     "ConnectionManager",
-    "HardwareConfig",
     "SystemStatus",
     "_gps_fix_to_dict",
     "_resolve_autofocus_target_name",
@@ -94,10 +93,31 @@ class CitraSenseWebApp:
         self._status_collector.daemon = daemon
 
     def _require_system_idle(self) -> JSONResponse | None:
-        """Return a 409 response if the system is busy with automated operations, else None."""
+        """Return a 409 response if the system is busy with automated operations, else None.
+
+        Prefer :meth:`require_sensor_idle` for per-sensor hardware routes —
+        this site-level gate returns 409 when *any* sensor is busy, which
+        shouldn't block manual control of a different, idle sensor.
+        """
         if self.status.system_busy:
             return JSONResponse(
                 {"error": f"System busy ({self.status.system_busy_reason})", "system_busy": True},
+                status_code=409,
+            )
+        return None
+
+    def require_sensor_idle(self, runtime) -> JSONResponse | None:
+        """Return a 409 if *runtime* itself is busy; otherwise None.
+
+        Used by per-sensor hardware routes so one sensor imaging doesn't
+        block manual mount/camera/filter/focuser calls on a different
+        sensor.  The busy reason is produced by
+        :meth:`SensorRuntime.busy_reason`.
+        """
+        reason = runtime.busy_reason() if runtime else ""
+        if reason:
+            return JSONResponse(
+                {"error": f"Sensor busy ({reason})", "system_busy": True},
                 status_code=409,
             )
         return None
@@ -129,26 +149,27 @@ class CitraSenseWebApp:
         Always broadcasts when the daemon is ready (even an empty list) so
         the client can clear its table when the queue drains.
         """
-        if not self.daemon or not getattr(self.daemon, "task_manager", None):
+        if not self.daemon or not getattr(self.daemon, "task_dispatcher", None):
             return
-        tasks = get_web_tasks(self.daemon, self.status)
+        tasks = get_web_tasks(self.daemon)
         await self.connection_manager.broadcast({"type": "tasks", "data": tasks})
 
     async def broadcast_preview(self):
-        """Pop a frame from the PreviewBus and broadcast it to all clients."""
+        """Pop all pending preview frames and broadcast them to all clients."""
         if not self.daemon:
             return
         bus = getattr(self.daemon, "preview_bus", None)
         if not bus:
             return
-        frame = bus.pop()
-        if not frame:
-            return
-        payload, source, kind = frame
-        if kind == "url":
-            await self.connection_manager.broadcast({"type": "preview_url", "url": payload, "source": source})
-        else:
-            await self.connection_manager.broadcast({"type": "preview", "data": payload, "source": source})
+        for payload, source, kind, sensor_id in bus.pop_all():
+            msg = {"source": source, "sensor_id": sensor_id}
+            if kind == "url":
+                msg["type"] = "preview_url"
+                msg["url"] = payload
+            else:
+                msg["type"] = "preview"
+                msg["data"] = payload
+            await self.connection_manager.broadcast(msg)
 
     async def broadcast_log(self, log_entry: dict):
         """Broadcast log entry to all connected clients."""

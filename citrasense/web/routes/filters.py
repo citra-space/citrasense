@@ -8,7 +8,7 @@ from fastapi import APIRouter
 from fastapi.responses import JSONResponse
 
 from citrasense.logging import CITRASENSE_LOGGER
-from citrasense.web.helpers import FILTER_NAME_OPTIONS
+from citrasense.web.helpers import FILTER_NAME_OPTIONS, get_sensor_context
 
 if TYPE_CHECKING:
     from citrasense.web.app import CitraSenseWebApp
@@ -16,20 +16,20 @@ if TYPE_CHECKING:
 
 def build_filters_router(ctx: CitraSenseWebApp) -> APIRouter:
     """Filter configuration, batch updates, sync, and manual position change."""
-    router = APIRouter(prefix="/api", tags=["filters"])
+    router = APIRouter(prefix="/api/sensors/{sensor_id}", tags=["filters"])
 
-    @router.get("/adapter/filters")
-    async def get_filters():
+    @router.get("/filters")
+    async def get_filters(sensor_id: str):
         """Get current filter configuration."""
-        if not ctx.daemon or not ctx.daemon.hardware_adapter:
-            return JSONResponse({"error": "Hardware adapter not available"}, status_code=503)
+        sensor, _runtime = get_sensor_context(ctx, sensor_id)
+        adapter = sensor.adapter
 
-        if not ctx.daemon.hardware_adapter.supports_filter_management():
+        if not adapter.supports_filter_management():
             return JSONResponse({"error": "Adapter does not support filter management"}, status_code=404)
 
         try:
-            filter_config = ctx.daemon.hardware_adapter.get_filter_config()
-            names_editable = ctx.daemon.hardware_adapter.supports_filter_rename()
+            filter_config = adapter.get_filter_config()
+            names_editable = adapter.supports_filter_rename()
             response: dict = {"filters": filter_config, "names_editable": names_editable}
             if names_editable:
                 response["filter_name_options"] = FILTER_NAME_OPTIONS
@@ -38,17 +38,17 @@ def build_filters_router(ctx: CitraSenseWebApp) -> APIRouter:
             CITRASENSE_LOGGER.error(f"Error getting filter config: {e}", exc_info=True)
             return JSONResponse({"error": str(e)}, status_code=500)
 
-    @router.post("/adapter/filters/batch")
-    async def update_filters_batch(updates: list[dict[str, Any]]):
+    @router.post("/filters/batch")
+    async def update_filters_batch(sensor_id: str, updates: list[dict[str, Any]]):
         """Update multiple filters atomically with single disk write."""
-        if not ctx.daemon or not ctx.daemon.hardware_adapter:
-            return JSONResponse({"error": "Hardware adapter not initialized"}, status_code=503)
+        sensor, _runtime = get_sensor_context(ctx, sensor_id)
+        adapter = sensor.adapter
 
         if not updates or not isinstance(updates, list):
             return JSONResponse({"error": "Updates must be a non-empty array"}, status_code=400)
 
         try:
-            filter_config = ctx.daemon.hardware_adapter.filter_map
+            filter_config = adapter.filter_map
 
             validated_updates = []
             for idx, update in enumerate(updates):
@@ -119,24 +119,23 @@ def build_filters_router(ctx: CitraSenseWebApp) -> APIRouter:
                 filter_id_int = validated["filter_id_int"]
 
                 if "focus_position" in validated:
-                    if not ctx.daemon.hardware_adapter.update_filter_focus(
-                        str(filter_id_int), validated["focus_position"]
-                    ):
+                    if not adapter.update_filter_focus(str(filter_id_int), validated["focus_position"]):
                         return JSONResponse(
                             {"error": f"Failed to update filter {filter_id_int} focus"}, status_code=500
                         )
 
                 if "enabled" in validated:
-                    if not ctx.daemon.hardware_adapter.update_filter_enabled(str(filter_id_int), validated["enabled"]):
+                    if not adapter.update_filter_enabled(str(filter_id_int), validated["enabled"]):
                         return JSONResponse(
                             {"error": f"Failed to update filter {filter_id_int} enabled state"}, status_code=500
                         )
 
-                if "name" in validated and ctx.daemon.hardware_adapter.supports_filter_rename():
-                    if not ctx.daemon.hardware_adapter.update_filter_name(str(filter_id_int), validated["name"]):
+                if "name" in validated and adapter.supports_filter_rename():
+                    if not adapter.update_filter_name(str(filter_id_int), validated["name"]):
                         return JSONResponse({"error": f"Failed to update filter {filter_id_int} name"}, status_code=500)
 
-            ctx.daemon.save_filter_config()
+            if ctx.daemon:
+                ctx.daemon.save_filter_config(sensor)
 
             return {"success": True, "updated_count": len(validated_updates)}
 
@@ -144,28 +143,27 @@ def build_filters_router(ctx: CitraSenseWebApp) -> APIRouter:
             CITRASENSE_LOGGER.error(f"Error in batch filter update: {e}", exc_info=True)
             return JSONResponse({"error": str(e)}, status_code=500)
 
-    @router.post("/adapter/filters/sync")
-    async def sync_filters_to_backend():
+    @router.post("/filters/sync")
+    async def sync_filters_to_backend(sensor_id: str):
         """Explicitly sync filter configuration to backend API."""
-        if not ctx.daemon or not ctx.daemon.hardware_adapter:
-            return JSONResponse({"error": "Hardware adapter not initialized"}, status_code=503)
-
+        sensor, _runtime = get_sensor_context(ctx, sensor_id)
+        if not ctx.daemon:
+            return JSONResponse({"error": "Daemon not available"}, status_code=503)
         try:
-            ctx.daemon.sync_filters_to_backend()
+            ctx.daemon.sync_filters_to_backend(sensor)
             return {"success": True, "message": "Filters synced to backend"}
         except Exception as e:
             CITRASENSE_LOGGER.error(f"Error syncing filters to backend: {e}", exc_info=True)
             return JSONResponse({"error": str(e)}, status_code=500)
 
-    @router.post("/adapter/filter/set")
-    async def set_filter_position(body: dict[str, Any]):
+    @router.post("/filter/set")
+    async def set_filter_position(sensor_id: str, body: dict[str, Any]):
         """Command the filter wheel to move to a specific position."""
-        if busy := ctx._require_system_idle():
+        sensor, _runtime = get_sensor_context(ctx, sensor_id)
+        if busy := ctx.require_sensor_idle(_runtime):
             return busy
-        if not ctx.daemon or not ctx.daemon.hardware_adapter:
-            return JSONResponse({"error": "Hardware adapter not initialized"}, status_code=503)
+        adapter = sensor.adapter
 
-        adapter = ctx.daemon.hardware_adapter
         if not adapter.filter_map:
             return JSONResponse({"error": "No filter wheel available"}, status_code=404)
 

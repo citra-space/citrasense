@@ -18,6 +18,21 @@ class KStarsDBusAdapter(AbstractAstroHardwareAdapter):
     """
     Adapter for controlling astronomical equipment through KStars via DBus.
 
+    .. warning::
+
+        **Multi-sensor limitation — one KStars/Ekos instance per rig.**
+
+        The Ekos Scheduler is a *singleton inside one KStars process*. When
+        we load a job we call ``scheduler.removeAllJobs()`` first to avoid
+        state conflicts from stale jobs in the scheduler. If two
+        ``KStarsDBusAdapter`` instances (two sensors) point at the *same*
+        KStars DBus bus they will repeatedly wipe each other's queued jobs.
+
+        For multi-sensor deployments each telescope must run its own
+        KStars/Ekos process on its own DBus session bus (or equivalent
+        isolation such as a separate user / X display). The operator is
+        expected to configure distinct ``bus_name``/environment per rig.
+
     DBus Interface Documentation (from introspection):
 
     Mount Interface (org.kde.kstars.Ekos.Mount):
@@ -620,11 +635,20 @@ class KStarsDBusAdapter(AbstractAstroHardwareAdapter):
 
         # Load the scheduler job
         try:
-            # Clear any existing jobs first to prevent state conflicts
+            # Clear any existing jobs first to prevent state conflicts.
+            #
+            # NOTE: ``removeAllJobs`` wipes *every* queued job on the Ekos
+            # scheduler. Sharing one KStars instance between two CitraSense
+            # telescope sensors is therefore unsafe — each sensor would
+            # clobber the other's queue here. Deployments with >1 telescope
+            # must run one KStars process per rig (distinct DBus bus).
             try:
                 self.scheduler.removeAllJobs()
-                self.logger.info("Cleared existing scheduler jobs")
-                time.sleep(0.5)  # Brief pause after clearing
+                self.logger.info(
+                    "Cleared existing scheduler jobs (Ekos singleton — "
+                    "one KStars process per telescope sensor required)"
+                )
+                time.sleep(0.5)
             except Exception as clear_error:
                 self.logger.warning(f"Could not clear jobs (might not exist): {clear_error}")
 

@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING
 from fastapi import APIRouter, Request
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 
+from citrasense.analysis.retention import resolve_task_dir
 from citrasense.logging import CITRASENSE_LOGGER
 from citrasense.web.connection_manager import _TarStreamBuffer
 
@@ -68,7 +69,7 @@ def build_analysis_router(ctx: CitraSenseWebApp) -> APIRouter:
         task = ctx.daemon.task_index.get_task(safe_id)
         if task is None:
             return JSONResponse({"error": "Task not found"}, status_code=404)
-        bundle_dir = ctx.daemon.settings.directories.processing_dir / safe_id
+        bundle_dir = resolve_task_dir(ctx.daemon.settings.directories.processing_dir, safe_id)
         task["artifacts_available"] = bundle_dir.is_dir()
 
         reprocessed_summary = bundle_dir / "reprocessed" / "processing_summary.json"
@@ -132,7 +133,7 @@ def build_analysis_router(ctx: CitraSenseWebApp) -> APIRouter:
         if not ctx.daemon:
             return JSONResponse({"error": "Not available"}, status_code=503)
         safe_id = Path(task_id).name
-        task_dir = ctx.daemon.settings.directories.processing_dir / safe_id
+        task_dir = resolve_task_dir(ctx.daemon.settings.directories.processing_dir, safe_id)
         resolved_task_dir = task_dir.resolve()
         artifact = (task_dir / filepath).resolve()
         if not artifact.is_relative_to(resolved_task_dir):
@@ -147,7 +148,7 @@ def build_analysis_router(ctx: CitraSenseWebApp) -> APIRouter:
         if not ctx.daemon:
             return JSONResponse({"error": "Not available"}, status_code=503)
         safe_id = Path(task_id).name
-        task_dir = ctx.daemon.settings.directories.processing_dir / safe_id
+        task_dir = resolve_task_dir(ctx.daemon.settings.directories.processing_dir, safe_id)
         if not task_dir.is_dir():
             return JSONResponse({"error": "Task artifacts not found or expired"}, status_code=404)
 
@@ -197,7 +198,7 @@ def build_analysis_router(ctx: CitraSenseWebApp) -> APIRouter:
             return JSONResponse({"error": "Daemon not available"}, status_code=503)
 
         safe_id = Path(task_id).name
-        debug_dir = ctx.daemon.settings.directories.processing_dir / safe_id
+        debug_dir = resolve_task_dir(ctx.daemon.settings.directories.processing_dir, safe_id)
         if not debug_dir.is_dir():
             return JSONResponse({"error": "Debug bundle not found (artifacts expired?)"}, status_code=404)
 
@@ -262,7 +263,7 @@ def build_analysis_router(ctx: CitraSenseWebApp) -> APIRouter:
 
             for i, tid in enumerate(task_ids):
                 safe_id = Path(tid).name
-                debug_dir = processing_dir / safe_id
+                debug_dir = resolve_task_dir(processing_dir, safe_id)
                 item_result = {"task_id": safe_id, "ok": False, "error": None}
                 try:
                     if not debug_dir.is_dir():
@@ -299,7 +300,7 @@ def build_analysis_router(ctx: CitraSenseWebApp) -> APIRouter:
             return JSONResponse({"error": "API client not available"}, status_code=503)
 
         safe_id = Path(task_id).name
-        debug_dir = ctx.daemon.settings.directories.processing_dir / safe_id
+        debug_dir = resolve_task_dir(ctx.daemon.settings.directories.processing_dir, safe_id)
         reprocessed_dir = debug_dir / "reprocessed"
         if not reprocessed_dir.is_dir():
             return JSONResponse({"error": "No reprocessed output found"}, status_code=404)
@@ -376,7 +377,9 @@ def build_analysis_router(ctx: CitraSenseWebApp) -> APIRouter:
 
         if task_ids:
             debug_dirs = [
-                processing_dir / Path(tid).name for tid in task_ids if (processing_dir / Path(tid).name).is_dir()
+                resolve_task_dir(processing_dir, Path(tid).name)
+                for tid in task_ids
+                if resolve_task_dir(processing_dir, Path(tid).name).is_dir()
             ]
         else:
             from citrasense.autotune import _discover_bundles
@@ -418,5 +421,54 @@ def build_analysis_router(ctx: CitraSenseWebApp) -> APIRouter:
 
         job = ctx.job_runner.submit(_autotune_worker, total=total_evals)
         return {"job_id": job.job_id, "total": total_evals, "bundles": len(debug_dirs)}
+
+    @router.post("/sensors/{sensor_id}/autotune/apply")
+    async def apply_autotune(sensor_id: str, request: Request):
+        """Write a tuned SExtractor config back to one sensor's settings.
+
+        Body: ``{"detect_thresh": ..., "detect_minarea": ..., "filter_name": ...}``.
+        All three are required — this endpoint exists specifically so
+        operators can apply tuning from the UI without falling through
+        to "first sensor wins" semantics.
+        """
+        if not ctx.daemon:
+            return JSONResponse({"error": "Daemon not available"}, status_code=503)
+
+        body = await request.json() if await request.body() else {}
+        detect_thresh = body.get("detect_thresh")
+        detect_minarea = body.get("detect_minarea")
+        filter_name = body.get("filter_name")
+        if detect_thresh is None or detect_minarea is None or filter_name is None:
+            return JSONResponse(
+                {"error": "detect_thresh, detect_minarea, and filter_name are required"},
+                status_code=400,
+            )
+
+        sc = ctx.daemon.settings.get_sensor_config(sensor_id)
+        if sc is None:
+            return JSONResponse({"error": f"Unknown sensor_id: {sensor_id}"}, status_code=404)
+
+        try:
+            sc.sextractor_detect_thresh = float(detect_thresh)
+            sc.sextractor_detect_minarea = int(detect_minarea)
+            sc.sextractor_filter_name = str(filter_name)
+        except (TypeError, ValueError) as exc:
+            return JSONResponse({"error": f"Invalid value: {exc}"}, status_code=400)
+
+        ctx.daemon.settings.save()
+        CITRASENSE_LOGGER.info(
+            "Applied autotune to sensor %s: thresh=%s minarea=%s filter=%s",
+            sensor_id,
+            sc.sextractor_detect_thresh,
+            sc.sextractor_detect_minarea,
+            sc.sextractor_filter_name,
+        )
+        return {
+            "status": "applied",
+            "sensor_id": sensor_id,
+            "detect_thresh": sc.sextractor_detect_thresh,
+            "detect_minarea": sc.sextractor_detect_minarea,
+            "filter_name": sc.sextractor_filter_name,
+        }
 
     return router

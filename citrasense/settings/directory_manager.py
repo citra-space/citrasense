@@ -7,7 +7,7 @@ from pathlib import Path
 
 import platformdirs
 
-from citrasense.settings.citrasense_settings import APP_AUTHOR, APP_NAME
+from citrasense.constants import APP_AUTHOR, APP_NAME
 
 
 class DirectoryManager:

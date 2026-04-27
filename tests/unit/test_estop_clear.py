@@ -5,8 +5,10 @@ import threading
 import time
 from unittest.mock import MagicMock
 
-from citrasense.acquisition.acquisition_queue import AcquisitionQueue as ImagingQueue
+from citrasense.acquisition.acquisition_queue import AcquisitionQueue
 from citrasense.tasks.task_dispatcher import TaskDispatcher
+
+SID = "test-scope"
 
 
 def _make_task_dispatcher() -> TaskDispatcher:
@@ -22,19 +24,17 @@ def _make_task_dispatcher() -> TaskDispatcher:
         api_client=MagicMock(),
         logger=MagicMock(),
         settings=settings,
-        telescope_record={"id": "test-scope"},
     )
 
-    # Register a mock runtime with real-ish queues
     runtime = MagicMock()
-    runtime.sensor_id = "test-scope"
+    runtime.sensor_id = SID
     runtime.sensor_type = "telescope"
     runtime.acquisition_queue = MagicMock()
     runtime.acquisition_queue.is_idle.return_value = True
     runtime.processing_queue = MagicMock()
     runtime.upload_queue = MagicMock()
     runtime.are_queues_idle.return_value = True
-    td._runtimes["test-scope"] = runtime
+    td.register_runtime(runtime)
     return td
 
 
@@ -55,15 +55,15 @@ class TestClearPendingTasks:
     def test_preserves_heap(self):
         td = _make_task_dispatcher()
         task = _make_task()
-        heapq.heappush(td.task_heap, (1000, 2000, "t1", task))
-        td.task_ids.add("t1")
-        td.task_dict["t1"] = task
+        heapq.heappush(td._sensor_heaps[SID], (1000, 2000, "t1", task))
+        td._sensor_task_ids[SID].add("t1")
+        td._sensor_task_dicts[SID]["t1"] = task
 
         td.clear_pending_tasks()
 
-        assert len(td.task_heap) == 1
-        assert "t1" in td.task_ids
-        assert "t1" in td.task_dict
+        assert len(td._sensor_heaps[SID]) == 1
+        assert "t1" in td._sensor_task_ids[SID]
+        assert "t1" in td._sensor_task_dicts[SID]
 
     def test_clears_imaging_tasks(self):
         td = _make_task_dispatcher()
@@ -86,20 +86,21 @@ class TestClearPendingTasks:
 
     def test_calls_imaging_queue_clear(self):
         td = _make_task_dispatcher()
-        td._default_runtime.acquisition_queue.clear = MagicMock(return_value=2)
+        rt = td.get_runtime("test-scope")
+        rt.acquisition_queue.clear = MagicMock(return_value=2)
 
         count = td.clear_pending_tasks()
 
-        td._default_runtime.acquisition_queue.clear.assert_called_once()
+        rt.acquisition_queue.clear.assert_called_once()
         assert count == 2
 
     def test_no_orphan_guids_after_clear(self):
         """After clear, get_tasks_by_stage should not return bare-GUID entries."""
         td = _make_task_dispatcher()
         task = _make_task("MySat")
-        heapq.heappush(td.task_heap, (1000, 2000, "t1", task))
-        td.task_ids.add("t1")
-        td.task_dict["t1"] = task
+        heapq.heappush(td._sensor_heaps[SID], (1000, 2000, "t1", task))
+        td._sensor_task_ids[SID].add("t1")
+        td._sensor_task_dicts[SID]["t1"] = task
         td.imaging_tasks["t1"] = time.time()
 
         td.clear_pending_tasks()
@@ -117,54 +118,60 @@ class TestExpiredTaskGuard:
     def test_skips_expired_task(self):
         """Tasks whose stop_epoch < now should be discarded, not executed."""
         td = _make_task_dispatcher()
+        heap = td._sensor_heaps[SID]
+        ids = td._sensor_task_ids[SID]
+        dicts = td._sensor_task_dicts[SID]
         now = int(time.time())
         past_stop = now - 100
         task = _make_task("Expired")
-        heapq.heappush(td.task_heap, (now - 200, past_stop, "t-expired", task))
-        td.task_ids.add("t-expired")
-        td.task_dict["t-expired"] = task
+        heapq.heappush(heap, (now - 200, past_stop, "t-expired", task))
+        ids.add("t-expired")
+        dicts["t-expired"] = task
 
         valid_task = _make_task("Valid")
-        heapq.heappush(td.task_heap, (now - 100, now + 3600, "t-valid", valid_task))
-        td.task_ids.add("t-valid")
-        td.task_dict["t-valid"] = valid_task
+        heapq.heappush(heap, (now - 100, now + 3600, "t-valid", valid_task))
+        ids.add("t-valid")
+        dicts["t-valid"] = valid_task
 
         popped = []
-        while td.task_heap and td.task_heap[0][0] <= now:
-            _start_epoch, stop_epoch, tid, _task = td.task_heap[0]
+        while heap and heap[0][0] <= now:
+            _start_epoch, stop_epoch, tid, _task = heap[0]
             if stop_epoch and stop_epoch < now:
-                heapq.heappop(td.task_heap)
-                td.task_ids.discard(tid)
-                td.task_dict.pop(tid, None)
+                heapq.heappop(heap)
+                ids.discard(tid)
+                dicts.pop(tid, None)
                 continue
-            heapq.heappop(td.task_heap)
-            td.task_ids.discard(tid)
+            heapq.heappop(heap)
+            ids.discard(tid)
             popped.append(tid)
 
         assert "t-expired" not in popped
-        assert "t-expired" not in td.task_ids
-        assert "t-expired" not in td.task_dict
+        assert "t-expired" not in ids
+        assert "t-expired" not in dicts
         assert "t-valid" in popped
 
     def test_zero_stop_epoch_means_no_expiry(self):
         """Tasks with stop_epoch=0 (no end time) should always execute."""
         td = _make_task_dispatcher()
+        heap = td._sensor_heaps[SID]
+        ids = td._sensor_task_ids[SID]
+        dicts = td._sensor_task_dicts[SID]
         now = int(time.time())
         task = _make_task("NoExpiry")
-        heapq.heappush(td.task_heap, (now - 100, 0, "t1", task))
-        td.task_ids.add("t1")
-        td.task_dict["t1"] = task
+        heapq.heappush(heap, (now - 100, 0, "t1", task))
+        ids.add("t1")
+        dicts["t1"] = task
 
         popped = []
-        while td.task_heap and td.task_heap[0][0] <= now:
-            _start_epoch, stop_epoch, tid, _task = td.task_heap[0]
+        while heap and heap[0][0] <= now:
+            _start_epoch, stop_epoch, tid, _task = heap[0]
             if stop_epoch and stop_epoch < now:
-                heapq.heappop(td.task_heap)
-                td.task_ids.discard(tid)
-                td.task_dict.pop(tid, None)
+                heapq.heappop(heap)
+                ids.discard(tid)
+                dicts.pop(tid, None)
                 continue
-            heapq.heappop(td.task_heap)
-            td.task_ids.discard(tid)
+            heapq.heappop(heap)
+            ids.discard(tid)
             popped.append(tid)
 
         assert "t1" in popped
@@ -172,29 +179,32 @@ class TestExpiredTaskGuard:
     def test_future_stop_epoch_not_skipped(self):
         """Tasks whose stop_epoch is in the future should execute normally."""
         td = _make_task_dispatcher()
+        heap = td._sensor_heaps[SID]
+        ids = td._sensor_task_ids[SID]
+        dicts = td._sensor_task_dicts[SID]
         now = int(time.time())
         task = _make_task("Future")
-        heapq.heappush(td.task_heap, (now - 50, now + 3600, "t1", task))
-        td.task_ids.add("t1")
-        td.task_dict["t1"] = task
+        heapq.heappush(heap, (now - 50, now + 3600, "t1", task))
+        ids.add("t1")
+        dicts["t1"] = task
 
         popped = []
-        while td.task_heap and td.task_heap[0][0] <= now:
-            _start_epoch, stop_epoch, tid, _task = td.task_heap[0]
+        while heap and heap[0][0] <= now:
+            _start_epoch, stop_epoch, tid, _task = heap[0]
             if stop_epoch and stop_epoch < now:
-                heapq.heappop(td.task_heap)
-                td.task_ids.discard(tid)
-                td.task_dict.pop(tid, None)
+                heapq.heappop(heap)
+                ids.discard(tid)
+                dicts.pop(tid, None)
                 continue
-            heapq.heappop(td.task_heap)
-            td.task_ids.discard(tid)
+            heapq.heappop(heap)
+            ids.discard(tid)
             popped.append(tid)
 
         assert "t1" in popped
 
 
 # ---------------------------------------------------------------------------
-# ImagingQueue._on_cancelled does NOT mark the task as failed on the API
+# AcquisitionQueue._on_cancelled does NOT mark the task as failed on the API
 # ---------------------------------------------------------------------------
 
 
@@ -209,7 +219,7 @@ class TestImagingCancelledNotFailed:
         logger = MagicMock()
         api_client = MagicMock()
         runtime = MagicMock()
-        iq = ImagingQueue(
+        iq = AcquisitionQueue(
             num_workers=0,
             settings=settings,
             logger=logger,

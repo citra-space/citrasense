@@ -35,7 +35,7 @@ def _make_tracking_task():
 
     settings = MagicMock()
     settings.processors_enabled = True
-    task_manager = MagicMock()
+    task_dispatcher = MagicMock()
     location_service = MagicMock()
     location_service.get_current_location.return_value = {
         "latitude": 37.0,
@@ -52,7 +52,7 @@ def _make_tracking_task():
         logger,
         task_obj,
         settings=settings,
-        runtime=task_manager,
+        runtime=task_dispatcher,
         location_service=location_service,
         telescope_record={"id": "tel-1"},
         ground_station={"id": "gs-1"},

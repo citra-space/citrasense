@@ -103,7 +103,7 @@ The NINA adapter uses a **WebSocket event listener** (`nina/event_listener.py`) 
 
 ### Work queues
 
-Tasks flow through three serial queues owned by a **SensorRuntime**: **AcquisitionQueue** → **ProcessingQueue** → **UploadQueue**. Each has background worker threads. Use `queue.is_idle()` to check if a queue has pending work. The **TaskDispatcher** sits above runtimes handling API polling, task scheduling (heap), routing tasks to the right runtime, safety evaluation, and stage tracking. It exposes web-compat facade properties (`imaging_queue`, `autofocus_manager`, etc.) that delegate to the default runtime so existing web routes work unchanged.
+Tasks flow through three serial queues owned by a **SensorRuntime**: **AcquisitionQueue** → **ProcessingQueue** → **UploadQueue**. Each has background worker threads. Use `queue.is_idle()` to check if a queue has pending work. The **TaskDispatcher** sits above runtimes handling API polling, task scheduling (heap), routing tasks to the right runtime, safety evaluation, and stage tracking. Use `task_dispatcher.get_runtime(sensor_id)` to resolve a sensor's runtime.
 
 ### Web UI
 
@@ -113,7 +113,40 @@ Tasks flow through three serial queues owned by a **SensorRuntime**: **Acquisiti
 - Real-time updates via WebSocket at `/ws` (`WebLogHandler` broadcasts logs to connected clients)
 - Templates in `web/templates/` (Jinja2 partials prefixed with `_`)
 - The web server runs in a **daemon thread** with its own event loop (`web/server.py`). Use thread-safe mechanisms when accessing daemon state from web handlers. The daemon only calls `web_server.start()` — all web complexity stays in `web/server.py`.
-- **Toast notifications**: Use `web_server.send_toast(message, type, id)` from daemon threads to push Bootstrap toasts to the browser. `type` is `"success"`, `"info"`, `"warning"`, or `"danger"`. `danger`/`warning` toasts persist until dismissed; `success`/`info` auto-hide. Pass an `id` to deduplicate (only one toast with that id shown at a time). Wire via an `on_toast` callback attribute — see `TaskManager.on_toast` and `AutofocusManager.on_toast` for the pattern. **Use toasts for safety-critical events** so operators who return later see what happened.
+- **Toast notifications**: Use `web_server.send_toast(message, type, id)` from daemon threads to push Bootstrap toasts to the browser. `type` is `"success"`, `"info"`, `"warning"`, or `"danger"`. `danger`/`warning` toasts persist until dismissed; `success`/`info` auto-hide. Pass an `id` to deduplicate (only one toast with that id shown at a time). Wire via an `on_toast` callback attribute — see `TaskDispatcher.on_toast` and `AutofocusManager.on_toast` for the pattern. **Use toasts for safety-critical events** so operators who return later see what happened.
+
+#### Route structure
+
+Sensor-specific routes are namespaced under `/api/sensors/{sensor_id}/...`:
+- `/api/sensors` — list all registered sensors
+- `/api/sensors/{id}` — sensor detail, connect/disconnect
+- `/api/sensors/{id}/mount/...` — mount control
+- `/api/sensors/{id}/camera/...` — camera capture/preview
+- `/api/sensors/{id}/filters/...` — filter management
+- `/api/sensors/{id}/focuser/...` — focuser movement
+- `/api/sensors/{id}/autofocus` — autofocus trigger/cancel/presets
+- `/api/sensors/{id}/alignment` — alignment trigger/cancel
+- `/api/sensors/{id}/calibration/...` — calibration library/capture
+- `/api/sensors/{id}/safety/cable-wrap/reset` — per-sensor safety
+
+Site-level routes remain at `/api/...` (e.g., `/api/emergency-stop`, `/api/tasks/...`, `/api/config`).
+
+Route handlers resolve sensors via `get_sensor_context(ctx, sensor_id)` from `web/helpers.py`, which returns `(sensor, runtime)` or raises 404/503. Hardware access goes through `sensor.adapter`, managers through `runtime.*_manager`.
+
+#### Monitoring layout (per-sensor card groups)
+
+The monitoring tab has a site info row at the top followed by per-sensor card groups:
+
+1. **Site info row** — ground station, location, time health, safety summary (always visible)
+2. **Per-sensor card groups** — generated via `x-for="sensor in $store.citrasense.sensors"`, each containing:
+   - Collapsible section header with sensor name, type badge, and connection status
+   - **Telescope type**: Robotic Session card, Telescope + Optics cards (side by side), Active Tasks pipeline, Scheduled Tasks table
+   - **Other types**: generic status card, Active Tasks pipeline, Scheduled Tasks table
+   - All cards read per-sensor data from the enriched `sensor.*` object (populated by `_enrich_sensors` in `StatusCollector`)
+   - Scheduled tasks are filtered per-sensor: `$store.citrasense.tasks.filter(t => t.sensor_id === sensor.id)`
+   - Active pipeline stages use per-sensor `sensor.tasks_by_stage` and `sensor.pipeline_stats`
+
+The Alpine store (`$store.citrasense`) holds `sensors` (array of enriched sensor objects from `status.sensors`) and `sensorCollapse` (keyed by sensor ID). Frontend API calls use `store.sensorApiBaseFor(sensorId)` to prefix sensor-scoped requests. Template `@click` handlers pass `sensor.id` explicitly to all window functions (e.g., `homeMount(sensor.id)`).
 
 ### Adding a new setting
 
@@ -131,7 +164,7 @@ That's it. `to_dict()` (via `model_dump()`), `GET /api/config`, `saveConfigurati
 
 ### Adapter settings persistence
 
-`_all_adapter_settings` in `CitraSenseSettings` is a nested dict keyed by adapter name (e.g., `"NinaAdvancedHttpAdapter"`). Each entry contains adapter-specific settings *including* a `"filters"` key saved by `_save_filter_config()`. The web form sends flat adapter_settings for only the **current** adapter — `update_and_save()` must **merge** incoming settings with existing ones, not replace the entire dict. Replacing it will silently wipe filters and other adapter-specific state.
+Each sensor's `adapter_settings` lives on its `SensorConfig` within the `sensors[]` array — there is no top-level `adapter_settings` dict or `_all_adapter_settings` archive. The web form sends the `sensors[]` array with per-sensor `adapter_settings` for only the fields it controls — `update_and_save()` shallow-merges incoming settings with existing ones so partial saves don't wipe keys like `"filters"` that the form never sends. Legacy v1/v2 configs (with top-level `hardware_adapter`, `telescope_id`, and a keyed `adapter_settings` dict) are migrated automatically in `CitraSenseSettings.load()`.
 
 ### Task lifecycle and race conditions
 

@@ -203,7 +203,8 @@ class AbstractBaseTelescopeTask(ABC):
 
         self.runtime.record_task_started()
 
-        if self.settings.processors_enabled:
+        _sc = getattr(self.runtime, "sensor_config", None) or self.settings
+        if _sc.processors_enabled:
             self.task.set_status_msg("Queued for processing...")
             self.runtime.update_task_stage(self.task.id, "processing")
 
@@ -221,16 +222,17 @@ class AbstractBaseTelescopeTask(ABC):
                 self.logger.warning(f"Failed to enrich FITS metadata for {image_path}: {e}")
 
             # 2. Queue for background processing
-            if self.settings.processors_enabled:
+            if _sc.processors_enabled:
                 self.timing_info.stamp_now("processing_queued_at")
                 self.runtime.processing_queue.submit(
                     task_id=self.task.id,
                     image_path=Path(image_path),
                     context={
+                        "sensor_id": self.runtime.sensor_id,
                         "task": self.task,
                         "telescope_record": self.telescope_record,
                         "ground_station_record": self.ground_station,
-                        "settings": self.settings,
+                        "settings": _sc,
                         "location_service": self.location_service,
                         "elset_cache": self.elset_cache,
                         "apass_catalog": self.apass_catalog if self.settings.use_local_apass_catalog else None,
@@ -306,7 +308,8 @@ class AbstractBaseTelescopeTask(ABC):
             if annotated and Path(annotated).exists() and self._on_annotated_image:
                 self._on_annotated_image(annotated)
 
-        if self.settings.skip_upload:
+        _sc2 = getattr(self.runtime, "sensor_config", None) or self.settings
+        if _sc2.skip_upload:
             self.logger.info("Upload skipped (skip_upload enabled) — task will not be marked complete on API")
             self._finalize_skipped_upload(task_id)
             return
@@ -963,12 +966,11 @@ class AbstractBaseTelescopeTask(ABC):
         if angular_rate_deg_s <= 0:
             return None
 
-        max_trail_arcsec = self.settings.adaptive_exposure_max_trail_pixels * pixel_scale_arcsec
+        sc = getattr(self.runtime, "sensor_config", None) or self.settings
+        max_trail_arcsec = sc.adaptive_exposure_max_trail_pixels * pixel_scale_arcsec
         angular_rate_arcsec_s = angular_rate_deg_s * 3600
         exposure = max_trail_arcsec / angular_rate_arcsec_s
-        exposure = max(
-            self.settings.adaptive_exposure_min_seconds, min(exposure, self.settings.adaptive_exposure_max_seconds)
-        )
+        exposure = max(sc.adaptive_exposure_min_seconds, min(exposure, sc.adaptive_exposure_max_seconds))
         return round(exposure, 3)
 
     def compute_satellite_timing(self, satellite_data: dict) -> dict:

@@ -8,7 +8,7 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 from astropy.io import fits
@@ -22,7 +22,11 @@ if TYPE_CHECKING:
     pass
 
 ContextHook = Callable[[ProcessingContext], None]
-SummaryHook = Callable[[Path, AggregatedResult], None]
+# Post-processing hooks receive the full :class:`ProcessingContext` so they
+# can log under the per-sensor logger (``context.logger``) rather than the
+# module-level root logger.  The aggregated result carries all artifact
+# outcomes.
+SummaryHook = Callable[[ProcessingContext, AggregatedResult], None]
 
 
 @dataclass
@@ -56,8 +60,8 @@ def _build_optical_pipeline() -> PipelineDefinition:
             AnnotatedImageProcessor(),
         ]
 
-    def _post_report(working_dir: Path, _aggregated: AggregatedResult) -> None:
-        generate_html_report(working_dir)
+    def _post_report(context: ProcessingContext, _aggregated: AggregatedResult) -> None:
+        generate_html_report(context.working_dir, report_logger=context.logger)
 
     return PipelineDefinition(
         factory=_build_processors,
@@ -130,18 +134,24 @@ class PipelineRegistry:
         with self._stats_lock:
             return copy.deepcopy(self._processor_stats)
 
-    def get_all_processors(self) -> list[dict]:
+    def get_all_processors(self, sensor_config: Any = None) -> list[dict]:
         """Get metadata for all processors (enabled and disabled).
 
-        Returns:
-            List of dicts with processor metadata
+        ``enabled_processors`` lives on ``SensorConfig`` in the multi-sensor
+        model, so callers should supply the sensor's config to get the right
+        per-sensor toggles. Falls back to the site-level settings (legacy
+        shape) only if no ``sensor_config`` is provided.
         """
+        if sensor_config is not None:
+            ep_map = getattr(sensor_config, "enabled_processors", {}) or {}
+        else:
+            ep_map = getattr(self.settings, "enabled_processors", {}) or {}
         return [
             {
                 "name": p.name,
                 "friendly_name": p.friendly_name,
                 "description": p.description,
-                "enabled": self.settings.enabled_processors.get(p.name, True),
+                "enabled": ep_map.get(p.name, True),
             }
             for p in self.processors
         ]
@@ -163,7 +173,8 @@ class PipelineRegistry:
         for hook in self._pre_hooks:
             hook(context)
 
-        enabled_processors = [p for p in self.processors if self.settings.enabled_processors.get(p.name, True)]
+        ep_map = getattr(context.settings, "enabled_processors", {})
+        enabled_processors = [p for p in self.processors if ep_map.get(p.name, True)]
 
         enabled_names = [p.name for p in enabled_processors]
         disabled_names = [p.name for p in self.processors if p not in enabled_processors]
@@ -212,9 +223,9 @@ class PipelineRegistry:
             f"Total extracted keys: {len(aggregated.extracted_data)}, should_upload={aggregated.should_upload}"
         )
 
-        dump_processing_summary(context.working_dir, aggregated)
+        dump_processing_summary(context.working_dir, aggregated, sensor_id=context.sensor_id, logger=context.logger)
         for hook in self._post_hooks:
-            hook(context.working_dir, aggregated)
+            hook(context, aggregated)
 
         return aggregated
 

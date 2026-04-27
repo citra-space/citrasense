@@ -19,6 +19,7 @@ from typing import TYPE_CHECKING, Any
 from citrasense.acquisition.acquisition_queue import AcquisitionQueue
 from citrasense.acquisition.processing_queue import ProcessingQueue
 from citrasense.acquisition.upload_queue import UploadQueue
+from citrasense.logging.sensor_logger import get_sensor_logger
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -27,6 +28,8 @@ if TYPE_CHECKING:
     from citrasense.preview_bus import PreviewBus
     from citrasense.sensors.abstract_sensor import AbstractSensor
     from citrasense.sensors.bus import SensorBus, Subscription
+    from citrasense.sensors.telescope.observing_session import ObservingSessionManager
+    from citrasense.sensors.telescope.self_tasking_manager import SelfTaskingManager
     from citrasense.settings.citrasense_settings import CitraSenseSettings
     from citrasense.tasks.task import Task
     from citrasense.tasks.task_dispatcher import TaskDispatcher
@@ -62,13 +65,32 @@ class SensorRuntime:
         self.sensor = sensor
         self.sensor_id = sensor.sensor_id
         self.sensor_type = sensor.sensor_type
-        self.logger = logger.getChild(f"SensorRuntime[{sensor.sensor_id}]")
+        # Wrap the runtime logger in a sensor-scoped adapter so every record
+        # it emits carries ``extra={'sensor_id': ...}``.  WebLogHandler
+        # forwards that onto the WebSocket payload for per-sensor filtering
+        # in the log panel.
+        self.logger = get_sensor_logger(
+            logger.getChild(f"SensorRuntime[{sensor.sensor_id}]"),
+            sensor.sensor_id,
+        )
         self.settings = settings
         self.api_client = api_client
         if sensor.sensor_type == "telescope" and hardware_adapter is None:
             raise ValueError(f"SensorRuntime for telescope sensor {sensor.sensor_id!r} " "requires a hardware_adapter")
         self.hardware_adapter = hardware_adapter
+        # Per-sensor pipeline registry. Callers may still inject a registry
+        # (older unit tests do), but production code builds one here so two
+        # runtimes don't share a single CalibrationProcessor instance.
+        if processor_registry is None and sensor.sensor_type == "telescope":
+            from citrasense.pipelines.common.pipeline_registry import PipelineRegistry
+
+            processor_registry = PipelineRegistry(settings=settings, logger=self.logger)
         self.processor_registry = processor_registry
+        # Per-sensor calibration library — assigned later by the daemon when
+        # the adapter is known to support direct camera control. The library
+        # is then wired into this runtime's CalibrationProcessor via
+        # ``attach_calibration_library``.
+        self.calibration_library: Any = None
         self.elset_cache = elset_cache
         self.apass_catalog = apass_catalog
         self.location_service = location_service
@@ -82,23 +104,29 @@ class SensorRuntime:
         self._dispatcher: TaskDispatcher | None = None
         self._streaming_sub: Subscription | None = None
 
+        # Per-sensor config (observation, processing tuning, autofocus, etc.)
+        self._sensor_config = settings.get_sensor_config(sensor.sensor_id)
+
         # ── Queue trio ─────────────────────────────────────────────────
+        # Pass the sensor-scoped logger (``self.logger``) so every record
+        # emitted by the queues and their downstream pipeline contexts
+        # carries ``extra={'sensor_id': ...}`` for the web log filter.
         self.acquisition_queue = AcquisitionQueue(
             num_workers=1,
             settings=settings,
-            logger=logger,
+            logger=self.logger,
             api_client=api_client,
             runtime=self,
         )
         self.processing_queue = ProcessingQueue(
             num_workers=1,
             settings=settings,
-            logger=logger,
+            logger=self.logger,
         )
         self.upload_queue = UploadQueue(
             num_workers=1,
             settings=settings,
-            logger=logger,
+            logger=self.logger,
         )
 
         # ── Hardware managers (telescope-specific) ─────────────────────
@@ -106,16 +134,26 @@ class SensorRuntime:
         self.alignment_manager: Any = None
         self.homing_manager: Any = None
         self.calibration_manager: Any = None
+        self.observing_session_manager: ObservingSessionManager | None = None
+        self.self_tasking_manager: SelfTaskingManager | None = None
 
         if sensor.sensor_type == "telescope" and hardware_adapter is not None:
             from citrasense.sensors.telescope.managers.alignment_manager import AlignmentManager
             from citrasense.sensors.telescope.managers.autofocus_manager import AutofocusManager
             from citrasense.sensors.telescope.managers.homing_manager import HomingManager
 
+            if self._sensor_config is None:
+                raise RuntimeError(
+                    f"Telescope sensor {self.sensor_id!r} has no SensorConfig in settings; "
+                    "cannot build AutofocusManager / AlignmentManager"
+                )
+
             self.autofocus_manager = AutofocusManager(
                 self.logger,
                 hardware_adapter,
                 settings,
+                sensor_id=self.sensor_id,
+                sensor_config=self._sensor_config,
                 imaging_queue=self.acquisition_queue,
                 location_service=location_service,
                 preview_bus=preview_bus,
@@ -124,6 +162,8 @@ class SensorRuntime:
                 self.logger,
                 hardware_adapter,
                 settings,
+                sensor_id=self.sensor_id,
+                sensor_config=self._sensor_config,
                 imaging_queue=self.acquisition_queue,
                 safety_monitor=safety_monitor,
                 location_service=location_service,
@@ -133,11 +173,29 @@ class SensorRuntime:
                 self.logger,
                 hardware_adapter,
                 imaging_queue=self.acquisition_queue,
+                sensor_id=self.sensor_id,
             )
 
     def set_dispatcher(self, dispatcher: TaskDispatcher) -> None:
         """Wire the parent dispatcher after construction (resolves circular dependency)."""
         self._dispatcher = dispatcher
+
+    def attach_calibration_library(self, library: Any) -> None:
+        """Bind a CalibrationLibrary to this runtime and its CalibrationProcessor.
+
+        Each runtime gets its own library so two telescopes don't end up
+        sharing a single processor whose ``library`` attribute reflects
+        whichever sensor connected last.
+        """
+        self.calibration_library = library
+        if self.processor_registry is None:
+            return
+        from citrasense.pipelines.optical.calibration_processor import CalibrationProcessor
+
+        for proc in self.processor_registry.processors:
+            if isinstance(proc, CalibrationProcessor):
+                proc.library = library
+                break
 
     # ── Stage tracking proxies ─────────────────────────────────────────
 
@@ -174,6 +232,51 @@ class SensorRuntime:
     def are_queues_idle(self) -> bool:
         return self.acquisition_queue.is_idle() and self.processing_queue.is_idle() and self.upload_queue.is_idle()
 
+    def busy_reason(self) -> str:
+        """Return a human-readable reason this sensor is busy, or ``""`` when idle.
+
+        Used by the web layer to gate per-sensor manual hardware calls
+        (preview, jog, filter move, focuser move, etc.) — we only want to
+        return 409 when *this* sensor is busy, not when some other sensor
+        in the site is imaging.
+        """
+        reasons: list[str] = []
+        if not self.acquisition_queue.is_idle():
+            reasons.append("imaging")
+        af = self.autofocus_manager
+        if af and af.is_running():
+            reasons.append("autofocus")
+        al = self.alignment_manager
+        if al and al.is_running():
+            reasons.append("alignment")
+        if al and al.is_calibrating():
+            reasons.append("pointing calibration")
+        hm = self.homing_manager
+        if hm and (hm.is_running() or hm.is_requested()):
+            reasons.append("homing")
+        cm = self.calibration_manager
+        if cm and (cm.is_running() or cm.is_requested()):
+            reasons.append("calibration capture")
+        return ", ".join(reasons)
+
+    @property
+    def sensor_config(self):
+        """The SensorConfig for this runtime's sensor."""
+        return self._sensor_config or self.settings.get_sensor_config(self.sensor_id)
+
+    @property
+    def paused(self) -> bool:
+        """Whether task processing is paused for this sensor."""
+        sc = self.sensor_config
+        return sc.task_processing_paused if sc else False
+
+    def set_paused(self, value: bool) -> None:
+        """Set paused state and persist to config."""
+        sc = self.sensor_config
+        if sc:
+            sc.task_processing_paused = value
+            self.settings.save()
+
     # ── Task submission ────────────────────────────────────────────────
 
     def submit_task(self, task: Task, on_complete: Callable) -> None:
@@ -196,7 +299,8 @@ class SensorRuntime:
         from citrasense.sensors.telescope.tasks.sidereal_telescope_task import SiderealTelescopeTask
         from citrasense.sensors.telescope.tasks.tracking_telescope_task import TrackingTelescopeTask
 
-        mode = self.settings.observation_mode
+        sc = self.sensor_config
+        mode = sc.observation_mode if sc else "auto"
 
         use_tracking = False
         if mode == "tracking":

@@ -1,51 +1,168 @@
     <div class="container my-4" id="configSection" x-show="$store.citrasense.currentSection === 'config'" x-cloak
-         x-data="{ configTab: $persist('api').as('configTab') }"
-         x-effect="if (configTab === 'calibration' && !($store.citrasense.status?.supports_direct_camera_control)) configTab = 'api';
-                  if (configTab === 'autofocus' && !($store.citrasense.status?.supports_autofocus)) configTab = 'hardware'">
+         x-data="{
+            configTab: $persist('api').as('configTab'),
+            navSensorOpen: {},
+            selectSensorTab(sensorId, tab) {
+                $store.citrasense.configSensorId = sensorId;
+                this.configTab = tab;
+                this.navSensorOpen = { ...this.navSensorOpen, [sensorId]: true };
+            },
+            toggleSensorNav(sensorId) {
+                const isOpen = this.navSensorOpen[sensorId];
+                this.navSensorOpen = { ...this.navSensorOpen, [sensorId]: !isOpen };
+                if (!isOpen) {
+                    $store.citrasense.configSensorId = sensorId;
+                    this.configTab = 'hardware';
+                }
+            }
+         }"
+         x-effect="
+            if (configTab === 'calibration' && !($store.citrasense.configSensorStatus?.supports_direct_camera_control)) configTab = 'api';
+            if (configTab === 'autofocus' && !($store.citrasense.configSensorStatus?.supports_autofocus)) configTab = 'hardware';
+         ">
         <form @submit.prevent="window.saveConfiguration($event)"
               @invalid.capture="window.handleInvalidConfigField($event, (tab) => configTab = tab)">
             <div class="row">
                 <!-- Side Navigation -->
                 <div class="col-md-3 mb-3 mb-md-0">
-                    <nav class="nav nav-pills flex-row flex-md-column config-sidenav">
+                    <nav class="nav nav-pills flex-column config-sidenav">
+                        <!-- ── Site ── -->
+                        <span class="nav-link disabled small text-muted text-uppercase px-2 py-1 mb-1"
+                              style="font-size: 0.7rem; letter-spacing: 0.05em;">Site</span>
                         <a class="nav-link" href="#" :class="{ active: configTab === 'api' }"
                            @click.prevent="configTab = 'api'">
                             <i class="bi bi-cloud-arrow-up me-2"></i>API
-                        </a>
-                        <a class="nav-link" href="#" :class="{ active: configTab === 'hardware' }"
-                           @click.prevent="configTab = 'hardware'">
-                            <i class="bi bi-hdd-network me-2"></i>Hardware
-                        </a>
-                        <a class="nav-link" href="#" :class="{ active: configTab === 'autofocus' }"
-                           @click.prevent="configTab = 'autofocus'"
-                           x-show="$store.citrasense.status?.supports_autofocus">
-                            <i class="bi bi-arrows-expand me-2"></i>Autofocus
-                        </a>
-                        <a class="nav-link" href="#" :class="{ active: configTab === 'calibration' }"
-                           @click.prevent="configTab = 'calibration'"
-                           x-show="$store.citrasense.status?.supports_direct_camera_control">
-                            <i class="bi bi-grid-3x3 me-2"></i>Calibration
-                        </a>
-                        <a class="nav-link" href="#" :class="{ active: configTab === 'observation' }"
-                           @click.prevent="configTab = 'observation'">
-                            <i class="bi bi-bullseye me-2"></i>Observation
-                        </a>
-                        <a class="nav-link" href="#" :class="{ active: configTab === 'processing' }"
-                           @click.prevent="configTab = 'processing'">
-                            <i class="bi bi-cpu me-2"></i>Processing
                         </a>
                         <a class="nav-link" href="#" :class="{ active: configTab === 'timelocation' }"
                            @click.prevent="configTab = 'timelocation'">
                             <i class="bi bi-globe me-2"></i>Time &amp; Location
                         </a>
-                        <a class="nav-link" href="#" :class="{ active: configTab === 'selftasking' }"
-                           @click.prevent="configTab = 'selftasking'">
-                            <i class="bi bi-robot me-2"></i>Robotic Operations
+                        <a class="nav-link" href="#" :class="{ active: configTab === 'pipeline' }"
+                           @click.prevent="configTab = 'pipeline'">
+                            <i class="bi bi-diagram-3 me-2"></i>Pipeline
                         </a>
                         <a class="nav-link" href="#" :class="{ active: configTab === 'advanced' }"
                            @click.prevent="configTab = 'advanced'">
                             <i class="bi bi-sliders me-2"></i>Advanced
                         </a>
+
+                        <hr class="border-secondary my-2">
+
+                        <!-- ── Per-sensor groups ── -->
+                        <template x-for="(sensor, sIdx) in ($store.citrasense.config?.sensors || [])" :key="sensor.id">
+                            <div>
+                                <a class="nav-link d-flex align-items-center justify-content-between py-1 px-2"
+                                   href="#" @click.prevent="toggleSensorNav(sensor.id)"
+                                   :class="{ 'fw-bold': $store.citrasense.configSensorId === sensor.id }">
+                                    <span>
+                                        <i class="bi me-2" :class="navSensorOpen[sensor.id] ? 'bi-chevron-down' : 'bi-chevron-right'" style="font-size: 0.7em;"></i>
+                                        <i class="bi bi-telescope me-1"></i>
+                                        <span x-text="sensor.id"></span>
+                                    </span>
+                                    <button type="button"
+                                            class="btn btn-link btn-sm text-danger p-0 ms-1"
+                                            x-show="($store.citrasense.config?.sensors?.length || 0) > 1"
+                                            @click.stop="window._configRemoveSensor && window._configRemoveSensor(sensor.id)"
+                                            title="Remove sensor">
+                                        <i class="bi bi-trash" style="font-size: 0.75rem;"></i>
+                                    </button>
+                                </a>
+                                <div x-show="navSensorOpen[sensor.id]" x-collapse class="ms-3">
+                                    <a class="nav-link py-1 ps-3" href="#"
+                                       :class="{ active: configTab === 'hardware' && $store.citrasense.configSensorId === sensor.id }"
+                                       @click.prevent="selectSensorTab(sensor.id, 'hardware')">
+                                        <i class="bi bi-hdd-network me-2"></i>Hardware
+                                    </a>
+                                    <a class="nav-link py-1 ps-3" href="#"
+                                       :class="{ active: configTab === 'observation' && $store.citrasense.configSensorId === sensor.id }"
+                                       @click.prevent="selectSensorTab(sensor.id, 'observation')">
+                                        <i class="bi bi-bullseye me-2"></i>Observation
+                                    </a>
+                                    <a class="nav-link py-1 ps-3" href="#"
+                                       :class="{ active: configTab === 'processing' && $store.citrasense.configSensorId === sensor.id }"
+                                       @click.prevent="selectSensorTab(sensor.id, 'processing')">
+                                        <i class="bi bi-cpu me-2"></i>Processing
+                                    </a>
+                                    <a class="nav-link py-1 ps-3" href="#"
+                                       :class="{ active: configTab === 'autofocus' && $store.citrasense.configSensorId === sensor.id }"
+                                       @click.prevent="selectSensorTab(sensor.id, 'autofocus')"
+                                       x-show="$store.citrasense.status?.sensors?.[sensor.id]?.supports_autofocus !== false">
+                                        <i class="bi bi-arrows-expand me-2"></i>Autofocus
+                                    </a>
+                                    <a class="nav-link py-1 ps-3" href="#"
+                                       :class="{ active: configTab === 'calibration' && $store.citrasense.configSensorId === sensor.id }"
+                                       @click.prevent="selectSensorTab(sensor.id, 'calibration')"
+                                       x-show="$store.citrasense.status?.sensors?.[sensor.id]?.supports_direct_camera_control">
+                                        <i class="bi bi-grid-3x3 me-2"></i>Calibration
+                                    </a>
+                                    <a class="nav-link py-1 ps-3" href="#"
+                                       :class="{ active: configTab === 'selftasking' && $store.citrasense.configSensorId === sensor.id }"
+                                       @click.prevent="selectSensorTab(sensor.id, 'selftasking')">
+                                        <i class="bi bi-robot me-2"></i>Robotic
+                                    </a>
+                                </div>
+                            </div>
+                        </template>
+
+                        <!-- Add Sensor button -->
+                        <div class="mt-2" x-data="{
+                            showAddForm: false,
+                            newId: '',
+                            newAdapter: '',
+                            addError: '',
+                            adding: false,
+                            async addSensor() {
+                                this.addError = '';
+                                const id = this.newId.trim();
+                                if (!id) { this.addError = 'Sensor ID is required'; return; }
+                                this.adding = true;
+                                try {
+                                    const resp = await fetch('/api/config/sensors', {
+                                        method: 'POST',
+                                        headers: { 'Content-Type': 'application/json' },
+                                        body: JSON.stringify({ id, type: 'telescope', adapter: this.newAdapter })
+                                    });
+                                    const data = await resp.json();
+                                    if (!resp.ok) { this.addError = data.error || 'Failed to add sensor'; return; }
+                                    $store.citrasense.config.sensors.push(data.sensor);
+                                    $store.citrasense.configSensorId = id;
+                                    $store.citrasense.savedAdapters[id] = this.newAdapter;
+                                    this.newId = '';
+                                    this.newAdapter = '';
+                                    this.showAddForm = false;
+                                } catch (e) {
+                                    this.addError = e.message;
+                                } finally {
+                                    this.adding = false;
+                                }
+                            }
+                        }">
+                            <a class="nav-link py-1 px-2 text-success" href="#"
+                               @click.prevent="showAddForm = !showAddForm">
+                                <i class="bi" :class="showAddForm ? 'bi-x-lg' : 'bi-plus-lg'" style="font-size: 0.8em;"></i>
+                                <span class="ms-1 small">Add Sensor</span>
+                            </a>
+                            <div class="p-2 border border-secondary rounded bg-dark mt-1" x-show="showAddForm" x-cloak x-transition>
+                                <div class="mb-2">
+                                    <input type="text" class="form-control form-control-sm" placeholder="Sensor ID (e.g. scope-1)"
+                                           x-model="newId">
+                                </div>
+                                <div class="mb-2">
+                                    <select class="form-select form-select-sm" x-model="newAdapter">
+                                        <option value="">-- adapter --</option>
+                                        <template x-for="a in ($store.citrasense.hardwareAdapters || [])" :key="a.value">
+                                            <option :value="a.value" x-text="a.label"></option>
+                                        </template>
+                                    </select>
+                                </div>
+                                <button type="button" class="btn btn-sm btn-success w-100" :disabled="adding || !newId.trim()"
+                                        @click="addSensor()">
+                                    <span x-show="!adding">Add</span>
+                                    <span x-show="adding"><i class="bi bi-arrow-repeat spin"></i></span>
+                                </button>
+                                <div class="text-danger small mt-1" x-show="addError" x-text="addError"></div>
+                            </div>
+                        </div>
                     </nav>
                 </div>
 
@@ -90,14 +207,10 @@
                                     </div>
                                 </div>
                             </div>
-                            <div class="col-12 col-md-6">
+                            <div class="col-12">
                                 <label for="personal_access_token" class="form-label">Personal Access Token <span class="text-danger">*</span></label>
                                 <input type="password" id="personal_access_token" class="form-control" placeholder="Enter your Citra API token" required x-model="$store.citrasense.config.personal_access_token">
-                                <small class="text-muted">Get your token and telescope ID from <a :href="$store.citrasense.config.app_url || ''" target="_blank" rel="noopener noreferrer" x-text="($store.citrasense.config.app_url || '').replace('https://', '')"></a></small>
-                            </div>
-                            <div class="col-12 col-md-6">
-                                <label for="telescopeId" class="form-label">Telescope ID <span class="text-danger">*</span></label>
-                                <input type="text" id="telescopeId" class="form-control" placeholder="Enter telescope ID" required x-model="$store.citrasense.config.telescope_id">
+                                <small class="text-muted">Get your token from <a :href="$store.citrasense.config.app_url || ''" target="_blank" rel="noopener noreferrer" x-text="($store.citrasense.config.app_url || '').replace('https://', '')"></a></small>
                             </div>
                         </div>
                     </div>
@@ -106,7 +219,18 @@
                     <!-- ============================================ -->
                     <!-- Hardware Configuration                       -->
                     <!-- ============================================ -->
-                    <div x-show="configTab === 'hardware'">
+                    <div x-show="configTab === 'hardware'"
+                         x-effect="
+                            const sid = $store.citrasense.configSensorId;
+                            const idx = $store.citrasense.configSensorIndex;
+                            const sc  = $store.citrasense.config?.sensors?.[idx];
+                            if (sc?.adapter) {
+                                import('../static/config.js').then(m => {
+                                    m.loadAdapterSchema(sc.adapter, sc.adapter_settings || {});
+                                    m.loadFilterConfig();
+                                });
+                            }
+                         ">
                         <h5 class="mb-3 pb-2 border-bottom border-secondary d-flex align-items-center gap-2">
                             <i class="bi bi-hdd-network"></i>Hardware Configuration
                         </h5>
@@ -128,7 +252,7 @@
                     <!-- ============================================ -->
                     <!-- Calibration                                  -->
                     <!-- ============================================ -->
-                    <div x-show="configTab === 'calibration'"
+                    <div x-show="configTab === 'calibration'" class="calibration-pane"
                          x-data="{
                              calStatus: null,
                              calLoading: false,
@@ -140,7 +264,7 @@
                              twilightTimer: null,
                              async loadCalStatus() {
                                  try {
-                                     const resp = await fetch('/api/calibration/status');
+                                     const resp = await fetch($store.citrasense.sensorApiBaseFor($store.citrasense.configSensorId) + '/calibration/status');
                                      this.calStatus = await resp.json();
                                  } catch(e) { this.calStatus = null; }
                              },
@@ -205,7 +329,7 @@
                                      if (this.calFrameType === 'flat') {
                                          body.filter_position = this.calFilterPosition;
                                      }
-                                     await fetch('/api/calibration/capture', {
+                                     await fetch($store.citrasense.sensorApiBaseFor($store.citrasense.configSensorId) + '/calibration/capture', {
                                          method: 'POST',
                                          headers: {'Content-Type': 'application/json'},
                                          body: JSON.stringify(body)
@@ -215,11 +339,11 @@
                                  } catch(e) { console.error(e); }
                              },
                              async cancelCapture() {
-                                 await fetch('/api/calibration/cancel', { method: 'POST' });
+                                 await fetch($store.citrasense.sensorApiBaseFor($store.citrasense.configSensorId) + '/calibration/cancel', { method: 'POST' });
                              },
                              async captureSuite(suiteName) {
                                  try {
-                                     const resp = await fetch('/api/calibration/capture-suite', {
+                                     const resp = await fetch($store.citrasense.sensorApiBaseFor($store.citrasense.configSensorId) + '/calibration/capture-suite', {
                                          method: 'POST',
                                          headers: {'Content-Type': 'application/json'},
                                          body: JSON.stringify({ suite: suiteName })
@@ -235,7 +359,7 @@
                              },
                              async deleteMaster(type, entry) {
                                  if (!confirm('Delete this master frame?')) return;
-                                 await fetch('/api/calibration/master', {
+                                 await fetch($store.citrasense.sensorApiBaseFor($store.citrasense.configSensorId) + '/calibration/master', {
                                      method: 'DELETE',
                                      headers: {'Content-Type': 'application/json'},
                                      body: JSON.stringify({
@@ -291,19 +415,19 @@
                                 </div>
 
                                 <!-- Calibration readiness for current settings -->
-                                <div class="mb-3" x-show="$store.citrasense.status?.calibration_status?.calibration_applicable">
-                                    <template x-if="$store.citrasense.status?.calibration_status?.has_bias && $store.citrasense.status?.calibration_status?.has_dark && $store.citrasense.status?.calibration_status?.has_flat">
+                                <div class="mb-3" x-show="$store.citrasense.configSensorStatus?.calibration_status?.calibration_applicable">
+                                    <template x-if="$store.citrasense.configSensorStatus?.calibration_status?.has_bias && $store.citrasense.configSensorStatus?.calibration_status?.has_dark && $store.citrasense.configSensorStatus?.calibration_status?.has_flat">
                                         <div class="alert alert-success py-2 mb-0 small">
                                             <i class="bi bi-check-circle-fill me-1"></i>
                                             All calibration masters available for current settings.
                                         </div>
                                     </template>
-                                    <template x-if="$store.citrasense.status?.calibration_status && !($store.citrasense.status.calibration_status.has_bias && $store.citrasense.status.calibration_status.has_dark && $store.citrasense.status.calibration_status.has_flat)">
+                                    <template x-if="$store.citrasense.configSensorStatus?.calibration_status && !($store.citrasense.configSensorStatus.calibration_status.has_bias && $store.citrasense.configSensorStatus.calibration_status.has_dark && $store.citrasense.configSensorStatus.calibration_status.has_flat)">
                                         <div class="alert alert-warning py-2 mb-0 small">
                                             <i class="bi bi-exclamation-triangle-fill me-1"></i>
                                             <strong>Missing for current settings:</strong>
                                             <ul class="mb-0 ps-3 mt-1">
-                                                <template x-for="m in ($store.citrasense.status?.calibration_status?.missing || [])" :key="m">
+                                                <template x-for="m in ($store.citrasense.configSensorStatus?.calibration_status?.missing || [])" :key="m">
                                                     <li x-text="m"></li>
                                                 </template>
                                             </ul>
@@ -342,7 +466,7 @@
                                                     <td x-text="b.ncombine"></td>
                                                     <td><small x-text="b.date ? new Date(b.date).toLocaleString([], {month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit'}) : ''"></small></td>
                                                     <td class="text-nowrap">
-                                                        <a class="btn btn-outline-secondary btn-sm py-0 px-1 me-1" :href="'/api/calibration/master/download?filename=' + encodeURIComponent(b.filename)" title="Download"><i class="bi bi-download"></i></a>
+                                                        <a class="btn btn-outline-secondary btn-sm py-0 px-1 me-1" :href="$store.citrasense.sensorApiBaseFor($store.citrasense.configSensorId) + '/calibration/master/download?filename=' + encodeURIComponent(b.filename)" title="Download"><i class="bi bi-download"></i></a>
                                                         <button type="button" class="btn btn-outline-danger btn-sm py-0 px-1" @click="deleteMaster('bias', b)" title="Delete"><i class="bi bi-trash"></i></button>
                                                     </td>
                                                 </tr>
@@ -359,7 +483,7 @@
                                                     <td x-text="d.ncombine"></td>
                                                     <td><small x-text="d.date ? new Date(d.date).toLocaleString([], {month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit'}) : ''"></small></td>
                                                     <td class="text-nowrap">
-                                                        <a class="btn btn-outline-secondary btn-sm py-0 px-1 me-1" :href="'/api/calibration/master/download?filename=' + encodeURIComponent(d.filename)" title="Download"><i class="bi bi-download"></i></a>
+                                                        <a class="btn btn-outline-secondary btn-sm py-0 px-1 me-1" :href="$store.citrasense.sensorApiBaseFor($store.citrasense.configSensorId) + '/calibration/master/download?filename=' + encodeURIComponent(d.filename)" title="Download"><i class="bi bi-download"></i></a>
                                                         <button type="button" class="btn btn-outline-danger btn-sm py-0 px-1" @click="deleteMaster('dark', d)" title="Delete"><i class="bi bi-trash"></i></button>
                                                     </td>
                                                 </tr>
@@ -376,7 +500,7 @@
                                                     <td x-text="f.ncombine"></td>
                                                     <td><small x-text="f.date ? new Date(f.date).toLocaleString([], {month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit'}) : ''"></small></td>
                                                     <td class="text-nowrap">
-                                                        <a class="btn btn-outline-secondary btn-sm py-0 px-1 me-1" :href="'/api/calibration/master/download?filename=' + encodeURIComponent(f.filename)" title="Download"><i class="bi bi-download"></i></a>
+                                                        <a class="btn btn-outline-secondary btn-sm py-0 px-1 me-1" :href="$store.citrasense.sensorApiBaseFor($store.citrasense.configSensorId) + '/calibration/master/download?filename=' + encodeURIComponent(f.filename)" title="Download"><i class="bi bi-download"></i></a>
                                                         <button type="button" class="btn btn-outline-danger btn-sm py-0 px-1" @click="deleteMaster('flat', f)" title="Delete"><i class="bi bi-trash"></i></button>
                                                     </td>
                                                 </tr>
@@ -465,13 +589,13 @@
                                             <div class="col-auto">
                                                 <label class="form-label small mb-0">Bias/Dark frame count</label>
                                                 <input type="number" class="form-control form-control-sm" style="width: 80px;"
-                                                       x-model.number="$store.citrasense.config.calibration_frame_count"
+                                                       x-model.number="$store.citrasense.config.sensors[$store.citrasense.configSensorIndex].calibration_frame_count"
                                                        min="5" max="100" step="1">
                                             </div>
                                             <div class="col-auto">
                                                 <label class="form-label small mb-0">Flat frame count</label>
                                                 <input type="number" class="form-control form-control-sm" style="width: 80px;"
-                                                       x-model.number="$store.citrasense.config.flat_frame_count"
+                                                       x-model.number="$store.citrasense.config.sensors[$store.citrasense.configSensorIndex].flat_frame_count"
                                                        min="5" max="50" step="1">
                                             </div>
                                         </div>
@@ -513,7 +637,8 @@
                     <!-- ============================================ -->
                     <!-- Observation Settings                         -->
                     <!-- ============================================ -->
-                    <div x-show="configTab === 'observation'">
+                    <div x-show="configTab === 'observation'"
+                         x-data="{ get sc() { return $store.citrasense.config?.sensors?.[$store.citrasense.configSensorIndex] || {}; } }">
                         <h5 class="mb-3 pb-2 border-bottom border-secondary d-flex align-items-center gap-2">
                             <i class="bi bi-bullseye"></i>Observation
                         </h5>
@@ -521,7 +646,7 @@
                             <div class="col-12 col-md-6">
                                 <label for="observation_mode" class="form-label">Satellite Observation Strategy</label>
                                 <select id="observation_mode" class="form-select"
-                                    x-model="$store.citrasense.config.observation_mode">
+                                    x-model="sc.observation_mode">
                                     <option value="auto">Auto (tracking if mount supports it)</option>
                                     <option value="tracking">Tracking (custom rates, long exposure)</option>
                                     <option value="sidereal">Sidereal (point-ahead, streak images)</option>
@@ -536,7 +661,7 @@
                                 <label for="exposure_seconds" class="form-label">Exposure Duration (seconds)</label>
                                 <input type="number" id="exposure_seconds" class="form-control"
                                        min="0.01" max="300" step="0.01"
-                                       x-model.number="$store.citrasense.config.exposure_seconds">
+                                       x-model.number="sc.exposure_seconds">
                                 <small class="text-muted d-block mt-2">
                                     Shorter exposures (1-3s) for sidereal/streak. Longer (10-20s) for tracking.
                                 </small>
@@ -545,7 +670,7 @@
                                 <label for="num_exposures" class="form-label">Exposures Per Task</label>
                                 <input type="number" id="num_exposures" class="form-control"
                                        min="1" max="50" step="1"
-                                       x-model.number="$store.citrasense.config.num_exposures">
+                                       x-model.number="sc.num_exposures">
                                 <small class="text-muted d-block mt-2">
                                     Number of images captured per observation. Multiple frames improve satellite detection.
                                 </small>
@@ -553,7 +678,7 @@
                             <div class="col-12">
                                 <div class="form-check form-switch mt-2">
                                     <input type="checkbox" id="adaptive_exposure" class="form-check-input"
-                                           x-model="$store.citrasense.config.adaptive_exposure">
+                                           x-model="sc.adaptive_exposure">
                                     <label for="adaptive_exposure" class="form-check-label">Adaptive Exposure</label>
                                 </div>
                                 <small class="text-muted d-block mt-1">
@@ -561,26 +686,26 @@
                                     Keeps satellite trail within the pixel limit below. Only applies to sidereal mode.
                                 </small>
                             </div>
-                            <template x-if="$store.citrasense.config.adaptive_exposure">
+                            <template x-if="sc.adaptive_exposure">
                                 <div class="col-12">
                                     <div class="row g-3 mt-1">
                                         <div class="col-12 col-md-4">
                                             <label for="adaptive_exposure_max_trail_pixels" class="form-label">Max Trail (pixels)</label>
                                             <input type="number" id="adaptive_exposure_max_trail_pixels" class="form-control"
                                                    min="0.5" max="50" step="0.5"
-                                                   x-model.number="$store.citrasense.config.adaptive_exposure_max_trail_pixels">
+                                                   x-model.number="sc.adaptive_exposure_max_trail_pixels">
                                         </div>
                                         <div class="col-12 col-md-4">
                                             <label for="adaptive_exposure_min_seconds" class="form-label">Min Exposure (s)</label>
                                             <input type="number" id="adaptive_exposure_min_seconds" class="form-control"
                                                    min="0.01" max="10" step="0.01"
-                                                   x-model.number="$store.citrasense.config.adaptive_exposure_min_seconds">
+                                                   x-model.number="sc.adaptive_exposure_min_seconds">
                                         </div>
                                         <div class="col-12 col-md-4">
                                             <label for="adaptive_exposure_max_seconds" class="form-label">Max Exposure (s)</label>
                                             <input type="number" id="adaptive_exposure_max_seconds" class="form-control"
                                                    min="1" max="300" step="1"
-                                                   x-model.number="$store.citrasense.config.adaptive_exposure_max_seconds">
+                                                   x-model.number="sc.adaptive_exposure_max_seconds">
                                         </div>
                                     </div>
                                 </div>
@@ -590,19 +715,20 @@
 
 
                     <!-- ============================================ -->
-                    <!-- Image Processing Settings                    -->
+                    <!-- Per-Sensor Processing Settings               -->
                     <!-- ============================================ -->
-                    <div x-show="configTab === 'processing'">
+                    <div x-show="configTab === 'processing'"
+                         x-data="{ get sc() { return $store.citrasense.config?.sensors?.[$store.citrasense.configSensorIndex] || {}; } }">
                         <h5 class="mb-3 pb-2 border-bottom border-secondary d-flex align-items-center gap-2">
-                            <i class="bi bi-cpu"></i>Image Processing
+                            <i class="bi bi-cpu"></i>Processing
                         </h5>
                         <div class="row g-3">
-                            <!-- Left Column: Pipeline Toggle -->
+                            <!-- Left Column: Pipeline Toggle + Skip Upload -->
                             <div class="col-md-6">
                                 <h6 class="text-muted mb-3"><i class="bi bi-toggle-on me-2"></i>Pipeline Control</h6>
                                 <div class="form-check">
                                     <input class="form-check-input" type="checkbox" id="processors_enabled"
-                                           x-model="$store.citrasense.config.processors_enabled">
+                                           x-model="sc.processors_enabled">
                                     <label class="form-check-label" for="processors_enabled">
                                         Enable image processing pipeline
                                     </label>
@@ -610,27 +736,9 @@
                                 <small class="text-muted d-block mt-2">
                                     Process images before upload to extract readings and filter bad images
                                 </small>
-                                <div class="mt-3">
-                                    <label class="form-label" for="processing_output_retention_hours">
-                                        Processing output retention
-                                    </label>
-                                    <select class="form-select form-select-sm" id="processing_output_retention_hours"
-                                            x-model.number="$store.citrasense.config.processing_output_retention_hours">
-                                        <option value="0">Delete immediately (default)</option>
-                                        <option value="6">Keep 6 hours</option>
-                                        <option value="24">Keep 24 hours</option>
-                                        <option value="72">Keep 3 days</option>
-                                        <option value="168">Keep 7 days</option>
-                                        <option value="-1">Keep forever</option>
-                                    </select>
-                                </div>
-                                <small class="text-muted d-block mt-2">
-                                    Retain intermediate files (source catalogs, plate solve artifacts) for inspection.
-                                    Analysis metrics are always kept regardless of this setting.
-                                </small>
                                 <div class="form-check mt-3">
                                     <input class="form-check-input" type="checkbox" id="skip_upload"
-                                           x-model="$store.citrasense.config.skip_upload">
+                                           x-model="sc.skip_upload">
                                     <label class="form-check-label" for="skip_upload">
                                         Skip upload after processing
                                     </label>
@@ -638,26 +746,6 @@
                                 <small class="text-muted d-block mt-2">
                                     Run the full processing pipeline but skip uploading results and marking the task complete on the API
                                 </small>
-                                <div class="form-check mt-3">
-                                    <input class="form-check-input" type="checkbox" id="use_local_apass_catalog"
-                                           x-model="$store.citrasense.config.use_local_apass_catalog">
-                                    <label class="form-check-label" for="use_local_apass_catalog">
-                                        Use local APASS catalog
-                                    </label>
-                                </div>
-                                <small class="text-muted d-block mt-2">Downloads a ~6.4 GB compressed (~16 GB on disk) catalog for faster offline photometry. Uses AAVSO HTTP API when disabled.</small>
-                                <div class="mt-3">
-                                    <label class="form-label small text-muted mb-1" for="custom_data_dir">
-                                        <i class="bi bi-folder me-1"></i>Data directory
-                                    </label>
-                                    <input type="text" class="form-control form-control-sm bg-dark text-light border-secondary"
-                                           id="custom_data_dir"
-                                           placeholder="{{ default_data_dir }}"
-                                           x-model="$store.citrasense.config.custom_data_dir">
-                                    <small class="text-muted d-block mt-1">
-                                        Images and processing output. Leave blank for default.
-                                    </small>
-                                </div>
                             </div>
 
                             <!-- Right Column: Available Processors -->
@@ -671,8 +759,8 @@
                                                     class="form-check-input"
                                                     type="checkbox"
                                                     :id="'processor-' + processor.name"
-                                                    :checked="processor.enabled"
-                                                    @change="$store.citrasense.config.enabled_processors[processor.name] = $event.target.checked"
+                                                    :checked="sc.enabled_processors?.[processor.name] ?? processor.enabled"
+                                                    @change="sc.enabled_processors[processor.name] = $event.target.checked"
                                                 >
                                                 <label class="form-check-label" :for="'processor-' + processor.name">
                                                     <strong x-text="processor.friendly_name"></strong>
@@ -719,14 +807,14 @@
                                         <label class="form-label small text-muted mb-1" for="plate_solve_timeout">Solve timeout (seconds)</label>
                                         <input type="number" class="form-control form-control-sm bg-dark text-light border-secondary"
                                                id="plate_solve_timeout" step="5" min="10" max="300"
-                                               x-model.number="$store.citrasense.config.plate_solve_timeout">
+                                               x-model.number="sc.plate_solve_timeout">
                                         <small class="text-muted">CPU time limit for solve-field (10&ndash;300s)</small>
                                     </div>
                                     <div class="col-12 col-md-8">
                                         <label class="form-label small text-muted mb-1" for="astrometry_index_path">Index files directory</label>
                                         <input type="text" class="form-control form-control-sm bg-dark text-light border-secondary"
                                                id="astrometry_index_path" placeholder="(default system path)"
-                                               x-model="$store.citrasense.config.astrometry_index_path">
+                                               x-model="sc.astrometry_index_path">
                                         <small class="text-muted">Optional path to astrometry.net index files (leave blank for system default)</small>
                                     </div>
                                 </div>
@@ -745,21 +833,21 @@
                                         <label class="form-label small text-muted mb-1" for="sextractor_detect_thresh">Detection threshold (&sigma;)</label>
                                         <input type="number" class="form-control form-control-sm bg-dark text-light border-secondary"
                                                id="sextractor_detect_thresh" step="0.5" min="1" max="20"
-                                               x-model.number="$store.citrasense.config.sextractor_detect_thresh">
+                                               x-model.number="sc.sextractor_detect_thresh">
                                         <small class="text-muted">Sigmas above background (1&ndash;20)</small>
                                     </div>
                                     <div class="col-6 col-md-3">
                                         <label class="form-label small text-muted mb-1" for="sextractor_detect_minarea">Min pixel area</label>
                                         <input type="number" class="form-control form-control-sm bg-dark text-light border-secondary"
                                                id="sextractor_detect_minarea" step="1" min="1" max="50"
-                                               x-model.number="$store.citrasense.config.sextractor_detect_minarea">
+                                               x-model.number="sc.sextractor_detect_minarea">
                                         <small class="text-muted">Connected pixels required (1&ndash;50)</small>
                                     </div>
                                     <div class="col-12 col-md-6">
                                         <label class="form-label small text-muted mb-1" for="sextractor_filter_name">Convolution kernel</label>
                                         <select class="form-select form-select-sm bg-dark text-light border-secondary"
                                                 id="sextractor_filter_name"
-                                                x-model="$store.citrasense.config.sextractor_filter_name">
+                                                x-model="sc.sextractor_filter_name">
                                             <option value="gauss_1.5_3x3">Gaussian 3&times;3 (FWHM 1.5px)</option>
                                             <option value="gauss_2.5_5x5">Gaussian 5&times;5 (FWHM 2.5px)</option>
                                             <option value="default">Gaussian 9&times;9 (FWHM 5.0px)</option>
@@ -768,6 +856,60 @@
                                         </select>
                                         <small class="text-muted">Smaller kernels suit sharp PSFs; top-hat suppresses hot-pixel triggers</small>
                                     </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+
+                    <!-- ============================================ -->
+                    <!-- Global Pipeline Settings                     -->
+                    <!-- ============================================ -->
+                    <div x-show="configTab === 'pipeline'">
+                        <h5 class="mb-3 pb-2 border-bottom border-secondary d-flex align-items-center gap-2">
+                            <i class="bi bi-diagram-3"></i>Pipeline
+                        </h5>
+                        <div class="row g-3">
+                            <div class="col-md-6">
+                                <div class="mb-3">
+                                    <label class="form-label" for="processing_output_retention_hours">
+                                        Processing output retention
+                                    </label>
+                                    <select class="form-select form-select-sm" id="processing_output_retention_hours"
+                                            x-model.number="$store.citrasense.config.processing_output_retention_hours">
+                                        <option value="0">Delete immediately (default)</option>
+                                        <option value="6">Keep 6 hours</option>
+                                        <option value="24">Keep 24 hours</option>
+                                        <option value="72">Keep 3 days</option>
+                                        <option value="168">Keep 7 days</option>
+                                        <option value="-1">Keep forever</option>
+                                    </select>
+                                    <small class="text-muted d-block mt-2">
+                                        Retain intermediate files (source catalogs, plate solve artifacts) for inspection.
+                                        Analysis metrics are always kept regardless of this setting.
+                                    </small>
+                                </div>
+                                <div class="form-check mt-3">
+                                    <input class="form-check-input" type="checkbox" id="use_local_apass_catalog"
+                                           x-model="$store.citrasense.config.use_local_apass_catalog">
+                                    <label class="form-check-label" for="use_local_apass_catalog">
+                                        Use local APASS catalog
+                                    </label>
+                                </div>
+                                <small class="text-muted d-block mt-2">Downloads a ~6.4 GB compressed (~16 GB on disk) catalog for faster offline photometry. Uses AAVSO HTTP API when disabled.</small>
+                            </div>
+                            <div class="col-md-6">
+                                <div class="mb-3">
+                                    <label class="form-label small text-muted mb-1" for="custom_data_dir">
+                                        <i class="bi bi-folder me-1"></i>Data directory
+                                    </label>
+                                    <input type="text" class="form-control form-control-sm bg-dark text-light border-secondary"
+                                           id="custom_data_dir"
+                                           placeholder="{{ default_data_dir }}"
+                                           x-model="$store.citrasense.config.custom_data_dir">
+                                    <small class="text-muted d-block mt-1">
+                                        Images and processing output. Leave blank for default.
+                                    </small>
                                 </div>
                             </div>
                         </div>
@@ -989,7 +1131,7 @@
                             <div class="col-md-6">
                                 <label class="form-label" for="sessionSunThreshold">Darkness Threshold</label>
                                 <select id="sessionSunThreshold" class="form-select"
-                                        x-model.number="$store.citrasense.config.observing_session_sun_altitude_threshold">
+                                        x-model.number="$store.citrasense.config.sensors[$store.citrasense.configSensorIndex].observing_session_sun_altitude_threshold">
                                     <option value="-6">Civil Twilight (-6&deg;)</option>
                                     <option value="-12">Nautical Twilight (-12&deg;)</option>
                                     <option value="-18">Astronomical Twilight (-18&deg;)</option>
@@ -1001,14 +1143,14 @@
                                 <label class="form-label">Startup / Shutdown</label>
                                 <div class="form-check mb-2">
                                     <input class="form-check-input" type="checkbox" id="sessionDoPointingCal"
-                                           x-model="$store.citrasense.config.observing_session_do_pointing_calibration">
+                                           x-model="$store.citrasense.config.sensors[$store.citrasense.configSensorIndex].observing_session_do_pointing_calibration">
                                     <label class="form-check-label" for="sessionDoPointingCal">
                                         Calibrate pointing model at start of night
                                     </label>
                                 </div>
                                 <div class="form-check mb-2">
                                     <input class="form-check-input" type="checkbox" id="sessionDoAutofocus"
-                                           x-model="$store.citrasense.config.observing_session_do_autofocus">
+                                           x-model="$store.citrasense.config.sensors[$store.citrasense.configSensorIndex].observing_session_do_autofocus">
                                     <label class="form-check-label" for="sessionDoAutofocus">
                                         Autofocus at start of night
                                     </label>
@@ -1021,7 +1163,7 @@
                                 </div>
                                 <div class="form-check mb-2">
                                     <input class="form-check-input" type="checkbox" id="sessionDoPark"
-                                           x-model="$store.citrasense.config.observing_session_do_park">
+                                           x-model="$store.citrasense.config.sensors[$store.citrasense.configSensorIndex].observing_session_do_park">
                                     <label class="form-check-label" for="sessionDoPark">
                                         Unpark at dusk / Park at dawn
                                     </label>
@@ -1038,12 +1180,12 @@
                         <div class="row g-3 mb-4">
                             <div class="col-md-6"
                                  x-data="{
-                                     get types() { return $store.citrasense.config.self_tasking_exclude_object_types || []; },
+                                     get types() { return $store.citrasense.config.sensors[$store.citrasense.configSensorIndex].self_tasking_exclude_object_types || []; },
                                      toggleType(t) {
                                          let arr = [...(this.types)];
                                          let idx = arr.indexOf(t);
                                          if (idx >= 0) arr.splice(idx, 1); else arr.push(t);
-                                         $store.citrasense.config.self_tasking_exclude_object_types = arr;
+                                         $store.citrasense.config.sensors[$store.citrasense.configSensorIndex].self_tasking_exclude_object_types = arr;
                                      }
                                  }">
                                 <label class="form-label">Exclude Object Types</label>
@@ -1058,12 +1200,12 @@
                             </div>
                             <div class="col-md-6"
                                  x-data="{
-                                     get regimes() { return $store.citrasense.config.self_tasking_include_orbit_regimes || []; },
+                                     get regimes() { return $store.citrasense.config.sensors[$store.citrasense.configSensorIndex].self_tasking_include_orbit_regimes || []; },
                                      toggleRegime(r) {
                                          let arr = [...(this.regimes)];
                                          let idx = arr.indexOf(r);
                                          if (idx >= 0) arr.splice(idx, 1); else arr.push(r);
-                                         $store.citrasense.config.self_tasking_include_orbit_regimes = arr;
+                                         $store.citrasense.config.sensors[$store.citrasense.configSensorIndex].self_tasking_include_orbit_regimes = arr;
                                      }
                                  }">
                                 <label class="form-label">Include Orbit Regimes</label>
@@ -1082,14 +1224,14 @@
                                 <label class="form-label" for="selfTaskingGroupIds">Satellite Group IDs</label>
                                 <input type="text" class="form-control" id="selfTaskingGroupIds"
                                        placeholder="Leave empty for auto-discovery"
-                                       :value="($store.citrasense.config.self_tasking_satellite_group_ids || []).join(', ')"
-                                       @change="$store.citrasense.config.self_tasking_satellite_group_ids = $event.target.value ? $event.target.value.split(',').map(s => s.trim()).filter(Boolean) : []">
+                                       :value="($store.citrasense.config.sensors[$store.citrasense.configSensorIndex].self_tasking_satellite_group_ids || []).join(', ')"
+                                       @change="$store.citrasense.config.sensors[$store.citrasense.configSensorIndex].self_tasking_satellite_group_ids = $event.target.value ? $event.target.value.split(',').map(s => s.trim()).filter(Boolean) : []">
                                 <small class="text-muted d-block mt-1">Comma-separated group UUIDs. Empty = server discovers visible satellites automatically.</small>
                             </div>
                             <div class="col-md-6">
                                 <label class="form-label" for="selfTaskingCollectionType">Collection Type</label>
                                 <select id="selfTaskingCollectionType" class="form-select"
-                                        x-model="$store.citrasense.config.self_tasking_collection_type">
+                                        x-model="$store.citrasense.config.sensors[$store.citrasense.configSensorIndex].self_tasking_collection_type">
                                     <option value="Track">Track (single filter)</option>
                                     <option value="Characterization">Characterization (multi-filter)</option>
                                 </select>

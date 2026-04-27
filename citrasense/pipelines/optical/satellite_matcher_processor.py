@@ -461,8 +461,8 @@ class SatelliteMatcherProcessor(AbstractImageProcessor):
                 processor_name=self.name,
             )
 
-            dump_processor_result(context.working_dir, "satellite_matcher_result.json", result)
-            dump_json(context.working_dir, "satellite_matcher_debug.json", debug_info)
+            dump_processor_result(context.working_dir, "satellite_matcher_result.json", result, logger=context.logger)
+            dump_json(context.working_dir, "satellite_matcher_debug.json", debug_info, logger=context.logger)
 
             return result
 
@@ -475,5 +475,5 @@ class SatelliteMatcherProcessor(AbstractImageProcessor):
                 processing_time_seconds=time.time() - start_time,
                 processor_name=self.name,
             )
-            dump_processor_result(context.working_dir, "satellite_matcher_result.json", result)
+            dump_processor_result(context.working_dir, "satellite_matcher_result.json", result, logger=context.logger)
             return result

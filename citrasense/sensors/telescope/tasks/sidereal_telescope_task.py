@@ -56,11 +56,12 @@ class SiderealTelescopeTask(AbstractBaseTelescopeTask):
         Fast movers (LEO): slew ahead, plate-solve, wait for the satellite
         to enter the FOV, then burst-capture.
         """
-        num_exposures = self.settings.num_exposures
+        sc = getattr(self.runtime, "sensor_config", None) or self.settings
+        num_exposures = sc.num_exposures
         angular_rate = self.compute_angular_rate(satellite_data, inertial=True)
 
         adaptive_actually_applied = False
-        if self.settings.adaptive_exposure:
+        if sc.adaptive_exposure:
             adaptive = self.compute_adaptive_exposure(angular_rate)
             if adaptive is not None:
                 exposure = adaptive
@@ -69,13 +70,13 @@ class SiderealTelescopeTask(AbstractBaseTelescopeTask):
                     "Adaptive exposure: %.3fs (angular rate %.6f\u00b0/s, max trail %.1f px)",
                     exposure,
                     angular_rate,
-                    self.settings.adaptive_exposure_max_trail_pixels,
+                    sc.adaptive_exposure_max_trail_pixels,
                 )
             else:
-                exposure = self.settings.exposure_seconds
+                exposure = sc.exposure_seconds
                 self.logger.info("Adaptive exposure: plate scale unavailable, falling back to fixed %.3fs", exposure)
         else:
-            exposure = self.settings.exposure_seconds
+            exposure = sc.exposure_seconds
 
         imaging_window = num_exposures * exposure
 

@@ -69,10 +69,11 @@ def _make_daemon():
         "altitude": 100.0,
     }
     daemon.runtime = MagicMock()
+    daemon.runtime.sensor_config = None
     daemon.runtime.record_task_started = MagicMock()
     daemon.runtime.record_task_succeeded = MagicMock()
     daemon.runtime.record_task_failed = MagicMock()
-    daemon.hardware_adapter = _make_hardware_adapter()
+    daemon.adapter = _make_hardware_adapter()
     return daemon
 
 
@@ -107,7 +108,7 @@ class TestFetchSatellite:
                 pass
 
         daemon = _make_daemon()
-        ct = ConcreteTask(api, daemon.hardware_adapter, MagicMock(), _make_task_dict(), **_daemon_kwargs(daemon))
+        ct = ConcreteTask(api, daemon.adapter, MagicMock(), _make_task_dict(), **_daemon_kwargs(daemon))
         result = ct.fetch_satellite()
         assert result is not None
         assert result["most_recent_elset"]["tle"] == ["best1", "best2"]
@@ -132,7 +133,7 @@ class TestFetchSatellite:
                 pass
 
         daemon = _make_daemon()
-        ct = ConcreteTask(api, daemon.hardware_adapter, MagicMock(), _make_task_dict(), **_daemon_kwargs(daemon))
+        ct = ConcreteTask(api, daemon.adapter, MagicMock(), _make_task_dict(), **_daemon_kwargs(daemon))
         result = ct.fetch_satellite()
         assert result is not None
         assert result["most_recent_elset"]["tle"] == ["new1", "new2"]
@@ -148,7 +149,7 @@ class TestFetchSatellite:
                 pass
 
         daemon = _make_daemon()
-        ct = ConcreteTask(api, daemon.hardware_adapter, MagicMock(), _make_task_dict(), **_daemon_kwargs(daemon))
+        ct = ConcreteTask(api, daemon.adapter, MagicMock(), _make_task_dict(), **_daemon_kwargs(daemon))
         assert ct.fetch_satellite() is None
 
     def test_returns_none_when_no_elsets_anywhere(self):
@@ -163,7 +164,7 @@ class TestFetchSatellite:
                 pass
 
         daemon = _make_daemon()
-        ct = ConcreteTask(api, daemon.hardware_adapter, MagicMock(), _make_task_dict(), **_daemon_kwargs(daemon))
+        ct = ConcreteTask(api, daemon.adapter, MagicMock(), _make_task_dict(), **_daemon_kwargs(daemon))
         assert ct.fetch_satellite() is None
 
     def test_threads_adapter_elset_types_into_best_elset(self):
@@ -184,8 +185,8 @@ class TestFetchSatellite:
                 pass
 
         daemon = _make_daemon()
-        daemon.hardware_adapter.select_elset_types.return_value = CLASSIC_SGP4_ELSET_TYPES
-        ct = ConcreteTask(api, daemon.hardware_adapter, MagicMock(), _make_task_dict(), **_daemon_kwargs(daemon))
+        daemon.adapter.select_elset_types.return_value = CLASSIC_SGP4_ELSET_TYPES
+        ct = ConcreteTask(api, daemon.adapter, MagicMock(), _make_task_dict(), **_daemon_kwargs(daemon))
         assert ct.fetch_satellite() is not None
         api.get_best_elset.assert_called_once_with("sat-iss", types=CLASSIC_SGP4_ELSET_TYPES)
 
@@ -220,8 +221,8 @@ class TestFetchSatellite:
                 pass
 
         daemon = _make_daemon()
-        daemon.hardware_adapter.select_elset_types.return_value = CLASSIC_SGP4_ELSET_TYPES
-        ct = ConcreteTask(api, daemon.hardware_adapter, MagicMock(), _make_task_dict(), **_daemon_kwargs(daemon))
+        daemon.adapter.select_elset_types.return_value = CLASSIC_SGP4_ELSET_TYPES
+        ct = ConcreteTask(api, daemon.adapter, MagicMock(), _make_task_dict(), **_daemon_kwargs(daemon))
         result = ct.fetch_satellite()
         assert result is not None
         # The XP elset is newer but must be filtered out — classic SGP4 wins.
@@ -421,9 +422,7 @@ class TestOnProcessingComplete:
                 pass
 
         daemon = _make_daemon()
-        return ConcreteTask(
-            MagicMock(), daemon.hardware_adapter, MagicMock(), _make_task_dict(), **_daemon_kwargs(daemon)
-        )
+        return ConcreteTask(MagicMock(), daemon.adapter, MagicMock(), _make_task_dict(), **_daemon_kwargs(daemon))
 
     def test_skip_upload_when_should_upload_false(self):
         ct = self._make_concrete()
@@ -545,9 +544,7 @@ class TestCancellation:
                 pass
 
         daemon = _make_daemon()
-        return ConcreteTask(
-            MagicMock(), daemon.hardware_adapter, MagicMock(), _make_task_dict(), **_daemon_kwargs(daemon)
-        )
+        return ConcreteTask(MagicMock(), daemon.adapter, MagicMock(), _make_task_dict(), **_daemon_kwargs(daemon))
 
     def test_cancel_sets_flag(self):
         ct = self._make_concrete()
@@ -656,7 +653,7 @@ class TestPredictSlewTime:
                 pass
 
         daemon = _make_daemon()
-        adapter = daemon.hardware_adapter
+        adapter = daemon.adapter
         adapter.scope_slew_rate_degrees_per_second = 5.0
         # angular_distance should be called — use a real implementation
         import math
@@ -699,7 +696,7 @@ class TestConvergenceThreshold:
 
         daemon = _make_daemon()
         adapter = _make_hardware_adapter(**adapter_kwargs)
-        daemon.hardware_adapter = adapter
+        daemon.adapter = adapter
         return ConcreteTask(MagicMock(), adapter, MagicMock(), _make_task_dict(), **_daemon_kwargs(daemon))
 
     def test_from_telescope_record(self):
@@ -1005,7 +1002,7 @@ class TestAdaptiveSlewRate:
         daemon = _make_daemon()
         adapter = _make_hardware_adapter(initial_slew_samples=initial_samples)
         adapter.scope_slew_rate_degrees_per_second = 5.0
-        daemon.hardware_adapter = adapter
+        daemon.adapter = adapter
         return ConcreteTask(MagicMock(), adapter, MagicMock(), _make_task_dict(), **_daemon_kwargs(daemon))
 
     def _run_single_slew(self, ct, slew_duration, slewed_distance):
@@ -1316,7 +1313,7 @@ def _make_concrete_for_propagation():
             pass
 
     daemon = _make_daemon()
-    return ConcreteTask(MagicMock(), daemon.hardware_adapter, MagicMock(), _make_task_dict(), **_daemon_kwargs(daemon))
+    return ConcreteTask(MagicMock(), daemon.adapter, MagicMock(), _make_task_dict(), **_daemon_kwargs(daemon))
 
 
 class TestXPTLEPropagationGate:

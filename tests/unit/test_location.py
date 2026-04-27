@@ -743,7 +743,8 @@ def test_location_service_hardware_adapter_gps_cached():
     assert call_count == 1
 
     # Expire the cache and verify provider is called again
-    ls._hardware_adapter_gps_cache_time = time.time() - 60
+    for key in ls._hardware_adapter_gps_cache_times:
+        ls._hardware_adapter_gps_cache_times[key] = time.time() - 60
     fix3 = ls._query_hardware_adapter_gps()
     assert fix3 is not None
     assert call_count == 2

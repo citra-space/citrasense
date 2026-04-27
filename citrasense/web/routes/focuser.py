@@ -9,6 +9,7 @@ from fastapi import APIRouter
 from fastapi.responses import JSONResponse
 
 from citrasense.logging import CITRASENSE_LOGGER
+from citrasense.web.helpers import get_sensor_context
 
 if TYPE_CHECKING:
     from citrasense.web.app import CitraSenseWebApp
@@ -16,23 +17,16 @@ if TYPE_CHECKING:
 
 def build_focuser_router(ctx: CitraSenseWebApp) -> APIRouter:
     """Focuser move (absolute/relative) and abort."""
-    router = APIRouter(prefix="/api", tags=["focuser"])
+    router = APIRouter(prefix="/api/sensors/{sensor_id}", tags=["focuser"])
 
     @router.post("/focuser/move")
-    async def focuser_move(body: dict[str, Any]):
-        """Move the focuser to an absolute position or by relative steps.
-
-        Jog moves are fire-and-forget: the command is issued and the
-        endpoint returns immediately.  The UI tracks position via the
-        status poll.  Issuing a move while the focuser is already moving
-        stops the previous move first.
-        """
-        if busy := ctx._require_system_idle():
+    async def focuser_move(sensor_id: str, body: dict[str, Any]):
+        """Move the focuser to an absolute position or by relative steps."""
+        sensor, _runtime = get_sensor_context(ctx, sensor_id)
+        if busy := ctx.require_sensor_idle(_runtime):
             return busy
-        if not ctx.daemon or not ctx.daemon.hardware_adapter:
-            return JSONResponse({"error": "Hardware adapter not initialized"}, status_code=503)
 
-        focuser = ctx.daemon.hardware_adapter.focuser
+        focuser = sensor.adapter.focuser
         if focuser is None or not focuser.is_connected():
             return JSONResponse({"error": "No focuser connected"}, status_code=404)
 
@@ -67,12 +61,11 @@ def build_focuser_router(ctx: CitraSenseWebApp) -> APIRouter:
         return JSONResponse({"error": "Provide 'position' (absolute) or 'relative' (steps)"}, status_code=400)
 
     @router.post("/focuser/abort")
-    async def focuser_abort():
+    async def focuser_abort(sensor_id: str):
         """Stop focuser movement."""
-        if not ctx.daemon or not ctx.daemon.hardware_adapter:
-            return JSONResponse({"error": "Hardware adapter not initialized"}, status_code=503)
+        sensor, _runtime = get_sensor_context(ctx, sensor_id)
 
-        focuser = ctx.daemon.hardware_adapter.focuser
+        focuser = sensor.adapter.focuser
         if focuser is None or not focuser.is_connected():
             return JSONResponse({"error": "No focuser connected"}, status_code=404)
 

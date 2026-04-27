@@ -108,10 +108,17 @@ class AcquisitionContext:
     apass_catalog: Any = None
     safety_monitor: Any = None
     settings: Any = None
-    telescope_record: dict[str, Any] | None = None
-    ground_station: dict[str, Any] | None = None
     processor_registry: Any = None
     task_index: Any = None
+    # Site-level: the Citra ground-station record that owns this daemon's
+    # sensors.  One per deployed site (see
+    # :attr:`CitraSenseDaemon.ground_station`).
+    ground_station: dict[str, Any] | None = None
+    # Telescope-specific: the Citra telescope record for the sensor.
+    # Non-telescope sensors leave this ``None``.  When the phase-4 refactor
+    # lands we'll move this onto a ``TelescopeAcquisitionContext`` subclass
+    # so optical geometry never bleeds into RF/radar sensors.
+    telescope_record: dict[str, Any] | None = None
 
 
 class AbstractSensor(ABC):

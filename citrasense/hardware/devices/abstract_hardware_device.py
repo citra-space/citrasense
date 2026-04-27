@@ -9,6 +9,7 @@ from collections.abc import Callable
 from typing import ClassVar, TypeVar
 
 from citrasense.hardware.abstract_astro_hardware_adapter import SettingSchemaEntry
+from citrasense.logging.sensor_logger import SensorLoggerAdapter
 
 _T = TypeVar("_T")
 
@@ -19,15 +20,20 @@ class AbstractHardwareDevice(ABC):
     Provides common interface elements shared by all device types.
     """
 
-    logger: logging.Logger
+    # Accept the ``SensorLoggerAdapter`` variant so per-sensor adapters can
+    # pass their tagged logger straight through to nested device probes —
+    # plain ``LoggerAdapter`` has no ``getChild`` method, so we name the
+    # sensor-aware subclass explicitly.
+    logger: logging.Logger | SensorLoggerAdapter
 
     _hardware_probe_cache: ClassVar[dict[str, tuple[object, float]]] = {}
 
-    def __init__(self, logger: logging.Logger, **kwargs):
+    def __init__(self, logger: logging.Logger | SensorLoggerAdapter, **kwargs):
         """Initialize the hardware device.
 
         Args:
-            logger: Logger instance for this device
+            logger: Logger instance for this device (plain logger or
+                :class:`SensorLoggerAdapter` — both support ``getChild``).
             **kwargs: Device-specific configuration parameters
         """
         self.logger = logger.getChild(type(self).__name__)

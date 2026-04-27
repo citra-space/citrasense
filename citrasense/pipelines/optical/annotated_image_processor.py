@@ -120,7 +120,16 @@ class AnnotatedImageProcessor(AbstractImageProcessor):
             self._draw_overlay(draw, img.width, task_name, epoch_str, match_count, font)
 
             image_bytes = self._encode_image(img)
-            preview_path = self._save_preview(image_bytes, context.image_path.parent)
+            # ``latest_preview.jpg`` used to be a single site-wide rolling
+            # file in ``images_dir``.  In multi-sensor deployments that made
+            # two scopes overwrite each other's preview — the operator saw
+            # scope B's image in scope A's card (and vice versa).  Scope
+            # the filename by ``sensor_id`` so each rig gets its own
+            # slot (falling back to the legacy name on empty sensor_id for
+            # single-sensor configs).
+            sensor_id = getattr(context, "sensor_id", "") or ""
+            preview_name = f"latest_preview_{sensor_id}.jpg" if sensor_id else "latest_preview.jpg"
+            preview_path = self._save_preview(image_bytes, context.image_path.parent, preview_name)
             working_path = self._save_to_working_dir(image_bytes, context.working_dir)
 
             elapsed = time.time() - start_time
@@ -592,14 +601,21 @@ class AnnotatedImageProcessor(AbstractImageProcessor):
         return buf.getvalue()
 
     @staticmethod
-    def _save_preview(image_bytes: bytes, images_dir: Path) -> Path:
+    def _save_preview(image_bytes: bytes, images_dir: Path, filename: str = "latest_preview.jpg") -> Path:
         """Save annotated image as a single rotating preview file (overwritten each time).
 
         Uses atomic write (temp file + rename) to prevent serving a partially
         written image when the web endpoint reads during an overwrite.
+
+        ``filename`` is parameterised so callers can include a sensor id —
+        in multi-sensor deployments, all sensors share one ``images_dir``
+        and a single ``latest_preview.jpg`` would be overwritten by
+        whichever rig finished processing last, aliasing the per-sensor
+        preview in the web UI.
         """
-        out_path = images_dir / "latest_preview.jpg"
-        tmp_path = images_dir / "latest_preview.tmp.jpg"
+        out_path = images_dir / filename
+        tmp_name = filename[:-4] + ".tmp.jpg" if filename.endswith(".jpg") else filename + ".tmp"
+        tmp_path = images_dir / tmp_name
         tmp_path.write_bytes(image_bytes)
         tmp_path.replace(out_path)
         return out_path

@@ -7,6 +7,8 @@ import threading
 import time
 from typing import TYPE_CHECKING
 
+from citrasense.logging.sensor_logger import SensorLoggerAdapter
+
 if TYPE_CHECKING:
     from citrasense.acquisition.base_work_queue import BaseWorkQueue
     from citrasense.hardware.abstract_astro_hardware_adapter import AbstractAstroHardwareAdapter
@@ -32,13 +34,20 @@ class HomingManager:
 
     def __init__(
         self,
-        logger: logging.Logger,
+        logger: logging.Logger | SensorLoggerAdapter,
         hardware_adapter: AbstractAstroHardwareAdapter,
         imaging_queue: BaseWorkQueue | None = None,
+        sensor_id: str = "",
     ):
         self.logger = logger.getChild(type(self).__name__)
         self.hardware_adapter = hardware_adapter
         self.imaging_queue = imaging_queue
+        # Stash the sensor id so future toast/log/metric plumbing can
+        # disambiguate homing events across multi-sensor sites — matches
+        # the AutofocusManager / AlignmentManager convention.  Pulled
+        # from the SensorLoggerAdapter by default when explicit arg is
+        # omitted, so callers don't have to pass it twice.
+        self._sensor_id: str = sensor_id or getattr(logger, "_sensor_id", "") or ""
         self._requested = False
         self._running = False
         self._progress = ""

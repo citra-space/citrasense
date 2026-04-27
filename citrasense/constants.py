@@ -5,6 +5,12 @@ Centralizing these values prevents duplication and circular import issues.
 """
 
 # ============================================================================
+# APPLICATION IDENTITY (used by platformdirs for config/data/log paths)
+# ============================================================================
+APP_NAME = "citrasense"
+APP_AUTHOR = "citra-space"
+
+# ============================================================================
 # API ENDPOINTS
 # ============================================================================
 PROD_API_HOST = "api.citra.space"

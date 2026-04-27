@@ -50,9 +50,34 @@ def mock_imaging_queue():
     return queue
 
 
+def _mock_sensor_config() -> MagicMock:
+    sc = MagicMock()
+    sc.adapter_settings = {}
+    sc.last_autofocus_timestamp = None
+    sc.scheduled_autofocus_enabled = False
+    sc.autofocus_schedule_mode = "interval"
+    sc.autofocus_interval_minutes = 60
+    sc.autofocus_after_sunset_offset_minutes = 60
+    sc.autofocus_on_hfr_increase_enabled = False
+    sc.autofocus_hfr_increase_percent = 30
+    sc.autofocus_hfr_sample_window = 5
+    sc.autofocus_target_preset = "mirach"
+    sc.autofocus_target_custom_ra = None
+    sc.autofocus_target_custom_dec = None
+    return sc
+
+
 @pytest.fixture
 def autofocus_manager(mock_logger, mock_hardware_adapter, mock_settings, mock_imaging_queue):
-    return AutofocusManager(mock_logger, mock_hardware_adapter, mock_settings, mock_imaging_queue)
+    mgr = AutofocusManager(
+        mock_logger,
+        mock_hardware_adapter,
+        mock_settings,
+        sensor_id="scope-1",
+        sensor_config=_mock_sensor_config(),
+        imaging_queue=mock_imaging_queue,
+    )
+    return mgr
 
 
 # ---------------------------------------------------------------------------
@@ -132,33 +157,36 @@ def test_runs_when_imaging_queue_idle(autofocus_manager, mock_imaging_queue, moc
 
 
 def test_scheduled_autofocus_fires_when_overdue(autofocus_manager, mock_settings, mock_hardware_adapter):
-    mock_settings.scheduled_autofocus_enabled = True
-    mock_settings.autofocus_interval_minutes = 60
-    mock_settings.last_autofocus_timestamp = int(time.time()) - 3700
+    sc = autofocus_manager._sensor_config
+    sc.scheduled_autofocus_enabled = True
+    sc.autofocus_interval_minutes = 60
+    sc.last_autofocus_timestamp = int(time.time()) - 3700
     result = autofocus_manager.check_and_execute()
     assert result is True
     mock_hardware_adapter.do_autofocus.assert_called_once()
 
 
 def test_scheduled_autofocus_skips_when_not_due(autofocus_manager, mock_settings, mock_hardware_adapter):
-    mock_settings.scheduled_autofocus_enabled = True
-    mock_settings.autofocus_interval_minutes = 60
-    mock_settings.last_autofocus_timestamp = int(time.time()) - 10
+    sc = autofocus_manager._sensor_config
+    sc.scheduled_autofocus_enabled = True
+    sc.autofocus_interval_minutes = 60
+    sc.last_autofocus_timestamp = int(time.time()) - 10
     result = autofocus_manager.check_and_execute()
     assert result is False
     mock_hardware_adapter.do_autofocus.assert_not_called()
 
 
 def test_scheduled_autofocus_skips_when_disabled(autofocus_manager, mock_settings, mock_hardware_adapter):
-    mock_settings.scheduled_autofocus_enabled = False
-    mock_settings.last_autofocus_timestamp = int(time.time()) - 99999
+    sc = autofocus_manager._sensor_config
+    sc.scheduled_autofocus_enabled = False
+    sc.last_autofocus_timestamp = int(time.time()) - 99999
     result = autofocus_manager.check_and_execute()
     assert result is False
     mock_hardware_adapter.do_autofocus.assert_not_called()
 
 
 def test_scheduled_autofocus_skips_when_no_adapter_support(autofocus_manager, mock_settings, mock_hardware_adapter):
-    mock_settings.scheduled_autofocus_enabled = True
+    autofocus_manager._sensor_config.scheduled_autofocus_enabled = True
     mock_hardware_adapter.supports_autofocus.return_value = False
     result = autofocus_manager.check_and_execute()
     assert result is False
@@ -166,8 +194,9 @@ def test_scheduled_autofocus_skips_when_no_adapter_support(autofocus_manager, mo
 
 
 def test_scheduled_autofocus_fires_when_never_run(autofocus_manager, mock_settings, mock_hardware_adapter):
-    mock_settings.scheduled_autofocus_enabled = True
-    mock_settings.last_autofocus_timestamp = None
+    sc = autofocus_manager._sensor_config
+    sc.scheduled_autofocus_enabled = True
+    sc.last_autofocus_timestamp = None
     result = autofocus_manager.check_and_execute()
     assert result is True
     mock_hardware_adapter.do_autofocus.assert_called_once()
@@ -179,7 +208,7 @@ def test_scheduled_autofocus_fires_when_never_run(autofocus_manager, mock_settin
 
 
 def test_resolve_target_preset(autofocus_manager, mock_settings):
-    mock_settings.autofocus_target_preset = "vega"
+    autofocus_manager._sensor_config.autofocus_target_preset = "vega"
     ra, dec = autofocus_manager._resolve_target()
     expected = AUTOFOCUS_TARGET_PRESETS["vega"]
     assert ra == expected["ra"]
@@ -187,18 +216,20 @@ def test_resolve_target_preset(autofocus_manager, mock_settings):
 
 
 def test_resolve_target_custom(autofocus_manager, mock_settings):
-    mock_settings.autofocus_target_preset = "custom"
-    mock_settings.autofocus_target_custom_ra = 123.45
-    mock_settings.autofocus_target_custom_dec = -67.89
+    sc = autofocus_manager._sensor_config
+    sc.autofocus_target_preset = "custom"
+    sc.autofocus_target_custom_ra = 123.45
+    sc.autofocus_target_custom_dec = -67.89
     ra, dec = autofocus_manager._resolve_target()
     assert ra == 123.45
     assert dec == -67.89
 
 
 def test_resolve_target_custom_missing_dec(autofocus_manager, mock_settings):
-    mock_settings.autofocus_target_preset = "custom"
-    mock_settings.autofocus_target_custom_ra = 123.45
-    mock_settings.autofocus_target_custom_dec = None
+    sc = autofocus_manager._sensor_config
+    sc.autofocus_target_preset = "custom"
+    sc.autofocus_target_custom_ra = 123.45
+    sc.autofocus_target_custom_dec = None
     ra, dec = autofocus_manager._resolve_target()
     mirach = AUTOFOCUS_TARGET_PRESETS["mirach"]
     assert ra == mirach["ra"]
@@ -206,7 +237,7 @@ def test_resolve_target_custom_missing_dec(autofocus_manager, mock_settings):
 
 
 def test_resolve_target_unknown_preset(autofocus_manager, mock_settings):
-    mock_settings.autofocus_target_preset = "nonexistent_star"
+    autofocus_manager._sensor_config.autofocus_target_preset = "nonexistent_star"
     ra, dec = autofocus_manager._resolve_target()
     mirach = AUTOFOCUS_TARGET_PRESETS["mirach"]
     assert ra == mirach["ra"]
@@ -214,7 +245,7 @@ def test_resolve_target_unknown_preset(autofocus_manager, mock_settings):
 
 
 def test_resolve_target_current_position(autofocus_manager, mock_settings):
-    mock_settings.autofocus_target_preset = "current"
+    autofocus_manager._sensor_config.autofocus_target_preset = "current"
     ra, dec = autofocus_manager._resolve_target()
     assert ra is None
     assert dec is None
@@ -222,6 +253,7 @@ def test_resolve_target_current_position(autofocus_manager, mock_settings):
 
 def test_resolve_target_no_settings(autofocus_manager):
     autofocus_manager.settings = None
+    autofocus_manager._sensor_config = None
     ra, dec = autofocus_manager._resolve_target()
     assert ra is None
     assert dec is None
@@ -233,7 +265,7 @@ def test_resolve_target_no_settings(autofocus_manager):
 
 
 def test_adapter_receives_named_preset_coords(autofocus_manager, mock_settings, mock_hardware_adapter):
-    mock_settings.autofocus_target_preset = "vega"
+    autofocus_manager._sensor_config.autofocus_target_preset = "vega"
     autofocus_manager.request()
     autofocus_manager.check_and_execute()
     _, kwargs = mock_hardware_adapter.do_autofocus.call_args
@@ -243,7 +275,7 @@ def test_adapter_receives_named_preset_coords(autofocus_manager, mock_settings, 
 
 
 def test_adapter_receives_none_for_current_position(autofocus_manager, mock_settings, mock_hardware_adapter):
-    mock_settings.autofocus_target_preset = "current"
+    autofocus_manager._sensor_config.autofocus_target_preset = "current"
     autofocus_manager.request()
     autofocus_manager.check_and_execute()
     _, kwargs = mock_hardware_adapter.do_autofocus.call_args
@@ -252,9 +284,10 @@ def test_adapter_receives_none_for_current_position(autofocus_manager, mock_sett
 
 
 def test_adapter_receives_custom_coords(autofocus_manager, mock_settings, mock_hardware_adapter):
-    mock_settings.autofocus_target_preset = "custom"
-    mock_settings.autofocus_target_custom_ra = 200.0
-    mock_settings.autofocus_target_custom_dec = 45.0
+    sc = autofocus_manager._sensor_config
+    sc.autofocus_target_preset = "custom"
+    sc.autofocus_target_custom_ra = 200.0
+    sc.autofocus_target_custom_dec = 45.0
     autofocus_manager.request()
     autofocus_manager.check_and_execute()
     _, kwargs = mock_hardware_adapter.do_autofocus.call_args
@@ -308,7 +341,7 @@ def test_timestamp_saved_on_success(autofocus_manager, mock_settings):
     autofocus_manager.request()
     before = int(time.time())
     autofocus_manager.check_and_execute()
-    assert mock_settings.last_autofocus_timestamp >= before
+    assert autofocus_manager._sensor_config.last_autofocus_timestamp >= before
     mock_settings.save.assert_called_once()
 
 
@@ -317,7 +350,7 @@ def test_timestamp_saved_on_failure(autofocus_manager, mock_hardware_adapter, mo
     autofocus_manager.request()
     before = int(time.time())
     autofocus_manager.check_and_execute()
-    assert mock_settings.last_autofocus_timestamp >= before
+    assert autofocus_manager._sensor_config.last_autofocus_timestamp >= before
     mock_settings.save.assert_called_once()
 
 
@@ -331,7 +364,10 @@ def test_filter_config_saved_after_autofocus(autofocus_manager, mock_hardware_ad
     mock_hardware_adapter.get_filter_config.return_value = {"0": {"name": "Red"}, "1": {"name": "Green"}}
     autofocus_manager.request()
     autofocus_manager.check_and_execute()
-    assert mock_settings.adapter_settings["filters"] == {"0": {"name": "Red"}, "1": {"name": "Green"}}
+    assert autofocus_manager._sensor_config.adapter_settings["filters"] == {
+        "0": {"name": "Red"},
+        "1": {"name": "Green"},
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -468,16 +504,19 @@ def mock_location_service():
 
 @pytest.fixture
 def sunset_manager(mock_logger, mock_hardware_adapter, mock_settings, mock_imaging_queue, mock_location_service):
-    mock_settings.autofocus_schedule_mode = "after_sunset"
-    mock_settings.scheduled_autofocus_enabled = True
-    mock_settings.autofocus_after_sunset_offset_minutes = 60
-    return AutofocusManager(
+    sc = _mock_sensor_config()
+    sc.scheduled_autofocus_enabled = True
+    sc.autofocus_schedule_mode = "after_sunset"
+    mgr = AutofocusManager(
         mock_logger,
         mock_hardware_adapter,
         mock_settings,
+        sensor_id="scope-1",
+        sensor_config=sc,
         imaging_queue=mock_imaging_queue,
         location_service=mock_location_service,
     )
+    return mgr
 
 
 class TestAfterSunsetScheduling:
@@ -495,18 +534,18 @@ class TestAfterSunsetScheduling:
             mock_trigger.return_value = future_sunset + timedelta(minutes=60)
             assert sunset_manager._should_run_after_sunset() is False
 
-    def test_skips_when_already_run_after_trigger(self, sunset_manager, mock_settings):
+    def test_skips_when_already_run_after_trigger(self, sunset_manager):
         trigger_time = datetime.now(timezone.utc) - timedelta(hours=1)
         ran_after_trigger = trigger_time + timedelta(minutes=10)
-        mock_settings.last_autofocus_timestamp = int(ran_after_trigger.timestamp())
+        sunset_manager._sensor_config.last_autofocus_timestamp = int(ran_after_trigger.timestamp())
         with patch(_PATCH_SUNSET_TRIGGER) as mock_trigger:
             mock_trigger.return_value = trigger_time
             assert sunset_manager._should_run_after_sunset() is False
 
-    def test_fires_when_last_run_was_before_trigger(self, sunset_manager, mock_settings):
+    def test_fires_when_last_run_was_before_trigger(self, sunset_manager):
         trigger_time = datetime.now(timezone.utc) - timedelta(minutes=30)
         ran_before_trigger = trigger_time - timedelta(hours=12)
-        mock_settings.last_autofocus_timestamp = int(ran_before_trigger.timestamp())
+        sunset_manager._sensor_config.last_autofocus_timestamp = int(ran_before_trigger.timestamp())
         with patch(_PATCH_SUNSET_TRIGGER) as mock_trigger:
             mock_trigger.return_value = trigger_time
             assert sunset_manager._should_run_after_sunset() is True
@@ -518,9 +557,17 @@ class TestAfterSunsetScheduling:
     def test_skips_when_no_location_service(
         self, mock_logger, mock_hardware_adapter, mock_settings, mock_imaging_queue
     ):
-        mock_settings.autofocus_schedule_mode = "after_sunset"
-        mock_settings.scheduled_autofocus_enabled = True
-        mgr = AutofocusManager(mock_logger, mock_hardware_adapter, mock_settings, imaging_queue=mock_imaging_queue)
+        sc = _mock_sensor_config()
+        sc.scheduled_autofocus_enabled = True
+        sc.autofocus_schedule_mode = "after_sunset"
+        mgr = AutofocusManager(
+            mock_logger,
+            mock_hardware_adapter,
+            mock_settings,
+            sensor_id="scope-1",
+            sensor_config=sc,
+            imaging_queue=mock_imaging_queue,
+        )
         assert mgr._should_run_after_sunset() is False
 
     def test_skips_when_sunset_computation_fails(self, sunset_manager):
@@ -541,29 +588,32 @@ class TestGetNextAutofocusMinutes:
     """Tests for the get_next_autofocus_minutes status helper."""
 
     def test_interval_mode_with_recent_run(self, autofocus_manager, mock_settings):
-        mock_settings.scheduled_autofocus_enabled = True
-        mock_settings.autofocus_schedule_mode = "interval"
-        mock_settings.autofocus_interval_minutes = 60
-        mock_settings.last_autofocus_timestamp = int(time.time()) - 600
+        sc = autofocus_manager._sensor_config
+        sc.scheduled_autofocus_enabled = True
+        sc.autofocus_schedule_mode = "interval"
+        sc.autofocus_interval_minutes = 60
+        sc.last_autofocus_timestamp = int(time.time()) - 600
         result = autofocus_manager.get_next_autofocus_minutes()
         assert result is not None
         assert 49 <= result <= 51
 
     def test_interval_mode_never_run(self, autofocus_manager, mock_settings):
-        mock_settings.scheduled_autofocus_enabled = True
-        mock_settings.autofocus_schedule_mode = "interval"
-        mock_settings.last_autofocus_timestamp = None
+        sc = autofocus_manager._sensor_config
+        sc.scheduled_autofocus_enabled = True
+        sc.autofocus_schedule_mode = "interval"
+        sc.last_autofocus_timestamp = None
         assert autofocus_manager.get_next_autofocus_minutes() == 0
 
     def test_returns_none_when_disabled(self, autofocus_manager, mock_settings):
-        mock_settings.scheduled_autofocus_enabled = False
+        autofocus_manager._sensor_config.scheduled_autofocus_enabled = False
         assert autofocus_manager.get_next_autofocus_minutes() is None
 
     def test_sunset_mode_returns_none_without_location(self, mock_logger, mock_hardware_adapter, mock_settings):
-        mock_settings.scheduled_autofocus_enabled = True
-        mock_settings.autofocus_schedule_mode = "after_sunset"
+        sc = _mock_sensor_config()
+        sc.scheduled_autofocus_enabled = True
+        sc.autofocus_schedule_mode = "after_sunset"
         mock_hardware_adapter.supports_autofocus.return_value = True
-        mgr = AutofocusManager(mock_logger, mock_hardware_adapter, mock_settings)
+        mgr = AutofocusManager(mock_logger, mock_hardware_adapter, mock_settings, sensor_id="scope-1", sensor_config=sc)
         assert mgr.get_next_autofocus_minutes() is None
 
     def test_sunset_mode_future_trigger(self, sunset_manager):
@@ -580,10 +630,10 @@ class TestGetNextAutofocusMinutes:
             mock_trigger.return_value = past_trigger
             assert sunset_manager.get_next_autofocus_minutes() == 0
 
-    def test_sunset_mode_done_for_tonight(self, sunset_manager, mock_settings):
+    def test_sunset_mode_done_for_tonight(self, sunset_manager):
         trigger_time = datetime.now(timezone.utc) - timedelta(hours=1)
         ran_after = trigger_time + timedelta(minutes=5)
-        mock_settings.last_autofocus_timestamp = int(ran_after.timestamp())
+        sunset_manager._sensor_config.last_autofocus_timestamp = int(ran_after.timestamp())
         with patch(_PATCH_SUNSET_TRIGGER) as mock_trigger:
             mock_trigger.return_value = trigger_time
             assert sunset_manager.get_next_autofocus_minutes() is None

@@ -293,7 +293,11 @@ class SourceExtractorProcessor(AbstractImageProcessor):
                 processor_name=self.name,
             )
             dump_processor_result(
-                context.working_dir, "source_extractor_result.json", result, extra={**fwhm_stats, **elongation_stats}
+                context.working_dir,
+                "source_extractor_result.json",
+                result,
+                extra={**fwhm_stats, **elongation_stats},
+                logger=context.logger,
             )
             return result
 
@@ -306,5 +310,5 @@ class SourceExtractorProcessor(AbstractImageProcessor):
                 processing_time_seconds=time.time() - start_time,
                 processor_name=self.name,
             )
-            dump_processor_result(context.working_dir, "source_extractor_result.json", result)
+            dump_processor_result(context.working_dir, "source_extractor_result.json", result, logger=context.logger)
             return result

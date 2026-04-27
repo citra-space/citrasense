@@ -83,7 +83,7 @@ def _embed_image(path: Path) -> str | None:
 # ---------------------------------------------------------------------------
 
 
-def _section_header(task: dict | None, fits_header: dict | None) -> str:
+def _section_header(task: dict | None, fits_header: dict | None, summary: dict | None = None) -> str:
     if not task:
         return ""
     sat = task.get("satelliteName", "Unknown")
@@ -91,11 +91,13 @@ def _section_header(task: dict | None, fits_header: dict | None) -> str:
     task_id = task.get("id", "")
     gs = task.get("groundStationName", "")
     date_obs = (fits_header or {}).get("DATE-OBS", "")
+    sensor_id = (summary or {}).get("sensor_id") or ""
+    sensor_pill = f'<span class="sensor-pill">Sensor: {_esc(sensor_id)}</span>' if sensor_id else ""
     return f"""
     <div class="header">
         <h1>{_esc(sat)}</h1>
         <div class="subtitle">{_esc(task_type)} &middot; {_esc(date_obs)} &middot; {_esc(gs)}</div>
-        <div class="task-id">Task {_esc(task_id)}</div>
+        <div class="task-id">Task {_esc(task_id)} {sensor_pill}</div>
     </div>"""
 
 
@@ -539,20 +541,23 @@ pre {
 # ---------------------------------------------------------------------------
 
 
-def generate_html_report(working_dir: Path) -> Path | None:
+def generate_html_report(working_dir: Path, report_logger: Any | None = None) -> Path | None:
     """Generate an HTML report from processing artifacts in *working_dir*.
 
     Best-effort: logs warnings on failure, never raises.  Returns the path
-    to ``report.html`` on success, or ``None`` on failure.
+    to ``report.html`` on success, or ``None`` on failure.  Pass the
+    per-sensor ``context.logger`` so success/warning lines carry
+    ``sensor_id`` in multi-sensor deployments.
     """
+    log = report_logger if report_logger is not None else logger
     try:
-        return _build_report(working_dir)
+        return _build_report(working_dir, log)
     except Exception as exc:
-        logger.warning("Failed to generate HTML report: %s", exc)
+        log.warning("Failed to generate HTML report: %s", exc)
         return None
 
 
-def _build_report(working_dir: Path) -> Path:
+def _build_report(working_dir: Path, log: Any) -> Path:
     task = _load_json(working_dir / "task.json")
     fits_header = _load_json(working_dir / "fits_header.json")
     summary = _load_json(working_dir / "processing_summary.json")
@@ -565,7 +570,7 @@ def _build_report(working_dir: Path) -> Path:
 
     body = "".join(
         [
-            _section_header(task, fits_header),
+            _section_header(task, fits_header, summary),
             _section_image(working_dir),
             _section_pipeline_summary(summary),
             _section_pointing(pointing),
@@ -600,5 +605,5 @@ def _build_report(working_dir: Path) -> Path:
 """
     out_path = working_dir / "report.html"
     out_path.write_text(html, encoding="utf-8")
-    logger.info("HTML report written to %s", out_path)
+    log.info("HTML report written to %s", out_path)
     return out_path

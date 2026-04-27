@@ -8,6 +8,7 @@ from fastapi import APIRouter
 from fastapi.responses import JSONResponse
 
 from citrasense.logging import CITRASENSE_LOGGER
+from citrasense.web.helpers import get_sensor_context
 
 if TYPE_CHECKING:
     from citrasense.web.app import CitraSenseWebApp
@@ -15,50 +16,37 @@ if TYPE_CHECKING:
 
 def build_alignment_router(ctx: CitraSenseWebApp) -> APIRouter:
     """Alignment, pointing model, and sync endpoints."""
-    router = APIRouter(prefix="/api", tags=["alignment"])
+    router = APIRouter(prefix="/api/sensors/{sensor_id}", tags=["alignment"])
 
-    @router.post("/adapter/alignment")
-    async def trigger_alignment():
+    @router.post("/alignment")
+    async def trigger_alignment(sensor_id: str):
         """Request plate-solve alignment to run between tasks."""
-        if not ctx.daemon:
-            return JSONResponse({"error": "Daemon not available"}, status_code=503)
-        if not ctx.daemon.task_manager:
-            return JSONResponse({"error": "Task manager not available"}, status_code=503)
-
+        _sensor, runtime = get_sensor_context(ctx, sensor_id)
         try:
-            ctx.daemon.task_manager.alignment_manager.request()
+            runtime.alignment_manager.request()
             return {"success": True, "message": "Alignment queued — will run between tasks"}
         except Exception as e:
             CITRASENSE_LOGGER.error(f"Error queueing alignment: {e}", exc_info=True)
             return JSONResponse({"error": str(e)}, status_code=500)
 
-    @router.post("/adapter/alignment/cancel")
-    async def cancel_alignment():
+    @router.post("/alignment/cancel")
+    async def cancel_alignment(sensor_id: str):
         """Cancel pending alignment request."""
-        if not ctx.daemon:
-            return JSONResponse({"error": "Daemon not available"}, status_code=503)
-        if not ctx.daemon.task_manager:
-            return JSONResponse({"error": "Task manager not available"}, status_code=503)
-
+        _sensor, runtime = get_sensor_context(ctx, sensor_id)
         try:
-            was_cancelled = ctx.daemon.task_manager.alignment_manager.cancel()
+            was_cancelled = runtime.alignment_manager.cancel()
             return {"success": was_cancelled}
         except Exception as e:
             CITRASENSE_LOGGER.error(f"Error cancelling alignment: {e}", exc_info=True)
             return JSONResponse({"error": str(e)}, status_code=500)
 
-    @router.post("/mount/pointing-model/calibrate")
-    async def calibrate_pointing_model():
+    @router.post("/pointing-model/calibrate")
+    async def calibrate_pointing_model(sensor_id: str):
         """Trigger a full pointing model calibration run."""
-        if not ctx.daemon:
-            return JSONResponse({"error": "Daemon not available"}, status_code=503)
-        if not ctx.daemon.task_manager:
-            return JSONResponse({"error": "Task manager not available"}, status_code=503)
-
-        alignment_mgr = ctx.daemon.task_manager.alignment_manager
+        _sensor, runtime = get_sensor_context(ctx, sensor_id)
+        alignment_mgr = runtime.alignment_manager
         if alignment_mgr.is_calibrating():
             return JSONResponse({"error": "Calibration already running"}, status_code=409)
-
         try:
             ok = alignment_mgr.request_calibration()
             if ok:
@@ -68,44 +56,34 @@ def build_alignment_router(ctx: CitraSenseWebApp) -> APIRouter:
             CITRASENSE_LOGGER.error(f"Error starting pointing calibration: {e}", exc_info=True)
             return JSONResponse({"error": str(e)}, status_code=500)
 
-    @router.post("/mount/pointing-model/reset")
-    async def reset_pointing_model():
+    @router.post("/pointing-model/reset")
+    async def reset_pointing_model(sensor_id: str):
         """Clear the pointing model and persisted state."""
-        if busy := ctx._require_system_idle():
+        sensor, _runtime = get_sensor_context(ctx, sensor_id)
+        if busy := ctx.require_sensor_idle(_runtime):
             return busy
-        if not ctx.daemon:
-            return JSONResponse({"error": "Daemon not available"}, status_code=503)
-
-        adapter = ctx.daemon.hardware_adapter
-        if adapter.pointing_model:
-            adapter.pointing_model.reset()
+        if sensor.adapter.pointing_model:
+            sensor.adapter.pointing_model.reset()
             return {"success": True, "message": "Pointing model reset"}
         return JSONResponse({"error": "Pointing model not available"}, status_code=404)
 
-    @router.post("/mount/pointing-model/calibrate/cancel")
-    async def cancel_pointing_calibration():
+    @router.post("/pointing-model/calibrate/cancel")
+    async def cancel_pointing_calibration(sensor_id: str):
         """Cancel an in-progress or pending pointing calibration."""
-        if not ctx.daemon:
-            return JSONResponse({"error": "Daemon not available"}, status_code=503)
-        if not ctx.daemon.task_manager:
-            return JSONResponse({"error": "Task manager not available"}, status_code=503)
-
+        _sensor, runtime = get_sensor_context(ctx, sensor_id)
         try:
-            ctx.daemon.task_manager.alignment_manager.cancel_calibration()
+            runtime.alignment_manager.cancel_calibration()
             return {"success": True}
         except Exception as e:
             CITRASENSE_LOGGER.error(f"Error cancelling pointing calibration: {e}", exc_info=True)
             return JSONResponse({"error": str(e)}, status_code=500)
 
-    @router.post("/adapter/sync")
-    async def manual_sync(request: dict[str, Any]):
+    @router.post("/sync")
+    async def manual_sync(sensor_id: str, request: dict[str, Any]):
         """Manually sync the mount to given RA/Dec coordinates."""
-        if busy := ctx._require_system_idle():
+        sensor, _runtime = get_sensor_context(ctx, sensor_id)
+        if busy := ctx.require_sensor_idle(_runtime):
             return busy
-        if not ctx.daemon:
-            return JSONResponse({"error": "Daemon not available"}, status_code=503)
-        if not ctx.daemon.hardware_adapter:
-            return JSONResponse({"error": "Hardware adapter not available"}, status_code=503)
 
         ra = request.get("ra")
         dec = request.get("dec")
@@ -118,7 +96,7 @@ def build_alignment_router(ctx: CitraSenseWebApp) -> APIRouter:
         except (TypeError, ValueError):
             return JSONResponse({"error": "RA and Dec must be numeric (degrees)"}, status_code=400)
 
-        mount = ctx.daemon.hardware_adapter.mount
+        mount = sensor.adapter.mount
         if not mount:
             return JSONResponse({"error": "No mount connected"}, status_code=404)
 

@@ -20,6 +20,8 @@ DIRECTV 1R
 2 25937  10.4213  49.5410 0006826 255.8956 271.2738  0.98961757 96102
 """
 
+_TEL_ID = "dummy-telescope-001"
+
 
 class TestParse3le:
     def test_parses_valid_3le(self):
@@ -46,12 +48,12 @@ def client():
 class TestDummyPassScheduling:
     def test_generated_tasks_are_above_horizon(self, client: DummyApiClient):
         """Every auto-generated task should have the satellite above the horizon at mid-pass."""
-        tasks = client.get_telescope_tasks("dummy-telescope-001")
+        tasks = client.get_telescope_tasks(_TEL_ID)
 
         if not tasks:
             pytest.skip("No visible passes found in search window (location/time dependent)")
 
-        gs = client.data["ground_station"]
+        gs = client._ground_station
         ts = load.timescale()
         observer = wgs84.latlon(gs["latitude"], gs["longitude"], elevation_m=gs["altitude"])
 
@@ -71,7 +73,7 @@ class TestDummyPassScheduling:
             assert elevation > 0, f"{cat['name']} at {mid.isoformat()} is at {elevation:.1f}° (expected above horizon)"
 
     def test_no_tasks_with_stale_pass(self, client: DummyApiClient):
-        tasks = client.get_telescope_tasks("dummy-telescope-001")
+        tasks = client.get_telescope_tasks(_TEL_ID)
         now = datetime.now(timezone.utc)
         for task in tasks:
             stop = datetime.fromisoformat(task["taskStop"])
@@ -90,10 +92,24 @@ class TestDummyPassScheduling:
         returned_ids = {e["satelliteId"] for e in elsets}
         assert returned_ids == set(client._satellite_catalog.keys())
 
+    def test_tasks_stamped_with_correct_telescope_id(self, client: DummyApiClient):
+        """Each task should carry the telescope_id it was generated for."""
+        tasks = client.get_telescope_tasks(_TEL_ID)
+        for task in tasks:
+            assert task["telescopeId"] == _TEL_ID
+
+    def test_separate_pools_per_telescope(self, client: DummyApiClient):
+        """Two telescope IDs should get independent task pools."""
+        tasks_a = client.get_telescope_tasks("tel-a")
+        tasks_b = client.get_telescope_tasks("tel-b")
+        ids_a = {t["id"] for t in tasks_a}
+        ids_b = {t["id"] for t in tasks_b}
+        assert ids_a.isdisjoint(ids_b), "Telescope task pools should not share tasks"
+
 
 class TestDummyCancelTask:
     def test_cancel_task_marks_pending_canceled(self, client: DummyApiClient):
-        tasks = client.get_telescope_tasks("dummy-telescope-001")
+        tasks = client.get_telescope_tasks(_TEL_ID)
         if not tasks:
             pytest.skip("No tasks generated to cancel")
 
@@ -102,20 +118,19 @@ class TestDummyCancelTask:
 
         assert client.cancel_task(target["id"]) is True
 
-        # The task is still in the underlying store, but flipped to Canceled.
-        stored = next(t for t in client.data["tasks"] if t["id"] == target["id"])
+        stored = client._find_task_across_pools(target["id"])
+        assert stored is not None
         assert stored["status"] == "Canceled"
 
-        # Subsequent fetches (Pending/Scheduled only) shouldn't return it.
-        remaining = client.get_telescope_tasks("dummy-telescope-001")
+        remaining = client.get_telescope_tasks(_TEL_ID)
         assert all(t["id"] != target["id"] for t in remaining)
 
     def test_cancel_unknown_task_returns_false(self, client: DummyApiClient):
         assert client.cancel_task("does-not-exist") is False
 
     def test_cancel_terminal_task_returns_false(self, client: DummyApiClient):
-        # Seed a task in a terminal state directly into the store.
-        client.data.setdefault("tasks", []).append({"id": "done-1", "status": "Succeeded"})
+        client._tasks.setdefault(_TEL_ID, []).append({"id": "done-1", "status": "Succeeded"})
         assert client.cancel_task("done-1") is False
-        stored = next(t for t in client.data["tasks"] if t["id"] == "done-1")
+        stored = client._find_task_across_pools("done-1")
+        assert stored is not None
         assert stored["status"] == "Succeeded"

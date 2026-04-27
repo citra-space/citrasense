@@ -5,9 +5,9 @@ new tasks, manages the scheduling heap, routes tasks to the appropriate
 :class:`~citrasense.sensors.sensor_runtime.SensorRuntime`, tracks task stages,
 handles safety evaluation, pause/resume, lifetime stats, and session managers.
 
-It exposes a backward-compatible facade so existing web routes (which access
-``daemon.task_manager.imaging_queue``, ``daemon.task_manager.autofocus_manager``,
-etc.) continue to work without modification.
+Web routes and the daemon resolve per-sensor hardware through
+``SensorManager`` / ``SensorRuntime`` directly; TaskDispatcher no longer
+exposes per-sensor facade properties.
 """
 
 from __future__ import annotations
@@ -17,7 +17,7 @@ import threading
 import time
 from collections.abc import Callable
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from dateutil import parser as dtparser
 
@@ -26,8 +26,7 @@ from citrasense.tasks.task import Task
 
 if TYPE_CHECKING:
     from citrasense.sensors.sensor_runtime import SensorRuntime
-    from citrasense.sensors.telescope.observing_session import ObservingSessionManager
-    from citrasense.sensors.telescope.self_tasking_manager import SelfTaskingManager
+    from citrasense.sensors.telescope.telescope_sensor import TelescopeSensor
 
 TASK_POLL_INTERVAL_SECONDS = 15
 
@@ -41,17 +40,13 @@ class TaskDispatcher:
         logger: Any,
         settings: Any,
         *,
-        hardware_adapter: Any = None,
         safety_monitor: Any = None,
-        telescope_record: dict | None = None,
         elset_cache: Any = None,
     ) -> None:
         self.api_client = api_client
         self.logger = logger.getChild(type(self).__name__)
         self.settings = settings
-        self.hardware_adapter = hardware_adapter
         self.safety_monitor = safety_monitor
-        self.telescope_record = telescope_record
         self.elset_cache = elset_cache
         self.on_toast: Callable[[str, str, str | None], None] | None = None
 
@@ -64,17 +59,15 @@ class TaskDispatcher:
         self.processing_tasks: dict[str, float] = {}
         self.uploading_tasks: dict[str, float] = {}
 
-        # ── Task heap ──────────────────────────────────────────────────
-        self.task_heap: list = []
-        self.task_ids: set[str] = set()
-        self.task_dict: dict[str, Task] = {}
+        # ── Per-sensor task heaps ─────────────────────────────────────
+        self._sensor_heaps: dict[str, list] = {}
+        self._sensor_task_ids: dict[str, set[str]] = {}
+        self._sensor_task_dicts: dict[str, dict[str, Task]] = {}
+        self._current_task_ids: dict[str, str | None] = {}
         self.heap_lock = threading.RLock()
         self._stop_event = threading.Event()
-        self.current_task_id: str | None = None
 
-        # ── Pause / resume ─────────────────────────────────────────────
-        self._processing_active = not settings.task_processing_paused
-        self._processing_lock = threading.Lock()
+        # ── Safety / last action ───────────────────────────────────────
         self._last_safety_action: object = None
 
         # ── Lifetime stats ─────────────────────────────────────────────
@@ -83,103 +76,141 @@ class TaskDispatcher:
         self.total_tasks_succeeded: int = 0
         self.total_tasks_failed: int = 0
 
-        # ── Automated scheduling ───────────────────────────────────────
-        self._automated_scheduling = (
-            self.telescope_record.get("automatedScheduling", False) if self.telescope_record else False
-        )
-
-        # ── Session managers (set after construction) ──────────────────
-        self._observing_session_manager: ObservingSessionManager | None = None
-        self._self_tasking_manager: SelfTaskingManager | None = None
+        # Session managers now live on SensorRuntime (per-sensor).
 
     # ── Runtime registration ───────────────────────────────────────────
 
     def register_runtime(self, runtime: SensorRuntime) -> None:
         """Add a SensorRuntime and wire its dispatcher back-reference."""
-        self._runtimes[runtime.sensor_id] = runtime
+        sid = runtime.sensor_id
+        self._runtimes[sid] = runtime
         runtime.set_dispatcher(self)
+        with self.heap_lock:
+            self._sensor_heaps.setdefault(sid, [])
+            self._sensor_task_ids.setdefault(sid, set())
+            self._sensor_task_dicts.setdefault(sid, {})
+            self._current_task_ids.setdefault(sid, None)
 
-    @property
-    def _default_runtime(self) -> SensorRuntime:
-        """Phase 1: the single registered runtime."""
-        return next(iter(self._runtimes.values()))
+    def get_runtime(self, sensor_id: str) -> SensorRuntime | None:
+        """Look up a registered runtime by *sensor_id*."""
+        return self._runtimes.get(sensor_id)
+
+    def iter_runtimes(self) -> list[SensorRuntime]:
+        """Public snapshot of all registered runtimes.
+
+        Returns a freshly copied list so callers can iterate safely without
+        reaching into :attr:`_runtimes`.
+        """
+        return list(self._runtimes.values())
+
+    def telescope_runtimes(self) -> list[SensorRuntime]:
+        """All telescope runtimes that have a ``citra_record`` wired up."""
+        return [
+            rt
+            for rt in self._runtimes.values()
+            if rt.sensor_type == "telescope" and getattr(rt.sensor, "citra_record", None)
+        ]
 
     def _runtime_for_task(self, task: Task) -> SensorRuntime | None:
-        """Resolve the runtime responsible for this task."""
-        if task.sensor_id and task.sensor_id in self._runtimes:
-            return self._runtimes[task.sensor_id]
-        for rt in self._runtimes.values():
-            if rt.sensor_type == task.sensor_type:
-                return rt
-        return self._default_runtime if self._runtimes else None
+        """Resolve the runtime responsible for this task.
 
-    # ── Web-compat facade ──────────────────────────────────────────────
-    # Existing web routes access daemon.task_manager.<property>.
-    # These properties delegate to the default (phase 1: only) runtime.
+        Matches by config-level ``sensor_id`` first, then by API-side
+        telescope ID (from ``citra_record.id``). When ``task.sensor_id`` is
+        unset and only one runtime of the requested type exists, that
+        single runtime is used — this keeps single-sensor deployments and
+        migrations from breaking without silently misrouting on multi-rig
+        sites.
 
-    @property
-    def imaging_queue(self):
-        return self._default_runtime.acquisition_queue
+        Returns ``None`` (task is dropped) if no unambiguous match exists.
+        """
+        sid = task.sensor_id
+        tid = getattr(task, "id", "?")
+        if sid:
+            if sid in self._runtimes:
+                return self._runtimes[sid]
+            for rt in self._runtimes.values():
+                rec = getattr(rt.sensor, "citra_record", None)
+                if rec and rec.get("id") == sid:
+                    return rt
+            self.logger.warning(
+                "Task %s has sensor_id=%r but no matching runtime; dropping",
+                tid,
+                sid,
+            )
+            self._notify_dropped_task(
+                f"Task dropped — sensor_id {sid!r} has no matching runtime",
+                toast_id=f"task-drop:unknown-sensor:{sid}",
+            )
+            return None
 
-    @property
-    def processing_queue(self):
-        return self._default_runtime.processing_queue
+        # No sensor_id on the task. Fall back to the single runtime of the
+        # requested type if (and only if) exactly one is registered.
+        candidates = [rt for rt in self._runtimes.values() if rt.sensor_type == task.sensor_type]
+        if len(candidates) == 1:
+            return candidates[0]
+        if len(candidates) > 1:
+            self.logger.warning(
+                "Task %s has no sensor_id but %d %s runtimes are registered; dropping",
+                tid,
+                len(candidates),
+                task.sensor_type,
+            )
+            self._notify_dropped_task(
+                f"Task dropped — no sensor_id on {task.sensor_type} task but "
+                f"{len(candidates)} candidates exist (check Citra task payload)",
+                toast_id=f"task-drop:missing-sensor:{task.sensor_type}",
+            )
+        else:
+            # No candidates: either nothing of this type is registered or
+            # the site has no runtimes at all.  Either way, the task can't
+            # be routed — make that visible in the log so operators can
+            # correlate dropped tasks with config mistakes (wrong sensor
+            # type on the API side, no telescope registered, etc.).
+            self.logger.warning(
+                "Task %s (sensor_type=%r) has no sensor_id and no matching runtime; dropping",
+                tid,
+                task.sensor_type,
+            )
+            self._notify_dropped_task(
+                f"Task dropped — no {task.sensor_type} sensor registered to run it",
+                toast_id=f"task-drop:no-runtime:{task.sensor_type}",
+            )
+        return None
 
-    @property
-    def upload_queue(self):
-        return self._default_runtime.upload_queue
-
-    @property
-    def autofocus_manager(self):
-        return self._default_runtime.autofocus_manager
-
-    @property
-    def alignment_manager(self):
-        return self._default_runtime.alignment_manager
-
-    @property
-    def homing_manager(self):
-        return self._default_runtime.homing_manager
-
-    @property
-    def calibration_manager(self):
-        return self._default_runtime.calibration_manager
-
-    @calibration_manager.setter
-    def calibration_manager(self, value: Any) -> None:
-        self._default_runtime.calibration_manager = value
-
-    # ── Session managers ───────────────────────────────────────────────
-
-    def set_session_managers(
-        self,
-        observing_session_manager: ObservingSessionManager,
-        self_tasking_manager: SelfTaskingManager,
-    ) -> None:
-        """Wire session managers after construction (resolves circular dependency)."""
-        self._observing_session_manager = observing_session_manager
-        self._self_tasking_manager = self_tasking_manager
-
-    @property
-    def observing_session_manager(self) -> ObservingSessionManager | None:
-        return self._observing_session_manager
-
-    @property
-    def self_tasking_manager(self) -> SelfTaskingManager | None:
-        return self._self_tasking_manager
+    def _notify_dropped_task(self, message: str, *, toast_id: str | None = None) -> None:
+        """Best-effort operator toast for dropped/unroutable tasks."""
+        if not self.on_toast:
+            return
+        try:
+            self.on_toast(message, "warning", toast_id)
+        except Exception:
+            self.logger.debug("Dropped-task toast failed", exc_info=True)
 
     @property
     def automated_scheduling(self) -> bool:
-        return self._automated_scheduling
+        """True if *any* telescope has automated scheduling enabled.
 
-    @automated_scheduling.setter
-    def automated_scheduling(self, value: bool) -> None:
-        self._automated_scheduling = value
+        ``automatedScheduling`` is a **per-sensor** flag on the Citra-side
+        telescope record — there is no site-level counterpart. This
+        property is an explicit "any of them" summary used by the
+        self-tasking gate and the monitoring UI; callers that need a
+        specific rig's state should read
+        ``runtime.sensor.citra_record["automatedScheduling"]`` directly
+        and toggles go through
+        ``PATCH /api/sensors/{sensor_id}/scheduling`` (which updates
+        exactly one rig at a time).
+        """
+        for rt in self._runtimes.values():
+            if rt.sensor_type == "telescope":
+                rec = getattr(rt.sensor, "citra_record", None)
+                if rec and rec.get("automatedScheduling", False):
+                    return True
+        return False
 
     # ── Queue helpers (facade) ─────────────────────────────────────────
 
     def are_queues_idle(self) -> bool:
-        return self._default_runtime.are_queues_idle()
+        return all(rt.are_queues_idle() for rt in self._runtimes.values())
 
     # ── Stage tracking ─────────────────────────────────────────────────
 
@@ -203,7 +234,8 @@ class TaskDispatcher:
             self.uploading_tasks.pop(task_id, None)
 
         with self.heap_lock:
-            self.task_dict.pop(task_id, None)
+            for td in self._sensor_task_dicts.values():
+                td.pop(task_id, None)
 
     def drop_scheduled_task(self, task_id: str) -> bool:
         """Fully evict a scheduled (not-yet-running) task.
@@ -216,12 +248,15 @@ class TaskDispatcher:
             self.uploading_tasks.pop(task_id, None)
 
         with self.heap_lock:
-            removed = task_id in self.task_ids
-            if removed:
-                self.task_ids.discard(task_id)
-                self.task_dict.pop(task_id, None)
-                self.task_heap = [entry for entry in self.task_heap if entry[2] != task_id]
-                heapq.heapify(self.task_heap)
+            removed = False
+            for sid in list(self._sensor_heaps):
+                ids = self._sensor_task_ids[sid]
+                if task_id in ids:
+                    removed = True
+                    ids.discard(task_id)
+                    self._sensor_task_dicts[sid].pop(task_id, None)
+                    self._sensor_heaps[sid] = [e for e in self._sensor_heaps[sid] if e[2] != task_id]
+                    heapq.heapify(self._sensor_heaps[sid])
         return removed
 
     # ── Stats ──────────────────────────────────────────────────────────
@@ -257,6 +292,8 @@ class TaskDispatcher:
                 task = self.get_task_by_id(task_id)
                 if task:
                     result["target_name"] = task.satelliteName if task.sensor_type == "telescope" else task.sensor_id
+                    result["sensor_type"] = task.sensor_type
+                    result["sensor_id"] = getattr(task, "sensor_id", None)
                     status_msg, retry_time, is_executing = task.get_status_info()
                     result["status_msg"] = status_msg
                     result["retry_scheduled_time"] = retry_time
@@ -284,7 +321,7 @@ class TaskDispatcher:
     @property
     def pending_task_count(self) -> int:
         with self.heap_lock:
-            return len(self.task_heap)
+            return sum(len(h) for h in self._sensor_heaps.values())
 
     def get_tasks_snapshot(self, exclude_active: bool = False) -> list[Task]:
         if exclude_active:
@@ -294,38 +331,100 @@ class TaskDispatcher:
             active_ids = set()
 
         with self.heap_lock:
-            return [task for _start, _stop, task_id, task in self.task_heap if task_id not in active_ids]
+            tasks = []
+            for heap in self._sensor_heaps.values():
+                tasks.extend(task for _start, _stop, task_id, task in heap if task_id not in active_ids)
+            return tasks
 
     def get_task_by_id(self, task_id: str) -> Task | None:
         with self.heap_lock:
-            return self.task_dict.get(task_id)
+            for td in self._sensor_task_dicts.values():
+                if task_id in td:
+                    return td[task_id]
+            return None
+
+    @property
+    def current_task_ids(self) -> dict[str, str]:
+        """Mapping of ``sensor_id -> currently-executing task id``.
+
+        Excludes sensors that are idle. Used by the web layer to decide
+        per-row ``isActive`` flags and to reject cancel requests for any
+        task currently executing on *any* sensor.
+        """
+        return {sid: tid for sid, tid in self._current_task_ids.items() if tid}
+
+    @property
+    def task_dict(self) -> dict[str, Task]:
+        """Flat aggregate of all per-sensor task dicts (read-only view for snapshots)."""
+        merged: dict[str, Task] = {}
+        for td in self._sensor_task_dicts.values():
+            merged.update(td)
+        return merged
+
+    def restore_task_dict(self, tasks: dict[str, Task]) -> None:
+        """Re-insert tasks into the correct per-sensor heaps (used on config reload)."""
+        with self.heap_lock:
+            for task_id, task in tasks.items():
+                rt = self._runtime_for_task(task)
+                if rt is None:
+                    continue
+                sid = rt.sensor_id
+                if task_id in self._sensor_task_ids.get(sid, set()):
+                    continue
+                self._sensor_task_dicts.setdefault(sid, {})[task_id] = task
+                self._sensor_task_ids.setdefault(sid, set()).add(task_id)
+                start = getattr(task, "taskStart", "") or ""
+                stop = getattr(task, "taskStop", "") or ""
+                heapq.heappush(
+                    self._sensor_heaps.setdefault(sid, []),
+                    (start, stop, task_id, task),
+                )
 
     # ── Poll loop ──────────────────────────────────────────────────────
 
+    def _all_task_ids(self) -> set[str]:
+        """Union of all task IDs across all sensor heaps."""
+        ids: set[str] = set()
+        for s in self._sensor_task_ids.values():
+            ids |= s
+        return ids
+
     def poll_tasks(self) -> None:
-        if self.telescope_record is None:
-            self.logger.error("poll_tasks called without telescope_record; cannot poll for tasks")
+        if not self.telescope_runtimes():
+            self.logger.error("poll_tasks called without any telescope runtimes; cannot poll for tasks")
             return
 
         while not self._stop_event.is_set():
             try:
-                if self._observing_session_manager:
-                    self._observing_session_manager.update()
-                if self._self_tasking_manager:
-                    self._self_tasking_manager.check_and_request()
+                for rt in self._runtimes.values():
+                    if rt.observing_session_manager:
+                        rt.observing_session_manager.update()
+                    if rt.self_tasking_manager:
+                        rt.self_tasking_manager.check_and_request()
 
                 if self.elset_cache:
                     interval_hours = self.settings.elset_refresh_interval_hours
                     self.elset_cache.refresh_if_stale(self.api_client, self.logger, interval_hours=interval_hours)
                 self._report_online()
                 now_iso = datetime.now(timezone.utc).isoformat()
-                tasks = self.api_client.get_telescope_tasks(
-                    self.telescope_record["id"],
-                    statuses=["Pending", "Scheduled"],
-                    task_stop_after=now_iso,
-                )
+                telescope_rts = self.telescope_runtimes()
+                if not telescope_rts:
+                    self._stop_event.wait(TASK_POLL_INTERVAL_SECONDS)
+                    continue
 
-                if tasks is None:
+                tasks: list = []
+                for trt in telescope_rts:
+                    rec = cast("TelescopeSensor", trt.sensor).citra_record
+                    assert rec is not None
+                    batch = self.api_client.get_telescope_tasks(
+                        rec["id"],
+                        statuses=["Pending", "Scheduled"],
+                        task_stop_after=now_iso,
+                    )
+                    if batch:
+                        tasks.extend(batch)
+
+                if not tasks:
                     self._stop_event.wait(TASK_POLL_INTERVAL_SECONDS)
                     continue
 
@@ -345,37 +444,51 @@ class TaskDispatcher:
                         except Exception as e:
                             self.logger.error("Error parsing task from API: %s", e, exc_info=True)
 
-                    new_heap = []
-                    for start_epoch, stop_epoch, tid, task in self.task_heap:
-                        if tid == self.current_task_id or tid in api_task_map:
-                            new_heap.append((start_epoch, stop_epoch, tid, task))
-                        else:
-                            self.logger.info("Removing task %s from queue (cancelled or status changed)", tid)
-                            self.task_ids.discard(tid)
-                            self.task_dict.pop(tid, None)
-                            removed += 1
+                    current_ids = {v for v in self._current_task_ids.values() if v}
+                    for sid in list(self._sensor_heaps):
+                        heap = self._sensor_heaps[sid]
+                        ids = self._sensor_task_ids[sid]
+                        dicts = self._sensor_task_dicts[sid]
+                        new_heap = []
+                        for entry in heap:
+                            start_epoch, stop_epoch, tid, task = entry
+                            if tid in current_ids or tid in api_task_map:
+                                new_heap.append(entry)
+                            else:
+                                self.logger.info("Removing task %s from queue (cancelled or status changed)", tid)
+                                ids.discard(tid)
+                                dicts.pop(tid, None)
+                                removed += 1
+                        if len(new_heap) != len(heap):
+                            self._sensor_heaps[sid] = new_heap
+                            heapq.heapify(new_heap)
 
-                    if removed > 0:
-                        self.task_heap = new_heap
-                        heapq.heapify(self.task_heap)
-
+                    all_known = self._all_task_ids()
                     for tid, task in api_task_map.items():
-                        if tid not in self.task_ids and tid != self.current_task_id and tid not in inflight_ids:
-                            task_start = task.taskStart
-                            task_stop = task.taskStop
-                            try:
-                                start_epoch = int(dtparser.isoparse(task_start).timestamp())
-                                stop_epoch = int(dtparser.isoparse(task_stop).timestamp()) if task_stop else 0
-                            except Exception:
-                                self.logger.error("Could not parse taskStart/taskStop for task %s", tid)
-                                continue
-                            if stop_epoch and stop_epoch < now:
-                                self.logger.debug("Skipping past task %s that ended at %s", tid, task_stop)
-                                continue
-                            heapq.heappush(self.task_heap, (start_epoch, stop_epoch, tid, task))
-                            self.task_ids.add(tid)
-                            self.task_dict[tid] = task
-                            added += 1
+                        if tid in all_known or tid in current_ids or tid in inflight_ids:
+                            continue
+                        rt = self._runtime_for_task(task)
+                        if rt is None:
+                            self.logger.warning(
+                                "Dropping task %s — no matching runtime (sensor_id=%s)", tid, task.sensor_id
+                            )
+                            continue
+                        target_sid = rt.sensor_id
+                        task_start = task.taskStart
+                        task_stop = task.taskStop
+                        try:
+                            start_epoch = int(dtparser.isoparse(task_start).timestamp())
+                            stop_epoch = int(dtparser.isoparse(task_stop).timestamp()) if task_stop else 0
+                        except Exception:
+                            self.logger.error("Could not parse taskStart/taskStop for task %s", tid)
+                            continue
+                        if stop_epoch and stop_epoch < now:
+                            self.logger.debug("Skipping past task %s that ended at %s", tid, task_stop)
+                            continue
+                        heapq.heappush(self._sensor_heaps[target_sid], (start_epoch, stop_epoch, tid, task))
+                        self._sensor_task_ids[target_sid].add(tid)
+                        self._sensor_task_dicts[target_sid][tid] = task
+                        added += 1
 
                     if added > 0 or removed > 0:
                         action_parts = []
@@ -390,12 +503,15 @@ class TaskDispatcher:
             self._stop_event.wait(TASK_POLL_INTERVAL_SECONDS)
 
     def _report_online(self) -> None:
-        if self.telescope_record is None:
-            return
-        telescope_id = self.telescope_record["id"]
         iso_timestamp = datetime.now(timezone.utc).isoformat()
-        self.api_client.put_telescope_status([{"id": telescope_id, "last_connection_epoch": iso_timestamp}])
-        self.logger.debug("Reported online status for telescope %s at %s", telescope_id, iso_timestamp)
+        statuses = []
+        for trt in self.telescope_runtimes():
+            rec = cast("TelescopeSensor", trt.sensor).citra_record
+            assert rec is not None
+            statuses.append({"id": rec["id"], "last_connection_epoch": iso_timestamp})
+        if statuses:
+            self.api_client.put_telescope_status(statuses)
+            self.logger.debug("Reported online status for %d telescope(s) at %s", len(statuses), iso_timestamp)
 
     # ── Task runner ────────────────────────────────────────────────────
 
@@ -405,93 +521,69 @@ class TaskDispatcher:
                 self._stop_event.wait(1)
                 continue
 
-            # Run maintenance on all runtimes
             for rt in self._runtimes.values():
                 rt.check_maintenance()
 
-            # Defer tasks while maintenance is active
-            if any(rt.is_maintenance_blocking() for rt in self._runtimes.values()):
+            if self._last_safety_action in (SafetyAction.EMERGENCY, SafetyAction.QUEUE_STOP):
                 self._stop_event.wait(1)
                 continue
 
-            with self._processing_lock:
-                is_paused = not self._processing_active
+            try:
+                now = int(time.time())
+                completed = 0
+                for sid, rt in self._runtimes.items():
+                    if rt.paused:
+                        continue
+                    if rt.is_maintenance_blocking():
+                        continue
+                    if rt.observing_session_manager and rt.observing_session_manager.is_winding_down():
+                        continue
+                    if not rt.acquisition_queue.is_idle():
+                        continue
+                    if rt.is_focus_or_alignment_active():
+                        continue
 
-            if not is_paused:
-                winding_down = (
-                    self._observing_session_manager is not None and self._observing_session_manager.is_winding_down()
-                )
-
-                try:
-                    now = int(time.time())
-                    completed = 0
-                    while not winding_down:
-                        with self._processing_lock:
-                            if not self._processing_active:
-                                break
-
-                        # Check if the default runtime can accept work
-                        rt = self._default_runtime
-                        if not rt.acquisition_queue.is_idle():
-                            break
-                        if rt.is_focus_or_alignment_active():
-                            break
-
-                        if self._last_safety_action in (SafetyAction.EMERGENCY, SafetyAction.QUEUE_STOP):
-                            break
-
-                        with self.heap_lock:
-                            if not (self.task_heap and self.task_heap[0][0] <= now):
-                                break
-                            _start_epoch, stop_epoch, tid, task = self.task_heap[0]
-                            if stop_epoch and stop_epoch < now:
-                                heapq.heappop(self.task_heap)
-                                self.task_ids.discard(tid)
-                                self.task_dict.pop(tid, None)
-                                self.logger.info("Skipping expired task %s (window closed)", tid)
-                                continue
-                            heapq.heappop(self.task_heap)
-                            self.task_ids.discard(tid)
-
-                            self.logger.info("Starting task %s at %s: %s", tid, datetime.now().isoformat(), task)
-                            self.current_task_id = tid
-
-                        # Route to the appropriate runtime
-                        runtime = self._runtime_for_task(task)
-                        if runtime is None:
-                            self.logger.warning(
-                                "No runtime for task %s (sensor_type=%s) — dropping",
-                                tid,
-                                task.sensor_type,
-                            )
-                            self.remove_task_from_all_stages(tid)
-                            with self.heap_lock:
-                                self.current_task_id = None
+                    with self.heap_lock:
+                        heap = self._sensor_heaps.get(sid)
+                        if not heap or heap[0][0] > now:
                             continue
+                        _start_epoch, stop_epoch, tid, task = heap[0]
+                        if stop_epoch and stop_epoch < now:
+                            heapq.heappop(heap)
+                            self._sensor_task_ids[sid].discard(tid)
+                            self._sensor_task_dicts[sid].pop(tid, None)
+                            self.logger.info("Skipping expired task %s (window closed)", tid)
+                            continue
+                        heapq.heappop(heap)
+                        self._sensor_task_ids[sid].discard(tid)
+                        self.logger.info("Starting task %s at %s: %s", tid, datetime.now().isoformat(), task)
+                        self._current_task_ids[sid] = tid
 
-                        self.update_task_stage(tid, "imaging")
-                        task.set_status_msg("Queued for imaging...")
+                    self.update_task_stage(tid, "imaging")
+                    task.set_status_msg("Queued for imaging...")
 
-                        def on_imaging_complete(task_id: str, success: bool) -> None:
-                            if success:
-                                with self.heap_lock:
-                                    self.current_task_id = None
-                                self.logger.info("Completed imaging task %s successfully.", task_id)
-                            else:
-                                self.logger.error("Imaging task %s permanently failed.", task_id)
-                                with self.heap_lock:
-                                    self.current_task_id = None
-                                self.record_task_failed()
-                                self.remove_task_from_all_stages(task_id)
+                    target_sid = sid
 
-                        runtime.submit_task(task, on_imaging_complete)
-                        completed += 1
+                    def on_imaging_complete(task_id: str, success: bool, _sid: str = target_sid) -> None:
+                        if success:
+                            with self.heap_lock:
+                                self._current_task_ids[_sid] = None
+                            self.logger.info("Completed imaging task %s successfully.", task_id)
+                        else:
+                            self.logger.error("Imaging task %s permanently failed.", task_id)
+                            with self.heap_lock:
+                                self._current_task_ids[_sid] = None
+                            self.record_task_failed()
+                            self.remove_task_from_all_stages(task_id)
 
-                    if completed > 0:
-                        self.logger.info(self._heap_summary("Completed tasks"))
-                except Exception as e:
-                    self.logger.error("Exception in task_runner loop: %s", e, exc_info=True)
-                    time.sleep(5)
+                    rt.submit_task(task, on_imaging_complete)
+                    completed += 1
+
+                if completed > 0:
+                    self.logger.info(self._heap_summary("Started tasks"))
+            except Exception as e:
+                self.logger.error("Exception in task_runner loop: %s", e, exc_info=True)
+                time.sleep(5)
 
             self._stop_event.wait(1)
 
@@ -509,91 +601,142 @@ class TaskDispatcher:
             return True
 
         if action == SafetyAction.EMERGENCY:
-            try:
-                self.hardware_adapter.abort_slew()
-            except Exception:
-                pass
-            is_new = self._last_safety_action != SafetyAction.EMERGENCY
-            if is_new:
-                self.clear_pending_tasks()
-                trigger_name = triggered_check.name if triggered_check else "unknown"
-                self.logger.critical(
-                    "EMERGENCY — cancelled in-flight imaging (trigger: %s)",
-                    trigger_name,
-                )
-                if self.on_toast:
-                    self.on_toast(
-                        f"Safety EMERGENCY: {trigger_name} — imaging cancelled",
-                        "danger",
-                        "safety-emergency",
-                    )
-            if triggered_check and is_new:
-                try:
-                    triggered_check.execute_action()
-                except Exception:
-                    self.logger.error("Safety corrective action failed", exc_info=True)
-            self._last_safety_action = action
-            return True
-
-        if action == SafetyAction.QUEUE_STOP:
-            if self.imaging_queue.is_idle() and triggered_check:
-                is_new = self._last_safety_action != SafetyAction.QUEUE_STOP
-                if is_new:
-                    self.logger.warning("Executing safety action from %r (queue idle)", triggered_check.name)
-                try:
-                    triggered_check.execute_action()
-                except Exception:
-                    if is_new:
-                        self.logger.error("Safety corrective action failed", exc_info=True)
-            self._last_safety_action = action
-            return True
+            self._handle_emergency(triggered_check)
+        elif action == SafetyAction.QUEUE_STOP:
+            self._handle_queue_stop(triggered_check)
 
         self._last_safety_action = action
-        return False
+        return action in (SafetyAction.EMERGENCY, SafetyAction.QUEUE_STOP)
+
+    def _handle_emergency(self, triggered_check: Any) -> None:
+        """Abort in-flight imaging and fire corrective action on EMERGENCY.
+
+        The corrective action and the operator toast only fire on the edge
+        (first cycle in which EMERGENCY is reported) so repeated evaluation
+        passes don't spam logs or try to re-execute the action.
+        """
+        for rt in self._runtimes.values():
+            adapter = getattr(rt, "hardware_adapter", None)
+            if adapter:
+                try:
+                    adapter.abort_slew()
+                except Exception:
+                    pass
+
+        is_new = self._last_safety_action != SafetyAction.EMERGENCY
+        if not is_new:
+            return
+
+        self.clear_pending_tasks()
+        trigger_name = triggered_check.name if triggered_check else "unknown"
+        trigger_sid_raw = getattr(triggered_check, "sensor_id", None) if triggered_check else None
+        trigger_sid = trigger_sid_raw if isinstance(trigger_sid_raw, str) and trigger_sid_raw else None
+        self.logger.critical(
+            "EMERGENCY — cancelled in-flight imaging (trigger: %s, sensor: %s)",
+            trigger_name,
+            trigger_sid or "site",
+        )
+        if self.on_toast:
+            where = f" on {trigger_sid}" if trigger_sid else ""
+            toast_id = f"safety-emergency:{trigger_sid}" if trigger_sid else "safety-emergency"
+            self.on_toast(
+                f"Safety EMERGENCY: {trigger_name}{where} — imaging cancelled",
+                "danger",
+                toast_id,
+            )
+        if triggered_check:
+            try:
+                triggered_check.execute_action()
+            except Exception:
+                self.logger.error("Safety corrective action failed", exc_info=True)
+
+    def _handle_queue_stop(self, triggered_check: Any) -> None:
+        """Fire the triggered check's corrective action once its queue is idle.
+
+        Per-sensor isolation: a sensor-scoped check only waits for *its*
+        acquisition queue to go idle before running its corrective action.
+        Site-level checks (``sensor_id is None``) still gate on every
+        runtime being idle so they don't yank hardware out from under
+        another rig mid-exposure.
+        """
+        if triggered_check is None:
+            return
+
+        scoped_sid_raw = getattr(triggered_check, "sensor_id", None)
+        # Only treat it as per-sensor if it's an actual string; MagicMock
+        # tests (and site-level checks) leave this as None.
+        scoped_sid = scoped_sid_raw if isinstance(scoped_sid_raw, str) else None
+        if scoped_sid is not None:
+            rt = self._runtimes.get(scoped_sid)
+            idle = rt is not None and rt.acquisition_queue.is_idle()
+        else:
+            idle = all(rt.acquisition_queue.is_idle() for rt in self._runtimes.values())
+        if not idle:
+            return
+
+        is_new = self._last_safety_action != SafetyAction.QUEUE_STOP
+        if is_new:
+            self.logger.warning(
+                "Executing safety action from %r (queue idle, scope=%s)",
+                triggered_check.name,
+                scoped_sid or "site",
+            )
+        try:
+            triggered_check.execute_action()
+        except Exception:
+            if is_new:
+                self.logger.error("Safety corrective action failed", exc_info=True)
 
     # ── Pending task management ────────────────────────────────────────
 
     def clear_pending_tasks(self) -> int:
-        """Cancel in-flight imaging and clear stage tracking.
+        """Cancel in-flight imaging on all runtimes and clear stage tracking.
 
         Returns the number of queued imaging items drained.
         """
         with self._stage_lock:
-            cleared = self._default_runtime.acquisition_queue.clear()
+            cleared = 0
+            for rt in self._runtimes.values():
+                cleared += rt.acquisition_queue.clear()
             self.imaging_tasks.clear()
         return cleared
 
-    def pause(self) -> bool:
-        with self._processing_lock:
-            self._processing_active = False
-            self.logger.info("Task processing paused")
-            return self._processing_active
+    def pause_sensor(self, sensor_id: str | None = None) -> None:
+        """Pause one sensor (by id) or all sensors."""
+        for sid, rt in self._runtimes.items():
+            if sensor_id is None or sid == sensor_id:
+                rt.set_paused(True)
+                self.logger.info("Task processing paused for sensor %s", sid)
 
-    def resume(self) -> bool:
-        with self._processing_lock:
-            self._processing_active = True
-            self.logger.info("Task processing resumed")
-            return self._processing_active
+    def resume_sensor(self, sensor_id: str | None = None) -> None:
+        """Resume one sensor (by id) or all sensors."""
+        for sid, rt in self._runtimes.items():
+            if sensor_id is None or sid == sensor_id:
+                rt.set_paused(False)
+                self.logger.info("Task processing resumed for sensor %s", sid)
 
     def is_processing_active(self) -> bool:
-        with self._processing_lock:
-            return self._processing_active
+        """True if any sensor is not paused."""
+        return any(not rt.paused for rt in self._runtimes.values())
 
     # ── Diagnostics ────────────────────────────────────────────────────
 
     def _heap_summary(self, event: str) -> str:
         with self.heap_lock:
-            summary = f"{event}: {len(self.task_heap)} tasks in queue. "
-            next_tasks = []
-            if self.task_heap:
-                next_tasks = [
-                    f"{tid} at {datetime.fromtimestamp(start).isoformat()}"
-                    for start, stop, tid, _ in self.task_heap[:3]
-                ]
-                if len(self.task_heap) > 3:
-                    next_tasks.append(f"... ({len(self.task_heap) - 3} more)")
-            if self.current_task_id is not None:
-                summary += f"Current: {self.current_task_id}. "
+            total = sum(len(h) for h in self._sensor_heaps.values())
+            summary = f"{event}: {total} tasks in queue. "
+            all_entries = []
+            for heap in self._sensor_heaps.values():
+                all_entries.extend(heap[:3])
+            all_entries.sort()
+            next_tasks = [
+                f"{tid} at {datetime.fromtimestamp(start).isoformat()}" for start, stop, tid, _ in all_entries[:3]
+            ]
+            if total > 3:
+                next_tasks.append(f"... ({total - 3} more)")
+            active = [tid for tid in self._current_task_ids.values() if tid]
+            if active:
+                summary += f"Current: {', '.join(active)}. "
             if not next_tasks:
                 summary += "No tasks scheduled."
             return summary

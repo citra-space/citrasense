@@ -16,7 +16,7 @@ import pandas as pd
 import platformdirs
 
 from citrasense.api.abstract_api_client import AbstractCitraApiClient
-from citrasense.settings.citrasense_settings import APP_AUTHOR, APP_NAME
+from citrasense.constants import APP_AUTHOR, APP_NAME
 
 _logger = logging.getLogger("citrasense.ApassCatalog")
 

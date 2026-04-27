@@ -39,20 +39,106 @@ function compareVersions(v1, v2) {
             wsReconnecting: false,
             wsReconnectAt: 0,
             wsLastMessage: 0,
-            currentTaskId: null,
-            isTaskActive: false,
-            nextTaskStartTime: null,
-            countdown: '',
+            // Per-sensor "currently executing" map keyed by sensor_id.
+            // No scalar currentTaskId — in a multi-sensor deployment
+            // "current" is per sensor; use activeTaskIdSet for any
+            // "is this task in-flight anywhere" check.
+            currentTaskIds: {},
+            activeTaskIdSet: new Set(),
             // Wall-clock heartbeat bumped once per second by the ticker in
             // app.js.  Alpine getters that depend on "now" (e.g. taskRow's
             // countdownText) read this so they re-render reactively without
             // each component running its own setInterval.
             now: Date.now(),
+
+            // Multi-sensor support
+            sensors: [],
+            sensorCollapse: {},
+
+            // Log panel per-sensor filter. ``null`` = show all, ``"__site__"``
+            // = only entries without a sensor_id, otherwise a specific
+            // sensor_id.
+            logSensorFilter: null,
+            get filteredLogs() {
+                const f = this.logSensorFilter;
+                if (f === null) return this.logs;
+                if (f === '__site__') return this.logs.filter(l => !l.sensor_id);
+                return this.logs.filter(l => l.sensor_id === f);
+            },
+
+            sensorApiBaseFor(sensorId) {
+                if (!sensorId) {
+                    throw new Error('sensorApiBaseFor called without sensorId');
+                }
+                return `/api/sensors/${sensorId}`;
+            },
+
+            // Config editing state.  The selected sensor id is persisted
+            // to ``localStorage`` so reopening the Config tab lands back
+            // on the sensor the operator was last editing (important on
+            // multi-sensor sites where silently defaulting to sensors[0]
+            // has caused operators to edit the wrong rig).
+            _configSensorId: null,
+            _configSensorStorageKey: 'citrasense.configSensorId',
+            get configSensorId() {
+                return this._configSensorId;
+            },
+            set configSensorId(value) {
+                if (this._configSensorId === value) return;
+                this._configSensorId = value;
+                try {
+                    if (value) {
+                        localStorage.setItem(this._configSensorStorageKey, value);
+                    } else {
+                        localStorage.removeItem(this._configSensorStorageKey);
+                    }
+                } catch {
+                    // localStorage may be unavailable in private browsing /
+                    // iframes; silently fall back to in-memory state.
+                }
+                // Reload adapter schema+values, filter config, and processors
+                // for the newly selected sensor so the hardware / calibration /
+                // pipeline tabs reflect that sensor's settings instead of
+                // bleeding the previous sensor's adapterFields into saves.
+                if (typeof window !== 'undefined' && typeof window._configOnSensorSwitch === 'function') {
+                    Promise.resolve().then(() => {
+                        try {
+                            window._configOnSensorSwitch(value);
+                        } catch (err) {
+                            console.error('configSensorId switch handler failed:', err);
+                        }
+                    });
+                }
+            },
+            get configSensorIndex() {
+                if (!this.config?.sensors?.length) return -1;
+                // When no sensor is explicitly selected yet (e.g. the
+                // config hasn't finished loading), fall back to 0 so the
+                // many ``x-model="config.sensors[configSensorIndex]..."``
+                // bindings don't explode on first paint.  But when a
+                // non-null ``configSensorId`` doesn't match any sensor,
+                // return -1 so the form doesn't silently let the
+                // operator edit the wrong rig.
+                if (!this.configSensorId) return 0;
+                return this.config.sensors.findIndex(s => s.id === this.configSensorId);
+            },
+            loadPersistedConfigSensorId() {
+                try {
+                    return localStorage.getItem(this._configSensorStorageKey);
+                } catch {
+                    return null;
+                }
+            },
+            get configSensorStatus() {
+                const sid = this.configSensorId;
+                return sid ? (this.status?.sensors?.[sid] || {}) : {};
+            },
+
             config: {},
             apiEndpoint: 'production',
             hardwareAdapters: [], // [{value, label}]
             filters: {},
-            savedAdapter: null,
+            savedAdapters: {},
             enabledFilters: [],
             filterConfigVisible: false,
             filterNamesEditable: false,
@@ -69,21 +155,87 @@ function compareVersions(v1, v2) {
             // Autofocus target presets (loaded from API)
             autofocusPresets: [],
 
-            // Loading states for async operations
+            // Loading states for async operations.  ``isSavingConfig``,
+            // ``isScanning``, and ``isReconnecting`` are intrinsically
+            // site-wide.  Per-sensor "is X happening" state lives in the
+            // maps below so one sensor's Snap/Save/Loop/Autofocus doesn't
+            // flip the same button on a different sensor's card.
             isSavingConfig: false,
             isScanning: false,
             isReconnecting: false,
-            isCapturing: false,
-            isSaving: false,
-            isAutofocusing: false,
             captureResult: null,
-            // Focus loop state
-            isLooping: false,
-            previewDataUrl: null,
+
+            // Which sensor's focus loop is currently running (only one at a
+            // time since it occupies a single RAF loop on the client).
+            loopingSensorId: null,
             previewSource: '',
+            // Per-sensor preview data URLs.  There is no singular
+            // ``previewDataUrl`` slot — the fullscreen modal reads
+            // ``previewDataUrls[activePreviewSensorId]`` from the card
+            // that opened it.
+            previewDataUrls: {},
+            // Which sensor owns the fullscreen preview modal right now.
+            activePreviewSensorId: null,
             loopCount: 0,
-            previewExposure: null,
-            _lastTaskImageUrl: null,
+            // Per-sensor transient flags and settings.  Accessed through
+            // helper methods below so call sites never have to know the
+            // underlying map shape.
+            capturingSensors: {},
+            savingSensors: {},
+            autofocusingSensors: {},
+            previewExposures: {},
+            previewFlipHFlags: {},
+            // Per-sensor "last seen task image URL" tracking used by
+            // updateStoreFromStatus in app.js to decide when to refresh
+            // previewDataUrls[sensor_id].  Initialized lazily there.
+            _lastTaskImageUrlBySensor: {},
+
+            isLoopingFor(sensorId) {
+                return !!sensorId && this.loopingSensorId === sensorId;
+            },
+            get isAnyLooping() {
+                return this.loopingSensorId !== null;
+            },
+            isCapturingFor(sensorId) {
+                return !!sensorId && this.capturingSensors[sensorId] === true;
+            },
+            isSavingFor(sensorId) {
+                return !!sensorId && this.savingSensors[sensorId] === true;
+            },
+            isAutofocusingFor(sensorId) {
+                return !!sensorId && this.autofocusingSensors[sensorId] === true;
+            },
+            previewExposureFor(sensorId) {
+                if (!sensorId) return 2.0;
+                const v = this.previewExposures[sensorId];
+                return v == null ? 2.0 : v;
+            },
+            setPreviewExposure(sensorId, value) {
+                if (!sensorId) return;
+                this.previewExposures = { ...this.previewExposures, [sensorId]: value };
+            },
+            previewFlipHFor(sensorId) {
+                return !!sensorId && this.previewFlipHFlags[sensorId] === true;
+            },
+            togglePreviewFlipH(sensorId) {
+                if (!sensorId) return;
+                this.previewFlipHFlags = {
+                    ...this.previewFlipHFlags,
+                    [sensorId]: !this.previewFlipHFlags[sensorId],
+                };
+            },
+            _setCapturing(sensorId, value) {
+                if (!sensorId) return;
+                this.capturingSensors = { ...this.capturingSensors, [sensorId]: !!value };
+            },
+            _setSaving(sensorId, value) {
+                if (!sensorId) return;
+                this.savingSensors = { ...this.savingSensors, [sensorId]: !!value };
+            },
+            _setAutofocusing(sensorId, value) {
+                if (!sensorId) return;
+                this.autofocusingSensors = { ...this.autofocusingSensors, [sensorId]: !!value };
+            },
 
             // Spread all formatter functions from shared module
             ...formatters,
@@ -102,9 +254,9 @@ function compareVersions(v1, v2) {
                 return Object.entries(grouped);
             },
 
-            telescopeTooltip() {
-                const s = this.status;
-                if (!s?.telescope_connected) return 'Telescope disconnected';
+            telescopeTooltip(sensorStatus) {
+                const s = sensorStatus || {};
+                if (!s.telescope_connected) return 'Telescope disconnected';
                 let tip = 'Telescope connected';
                 const pm = s.pointing_model;
                 if (pm && pm.state !== 'untrained') {
@@ -120,20 +272,17 @@ function compareVersions(v1, v2) {
                 return tip;
             },
 
-            // Store methods
-            previewFlipH: false,
-
-            async captureImage() {
-                const duration = this.previewExposure;
+            async captureImage(sensorId) {
+                const duration = this.previewExposureFor(sensorId);
                 if (Number.isNaN(duration) || duration <= 0) {
                     const { showToast } = await import('./config.js');
                     showToast('Invalid exposure duration', 'danger');
                     return;
                 }
 
-                this.isSaving = true;
+                this._setSaving(sensorId, true);
                 try {
-                    const response = await fetch('/api/camera/capture', {
+                    const response = await fetch(`${this.sensorApiBaseFor(sensorId)}/camera/capture`, {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({ duration })
@@ -153,82 +302,111 @@ function compareVersions(v1, v2) {
                     const { showToast } = await import('./config.js');
                     showToast('Failed to capture image: ' + error.message, 'danger');
                 } finally {
-                    this.isSaving = false;
+                    this._setSaving(sensorId, false);
                 }
             },
 
-            async toggleProcessing(enabled) {
-                const endpoint = enabled ? '/api/tasks/resume' : '/api/tasks/pause';
+            async toggleProcessing(enabled, sensorId) {
+                if (!sensorId) {
+                    console.error('toggleProcessing called without sensorId');
+                    alert('Cannot toggle task processing: missing sensor_id');
+                    return;
+                }
+                const action = enabled ? 'resume' : 'pause';
+                const endpoint = `/api/sensors/${encodeURIComponent(sensorId)}/tasks/${action}`;
                 try {
-                    const response = await fetch(endpoint, { method: 'POST' });
+                    const response = await fetch(endpoint, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' }
+                    });
                     const result = await response.json();
                     if (!response.ok) {
                         alert(result.error || 'Failed to toggle task processing');
-                        // Revert on error
-                        this.status.processing_active = !enabled;
+                        if (sensorId && this.status?.sensors?.[sensorId]) {
+                            this.status.sensors[sensorId].task_processing_paused = enabled;
+                        }
                     }
                 } catch (error) {
                     console.error('Error toggling processing:', error);
                     alert('Error toggling task processing');
-                    this.status.processing_active = !enabled;
                 }
             },
 
-            async toggleObservingSession(enabled) {
+            async toggleObservingSession(enabled, sensorId) {
+                if (!sensorId) {
+                    console.error('toggleObservingSession called without sensorId');
+                    alert('Cannot toggle observing session: missing sensor_id');
+                    return;
+                }
+                const body = { enabled };
                 try {
-                    const response = await fetch('/api/observing-session', {
+                    const response = await fetch(`/api/sensors/${encodeURIComponent(sensorId)}/observing-session`, {
                         method: 'PATCH',
                         headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ enabled: enabled })
+                        body: JSON.stringify(body)
                     });
                     const result = await response.json();
                     if (!response.ok) {
                         alert(result.error || 'Failed to toggle observing session');
-                        this.status.observing_session_enabled = !enabled;
+                        if (sensorId && this.status?.sensors?.[sensorId]) {
+                            this.status.sensors[sensorId].observing_session_enabled = !enabled;
+                        }
                     }
                 } catch (error) {
                     console.error('Error toggling observing session:', error);
                     alert('Error toggling observing session');
-                    this.status.observing_session_enabled = !enabled;
                 }
             },
 
-            async toggleSelfTasking(enabled) {
+            async toggleSelfTasking(enabled, sensorId) {
+                if (!sensorId) {
+                    console.error('toggleSelfTasking called without sensorId');
+                    alert('Cannot toggle self-tasking: missing sensor_id');
+                    return;
+                }
+                const body = { enabled };
                 try {
-                    const response = await fetch('/api/self-tasking', {
+                    const response = await fetch(`/api/sensors/${encodeURIComponent(sensorId)}/self-tasking`, {
                         method: 'PATCH',
                         headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ enabled: enabled })
+                        body: JSON.stringify(body)
                     });
                     const result = await response.json();
                     if (!response.ok) {
                         alert(result.error || 'Failed to toggle self-tasking');
-                        this.status.self_tasking_enabled = !enabled;
+                        if (sensorId && this.status?.sensors?.[sensorId]) {
+                            this.status.sensors[sensorId].self_tasking_enabled = !enabled;
+                        }
                     }
                 } catch (error) {
                     console.error('Error toggling self-tasking:', error);
                     alert('Error toggling self-tasking');
-                    this.status.self_tasking_enabled = !enabled;
                 }
             },
 
-            async toggleAutomatedScheduling(enabled) {
+            async toggleAutomatedScheduling(enabled, sensorId) {
+                if (!sensorId) {
+                    console.error('toggleAutomatedScheduling called without sensorId');
+                    alert('Cannot toggle automated scheduling: missing sensor_id');
+                    return;
+                }
+                const body = { enabled };
                 try {
-                    const response = await fetch('/api/telescope/automated-scheduling', {
+                    const response = await fetch(`/api/sensors/${encodeURIComponent(sensorId)}/scheduling`, {
                         method: 'PATCH',
                         headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ enabled: enabled })
+                        body: JSON.stringify(body)
                     });
                     const result = await response.json();
                     if (!response.ok) {
                         alert(result.error || 'Failed to toggle automated scheduling');
-                        // Revert on error
-                        this.status.automated_scheduling = !enabled;
+                        if (sensorId && this.status?.sensors?.[sensorId]) {
+                            this.status.sensors[sensorId].automated_scheduling = !enabled;
+                        }
                     }
                 } catch (error) {
                     console.error('Error toggling automated scheduling:', error);
                     alert('Error toggling automated scheduling');
-                    this.status.automated_scheduling = !enabled;
                 }
             },
 
@@ -259,72 +437,89 @@ function compareVersions(v1, v2) {
             get systemBusyReason() {
                 return this.status?.system_busy_reason || '';
             },
-            get isImagingTaskActive() {
-                return this.isSystemBusy || this.status?.processing_active === true;
+            /**
+             * True when the given sensor is running an imaging task or its
+             * processing queue is active.  Always takes a sensorId — there
+             * is no "site-wide" imaging state in a multi-sensor deployment.
+             */
+            isImagingTaskActive(sensorId) {
+                if (!sensorId) {
+                    console.error('isImagingTaskActive called without sensorId');
+                    return false;
+                }
+                const sd = this.status?.sensors?.[sensorId];
+                if (!sd) return false;
+                return sd.system_busy === true || sd.processing_active === true;
             },
 
-            async capturePreview() {
-                if (this.isImagingTaskActive) {
-                    this.isLooping = false;
+            async capturePreview(sensorId) {
+                if (this.isImagingTaskActive(sensorId)) {
+                    if (this.isLoopingFor(sensorId)) this.loopingSensorId = null;
                     return;
                 }
                 try {
-                    const response = await fetch('/api/camera/preview', {
+                    const response = await fetch(`${this.sensorApiBaseFor(sensorId)}/camera/preview`, {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ duration: this.previewExposure, flip_horizontal: this.previewFlipH })
+                        body: JSON.stringify({
+                            duration: this.previewExposureFor(sensorId),
+                            flip_horizontal: this.previewFlipHFor(sensorId),
+                        })
                     });
                     if (response.status === 409) {
-                        // Camera busy with previous capture — wait and retry
-                        if (this.isLooping) {
-                            setTimeout(() => this.capturePreview(), 250);
+                        if (this.isLoopingFor(sensorId)) {
+                            setTimeout(() => this.capturePreview(sensorId), 250);
                         }
                         return;
                     }
                     const data = await response.json();
                     if (response.ok && data.image_data) {
-                        this.previewDataUrl = data.image_data;
+                        this.previewDataUrls = { ...this.previewDataUrls, [sensorId]: data.image_data };
                         this.loopCount++;
                     } else {
                         const { showToast } = await import('./config.js');
                         showToast(data.error || 'Preview failed', 'danger');
-                        this.isLooping = false;
+                        if (this.isLoopingFor(sensorId)) this.loopingSensorId = null;
                         return;
                     }
                 } catch (error) {
                     console.error('Preview error:', error);
-                    this.isLooping = false;
+                    if (this.isLoopingFor(sensorId)) this.loopingSensorId = null;
                     return;
                 }
 
-                if (this.isLooping) {
-                    requestAnimationFrame(() => this.capturePreview());
+                if (this.isLoopingFor(sensorId)) {
+                    requestAnimationFrame(() => this.capturePreview(sensorId));
                 }
             },
 
-            startFocusLoop() {
-                if (this.isLooping || this.isSystemBusy) return;
-                this.isLooping = true;
+            startFocusLoop(sensorId) {
+                if (!sensorId) return;
+                if (this.loopingSensorId !== null || this.isImagingTaskActive(sensorId)) return;
+                this.loopingSensorId = sensorId;
                 this.loopCount = 0;
-                this.capturePreview();
+                this.capturePreview(sensorId);
             },
 
             stopFocusLoop() {
-                this.isLooping = false;
+                this.loopingSensorId = null;
             },
 
-            async singlePreview() {
-                if (this.isLooping) return;
-                this.isCapturing = true;
+            async singlePreview(sensorId) {
+                if (this.loopingSensorId !== null) return;
+                this._setCapturing(sensorId, true);
                 try {
-                    const response = await fetch('/api/camera/preview', {
+                    const response = await fetch(`${this.sensorApiBaseFor(sensorId)}/camera/preview`, {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ duration: this.previewExposure, flip_horizontal: this.previewFlipH })
+                        body: JSON.stringify({
+                            duration: this.previewExposureFor(sensorId),
+                            flip_horizontal: this.previewFlipHFor(sensorId),
+                        })
                     });
                     const data = await response.json();
                     if (response.ok && data.image_data) {
-                        this.previewDataUrl = data.image_data;
+                        this.previewDataUrls = { ...this.previewDataUrls, [sensorId]: data.image_data };
                         this.loopCount++;
                     } else {
                         const { showToast } = await import('./config.js');
@@ -334,7 +529,7 @@ function compareVersions(v1, v2) {
                     const { showToast } = await import('./config.js');
                     showToast('Preview failed: ' + error.message, 'danger');
                 } finally {
-                    this.isCapturing = false;
+                    this._setCapturing(sensorId, false);
                 }
             },
 

@@ -18,11 +18,12 @@ from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 
 from citrasense.location.twilight import ObservingWindow
+from citrasense.logging.sensor_logger import SensorLoggerAdapter
 from citrasense.sensors.telescope.observing_session import SessionState
 
 if TYPE_CHECKING:
     from citrasense.api.abstract_api_client import AbstractCitraApiClient
-    from citrasense.settings.citrasense_settings import CitraSenseSettings
+    from citrasense.settings.citrasense_settings import SensorConfig
 
 _REQUEST_INTERVAL_SECONDS = 300  # 5 minutes
 
@@ -40,15 +41,15 @@ class SelfTaskingManager:
     def __init__(
         self,
         api_client: AbstractCitraApiClient,
-        settings: CitraSenseSettings,
-        logger: logging.Logger,
+        sensor_config: SensorConfig,
+        logger: logging.Logger | SensorLoggerAdapter,
         ground_station_id: str,
         sensor_id: str,
         get_session_state: Callable[[], SessionState],
         get_observing_window: Callable[[], ObservingWindow | None],
     ):
         self._api_client = api_client
-        self._settings = settings
+        self._sensor_config = sensor_config
         self._logger = logger
         self._ground_station_id = ground_station_id
         self._sensor_id = sensor_id
@@ -61,7 +62,7 @@ class SelfTaskingManager:
 
     def check_and_request(self) -> None:
         """Evaluate conditions and request work if met.  Call from poll loop."""
-        if not self._settings.self_tasking_enabled:
+        if not self._sensor_config.self_tasking_enabled:
             return
 
         if self._get_session_state() != SessionState.OBSERVING:
@@ -79,12 +80,12 @@ class SelfTaskingManager:
 
     def _request_work(self, window: ObservingWindow, dark_end: str) -> None:
         """Build and send the batch collection request."""
-        settings = self._settings
+        cfg = self._sensor_config
 
-        group_ids = settings.self_tasking_satellite_group_ids or None
-        exclude_types = settings.self_tasking_exclude_object_types or None
-        orbit_regimes = settings.self_tasking_include_orbit_regimes or None
-        collection_type = settings.self_tasking_collection_type or "Track"
+        group_ids = cfg.self_tasking_satellite_group_ids or None
+        exclude_types = cfg.self_tasking_exclude_object_types or None
+        orbit_regimes = cfg.self_tasking_include_orbit_regimes or None
+        collection_type = cfg.self_tasking_collection_type or "Track"
 
         self._logger.info(
             "Self-tasking: requesting batch work (type=%s, window %s → %s, gs=%s)",

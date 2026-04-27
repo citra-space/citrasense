@@ -10,6 +10,7 @@ from fastapi import APIRouter
 from fastapi.responses import JSONResponse
 
 from citrasense.logging import CITRASENSE_LOGGER
+from citrasense.web.helpers import get_sensor_context
 
 if TYPE_CHECKING:
     from citrasense.web.app import CitraSenseWebApp
@@ -17,20 +18,17 @@ if TYPE_CHECKING:
 
 def build_camera_router(ctx: CitraSenseWebApp) -> APIRouter:
     """Camera test capture and preview endpoints."""
-    router = APIRouter(prefix="/api", tags=["camera"])
+    router = APIRouter(prefix="/api/sensors/{sensor_id}", tags=["camera"])
 
     @router.post("/camera/capture")
-    async def camera_capture(request: dict[str, Any]):
+    async def camera_capture(sensor_id: str, request: dict[str, Any]):
         """Trigger a test camera capture."""
-        if busy := ctx._require_system_idle():
+        sensor, _runtime = get_sensor_context(ctx, sensor_id)
+        if busy := ctx.require_sensor_idle(_runtime):
             return busy
-        if not ctx.daemon:
-            return JSONResponse({"error": "Daemon not available"}, status_code=503)
+        adapter = sensor.adapter
 
-        if not ctx.daemon.hardware_adapter:
-            return JSONResponse({"error": "Hardware adapter not available"}, status_code=503)
-
-        if not ctx.daemon.hardware_adapter.supports_direct_camera_control():
+        if not adapter.supports_direct_camera_control():
             return JSONResponse({"error": "Hardware adapter does not support direct camera control"}, status_code=400)
 
         try:
@@ -43,9 +41,7 @@ def build_camera_router(ctx: CitraSenseWebApp) -> APIRouter:
 
             CITRASENSE_LOGGER.info(f"Test capture requested: {duration}s exposure")
 
-            filepath = ctx.daemon.hardware_adapter.expose_camera(
-                exposure_time=duration, gain=None, offset=None, count=1
-            )
+            filepath = adapter.expose_camera(exposure_time=duration, gain=None, offset=None, count=1)
 
             file_path = Path(filepath)
             if not file_path.exists():
@@ -63,18 +59,18 @@ def build_camera_router(ctx: CitraSenseWebApp) -> APIRouter:
             return JSONResponse({"error": str(e)}, status_code=500)
 
     @router.post("/camera/preview")
-    async def camera_preview(request: dict[str, Any]):
+    async def camera_preview(sensor_id: str, request: dict[str, Any]):
         """Take an ephemeral preview exposure and return a JPEG data URL."""
-        if not ctx.daemon:
-            return JSONResponse({"error": "Daemon not available"}, status_code=503)
-        if not ctx.daemon.hardware_adapter:
-            return JSONResponse({"error": "Hardware adapter not available"}, status_code=503)
-        if not ctx.daemon.hardware_adapter.supports_direct_camera_control():
+        sensor, _runtime = get_sensor_context(ctx, sensor_id)
+        adapter = sensor.adapter
+
+        if not adapter.supports_direct_camera_control():
             return JSONResponse({"error": "Hardware adapter does not support direct camera control"}, status_code=400)
 
-        task_manager = ctx.daemon.task_manager if hasattr(ctx.daemon, "task_manager") else None
-        if task_manager and task_manager.is_processing_active():
-            return JSONResponse({"error": "Camera unavailable — task processing is active"}, status_code=503)
+        if _runtime and not _runtime.paused:
+            return JSONResponse(
+                {"error": "Camera unavailable — task processing is active for this sensor"}, status_code=503
+            )
 
         try:
             duration = request.get("duration", 1.0)
@@ -86,7 +82,6 @@ def build_camera_router(ctx: CitraSenseWebApp) -> APIRouter:
             if duration > 30:
                 return JSONResponse({"error": "Preview exposure must be 30 seconds or less"}, status_code=400)
 
-            adapter = ctx.daemon.hardware_adapter
             flip_h = bool(request.get("flip_horizontal", False))
             image_data = await asyncio.to_thread(adapter.capture_preview, duration, flip_h)
             return {"image_data": image_data}

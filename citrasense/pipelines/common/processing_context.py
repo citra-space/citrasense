@@ -23,6 +23,13 @@ class ProcessingContext:
     # -- Modality tag --------------------------------------------------------
     modality: str = "optical"
 
+    # -- Sensor attribution --------------------------------------------------
+    # ID of the sensor whose runtime is executing this pipeline. Used for log
+    # prefixes and HTML report headers so artifacts from multi-sensor
+    # deployments can be traced back to the right rig. Optional (defaults to
+    # empty string for manual captures and older tests).
+    sensor_id: str = ""
+
     # -- Image data ----------------------------------------------------------
     image_path: Path = field(default_factory=Path)
     working_image_path: Path = field(default_factory=Path)

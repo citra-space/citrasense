@@ -11,8 +11,8 @@ from typing import Any
 
 import platformdirs
 
+from citrasense.constants import APP_AUTHOR, APP_NAME
 from citrasense.logging import CITRASENSE_LOGGER
-from citrasense.settings.citrasense_settings import APP_AUTHOR, APP_NAME
 
 
 class SettingsFileManager:

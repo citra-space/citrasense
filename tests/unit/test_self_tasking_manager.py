@@ -42,7 +42,7 @@ def _make_manager(
 
     mgr = SelfTaskingManager(
         api_client=api_client,
-        settings=settings,
+        sensor_config=settings,
         logger=logger,
         ground_station_id="gs-001",
         sensor_id="sensor-001",

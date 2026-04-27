@@ -64,9 +64,9 @@ class LocationService:
         self._ground_station_ref: dict | None = None
         self._lock = threading.Lock()  # Protect _ground_station_ref access
         self._last_server_update = 0.0  # Track last server update for rate limiting
-        self._hardware_adapter_gps_provider: Callable[[], GPSFix | None] | None = None
-        self._hardware_adapter_gps_cache: GPSFix | None = None
-        self._hardware_adapter_gps_cache_time: float = 0.0
+        self._hardware_adapter_gps_providers: dict[str, Callable[[], GPSFix | None]] = {}
+        self._hardware_adapter_gps_caches: dict[str, GPSFix | None] = {}
+        self._hardware_adapter_gps_cache_times: dict[str, float] = {}
         self._equipment_poll_started = False
 
         # Initialize GPS monitor with frequent polling (for UI freshness)
@@ -164,50 +164,65 @@ class LocationService:
         with self._lock:
             self._ground_station_ref = ground_station
 
-    def set_hardware_adapter_gps_provider(self, provider: Callable[[], GPSFix | None]) -> None:
-        """Register the hardware adapter's GPS as a fallback location source.
+    def set_hardware_adapter_gps_provider(
+        self, provider: Callable[[], GPSFix | None], sensor_id: str | None = None
+    ) -> None:
+        """Register a hardware adapter's GPS as a fallback location source.
 
         The provider is a callable returning a GPSFix or None.  Used when gpsd
         has no fix (e.g. dead receiver) but a device like the Moravian camera
         has a built-in GPS receiver.
+
+        Multiple sensors can each register their own provider, keyed by
+        ``sensor_id``.  ``_query_hardware_adapter_gps`` returns the best fix
+        across all registered providers.
         """
-        self._hardware_adapter_gps_provider = provider
-        self.logger.info("Hardware adapter GPS provider registered as fallback location source")
+        key = sensor_id or "_site"
+        self._hardware_adapter_gps_providers[key] = provider
+        self.logger.info("Hardware adapter GPS provider registered for %s", key)
 
         if not self._gps_started and not self._equipment_poll_started:
             self._equipment_poll_started = True
             threading.Thread(target=self._equipment_gps_poll_loop, daemon=True).start()
 
     def get_equipment_gps(self) -> GPSFix | None:
-        """Return cached equipment GPS fix, or None. Never blocks on hardware I/O."""
-        return self._hardware_adapter_gps_cache
+        """Return best cached equipment GPS fix across all sensors. Never blocks on hardware I/O."""
+        best: GPSFix | None = None
+        for fix in self._hardware_adapter_gps_caches.values():
+            if fix is None:
+                continue
+            if fix.latitude is not None and fix.longitude is not None:
+                return fix
+            if best is None:
+                best = fix
+        return best
 
     def _query_hardware_adapter_gps(self) -> GPSFix | None:
-        """Try the hardware adapter's GPS, returning cached GPSFix or None.
+        """Query all registered hardware-adapter GPS providers and return the best fix.
 
-        May return a GPSFix without coordinates (e.g. device detected but still
-        acquiring satellites).  Callers needing position data must check
-        ``latitude``/``longitude`` before use.
+        Each provider's result is cached independently for 30s (matching
+        GPSMonitor's cache TTL) so the 1-second web status broadcast doesn't
+        hammer any camera's USB bus.
 
-        Results are cached for 30s (matching GPSMonitor's cache TTL) so the
-        1-second web status broadcast doesn't hammer the camera's USB bus.
+        Returns the first fix with valid coordinates, or the first non-None fix
+        if none have coordinates yet.
         """
-        if self._hardware_adapter_gps_provider is None:
-            return self._hardware_adapter_gps_cache
+        if not self._hardware_adapter_gps_providers:
+            return self.get_equipment_gps()
 
         now = time.time()
-        if now - self._hardware_adapter_gps_cache_time < GPSMonitor.CACHE_TTL_SECONDS:
-            return self._hardware_adapter_gps_cache
+        for key, provider in self._hardware_adapter_gps_providers.items():
+            cached_time = self._hardware_adapter_gps_cache_times.get(key, 0.0)
+            if now - cached_time < GPSMonitor.CACHE_TTL_SECONDS:
+                continue
+            try:
+                fix = provider()
+                self._hardware_adapter_gps_caches[key] = fix
+            except Exception:
+                self._hardware_adapter_gps_caches[key] = None
+            self._hardware_adapter_gps_cache_times[key] = now
 
-        try:
-            fix = self._hardware_adapter_gps_provider()
-            self._hardware_adapter_gps_cache = fix
-            self._hardware_adapter_gps_cache_time = now
-            return fix
-        except Exception:
-            self._hardware_adapter_gps_cache = None
-            self._hardware_adapter_gps_cache_time = now
-            return None
+        return self.get_equipment_gps()
 
     def on_gps_fix_changed(self, fix: GPSFix | None) -> None:
         """

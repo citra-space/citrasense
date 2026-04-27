@@ -9,6 +9,7 @@ from fastapi import APIRouter
 from fastapi.responses import JSONResponse
 
 from citrasense.logging import CITRASENSE_LOGGER
+from citrasense.web.helpers import get_sensor_context
 
 if TYPE_CHECKING:
     from citrasense.web.app import CitraSenseWebApp
@@ -16,18 +17,14 @@ if TYPE_CHECKING:
 
 def build_mount_router(ctx: CitraSenseWebApp) -> APIRouter:
     """Mount home, limits, unwind, move, goto, tracking."""
-    router = APIRouter(prefix="/api", tags=["mount"])
+    router = APIRouter(prefix="/api/sensors/{sensor_id}", tags=["mount"])
 
     @router.post("/mount/home")
-    async def trigger_mount_home():
+    async def trigger_mount_home(sensor_id: str):
         """Request mount homing — queued to run when imaging is idle."""
-        if not ctx.daemon:
-            return JSONResponse({"error": "Daemon not available"}, status_code=503)
-        if not ctx.daemon.task_manager:
-            return JSONResponse({"error": "Task manager not available"}, status_code=503)
-
+        _sensor, runtime = get_sensor_context(ctx, sensor_id)
         try:
-            success = ctx.daemon.task_manager.homing_manager.request()
+            success = runtime.homing_manager.request()
             if success:
                 return {"success": True, "message": "Mount homing queued — will run when imaging is idle"}
             return JSONResponse({"error": "Homing already in progress"}, status_code=409)
@@ -36,24 +33,22 @@ def build_mount_router(ctx: CitraSenseWebApp) -> APIRouter:
             return JSONResponse({"error": str(e)}, status_code=500)
 
     @router.get("/mount/limits")
-    async def get_mount_limits():
+    async def get_mount_limits(sensor_id: str):
         """Get the mount's altitude limits."""
-        if not ctx.daemon or not ctx.daemon.hardware_adapter:
-            return JSONResponse({"error": "Hardware not available"}, status_code=503)
+        sensor, _runtime = get_sensor_context(ctx, sensor_id)
         try:
-            h_limit, o_limit = ctx.daemon.hardware_adapter.get_mount_limits()
+            h_limit, o_limit = sensor.adapter.get_mount_limits()
             return {"horizon_limit": h_limit, "overhead_limit": o_limit}
         except Exception as e:
             return JSONResponse({"error": str(e)}, status_code=500)
 
     @router.post("/mount/limits")
-    async def set_mount_limits(request: dict[str, Any]):
+    async def set_mount_limits(sensor_id: str, request: dict[str, Any]):
         """Set the mount's altitude limits."""
-        if busy := ctx._require_system_idle():
+        sensor, _runtime = get_sensor_context(ctx, sensor_id)
+        if busy := ctx.require_sensor_idle(_runtime):
             return busy
-        if not ctx.daemon or not ctx.daemon.hardware_adapter:
-            return JSONResponse({"error": "Hardware not available"}, status_code=503)
-        adapter = ctx.daemon.hardware_adapter
+        adapter = sensor.adapter
         results: dict[str, Any] = {}
         try:
             if "horizon_limit" in request:
@@ -66,7 +61,7 @@ def build_mount_router(ctx: CitraSenseWebApp) -> APIRouter:
             return JSONResponse({"error": str(e)}, status_code=500)
 
     @router.post("/mount/unwind")
-    async def trigger_cable_unwind():
+    async def trigger_cable_unwind(sensor_id: str):
         """Manually trigger cable unwind in a background thread."""
         if not ctx.daemon or not ctx.daemon.safety_monitor:
             return JSONResponse({"error": "Safety monitor not available"}, status_code=503)
@@ -75,8 +70,9 @@ def build_mount_router(ctx: CitraSenseWebApp) -> APIRouter:
 
         from citrasense.sensors.telescope.safety.cable_wrap_check import CableWrapCheck
 
-        chk = ctx.daemon.safety_monitor.get_check("cable_wrap")
-        if not isinstance(chk, CableWrapCheck):
+        checks = ctx.daemon.safety_monitor.get_sensor_checks(sensor_id)
+        chk = next((c for c in checks if isinstance(c, CableWrapCheck)), None)
+        if chk is None:
             return JSONResponse({"error": "No cable wrap check configured"}, status_code=404)
         if chk.is_unwinding:
             return JSONResponse({"error": "Unwind already in progress"}, status_code=409)
@@ -84,18 +80,14 @@ def build_mount_router(ctx: CitraSenseWebApp) -> APIRouter:
         return JSONResponse({"success": True, "message": "Cable unwind started"}, status_code=202)
 
     @router.post("/mount/move")
-    async def mount_move(body: dict[str, Any]):
-        """Start or stop directional mount motion (jog control).
-
-        In alt-az mode: north=up, south=down, east=right, west=left.
-        """
-        if busy := ctx._require_system_idle():
+    async def mount_move(sensor_id: str, body: dict[str, Any]):
+        """Start or stop directional mount motion (jog control)."""
+        sensor, _runtime = get_sensor_context(ctx, sensor_id)
+        if busy := ctx.require_sensor_idle(_runtime):
             return busy
-        if not ctx.daemon or not ctx.daemon.hardware_adapter:
-            return JSONResponse({"error": "Hardware adapter not initialized"}, status_code=503)
 
-        mount = ctx.daemon.hardware_adapter.mount
-        if mount is None or not ctx.daemon.hardware_adapter.is_telescope_connected():
+        mount = sensor.adapter.mount
+        if mount is None or not sensor.adapter.is_telescope_connected():
             return JSONResponse({"error": "No mount connected"}, status_code=404)
 
         action = body.get("action")
@@ -124,15 +116,14 @@ def build_mount_router(ctx: CitraSenseWebApp) -> APIRouter:
             return JSONResponse({"error": str(e)}, status_code=500)
 
     @router.post("/mount/goto")
-    async def mount_goto(body: dict[str, Any]):
+    async def mount_goto(sensor_id: str, body: dict[str, Any]):
         """Slew the mount to arbitrary RA/Dec coordinates (degrees)."""
-        if busy := ctx._require_system_idle():
+        sensor, _runtime = get_sensor_context(ctx, sensor_id)
+        if busy := ctx.require_sensor_idle(_runtime):
             return busy
-        if not ctx.daemon or not ctx.daemon.hardware_adapter:
-            return JSONResponse({"error": "Hardware adapter not initialized"}, status_code=503)
 
-        mount = ctx.daemon.hardware_adapter.mount
-        if mount is None or not ctx.daemon.hardware_adapter.is_telescope_connected():
+        mount = sensor.adapter.mount
+        if mount is None or not sensor.adapter.is_telescope_connected():
             return JSONResponse({"error": "No mount connected"}, status_code=404)
 
         ra = body.get("ra")
@@ -154,15 +145,14 @@ def build_mount_router(ctx: CitraSenseWebApp) -> APIRouter:
             return JSONResponse({"error": str(e)}, status_code=500)
 
     @router.post("/mount/tracking")
-    async def mount_tracking(body: dict[str, Any]):
+    async def mount_tracking(sensor_id: str, body: dict[str, Any]):
         """Start or stop sidereal tracking."""
-        if busy := ctx._require_system_idle():
+        sensor, _runtime = get_sensor_context(ctx, sensor_id)
+        if busy := ctx.require_sensor_idle(_runtime):
             return busy
-        if not ctx.daemon or not ctx.daemon.hardware_adapter:
-            return JSONResponse({"error": "Hardware adapter not initialized"}, status_code=503)
 
-        mount = ctx.daemon.hardware_adapter.mount
-        if mount is None or not ctx.daemon.hardware_adapter.is_telescope_connected():
+        mount = sensor.adapter.mount
+        if mount is None or not sensor.adapter.is_telescope_connected():
             return JSONResponse({"error": "No mount connected"}, status_code=404)
 
         enabled = body.get("enabled")

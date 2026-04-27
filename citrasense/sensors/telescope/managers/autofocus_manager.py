@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING
 
 from citrasense.constants import AUTOFOCUS_TARGET_PRESETS
 from citrasense.hardware.abstract_astro_hardware_adapter import AbstractAstroHardwareAdapter
+from citrasense.logging.sensor_logger import SensorLoggerAdapter
 from citrasense.preview_bus import PreviewBus
 
 if TYPE_CHECKING:
@@ -24,7 +25,7 @@ if TYPE_CHECKING:
 
     from citrasense.acquisition.base_work_queue import BaseWorkQueue
     from citrasense.location.location_service import LocationService
-    from citrasense.settings.citrasense_settings import CitraSenseSettings
+    from citrasense.settings.citrasense_settings import CitraSenseSettings, SensorConfig
 
 
 class AutofocusManager:
@@ -37,20 +38,27 @@ class AutofocusManager:
 
     def __init__(
         self,
-        logger: logging.Logger,
+        logger: logging.Logger | SensorLoggerAdapter,
         hardware_adapter: AbstractAstroHardwareAdapter,
         settings: CitraSenseSettings,
+        *,
+        sensor_id: str,
+        sensor_config: SensorConfig,
         imaging_queue: BaseWorkQueue | None = None,
         location_service: LocationService | None = None,
         preview_bus: PreviewBus | None = None,
         on_toast: Callable[[str, str, str | None], None] | None = None,
     ):
+        if not sensor_id:
+            raise ValueError("AutofocusManager requires a non-empty sensor_id")
         self.logger = logger.getChild(type(self).__name__)
         self.hardware_adapter = hardware_adapter
         self.settings = settings
         self.imaging_queue = imaging_queue
         self.location_service = location_service
         self._preview_bus = preview_bus
+        self._sensor_id: str = sensor_id
+        self._sensor_config: SensorConfig = sensor_config
         self.on_toast = on_toast
         self._requested = False
         self._running = False
@@ -62,6 +70,11 @@ class AutofocusManager:
         self._hfr_history: deque[tuple[float, int, str]] = deque(maxlen=50)
         self._lock = threading.Lock()
         self._cancel_event = threading.Event()
+
+    @property
+    def _af_settings(self) -> SensorConfig:
+        """Per-sensor autofocus settings (SensorConfig)."""
+        return self._sensor_config
 
     def request(self) -> bool:
         """Request autofocus to run at next safe point between tasks."""
@@ -172,10 +185,10 @@ class AutofocusManager:
                 result["position"] = actual_pos
 
     def _update_hfr_baseline(self) -> None:
-        """Persist the best HFR from this AF run as the per-adapter monitoring baseline.
+        """Persist the best HFR from this AF run as the per-sensor monitoring baseline.
 
-        Stored in adapter_settings so each adapter gets its own baseline.
-        Must be called while holding self._lock.
+        Stored as a typed field on :class:`SensorConfig`. Must be called
+        while holding ``self._lock``.
         """
         if not self._filter_results or not self.settings:
             return
@@ -183,7 +196,11 @@ class AutofocusManager:
         if not hfr_values:
             return
         baseline = round(min(hfr_values), 2)
-        self.settings.adapter_settings["hfr_baseline"] = baseline
+        if self._sensor_config:
+            self._sensor_config.hfr_baseline = baseline
+        # Persistence happens in the autofocus ``finally`` block, which
+        # calls ``self.settings.save()`` once with both the baseline and
+        # the new ``last_autofocus_timestamp``.
         self.logger.info(f"HFR baseline updated to {baseline:.2f} px")
 
     def clear_points(self) -> None:
@@ -227,19 +244,20 @@ class AutofocusManager:
 
         Must be called while holding self._lock (reads _hfr_history).
         """
-        if not self.settings or not self.settings.autofocus_on_hfr_increase_enabled:
+        afs = self._af_settings
+        if not afs or not afs.autofocus_on_hfr_increase_enabled:
             return False
-        baseline = self.settings.adapter_settings.get("hfr_baseline")
+        baseline = self._sensor_config.hfr_baseline if self._sensor_config else None
         if baseline is None or baseline <= 0:
             return False
         if not self.hardware_adapter.supports_autofocus():
             return False
 
-        window = self.settings.autofocus_hfr_sample_window
+        window = afs.autofocus_hfr_sample_window
         if len(self._hfr_history) < window:
             return False
 
-        last_ts = self.settings.last_autofocus_timestamp
+        last_ts = afs.last_autofocus_timestamp
         if last_ts is not None and (time.time() - last_ts) < self._HFR_REFOCUS_COOLDOWN_SECONDS:
             return False
 
@@ -250,11 +268,11 @@ class AutofocusManager:
         if len(recent) < window:
             return False
         median_hfr = statistics.median(recent)
-        threshold = baseline * (1 + self.settings.autofocus_hfr_increase_percent / 100)
+        threshold = baseline * (1 + afs.autofocus_hfr_increase_percent / 100)
         if median_hfr > threshold:
             self.logger.info(
                 f"HFR degradation detected: median {median_hfr:.2f} > threshold {threshold:.2f} "
-                f"(baseline {baseline:.2f} + {self.settings.autofocus_hfr_increase_percent}%)"
+                f"(baseline {baseline:.2f} + {afs.autofocus_hfr_increase_percent}%)"
             )
             return True
         return False
@@ -290,24 +308,27 @@ class AutofocusManager:
 
     def _should_run_scheduled(self) -> bool:
         """Check if scheduled autofocus should run based on settings."""
-        if not self.settings:
+        afs = self._af_settings
+        if not afs:
             return False
 
-        if not self.settings.scheduled_autofocus_enabled:
+        if not afs.scheduled_autofocus_enabled:
             return False
 
         if not self.hardware_adapter.supports_autofocus():
             return False
 
-        mode = self.settings.autofocus_schedule_mode
+        mode = afs.autofocus_schedule_mode
         if mode == "after_sunset":
             return self._should_run_after_sunset()
         return self._should_run_interval()
 
     def _should_run_interval(self) -> bool:
         """Interval mode: trigger when elapsed time exceeds the configured interval."""
-        interval_minutes = self.settings.autofocus_interval_minutes
-        last_timestamp = self.settings.last_autofocus_timestamp
+        afs = self._af_settings
+        assert afs is not None
+        interval_minutes = afs.autofocus_interval_minutes
+        last_timestamp = afs.last_autofocus_timestamp
 
         if last_timestamp is None:
             return True
@@ -330,7 +351,9 @@ class AutofocusManager:
         if now_utc < trigger_time:
             return False
 
-        last_ts = self.settings.last_autofocus_timestamp
+        afs = self._af_settings
+        assert afs is not None
+        last_ts = afs.last_autofocus_timestamp
         if last_ts is None:
             return True
 
@@ -355,7 +378,9 @@ class AutofocusManager:
             if sunset is None:
                 self.logger.warning("Could not compute sunset for after-sunset autofocus (polar day?)")
                 return None
-            offset = self.settings.autofocus_after_sunset_offset_minutes
+            afs = self._af_settings
+            assert afs is not None
+            offset = afs.autofocus_after_sunset_offset_minutes
             return sunset + timedelta(minutes=offset)
         except Exception as e:
             self.logger.warning(f"Failed to compute sunset time: {e}")
@@ -366,19 +391,22 @@ class AutofocusManager:
 
         Used by the web status endpoint to display countdown.
         """
-        if not self.settings or not self.settings.scheduled_autofocus_enabled:
+        afs = self._af_settings
+        if not afs or not afs.scheduled_autofocus_enabled:
             return None
         if not self.hardware_adapter.supports_autofocus():
             return None
 
-        mode = self.settings.autofocus_schedule_mode
+        mode = afs.autofocus_schedule_mode
         if mode == "after_sunset":
             return self._next_minutes_after_sunset()
         return self._next_minutes_interval()
 
     def _next_minutes_interval(self) -> int:
-        last_ts = self.settings.last_autofocus_timestamp
-        interval = self.settings.autofocus_interval_minutes
+        afs = self._af_settings
+        assert afs is not None
+        last_ts = afs.last_autofocus_timestamp
+        interval = afs.autofocus_interval_minutes
         if last_ts is None:
             return 0
         elapsed = (int(time.time()) - last_ts) / 60
@@ -394,7 +422,9 @@ class AutofocusManager:
             return None
         now_utc = datetime.now(timezone.utc)
         if now_utc >= trigger_time:
-            last_ts = self.settings.last_autofocus_timestamp
+            afs = self._af_settings
+            assert afs is not None
+            last_ts = afs.last_autofocus_timestamp
             if last_ts is not None:
                 last_dt = datetime.fromtimestamp(last_ts, tz=timezone.utc)
                 if last_dt >= trigger_time:
@@ -405,19 +435,19 @@ class AutofocusManager:
 
     def _resolve_target(self) -> tuple[float | None, float | None]:
         """Resolve autofocus target RA/Dec from settings (preset or custom)."""
-        settings = self.settings
-        if not settings:
+        afs = self._af_settings
+        if not afs:
             return None, None
 
-        preset_key = settings.autofocus_target_preset or "mirach"
+        preset_key = afs.autofocus_target_preset or "mirach"
 
         if preset_key == "current":
             self.logger.info("Autofocus target: current position (no slew)")
             return None, None
 
         if preset_key == "custom":
-            ra = settings.autofocus_target_custom_ra
-            dec = settings.autofocus_target_custom_dec
+            ra = afs.autofocus_target_custom_ra
+            dec = afs.autofocus_target_custom_dec
             if ra is not None and dec is not None:
                 self.logger.info(f"Autofocus target: custom (RA={ra:.4f}, Dec={dec:.4f})")
                 return ra, dec
@@ -440,7 +470,7 @@ class AutofocusManager:
             from citrasense.preview_bus import array_to_jpeg_data_url
 
             data_url = array_to_jpeg_data_url(image)
-            self._preview_bus.push(data_url, "autofocus")
+            self._preview_bus.push(data_url, "autofocus", sensor_id=self._sensor_id)
         except Exception as e:
             self.logger.debug(f"Failed to push AF preview frame: {e}")
 
@@ -475,8 +505,8 @@ class AutofocusManager:
             if self.hardware_adapter.supports_filter_management():
                 try:
                     filter_config = self.hardware_adapter.get_filter_config()
-                    if filter_config and self.settings:
-                        self.settings.adapter_settings["filters"] = filter_config
+                    if filter_config and self._sensor_config:
+                        self._sensor_config.adapter_settings["filters"] = filter_config
                         self.logger.info(f"Saved filter configuration with {len(filter_config)} filters")
                 except Exception as e:
                     self.logger.warning(f"Failed to save filter configuration after autofocus: {e}")
@@ -489,17 +519,23 @@ class AutofocusManager:
                 else:
                     self._last_result = self._progress
             if self.on_toast:
-                self.on_toast("Autofocus completed successfully", "success", "autofocus-result")
+                prefix = f"[{self._sensor_id}] " if self._sensor_id else ""
+                toast_id = f"autofocus-result:{self._sensor_id}" if self._sensor_id else "autofocus-result"
+                self.on_toast(f"{prefix}Autofocus completed successfully", "success", toast_id)
         except Exception as e:
             self.logger.error(f"Autofocus failed: {e!s}", exc_info=True)
             with self._lock:
                 self._last_result = f"Failed: {e!s}"
             if self.on_toast:
-                self.on_toast(f"Autofocus failed: {e!s}", "danger", "autofocus-result")
+                prefix = f"[{self._sensor_id}] " if self._sensor_id else ""
+                toast_id = f"autofocus-result:{self._sensor_id}" if self._sensor_id else "autofocus-result"
+                self.on_toast(f"{prefix}Autofocus failed: {e!s}", "danger", toast_id)
         finally:
             with self._lock:
                 self._running = False
                 self._progress = ""
+            ts = int(time.time())
+            if self._sensor_config:
+                self._sensor_config.last_autofocus_timestamp = ts
             if self.settings:
-                self.settings.last_autofocus_timestamp = int(time.time())
                 self.settings.save()

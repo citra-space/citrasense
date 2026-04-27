@@ -14,8 +14,8 @@ from citrasense.sensors.telescope.observing_session import (
 )
 
 
-def _make_settings(**overrides):
-    """Return a mock settings object with observing session defaults."""
+def _make_sensor_config(**overrides):
+    """Return a mock SensorConfig with observing session defaults."""
     s = MagicMock()
     s.observing_session_enabled = True
     s.observing_session_sun_altitude_threshold = -12.0
@@ -34,7 +34,7 @@ def _make_manager(
     imaging_idle=True,
     queues_idle=True,
 ):
-    settings = settings or _make_settings()
+    settings = settings or _make_sensor_config()
     logger = logging.getLogger("test_session")
 
     request_autofocus = MagicMock()
@@ -45,7 +45,7 @@ def _make_manager(
     unpark_mount = MagicMock(return_value=True)
 
     mgr = ObservingSessionManager(
-        settings=settings,
+        sensor_config=settings,
         logger=logger,
         get_location=lambda: location,
         request_autofocus=request_autofocus,
@@ -70,7 +70,7 @@ def test_initial_state_is_daytime():
 
 
 def test_stays_daytime_when_disabled():
-    settings = _make_settings(observing_session_enabled=False)
+    settings = _make_sensor_config(observing_session_enabled=False)
     mgr, *_ = _make_manager(settings=settings)
     with patch.object(mgr, "_refresh_observing_window"):
         mgr._observing_window = _DARK_WINDOW
@@ -166,7 +166,7 @@ def test_night_startup_aborts_if_sun_rises():
 
 
 def test_night_startup_skips_unpark_when_disabled():
-    settings = _make_settings(observing_session_do_park=False)
+    settings = _make_sensor_config(observing_session_do_park=False)
     mgr, request_af, *_ = _make_manager(settings=settings)
 
     mgr._state = SessionState.NIGHT_STARTUP
@@ -179,7 +179,7 @@ def test_night_startup_skips_unpark_when_disabled():
 
 
 def test_night_startup_skips_autofocus_when_disabled():
-    settings = _make_settings(observing_session_do_autofocus=False, observing_session_do_park=False)
+    settings = _make_sensor_config(observing_session_do_autofocus=False, observing_session_do_park=False)
     mgr, request_af, *_ = _make_manager(settings=settings)
 
     mgr._state = SessionState.NIGHT_STARTUP

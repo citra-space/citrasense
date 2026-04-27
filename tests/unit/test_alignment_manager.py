@@ -79,10 +79,14 @@ def _make_manager(
     location_service = MagicMock()
     location_service.get_current_location.return_value = {"latitude": 40.0, "longitude": -74.0}
 
+    sensor_config = MagicMock()
+    sensor_config.alignment_exposure_seconds = 1.0
     mgr = AlignmentManager(
         logger=logging.getLogger("test"),
         hardware_adapter=adapter,
         settings=settings,
+        sensor_id="scope-1",
+        sensor_config=sensor_config,
         safety_monitor=safety_monitor,
         location_service=location_service,
     )

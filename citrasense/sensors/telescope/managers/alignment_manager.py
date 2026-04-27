@@ -19,13 +19,14 @@ import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from citrasense.logging.sensor_logger import SensorLoggerAdapter
 from citrasense.preview_bus import PreviewBus
 
 if TYPE_CHECKING:
     from citrasense.acquisition.base_work_queue import BaseWorkQueue
     from citrasense.hardware.abstract_astro_hardware_adapter import AbstractAstroHardwareAdapter
     from citrasense.hardware.devices.mount.altaz_pointing_model import AltAzPointingModel
-    from citrasense.settings.citrasense_settings import CitraSenseSettings
+    from citrasense.settings.citrasense_settings import CitraSenseSettings, SensorConfig
 
 
 class AlignmentManager:
@@ -40,14 +41,19 @@ class AlignmentManager:
 
     def __init__(
         self,
-        logger: logging.Logger,
+        logger: logging.Logger | SensorLoggerAdapter,
         hardware_adapter: AbstractAstroHardwareAdapter,
         settings: CitraSenseSettings,
+        *,
+        sensor_id: str,
+        sensor_config: SensorConfig,
         imaging_queue: BaseWorkQueue | None = None,
         safety_monitor=None,
         location_service=None,
         preview_bus: PreviewBus | None = None,
     ):
+        if not sensor_id:
+            raise ValueError("AlignmentManager requires a non-empty sensor_id")
         self.logger = logger.getChild(type(self).__name__)
         self.hardware_adapter = hardware_adapter
         self.settings = settings
@@ -55,6 +61,8 @@ class AlignmentManager:
         self.safety_monitor = safety_monitor
         self.location_service = location_service
         self._preview_bus = preview_bus
+        self._sensor_id: str = sensor_id
+        self._sensor_config: SensorConfig = sensor_config
 
         # Quick-align state
         self._requested = False
@@ -158,9 +166,7 @@ class AlignmentManager:
         return True
 
     def _get_exposure_seconds(self) -> float:
-        if self.settings:
-            return self.settings.alignment_exposure_seconds
-        return 2.0
+        return self._sensor_config.alignment_exposure_seconds
 
     def _execute(self) -> None:
         """Execute alignment: take image → plate solve → sync mount."""
@@ -196,7 +202,7 @@ class AlignmentManager:
 
             if self._preview_bus:
                 try:
-                    self._preview_bus.push_file(image_path, "alignment")
+                    self._preview_bus.push_file(image_path, "alignment", sensor_id=self._sensor_id)
                 except Exception as e:
                     self.logger.debug(f"Failed to push alignment preview: {e}")
             self._set_progress("Plate solving...")
@@ -259,8 +265,9 @@ class AlignmentManager:
             with self._lock:
                 self._running = False
                 self._progress = ""
+            ts = int(time.time())
+            self._sensor_config.last_alignment_timestamp = ts
             if self.settings:
-                self.settings.last_alignment_timestamp = int(time.time())
                 self.settings.save()
 
     # ------------------------------------------------------------------
@@ -654,13 +661,8 @@ class AlignmentManager:
 
         Reusable for any calibration phase (pre-walk, pre-verification, etc.).
         """
-        if not self.safety_monitor:
-            return
-
-        from citrasense.sensors.telescope.safety.cable_wrap_check import CableWrapCheck
-
-        check = self.safety_monitor.get_check("cable_wrap")
-        if not isinstance(check, CableWrapCheck):
+        check = self._get_cable_wrap_check()
+        if check is None:
             return
 
         cumulative = check.cumulative_deg
@@ -707,7 +709,7 @@ class AlignmentManager:
 
             if self._preview_bus:
                 try:
-                    self._preview_bus.push_file(image_path, "calibration")
+                    self._preview_bus.push_file(image_path, "calibration", sensor_id=self._sensor_id)
                 except Exception as e:
                     self.logger.debug(f"Failed to push calibration preview: {e}")
             result = PlateSolverProcessor.solve(
@@ -720,16 +722,30 @@ class AlignmentManager:
 
         return None
 
-    def _get_cable_wrap_cumulative(self) -> float:
-        """Read current cable wrap cumulative rotation, or 0.0 if unavailable."""
-        if not self.safety_monitor:
-            return 0.0
+    def _get_cable_wrap_check(self) -> Any:
+        """Resolve the CableWrapCheck owned by *this* sensor, if any.
+
+        Scoped via ``SafetyMonitor.get_sensor_checks(sensor_id)`` so a
+        multi-telescope site doesn't return another mount's check.
+        """
+        if not self.safety_monitor or not self._sensor_id:
+            return None
         try:
             from citrasense.sensors.telescope.safety.cable_wrap_check import CableWrapCheck
 
-            check = self.safety_monitor.get_check("cable_wrap")
-            if isinstance(check, CableWrapCheck):
-                return check.cumulative_deg
+            for chk in self.safety_monitor.get_sensor_checks(self._sensor_id):
+                if isinstance(chk, CableWrapCheck):
+                    return chk
         except Exception:
             pass
-        return 0.0
+        return None
+
+    def _get_cable_wrap_cumulative(self) -> float:
+        """Read current cable wrap cumulative rotation, or 0.0 if unavailable."""
+        check = self._get_cable_wrap_check()
+        if check is None:
+            return 0.0
+        try:
+            return check.cumulative_deg
+        except Exception:
+            return 0.0

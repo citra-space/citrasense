@@ -264,7 +264,9 @@ document.addEventListener('alpine:init', () => {
         },
 
         pointingClass(deg) {
-            return Alpine.store('citrasense').pointingAccuracyClass(deg, Alpine.store('citrasense').status?.fov_short_deg);
+            const sensors = Alpine.store('citrasense').status?.sensors || {};
+            const first = Object.values(sensors).find(s => s.type === 'telescope');
+            return Alpine.store('citrasense').pointingAccuracyClass(deg, first?.fov_short_deg);
         },
 
         // Window utilization mini-bar: delay | slew | imaging | margin

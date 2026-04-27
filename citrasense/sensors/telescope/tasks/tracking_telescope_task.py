@@ -46,7 +46,8 @@ class TrackingTelescopeTask(AbstractBaseTelescopeTask):
             if self.is_cancelled:
                 return False
 
-            exposure = self.settings.exposure_seconds
+            sc = getattr(self.runtime, "sensor_config", None) or self.settings
+            exposure = sc.exposure_seconds
             self.task.set_status_msg(f"Exposing image ({exposure}s)...")
             self.timing_info.stamp_now("imaging_started_at")
             filepath = self.hardware_adapter.take_image(self.task.id, exposure)

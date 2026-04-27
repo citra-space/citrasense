@@ -12,7 +12,7 @@ from typing import Any
 
 import platformdirs
 
-from citrasense.settings.citrasense_settings import APP_AUTHOR, APP_NAME
+from citrasense.constants import APP_AUTHOR, APP_NAME
 
 _LOW_COUNT_THRESHOLD = 25_000
 

@@ -5,10 +5,6 @@ from :class:`~citrasense.settings.citrasense_settings.SensorConfig` (via
 :mod:`citrasense.sensors.sensor_registry`) and drives bulk lifecycle
 operations (connect all, disconnect all). The daemon talks to this object
 instead of a single ``hardware_adapter`` attribute.
-
-Phase 1 always carries exactly one telescope sensor; the surface here is
-already N-sensor so phase 4/5 dispatching can build on it without another
-refactor.
 """
 
 from __future__ import annotations
@@ -69,9 +65,12 @@ class SensorManager:
         """Return the sensor registered under ``sensor_id``."""
         return self._sensors[sensor_id]
 
-    def get_or_none(self, sensor_id: str) -> AbstractSensor | None:
-        """Return the sensor registered under ``sensor_id`` or ``None``."""
+    def get_sensor(self, sensor_id: str) -> AbstractSensor | None:
+        """Return the sensor registered under *sensor_id*, or ``None``."""
         return self._sensors.get(sensor_id)
+
+    # Kept for internal callers that prefer the shorter name.
+    get_or_none = get_sensor
 
     def all(self) -> list[AbstractSensor]:
         """All registered sensors, in registration order."""
@@ -83,9 +82,12 @@ class SensorManager:
             if s.sensor_type == sensor_type:
                 yield s
 
-    def first_of_type(self, sensor_type: str) -> AbstractSensor | None:
-        """Return the first registered sensor of ``sensor_type`` or ``None``."""
-        return next(self.iter_by_type(sensor_type), None)
+    # NOTE: ``first_of_type`` used to live here as a convenience helper, but it
+    # was a classic "first sensor wins" footgun in multi-sensor deployments —
+    # callers that needed *a* telescope silently got the first one registered
+    # and hid bugs where the actual sensor should have been selected by id.
+    # Use ``iter_by_type`` + explicit selection, or resolve via
+    # ``TaskDispatcher._runtime_for_task`` / ``SensorManager.get``.
 
     # ── Bulk lifecycle ────────────────────────────────────────────────
 

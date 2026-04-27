@@ -1,11 +1,12 @@
-"""Telescope sensor — phase-1 wrapper around ``AbstractAstroHardwareAdapter``.
+"""Telescope sensor — wrapper around ``AbstractAstroHardwareAdapter``.
 
-This class adapts the existing telescope hardware stack (NINA, KStars, INDI,
-Direct, Dummy) to the new :class:`~citrasense.sensors.abstract_sensor.AbstractSensor`
-contract. It intentionally stays **thin** in phase 1: the adapter is the
-authoritative controller and still owns mount/camera/filter/focuser. Consumers
-who need telescope-specific verbs reach through ``sensor.adapter`` — the
-compatibility surface the daemon's ``hardware_adapter`` property relies on.
+This class adapts the telescope hardware stack (NINA, KStars, INDI,
+Direct, Dummy) to the :class:`~citrasense.sensors.abstract_sensor.AbstractSensor`
+contract. It stays **thin**: the adapter is the authoritative controller
+and still owns mount/camera/filter/focuser. Consumers who need
+telescope-specific verbs reach through ``sensor.adapter`` — the daemon
+no longer exposes a top-level ``hardware_adapter`` property; hardware
+is resolved per-sensor via the ``SensorManager`` + ``SensorRuntime``.
 
 Phase 1 contract
 ----------------
@@ -15,7 +16,7 @@ Phase 1 contract
 * ``get_settings_schema`` forwards to the adapter class's classmethod (same
   API the web config form uses today).
 * :meth:`acquire` is wired in phase 4 (task-flow refactor). In phase 1 the
-  daemon still drives acquisition through ``TaskManager`` → telescope tasks
+  daemon still drives acquisition through ``TaskDispatcher`` → telescope tasks
   → ``self.hardware_adapter.*``, so calling ``acquire`` is a programming
   error and raises ``NotImplementedError``.
 * Streaming verbs raise ``NotImplementedError`` (this sensor is on-demand).
@@ -76,7 +77,11 @@ class TelescopeSensor(AbstractSensor):
         super().__init__(sensor_id=sensor_id)
         self.adapter = adapter
         self.adapter_key = adapter_key
+        self.citra_record: dict[str, Any] | None = None
         self._cable_wrap_check: CableWrapCheck | None = None
+        # Let the adapter namespace its per-sensor state files
+        # (e.g. pointing_model_<sensor_id>.json) via self.sensor_id.
+        self.adapter.sensor_id = sensor_id
 
     # ── Factory ───────────────────────────────────────────────────────
 
@@ -95,9 +100,20 @@ class TelescopeSensor(AbstractSensor):
         instantiates it with the same kwargs the daemon's legacy
         ``_create_hardware_adapter`` used: ``logger``, ``images_dir``, and
         the adapter-specific settings dict splat.
+
+        The logger handed to the adapter is wrapped in a sensor-scoped
+        :class:`SensorLoggerAdapter` so every record emitted by INDI /
+        NINA / KStars / Direct flows carries ``extra={'sensor_id': ...}``
+        for the web UI's per-sensor log filter.
         """
+        from citrasense.logging.sensor_logger import get_sensor_logger
+
         adapter_class = get_adapter_class(cfg.adapter)
-        adapter = adapter_class(logger=logger, images_dir=images_dir, **cfg.adapter_settings)
+        adapter_logger = get_sensor_logger(
+            logger.getChild(f"{adapter_class.__name__}[{cfg.id}]"),
+            cfg.id,
+        )
+        adapter = adapter_class(logger=adapter_logger, images_dir=images_dir, **cfg.adapter_settings)
         return cls(sensor_id=cfg.id, adapter=adapter, adapter_key=cfg.adapter)
 
     # ── AbstractSensor surface ────────────────────────────────────────
@@ -108,7 +124,7 @@ class TelescopeSensor(AbstractSensor):
         ``ctx`` is accepted for protocol compatibility but not consumed here;
         the telescope adapter gets its site services wired by the daemon
         separately (``set_location_service``, ``set_safety_monitor``, ...)
-        during ``_initialize_telescope``. Phase-4 follow-ups will consolidate
+        during ``_initialize_telescopes``. Phase-4 follow-ups will consolidate
         that wiring through the context.
         """
         del ctx

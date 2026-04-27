@@ -64,11 +64,16 @@ def check_processor_runtime_deps(settings: CitraSenseSettings) -> list[dict[str,
     disabled. Per-processor flags are consulted for the other gates so
     operators don't see warnings for processors they've turned off.
     """
-    if not settings.processors_enabled:
+    any_enabled = any(sc.processors_enabled for sc in settings.sensors)
+    if not any_enabled:
         return []
 
     issues: list[dict[str, str]] = []
-    enabled = settings.enabled_processors
+    enabled: dict[str, bool] = {}
+    for sc in settings.sensors:
+        if sc.processors_enabled:
+            for k, v in sc.enabled_processors.items():
+                enabled[k] = enabled.get(k, False) or v
 
     # astropy_healpix is only imported when the local APASS catalog is
     # enabled; no point warning users who haven't opted in.

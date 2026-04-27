@@ -17,10 +17,13 @@ def _settings(
     enabled_processors: dict[str, bool] | None = None,
 ):
     """Build a minimal settings stub — the only fields the function touches."""
-    return SimpleNamespace(
+    sensor = SimpleNamespace(
         processors_enabled=processors_enabled,
-        use_local_apass_catalog=use_local_apass_catalog,
         enabled_processors=enabled_processors or {},
+    )
+    return SimpleNamespace(
+        sensors=[sensor],
+        use_local_apass_catalog=use_local_apass_catalog,
     )
 
 

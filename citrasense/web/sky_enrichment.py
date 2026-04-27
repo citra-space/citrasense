@@ -35,7 +35,6 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from math import asin, cos, degrees, radians, sin
 from typing import Any
 
 from keplemon import time as ktime
@@ -133,16 +132,6 @@ def _compass_16pt(az_deg: float) -> str:
     """Map azimuth (0..360, North=0) to a 16-point compass label."""
     idx = int((az_deg + 11.25) % 360 / 22.5)
     return _COMPASS_16[idx]
-
-
-def _angular_distance_deg(ra1_deg: float, dec1_deg: float, ra2_deg: float, dec2_deg: float) -> float:
-    """Great-circle distance between two RA/Dec points, in degrees."""
-    ra1, dec1 = radians(ra1_deg), radians(dec1_deg)
-    ra2, dec2 = radians(ra2_deg), radians(dec2_deg)
-    dlat = dec2 - dec1
-    dlon = ra2 - ra1
-    a = sin(dlat / 2) ** 2 + cos(dec1) * cos(dec2) * sin(dlon / 2) ** 2
-    return degrees(2 * asin(min(1.0, a**0.5)))
 
 
 def _parse_iso(ts: str | None) -> datetime | None:
@@ -267,7 +256,6 @@ def _propagate_static(
 
 def get_web_tasks(
     daemon: Any,
-    status: Any,
     *,
     exclude_active: bool = False,
 ) -> list[dict]:
@@ -278,17 +266,16 @@ def get_web_tasks(
 
     Sky enrichment uses a per-task memo keyed by ``task.id``; the static
     fields (alt/az/compass/trend/peak) are computed once on first sight and
-    reused on every subsequent emission.  Only the slew-from-current-pointing
-    is recomputed each time, since the scope moves.  Memo entries for tasks
-    no longer in the queue are evicted at the top of every call.
+    reused on every subsequent emission.  Memo entries for tasks no longer in
+    the queue are evicted at the top of every call.
 
     Returns ``[]`` when the daemon or task manager isn't yet ready.
     """
-    if not daemon or not getattr(daemon, "task_manager", None):
+    if not daemon or not getattr(daemon, "task_dispatcher", None):
         return []
 
-    tasks = [_task_to_dict(t) for t in daemon.task_manager.get_tasks_snapshot(exclude_active=exclude_active)]
-    _enrich_tasks(tasks, daemon=daemon, status=status)
+    tasks = [_task_to_dict(t) for t in daemon.task_dispatcher.get_tasks_snapshot(exclude_active=exclude_active)]
+    _enrich_tasks(tasks, daemon=daemon)
     return tasks
 
 
@@ -308,16 +295,13 @@ def _gather_location(daemon: Any) -> dict | None:
         return None
 
 
-def _enrich_tasks(tasks: list[dict], *, daemon: Any, status: Any) -> None:
+def _enrich_tasks(tasks: list[dict], *, daemon: Any) -> None:
     """Mutate each task dict with sky fields, using the per-task memo.
 
-    Three phases:
+    Two phases:
       1. Drop memo entries for tasks no longer in the snapshot.
       2. For each task, paste cached static fields if the memo is fresh,
          otherwise propagate via keplemon and seed the memo.
-      3. For each task with cached topocentric coords AND a known scope
-         pointing, compute ``slew_from_current_deg`` via a great-circle
-         (no propagation needed -- microseconds).
     """
     global _OBSERVER_SIG
 
@@ -363,21 +347,6 @@ def _enrich_tasks(tasks: list[dict], *, daemon: Any, status: Any) -> None:
                     obs_lat_deg=obs_sig[0],
                     obs_lon_deg=obs_sig[1],
                     elset_cache=elset_cache,
-                )
-
-    # Phase 3 -- recompute slew distance from cached target coords.
-    scope_ra = getattr(status, "telescope_ra", None)
-    scope_dec = getattr(status, "telescope_dec", None)
-    if scope_ra is not None and scope_dec is not None:
-        for task in tasks:
-            task_id = task.get("id")
-            if not task_id:
-                continue
-            entry = _SKY_MEMO.get(task_id)
-            if entry and entry.target_ra_deg is not None and entry.target_dec_deg is not None:
-                task["slew_from_current_deg"] = round(
-                    _angular_distance_deg(scope_ra, scope_dec, entry.target_ra_deg, entry.target_dec_deg),
-                    2,
                 )
 
 

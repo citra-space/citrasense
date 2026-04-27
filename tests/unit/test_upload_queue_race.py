@@ -95,7 +95,7 @@ class TestQueueForUploadGuard:
 
 
 class TestConfigReloadDropsInFlightStages:
-    """_initialize_telescope must not restore processing_tasks or uploading_tasks."""
+    """_initialize_telescopes must not restore processing_tasks or uploading_tasks."""
 
     def _make_daemon(self):
         from citrasense.citrasense_daemon import CitraSenseDaemon
@@ -112,21 +112,34 @@ class TestConfigReloadDropsInFlightStages:
         }
         daemon.api_client.get_ground_station.return_value = {"id": "gs1", "name": "TestGS"}
 
-        daemon.hardware_adapter = MagicMock()
-        daemon.hardware_adapter.connect.return_value = True
-        daemon.hardware_adapter.is_mount_homed.return_value = True
-        daemon.hardware_adapter.supports_direct_camera_control.return_value = False
-        daemon.hardware_adapter.get_filter_config.return_value = {}
+        telescope_sensor = MagicMock()
+        telescope_sensor.sensor_id = "t1"
+        telescope_sensor.sensor_type = "telescope"
+        telescope_sensor.adapter = MagicMock()
+        telescope_sensor.adapter.connect.return_value = True
+        telescope_sensor.adapter.is_mount_homed.return_value = True
+        telescope_sensor.adapter.supports_direct_camera_control.return_value = False
+        telescope_sensor.adapter.get_filter_config.return_value = {}
+        telescope_sensor.citra_record = None
 
+        sensor_manager = MagicMock()
+        sensor_manager.iter_by_type.return_value = iter([telescope_sensor])
+        sensor_manager.get.return_value = telescope_sensor
+        sensor_manager.get_sensor.return_value = telescope_sensor
+        sensor_manager.__iter__ = lambda self: iter([telescope_sensor])
+        # first_of_type was removed — delete the MagicMock auto-attribute so
+        # callers that still reach for it fail loudly.
+        del sensor_manager.first_of_type
+
+        daemon.sensor_manager = sensor_manager
         daemon.location_service = MagicMock()
         daemon.time_monitor = MagicMock()
         daemon.web_server = MagicMock()
         daemon.elset_cache = MagicMock()
         daemon.apass_catalog = MagicMock()
         daemon.processor_registry = MagicMock()
-        daemon.task_manager = None
+        daemon.task_dispatcher = None
         daemon.safety_monitor = MagicMock()
-        daemon.telescope_record = None
         daemon.ground_station = None
         daemon.latest_annotated_image_path = None
         daemon.preview_bus = MagicMock()
@@ -134,9 +147,6 @@ class TestConfigReloadDropsInFlightStages:
         daemon.sensor_bus = MagicMock()
         daemon._retention_timer = None
         daemon._stop_requested = False
-        daemon._telescope_sensor = MagicMock()
-        daemon._telescope_sensor.sensor_id = "t1"
-        daemon._telescope_sensor.sensor_type = "telescope"
         return daemon
 
     def test_processing_and_uploading_not_restored(self):
@@ -153,15 +163,15 @@ class TestConfigReloadDropsInFlightStages:
             patch.object(daemon, "sync_filters_to_backend"),
         ):
             mock_td_instance = MagicMock()
-            mock_td_instance.task_dict = {}
             mock_td_instance.imaging_tasks = {}
             mock_td_instance.processing_tasks = {}
             mock_td_instance.uploading_tasks = {}
             MockTD.return_value = mock_td_instance
             MockRT.return_value = MagicMock()
 
-            success, _error = daemon._initialize_telescope(
-                old_task_dict={"task-1": MagicMock()},
+            old_task_dict = {"task-1": MagicMock()}
+            success, _error = daemon._initialize_telescopes(
+                old_task_dict=old_task_dict,
                 old_imaging_tasks={"task-i1": MagicMock()},
                 old_processing_tasks=old_processing,
                 old_uploading_tasks=old_uploading,
@@ -170,5 +180,5 @@ class TestConfigReloadDropsInFlightStages:
         assert success is True
         assert mock_td_instance.processing_tasks == {}
         assert mock_td_instance.uploading_tasks == {}
-        assert "task-1" in mock_td_instance.task_dict
+        mock_td_instance.restore_task_dict.assert_called_once_with(old_task_dict)
         assert "task-i1" in mock_td_instance.imaging_tasks

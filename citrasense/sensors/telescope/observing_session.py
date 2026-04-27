@@ -4,7 +4,7 @@ Tracks sun altitude to determine when it is dark enough to observe, and
 orchestrates startup actions (unpark, autofocus) and shutdown actions (drain
 queues, park) based on configurable ``do_*`` switches.
 
-The ``update()`` method is called from the ``TaskManager.poll_tasks`` loop
+The ``update()`` method is called from the ``TaskDispatcher.poll_tasks`` loop
 every 15 seconds.  It recomputes the session state and triggers actions
 as needed — no additional threads.
 """
@@ -18,11 +18,12 @@ from enum import Enum
 from typing import TYPE_CHECKING, Any
 
 from citrasense.location.twilight import ObservingWindow, compute_observing_window
+from citrasense.logging.sensor_logger import SensorLoggerAdapter
 
 _SHUTDOWN_TIMEOUT_SECONDS = 300  # 5 minutes — force-park if imaging hasn't drained
 
 if TYPE_CHECKING:
-    from citrasense.settings.citrasense_settings import CitraSenseSettings
+    from citrasense.settings.citrasense_settings import SensorConfig
 
 
 class SessionState(Enum):
@@ -52,8 +53,8 @@ class ObservingSessionManager:
 
     def __init__(
         self,
-        settings: CitraSenseSettings,
-        logger: logging.Logger,
+        sensor_config: SensorConfig,
+        logger: logging.Logger | SensorLoggerAdapter,
         get_location: Callable[[], tuple[float, float] | None],
         request_autofocus: Callable[[], Any],
         is_autofocus_running: Callable[[], bool],
@@ -64,7 +65,7 @@ class ObservingSessionManager:
         request_pointing_calibration: Callable[[], Any] | None = None,
         is_pointing_calibration_running: Callable[[], bool] | None = None,
     ):
-        self._settings = settings
+        self._sensor_config = sensor_config
         self._logger = logger
         self._get_location = get_location
         self._request_autofocus = request_autofocus
@@ -96,7 +97,7 @@ class ObservingSessionManager:
 
     def update(self) -> SessionState:
         """Recompute session state and trigger actions.  Call from poll loop."""
-        if not self._settings.observing_session_enabled:
+        if not self._sensor_config.observing_session_enabled:
             if self._state != SessionState.DAYTIME:
                 self._logger.info("Observing session disabled — resetting to DAYTIME")
                 self._reset_to_daytime()
@@ -143,7 +144,7 @@ class ObservingSessionManager:
             self._observing_window = None
             return
         lat, lon = location
-        threshold = self._settings.observing_session_sun_altitude_threshold
+        threshold = self._sensor_config.observing_session_sun_altitude_threshold
         try:
             self._observing_window = compute_observing_window(lat, lon, threshold)
         except Exception:
@@ -153,7 +154,7 @@ class ObservingSessionManager:
     def _run_startup_actions(self) -> None:
         """Execute enabled startup actions in order: unpark → pointing calibration → autofocus → done."""
         # Step 1: Unpark
-        if self._settings.observing_session_do_park and not self._unpark_done:
+        if self._sensor_config.observing_session_do_park and not self._unpark_done:
             if self._unpark_mount is not None:
                 self._logger.info("NIGHT_STARTUP: Unparking mount")
                 try:
@@ -168,7 +169,7 @@ class ObservingSessionManager:
 
         # Step 2: Pointing calibration (before autofocus — plate solving tolerates mild defocus)
         if (
-            self._settings.observing_session_do_pointing_calibration
+            self._sensor_config.observing_session_do_pointing_calibration
             and self._request_pointing_calibration is not None
             and not self._pointing_calibration_requested
         ):
@@ -181,14 +182,14 @@ class ObservingSessionManager:
             return
 
         if (
-            self._settings.observing_session_do_pointing_calibration
+            self._sensor_config.observing_session_do_pointing_calibration
             and self._is_pointing_calibration_running is not None
             and self._is_pointing_calibration_running()
         ):
             return  # Still calibrating
 
         # Step 3: Autofocus
-        if self._settings.observing_session_do_autofocus and not self._autofocus_requested:
+        if self._sensor_config.observing_session_do_autofocus and not self._autofocus_requested:
             self._logger.info("NIGHT_STARTUP: Requesting autofocus")
             try:
                 self._request_autofocus()
@@ -197,7 +198,7 @@ class ObservingSessionManager:
             self._autofocus_requested = True
             return
 
-        if self._settings.observing_session_do_autofocus and self._is_autofocus_running():
+        if self._sensor_config.observing_session_do_autofocus and self._is_autofocus_running():
             return  # Still waiting for autofocus to finish
 
         # All startup actions complete
@@ -222,7 +223,7 @@ class ObservingSessionManager:
         if not timed_out and not self._is_imaging_idle():
             return  # Wait for current exposure to finish
 
-        if self._settings.observing_session_do_park and not self._park_done:
+        if self._sensor_config.observing_session_do_park and not self._park_done:
             if self._park_mount is not None:
                 self._logger.info("NIGHT_SHUTDOWN: Parking mount")
                 try:
@@ -256,17 +257,17 @@ class ObservingSessionManager:
     def _get_session_activity(self) -> str | None:
         """Return a human-readable label for the current startup/shutdown sub-step."""
         if self._state == SessionState.NIGHT_STARTUP:
-            if self._settings.observing_session_do_park and not self._unpark_done:
+            if self._sensor_config.observing_session_do_park and not self._unpark_done:
                 return "Unparking mount"
             if (
-                self._settings.observing_session_do_pointing_calibration
+                self._sensor_config.observing_session_do_pointing_calibration
                 and self._request_pointing_calibration is not None
             ):
                 if not self._pointing_calibration_requested:
                     return "Requesting pointing calibration"
                 if self._is_pointing_calibration_running and self._is_pointing_calibration_running():
                     return "Calibrating pointing model"
-            if self._settings.observing_session_do_autofocus:
+            if self._sensor_config.observing_session_do_autofocus:
                 if not self._autofocus_requested:
                     return "Requesting autofocus"
                 if self._is_autofocus_running():
@@ -275,7 +276,7 @@ class ObservingSessionManager:
         if self._state == SessionState.NIGHT_SHUTDOWN:
             if not self._is_imaging_idle():
                 return "Waiting for imaging to finish"
-            if self._settings.observing_session_do_park and not self._park_done:
+            if self._sensor_config.observing_session_do_park and not self._park_done:
                 return "Parking mount"
             return "Finishing shutdown"
         return None
@@ -286,7 +287,7 @@ class ObservingSessionManager:
         return {
             "observing_session_state": self._state.value,
             "session_activity": self._get_session_activity(),
-            "observing_session_threshold": self._settings.observing_session_sun_altitude_threshold,
+            "observing_session_threshold": self._sensor_config.observing_session_sun_altitude_threshold,
             "sun_altitude": window.current_sun_altitude if window else None,
             "dark_window_start": window.dark_start if window else None,
             "dark_window_end": window.dark_end if window else None,

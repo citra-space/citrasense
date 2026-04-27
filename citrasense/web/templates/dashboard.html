@@ -132,15 +132,36 @@
                 <div id="logAccordionCollapse" class="accordion-collapse collapse" aria-labelledby="logAccordionHeader"
                     data-bs-parent="#logAccordion">
                     <div class="accordion-body p-0 log-accordion-body">
+                        <!-- Per-sensor filter chips: click to show only that sensor's logs, click "All" to clear. -->
+                        <div class="log-filter-bar px-3 pt-2 pb-1 d-flex flex-wrap align-items-center gap-2">
+                            <span class="text-muted-dark small">Filter:</span>
+                            <button type="button"
+                                class="btn btn-sm"
+                                :class="$store.citrasense.logSensorFilter === null ? 'btn-primary' : 'btn-outline-secondary'"
+                                @click="$store.citrasense.logSensorFilter = null">All</button>
+                            <button type="button"
+                                class="btn btn-sm"
+                                :class="$store.citrasense.logSensorFilter === '__site__' ? 'btn-primary' : 'btn-outline-secondary'"
+                                @click="$store.citrasense.logSensorFilter = '__site__'"
+                                title="Show only site-level logs (no sensor tag)">Site</button>
+                            <template x-for="sensor in $store.citrasense.sensors" :key="sensor.id">
+                                <button type="button"
+                                    class="btn btn-sm"
+                                    :class="$store.citrasense.logSensorFilter === sensor.id ? 'btn-primary' : 'btn-outline-secondary'"
+                                    @click="$store.citrasense.logSensorFilter = sensor.id"
+                                    x-text="sensor.name || sensor.id"></button>
+                            </template>
+                        </div>
                         <div class="log-container p-3" id="logContainer" x-ref="logContainer"
                              x-data="{ autoScroll: true }"
                              @scroll="autoScroll = ($el.scrollTop + $el.clientHeight >= $el.scrollHeight - 30)"
-                             x-effect="if ($store.citrasense.logs.length && autoScroll) { $nextTick(() => $el.scrollTop = $el.scrollHeight) }">
-                            <p class="text-muted-dark" x-show="$store.citrasense.logs.length === 0">No logs available</p>
-                            <template x-for="log in $store.citrasense.logs" :key="log._id">
+                             x-effect="if ($store.citrasense.filteredLogs.length && autoScroll) { $nextTick(() => $el.scrollTop = $el.scrollHeight) }">
+                            <p class="text-muted-dark" x-show="$store.citrasense.filteredLogs.length === 0">No logs available</p>
+                            <template x-for="log in $store.citrasense.filteredLogs" :key="log._id">
                                 <div x-data="logEntry(log)" class="log-entry">
                                     <span class="log-timestamp" x-text="timestamp"></span>
                                     <span class="log-level" :class="levelClass" x-text="log.level"></span>
+                                    <span class="log-sensor" x-show="log.sensor_id" x-text="'[' + log.sensor_id + ']'"></span>
                                     <span class="log-module" x-show="log.module && log.module !== 'citrasense'" x-text="'[' + log.module + ']'"></span>
                                     <span class="log-message" x-text="strippedMessage"></span>
                                 </div>

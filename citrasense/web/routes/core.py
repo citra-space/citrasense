@@ -34,9 +34,19 @@ def build_core_router(ctx: CitraSenseWebApp) -> APIRouter:
         return ctx.status
 
     @router.get("/api/task-preview/latest")
-    async def get_latest_task_preview():
-        """Serve the latest annotated task image."""
-        ann_path = getattr(ctx.daemon, "latest_annotated_image_path", None)
+    async def get_latest_task_preview(sensor_id: str | None = None):
+        """Serve the latest annotated task image for *sensor_id*.
+
+        Previously this endpoint fell back to "newest preview across all
+        sensors" when ``sensor_id`` was missing or unrecognised, which
+        in multi-sensor deployments silently aliased two telescopes to
+        the same preview slot.  Now the caller must name the sensor —
+        other callers should reach for the per-sensor runtime directly.
+        """
+        paths = getattr(ctx.daemon, "latest_annotated_image_paths", {})
+        if not sensor_id:
+            return JSONResponse({"error": "sensor_id is required"}, status_code=400)
+        ann_path = paths.get(sensor_id)
         if not ann_path or not Path(ann_path).exists():
             return JSONResponse({"error": "No preview available"}, status_code=404)
         mime = "image/jpeg" if Path(ann_path).suffix.lower() in (".jpg", ".jpeg") else "image/png"
@@ -84,12 +94,25 @@ def build_core_router(ctx: CitraSenseWebApp) -> APIRouter:
         return get_version_info()
 
     @router.get("/api/processors")
-    async def get_processors():
-        """Get list of all available processors with metadata."""
+    async def get_processors(sensor_id: str):
+        """Get list of all available processors with metadata.
+
+        ``sensor_id`` selects which sensor's ``enabled_processors`` map to
+        apply to the returned ``enabled`` flags. It is required — there is
+        no "default" sensor in a multi-sensor deployment.
+        """
         if not ctx.daemon or not hasattr(ctx.daemon, "processor_registry") or not ctx.daemon.processor_registry:
             return []
 
-        return ctx.daemon.processor_registry.get_all_processors()
+        settings = getattr(ctx.daemon, "settings", None)
+        if not settings or not settings.sensors:
+            return JSONResponse({"error": "No sensors configured"}, status_code=503)
+
+        sensor_config = settings.get_sensor_config(sensor_id)
+        if sensor_config is None:
+            return JSONResponse({"error": f"Unknown sensor_id: {sensor_id}"}, status_code=400)
+
+        return ctx.daemon.processor_registry.get_all_processors(sensor_config=sensor_config)
 
     @router.get("/api/logs")
     async def get_logs(limit: int = 100):

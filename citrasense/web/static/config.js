@@ -23,14 +23,13 @@ const DEFAULT_API_PORT = 443;
 async function handleAdapterChange(adapter) {
     const store = Alpine.store('citrasense');
     if (adapter) {
-        const allAdapterSettings = store.config.adapter_settings || {};
-        const newAdapterSettings = allAdapterSettings[adapter] || {};
+        const sensorCfg = store.config.sensors?.[store.configSensorIndex] || {};
+        const currentSettings = sensorCfg.adapter_settings || {};
 
         console.log(`Switching to adapter: ${adapter}`);
-        console.log('All adapter settings:', allAdapterSettings);
-        console.log('Settings for this adapter:', newAdapterSettings);
+        console.log('Settings for this adapter:', currentSettings);
 
-        await loadAdapterSchema(adapter, newAdapterSettings);
+        await loadAdapterSchema(adapter, currentSettings);
         await loadFilterConfig();
     } else {
         store.adapterFields = [];
@@ -53,6 +52,13 @@ export async function initConfig() {
     window.saveConfiguration = saveConfiguration;
     window.handleInvalidConfigField = handleInvalidConfigField;
 
+    // Called by the Alpine store's configSensorId setter whenever the user
+    // picks a different sensor in the config nav. Keeps adapterFields,
+    // filters, and processor toggles in sync with the selected sensor so
+    // saves don't accidentally merge the previous sensor's hardware
+    // settings into the new sensor's adapter_settings.
+    window._configOnSensorSwitch = onConfigSensorSwitch;
+
     // Load initial config
     await loadConfiguration();
 
@@ -60,6 +66,24 @@ export async function initConfig() {
     await loadProcessors();
 
     checkConfigStatus();
+}
+
+async function onConfigSensorSwitch(sensorId) {
+    const store = (typeof Alpine !== 'undefined' && Alpine.store)
+        ? Alpine.store('citrasense')
+        : null;
+    if (!store || !sensorId) return;
+
+    const sensor = store.config?.sensors?.find(s => s.id === sensorId);
+    if (!sensor) return;
+
+    if (sensor.adapter) {
+        await loadAdapterSchema(sensor.adapter, sensor.adapter_settings || {});
+    } else {
+        store.adapterFields = [];
+    }
+    await loadFilterConfig();
+    await loadProcessors();
 }
 
 /**
@@ -107,15 +131,17 @@ async function loadAdapterOptions() {
  */
 async function loadProcessors() {
     try {
-        const processors = await getProcessors();
+        const store = (typeof Alpine !== 'undefined' && Alpine.store)
+            ? Alpine.store('citrasense')
+            : null;
+        const sensorId = store?.configSensorId || null;
+        const processors = await getProcessors(sensorId);
 
-        if (typeof Alpine !== 'undefined' && Alpine.store) {
-            const store = Alpine.store('citrasense');
-
-            // Update processor enabled states from config
-            const enabledProcessors = store.config?.enabled_processors || {};
+        if (store) {
+            // Per-sensor processor toggles live on sensor_config.enabled_processors
+            const sensor = store.config?.sensors?.find(s => s.id === sensorId);
+            const enabledProcessors = sensor?.enabled_processors || {};
             processors.forEach(proc => {
-                // If config has an explicit setting, use it; otherwise use the default from API
                 if (proc.name in enabledProcessors) {
                     proc.enabled = enabledProcessors[proc.name];
                 }
@@ -149,33 +175,25 @@ async function loadConfiguration() {
             if (config.processing_output_retention_hours === null || config.processing_output_retention_hours === undefined) {
                 config.processing_output_retention_hours = 0;
             }
-            if (config.scheduled_autofocus_enabled === null || config.scheduled_autofocus_enabled === undefined) {
-                config.scheduled_autofocus_enabled = false; // Default to false
-            }
-            if (config.processors_enabled === null || config.processors_enabled === undefined) {
-                config.processors_enabled = true; // Default to true
-            }
             if (config.use_dummy_api === null || config.use_dummy_api === undefined) {
                 config.use_dummy_api = false; // Default to false
             }
-            if (!config.enabled_processors) {
-                config.enabled_processors = {}; // Default to empty object
-            }
 
-            // Default autofocus target settings
-            if (!config.autofocus_target_preset) {
-                config.autofocus_target_preset = 'mirach';
-            }
-            if (!config.autofocus_schedule_mode) {
-                config.autofocus_schedule_mode = 'interval';
-            }
-            if (config.autofocus_after_sunset_offset_minutes === null || config.autofocus_after_sunset_offset_minutes === undefined) {
-                config.autofocus_after_sunset_offset_minutes = 60;
-            }
+            // Prefer the last-selected sensor (persisted in localStorage)
+            // so reopening the Config tab lands back on the rig the
+            // operator was editing.  Fall back to the first configured
+            // sensor only when the persisted id is no longer valid or
+            // nothing has been persisted yet.
+            const persistedId = store.loadPersistedConfigSensorId?.();
+            const persistedSensor = persistedId
+                ? (config.sensors || []).find(s => s.id === persistedId)
+                : null;
+            const initialSensor = persistedSensor || config.sensors?.[0] || null;
+            store.configSensorId = initialSensor?.id || null;
 
             // Load autofocus presets before setting config so the select renders with options
             try {
-                const presetsResp = await fetch('/api/adapter/autofocus/presets');
+                const presetsResp = await fetch(`${store.sensorApiBaseFor(store.configSensorId)}/autofocus/presets`);
                 const presetsData = await presetsResp.json();
                 store.autofocusPresets = presetsData.presets || [];
             } catch (e) {
@@ -184,19 +202,23 @@ async function loadConfiguration() {
             }
 
             store.config = config;
-            if (store.previewExposure === null) {
-                store.previewExposure = config.exposure_seconds || 2.0;
+            for (const sc of (config.sensors || [])) {
+                if (store.previewExposures[sc.id] == null) {
+                    store.setPreviewExposure(sc.id, sc.exposure_seconds || 2.0);
+                }
             }
-            store.savedAdapter = config.hardware_adapter; // Sync savedAdapter to store
+            // Track per-sensor saved adapter for change detection
+            for (const s of (config.sensors || [])) {
+                store.savedAdapters[s.id] = s.adapter;
+            }
             store.apiEndpoint =
                 config.host === PROD_API_HOST ? 'production' :
                 config.host === DEV_API_HOST ? 'development' : 'custom';
 
-            // Load adapter-specific settings if adapter is selected
-            if (config.hardware_adapter) {
-                const allAdapterSettings = config.adapter_settings || {};
-                const currentAdapterSettings = allAdapterSettings[config.hardware_adapter] || {};
-                await loadAdapterSchema(config.hardware_adapter, currentAdapterSettings);
+            // Load adapter-specific settings for the initially selected sensor
+            if (initialSensor?.adapter) {
+                const currentAdapterSettings = initialSensor.adapter_settings || {};
+                await loadAdapterSchema(initialSensor.adapter, currentAdapterSettings);
             }
         }
     } catch (error) {
@@ -228,7 +250,7 @@ function buildAdapterFields(schema, currentSettings = {}) {
 /**
  * Load adapter schema and merge with current values
  */
-async function loadAdapterSchema(adapterName, currentSettings = {}) {
+export async function loadAdapterSchema(adapterName, currentSettings = {}) {
     try {
         const settingsParam = Object.keys(currentSettings).length > 0
             ? `?current_settings=${encodeURIComponent(JSON.stringify(currentSettings))}`
@@ -283,14 +305,22 @@ async function saveConfiguration(event) {
         use_ssl = formConfig.use_ssl !== undefined ? formConfig.use_ssl : true;
     }
 
-    // Convert adapterFields back to flat settings object (for current adapter only)
+    // Convert adapterFields back to flat settings for the selected sensor
     const adapterSettings = {};
     (store.adapterFields || []).forEach(field => {
-        // Include all fields with defined values (including 0, false, empty string)
         if (field.value !== undefined && field.value !== null) {
             adapterSettings[field.name] = field.value;
         }
     });
+
+    // Inject adapter_settings into the selected sensor config
+    const sensorIndex = store.configSensorIndex;
+    if (store.config.sensors?.[sensorIndex]) {
+        store.config.sensors[sensorIndex].adapter_settings = {
+            ...store.config.sensors[sensorIndex].adapter_settings,
+            ...adapterSettings,
+        };
+    }
 
     // Server-computed fields that should not be sent back on save
     const COMPUTED_FIELDS = [
@@ -298,25 +328,27 @@ async function saveConfiguration(event) {
         'images_dir_path', 'processing_dir_path'
     ];
 
+    // Coerce per-sensor numeric fields before save
+    const sc = store.config.sensors?.[sensorIndex];
+    if (sc) {
+        sc.plate_solve_timeout = parseInt(sc.plate_solve_timeout || 60, 10);
+        sc.sextractor_detect_thresh = parseFloat(sc.sextractor_detect_thresh || 5.0);
+        sc.sextractor_detect_minarea = parseInt(sc.sextractor_detect_minarea || 3, 10);
+        sc.autofocus_interval_minutes = parseInt(sc.autofocus_interval_minutes || 60, 10);
+        sc.autofocus_after_sunset_offset_minutes = parseInt(sc.autofocus_after_sunset_offset_minutes ?? 60, 10);
+    }
+
     const config = {
         ...store.config,
-        // Overrides for specially-handled fields
-        adapter_settings: adapterSettings,
         host, port, use_ssl,
-        // Type coercions for form-bound numeric inputs (Alpine x-model can produce strings)
-        autofocus_interval_minutes: parseInt(store.config.autofocus_interval_minutes || 60, 10),
-        autofocus_after_sunset_offset_minutes: parseInt(store.config.autofocus_after_sunset_offset_minutes ?? 60, 10),
         time_check_interval_minutes: parseInt(store.config.time_check_interval_minutes || 5, 10),
         time_offset_pause_ms: parseFloat(store.config.time_offset_pause_ms || 500),
         gps_update_interval_minutes: parseInt(store.config.gps_update_interval_minutes || 5, 10),
-        plate_solve_timeout: parseInt(store.config.plate_solve_timeout || 60, 10),
-        astrometry_index_path: store.config.astrometry_index_path || '',
-        sextractor_detect_thresh: parseFloat(store.config.sextractor_detect_thresh || 5.0),
-        sextractor_detect_minarea: parseInt(store.config.sextractor_detect_minarea || 3, 10),
-        sextractor_filter_name: store.config.sextractor_filter_name || 'default',
     };
 
     COMPUTED_FIELDS.forEach(f => delete config[f]);
+    // adapter_settings is now embedded in sensors[].adapter_settings
+    delete config.adapter_settings;
 
     try {
         // Validate filters BEFORE saving main config
@@ -334,17 +366,17 @@ async function saveConfiguration(event) {
 
         if (result.ok) {
             // Capture previous adapter before updating so we can detect switches
-            const previousAdapter = store.savedAdapter;
+            const sensorId = store.configSensorId;
+            const currentAdapter = store.config.sensors?.[sensorIndex]?.adapter;
+            const previousAdapter = store.savedAdapters[sensorId];
 
-            // Update saved adapter to match newly saved config
-            if (typeof Alpine !== 'undefined' && Alpine.store) {
-                Alpine.store('citrasense').savedAdapter = config.hardware_adapter;
+            // Update saved adapter for this sensor
+            if (sensorId && currentAdapter) {
+                store.savedAdapters[sensorId] = currentAdapter;
             }
 
             // Only push filter changes when staying on the same adapter.
-            // On adapter switch, store.filters holds stale data from the
-            // old adapter — skip it and just reload the new adapter's filters.
-            const adapterChanged = config.hardware_adapter !== previousAdapter;
+            const adapterChanged = currentAdapter !== previousAdapter;
             const filterResults = adapterChanged
                 ? { success: 0, failed: 0 }
                 : await saveModifiedFilters();
@@ -382,6 +414,7 @@ const CONFIG_TAB_LABELS = {
     calibration: 'Calibration',
     observation: 'Observation',
     processing: 'Processing',
+    pipeline: 'Pipeline',
     timelocation: 'Time & Location',
     selftasking: 'Robotic Operations',
     advanced: 'Advanced',
@@ -542,24 +575,24 @@ export function showConfigSection() {
 /**
  * Load and display filter configuration
  */
-async function loadFilterConfig() {
+export async function loadFilterConfig() {
     const store = Alpine.store('citrasense');
 
-    // Check if selected adapter matches saved adapter
-    const selectedAdapter = store.config.hardware_adapter;
+    // Check if selected adapter matches saved adapter for this sensor
+    const sensorId = store.configSensorId;
+    const selectedAdapter = store.config.sensors?.[store.configSensorIndex]?.adapter;
+    const savedAdapter = store.savedAdapters[sensorId];
 
-    if (selectedAdapter && store.savedAdapter && selectedAdapter !== store.savedAdapter) {
-        // Adapter has changed but not saved yet - show message and hide table
+    if (selectedAdapter && savedAdapter && selectedAdapter !== savedAdapter) {
         store.filterConfigVisible = true;
         store.filterAdapterChangeMessageVisible = true;
         return;
     }
 
-    // Hide message and show table when adapters match
     store.filterAdapterChangeMessageVisible = false;
 
     try {
-        const response = await fetch('/api/adapter/filters');
+        const response = await fetch(`${store.sensorApiBaseFor(sensorId)}/filters`);
 
         if (response.status === 404 || response.status === 503) {
             store.filterConfigVisible = false;
@@ -634,7 +667,7 @@ async function saveModifiedFilters() {
 
     // Send single batch update
     try {
-        const response = await fetch('/api/adapter/filters/batch', {
+        const response = await fetch(`${store.sensorApiBaseFor(store.configSensorId)}/filters/batch`, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json'
@@ -648,7 +681,7 @@ async function saveModifiedFilters() {
 
             // After batch update, sync to backend
             try {
-                const syncResponse = await fetch('/api/adapter/filters/sync', {
+                const syncResponse = await fetch(`${store.sensorApiBaseFor(store.configSensorId)}/filters/sync`, {
                     method: 'POST'
                 });
                 if (!syncResponse.ok) {
@@ -680,13 +713,14 @@ async function saveModifiedFilters() {
 /**
  * Trigger or cancel autofocus routine
  */
-async function triggerAutofocus() {
+async function triggerAutofocus(sensorId) {
     const store = Alpine.store('citrasense');
-    const shouldCancel = store.status?.autofocus_requested || store.status?.autofocus_running;
+    const ss = store.status?.sensors?.[sensorId] || {};
+    const shouldCancel = ss?.autofocus_requested || ss?.autofocus_running;
 
     if (shouldCancel) {
         try {
-            const response = await fetch('/api/adapter/autofocus/cancel', {
+            const response = await fetch(`${store.sensorApiBaseFor(sensorId)}/autofocus/cancel`, {
                 method: 'POST'
             });
             const data = await response.json();
@@ -703,11 +737,10 @@ async function triggerAutofocus() {
         return;
     }
 
-    // Request autofocus
-    store.isAutofocusing = true;
+    store._setAutofocusing(sensorId, true);
 
     try {
-        const response = await fetch('/api/adapter/autofocus', {
+        const response = await fetch(`${store.sensorApiBaseFor(sensorId)}/autofocus`, {
             method: 'POST'
         });
 
@@ -722,7 +755,7 @@ async function triggerAutofocus() {
         console.error('Error triggering autofocus:', error);
         showToast('Failed to trigger autofocus', 'danger');
     } finally {
-        store.isAutofocusing = false;
+        store._setAutofocusing(sensorId, false);
     }
 }
 
@@ -736,13 +769,14 @@ export async function initFilterConfig() {
     await loadFilterConfig();
 }
 
-async function triggerAlignment() {
+async function triggerAlignment(sensorId) {
     const store = Alpine.store('citrasense');
-    const isCancel = store.status?.alignment_requested;
+    const ss = store.status?.sensors?.[sensorId] || {};
+    const isCancel = ss?.alignment_requested;
 
     if (isCancel) {
         try {
-            const response = await fetch('/api/adapter/alignment/cancel', { method: 'POST' });
+            const response = await fetch(`${store.sensorApiBaseFor(sensorId)}/alignment/cancel`, { method: 'POST' });
             const data = await response.json();
             if (response.ok && data.success) {
                 showToast('Alignment cancelled', 'info');
@@ -757,7 +791,7 @@ async function triggerAlignment() {
     }
 
     try {
-        const response = await fetch('/api/adapter/alignment', { method: 'POST' });
+        const response = await fetch(`${store.sensorApiBaseFor(sensorId)}/alignment`, { method: 'POST' });
         const data = await response.json();
         if (response.ok) {
             showToast('Alignment queued', 'success');
@@ -770,14 +804,14 @@ async function triggerAlignment() {
     }
 }
 
-async function manualSync(ra, dec) {
+async function manualSync(sensorId, ra, dec) {
     if (ra === '' || ra == null || dec === '' || dec == null) {
         showToast('Enter RA and Dec values before syncing', 'warning');
         return;
     }
 
     try {
-        const response = await fetch('/api/adapter/sync', {
+        const response = await fetch(`${store.sensorApiBaseFor(sensorId)}/sync`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ ra: parseFloat(ra), dec: parseFloat(dec) }),
@@ -797,9 +831,10 @@ async function manualSync(ra, dec) {
 /**
  * Initiate mount homing routine.
  */
-async function homeMount() {
+async function homeMount(sensorId) {
+    const store = Alpine.store('citrasense');
     try {
-        const response = await fetch('/api/mount/home', { method: 'POST' });
+        const response = await fetch(`${store.sensorApiBaseFor(sensorId)}/mount/home`, { method: 'POST' });
         const data = await response.json();
         if (response.ok) {
             showToast('Mount homing initiated', 'success');
@@ -815,9 +850,10 @@ async function homeMount() {
 /**
  * Trigger cable unwind to resolve cable wrap buildup.
  */
-async function triggerCableUnwind() {
+async function triggerCableUnwind(sensorId) {
+    const store = Alpine.store('citrasense');
     try {
-        const response = await fetch('/api/mount/unwind', { method: 'POST' });
+        const response = await fetch(`${store.sensorApiBaseFor(sensorId)}/mount/unwind`, { method: 'POST' });
         const data = await response.json();
         if (response.ok) {
             showToast('Cable unwind started — monitor progress in the Telescope card', 'success');
@@ -833,9 +869,10 @@ async function triggerCableUnwind() {
 /**
  * Reset cable wrap counter to zero after operator verifies cables are straight.
  */
-async function resetCableWrap() {
+async function resetCableWrap(sensorId) {
+    const store = Alpine.store('citrasense');
     try {
-        const response = await fetch('/api/safety/cable-wrap/reset', { method: 'POST' });
+        const response = await fetch(`${store.sensorApiBaseFor(sensorId)}/safety/cable-wrap/reset`, { method: 'POST' });
         const data = await response.json();
         if (response.ok) {
             showToast('Cable wrap counter reset to 0°', 'success');
@@ -887,13 +924,13 @@ async function clearOperatorStop() {
 /**
  * Setup autofocus/alignment button event listeners (call once during init)
  */
-async function changeFilterPosition(position) {
+async function changeFilterPosition(sensorId, position) {
     const store = Alpine.store('citrasense');
-    const wasLooping = store.isLooping;
+    const wasLooping = store.isLoopingFor(sensorId);
     if (wasLooping) store.stopFocusLoop();
 
     try {
-        const response = await fetch('/api/adapter/filter/set', {
+        const response = await fetch(`${store.sensorApiBaseFor(sensorId)}/filter/set`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ position: parseInt(position) })
@@ -909,12 +946,13 @@ async function changeFilterPosition(position) {
         showToast('Failed to change filter', 'danger');
     }
 
-    if (wasLooping) store.startFocusLoop();
+    if (wasLooping) store.startFocusLoop(sensorId);
 }
 
-async function moveFocuserRelative(steps) {
+async function moveFocuserRelative(sensorId, steps) {
+    const store = Alpine.store('citrasense');
     try {
-        const response = await fetch('/api/focuser/move', {
+        const response = await fetch(`${store.sensorApiBaseFor(sensorId)}/focuser/move`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ relative: parseInt(steps) })
@@ -929,9 +967,10 @@ async function moveFocuserRelative(steps) {
     }
 }
 
-async function moveFocuserAbsolute(position) {
+async function moveFocuserAbsolute(sensorId, position) {
+    const store = Alpine.store('citrasense');
     try {
-        const response = await fetch('/api/focuser/move', {
+        const response = await fetch(`${store.sensorApiBaseFor(sensorId)}/focuser/move`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ position: parseInt(position) })
@@ -948,9 +987,10 @@ async function moveFocuserAbsolute(position) {
     }
 }
 
-async function abortFocuser() {
+async function abortFocuser(sensorId) {
+    const store = Alpine.store('citrasense');
     try {
-        const response = await fetch('/api/focuser/abort', {
+        const response = await fetch(`${store.sensorApiBaseFor(sensorId)}/focuser/abort`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' }
         });
@@ -966,9 +1006,10 @@ async function abortFocuser() {
     }
 }
 
-async function mountMove(action, direction) {
+async function mountMove(sensorId, action, direction) {
+    const store = Alpine.store('citrasense');
     try {
-        const response = await fetch('/api/mount/move', {
+        const response = await fetch(`${store.sensorApiBaseFor(sensorId)}/mount/move`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ action, direction })
@@ -982,9 +1023,10 @@ async function mountMove(action, direction) {
     }
 }
 
-async function mountGoto(ra, dec) {
+async function mountGoto(sensorId, ra, dec) {
+    const store = Alpine.store('citrasense');
     try {
-        const response = await fetch('/api/mount/goto', {
+        const response = await fetch(`${store.sensorApiBaseFor(sensorId)}/mount/goto`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ ra: parseFloat(ra), dec: parseFloat(dec) })
@@ -1001,9 +1043,10 @@ async function mountGoto(ra, dec) {
     }
 }
 
-async function mountSetTracking(enabled) {
+async function mountSetTracking(sensorId, enabled) {
+    const store = Alpine.store('citrasense');
     try {
-        const response = await fetch('/api/mount/tracking', {
+        const response = await fetch(`${store.sensorApiBaseFor(sensorId)}/mount/tracking`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ enabled })
@@ -1011,7 +1054,8 @@ async function mountSetTracking(enabled) {
         const data = await response.json();
         if (response.ok) {
             const store = Alpine.store('citrasense');
-            if (store.status) store.status.mount_tracking = enabled;
+            const sd = store.status?.sensors?.[sensorId];
+            if (sd) sd.mount_tracking = enabled;
             showToast(enabled ? 'Sidereal tracking started' : 'Tracking stopped', 'info');
         } else {
             showToast(data.error || 'Tracking command failed', 'danger');
@@ -1022,9 +1066,10 @@ async function mountSetTracking(enabled) {
     }
 }
 
-async function calibratePointingModel() {
+async function calibratePointingModel(sensorId) {
+    const store = Alpine.store('citrasense');
     try {
-        const response = await fetch('/api/mount/pointing-model/calibrate', { method: 'POST' });
+        const response = await fetch(`${store.sensorApiBaseFor(sensorId)}/pointing-model/calibrate`, { method: 'POST' });
         const data = await response.json();
         if (response.ok && data.success) {
             showToast('Pointing calibration started', 'success');
@@ -1037,9 +1082,10 @@ async function calibratePointingModel() {
     }
 }
 
-async function resetPointingModel() {
+async function resetPointingModel(sensorId) {
+    const store = Alpine.store('citrasense');
     try {
-        const response = await fetch('/api/mount/pointing-model/reset', { method: 'POST' });
+        const response = await fetch(`${store.sensorApiBaseFor(sensorId)}/pointing-model/reset`, { method: 'POST' });
         const data = await response.json();
         if (response.ok && data.success) {
             showToast('Pointing model reset', 'success');
@@ -1052,9 +1098,10 @@ async function resetPointingModel() {
     }
 }
 
-async function cancelPointingCalibration() {
+async function cancelPointingCalibration(sensorId) {
+    const store = Alpine.store('citrasense');
     try {
-        const response = await fetch('/api/mount/pointing-model/calibrate/cancel', { method: 'POST' });
+        const response = await fetch(`${store.sensorApiBaseFor(sensorId)}/pointing-model/calibrate/cancel`, { method: 'POST' });
         const data = await response.json();
         if (response.ok && data.success) {
             showToast('Pointing calibration cancelled', 'success');
@@ -1064,6 +1111,25 @@ async function cancelPointingCalibration() {
     } catch (error) {
         console.error('Error cancelling pointing calibration:', error);
         showToast('Failed to cancel pointing calibration', 'danger');
+    }
+}
+
+async function removeSensor(sid) {
+    if (!confirm("Remove sensor '" + sid + "'? You will need to Save & Reload to finalize.")) return;
+    try {
+        const resp = await fetch('/api/config/sensors/' + encodeURIComponent(sid), { method: 'DELETE' });
+        const data = await resp.json();
+        if (!resp.ok) { alert(data.error || 'Failed to remove sensor'); return; }
+        const store = Alpine.store('citrasense');
+        const sensors = store.config.sensors;
+        const idx = sensors.findIndex(s => s.id === sid);
+        if (idx >= 0) sensors.splice(idx, 1);
+        delete store.savedAdapters[sid];
+        if (store.configSensorId === sid) {
+            store.configSensorId = sensors[0]?.id || null;
+        }
+    } catch (e) {
+        alert(e.message);
     }
 }
 
@@ -1079,6 +1145,7 @@ export function setupAutofocusButton() {
     window.cancelPointingCalibration = cancelPointingCalibration;
     window.emergencyStop = emergencyStop;
     window.clearOperatorStop = clearOperatorStop;
+    window._configRemoveSensor = removeSensor;
     window.changeFilterPosition = changeFilterPosition;
     window.moveFocuserRelative = moveFocuserRelative;
     window.moveFocuserAbsolute = moveFocuserAbsolute;
@@ -1093,7 +1160,7 @@ export function setupAutofocusButton() {
  */
 async function reloadAdapterSchema() {
     const store = Alpine.store('citrasense');
-    const adapter = store.config.hardware_adapter;
+    const adapter = store.config.sensors?.[store.configSensorIndex]?.adapter;
     if (!adapter) return;
 
     // Convert current adapterFields back to flat settings object
@@ -1111,7 +1178,7 @@ async function reloadAdapterSchema() {
  */
 async function scanHardware() {
     const store = Alpine.store('citrasense');
-    const adapter = store.config.hardware_adapter;
+    const adapter = store.config.sensors?.[store.configSensorIndex]?.adapter;
     if (!adapter) return;
 
     store.isScanning = true;
