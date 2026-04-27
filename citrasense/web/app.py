@@ -94,10 +94,31 @@ class CitraSenseWebApp:
         self._status_collector.daemon = daemon
 
     def _require_system_idle(self) -> JSONResponse | None:
-        """Return a 409 response if the system is busy with automated operations, else None."""
+        """Return a 409 response if the system is busy with automated operations, else None.
+
+        Prefer :meth:`_require_sensor_idle` for per-sensor hardware routes —
+        this site-level gate returns 409 when *any* sensor is busy, which
+        shouldn't block manual control of a different, idle sensor.
+        """
         if self.status.system_busy:
             return JSONResponse(
                 {"error": f"System busy ({self.status.system_busy_reason})", "system_busy": True},
+                status_code=409,
+            )
+        return None
+
+    def _require_sensor_idle(self, runtime) -> JSONResponse | None:
+        """Return a 409 if *runtime* itself is busy; otherwise None.
+
+        Used by per-sensor hardware routes so one sensor imaging doesn't
+        block manual mount/camera/filter/focuser calls on a different
+        sensor.  The busy reason is produced by
+        :meth:`SensorRuntime.busy_reason`.
+        """
+        reason = runtime.busy_reason() if runtime else ""
+        if reason:
+            return JSONResponse(
+                {"error": f"Sensor busy ({reason})", "system_busy": True},
                 status_code=409,
             )
         return None

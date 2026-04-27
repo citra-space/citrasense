@@ -22,7 +22,11 @@ if TYPE_CHECKING:
     pass
 
 ContextHook = Callable[[ProcessingContext], None]
-SummaryHook = Callable[[Path, AggregatedResult], None]
+# Post-processing hooks receive the full :class:`ProcessingContext` so they
+# can log under the per-sensor logger (``context.logger``) rather than the
+# module-level root logger.  The aggregated result carries all artifact
+# outcomes.
+SummaryHook = Callable[[ProcessingContext, AggregatedResult], None]
 
 
 @dataclass
@@ -56,8 +60,8 @@ def _build_optical_pipeline() -> PipelineDefinition:
             AnnotatedImageProcessor(),
         ]
 
-    def _post_report(working_dir: Path, _aggregated: AggregatedResult) -> None:
-        generate_html_report(working_dir)
+    def _post_report(context: ProcessingContext, _aggregated: AggregatedResult) -> None:
+        generate_html_report(context.working_dir, report_logger=context.logger)
 
     return PipelineDefinition(
         factory=_build_processors,
@@ -219,9 +223,9 @@ class PipelineRegistry:
             f"Total extracted keys: {len(aggregated.extracted_data)}, should_upload={aggregated.should_upload}"
         )
 
-        dump_processing_summary(context.working_dir, aggregated, sensor_id=context.sensor_id)
+        dump_processing_summary(context.working_dir, aggregated, sensor_id=context.sensor_id, logger=context.logger)
         for hook in self._post_hooks:
-            hook(context.working_dir, aggregated)
+            hook(context, aggregated)
 
         return aggregated
 

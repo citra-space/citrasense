@@ -194,9 +194,9 @@ class PhotometryProcessor(AbstractImageProcessor):
                 processor_name=self.name,
             )
 
-            dump_processor_result(context.working_dir, "photometry_result.json", result)
-            dump_csv(context.working_dir, "photometry_apass_catalog.csv", apass_catalog_df)
-            dump_csv(context.working_dir, "photometry_crossmatch.csv", crossmatch_df)
+            dump_processor_result(context.working_dir, "photometry_result.json", result, logger=context.logger)
+            dump_csv(context.working_dir, "photometry_apass_catalog.csv", apass_catalog_df, logger=context.logger)
+            dump_csv(context.working_dir, "photometry_crossmatch.csv", crossmatch_df, logger=context.logger)
 
             return result
 
@@ -209,7 +209,7 @@ class PhotometryProcessor(AbstractImageProcessor):
                 processing_time_seconds=time.time() - start_time,
                 processor_name=self.name,
             )
-            dump_processor_result(context.working_dir, "photometry_result.json", result)
+            dump_processor_result(context.working_dir, "photometry_result.json", result, logger=context.logger)
             return result
 
     def _query_apass_via_aavso_http(self, ra: float, dec: float, radius: float = 2.0) -> pd.DataFrame:

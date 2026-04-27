@@ -108,22 +108,25 @@ class SensorRuntime:
         self._sensor_config = settings.get_sensor_config(sensor.sensor_id)
 
         # ── Queue trio ─────────────────────────────────────────────────
+        # Pass the sensor-scoped logger (``self.logger``) so every record
+        # emitted by the queues and their downstream pipeline contexts
+        # carries ``extra={'sensor_id': ...}`` for the web log filter.
         self.acquisition_queue = AcquisitionQueue(
             num_workers=1,
             settings=settings,
-            logger=logger,
+            logger=self.logger,
             api_client=api_client,
             runtime=self,
         )
         self.processing_queue = ProcessingQueue(
             num_workers=1,
             settings=settings,
-            logger=logger,
+            logger=self.logger,
         )
         self.upload_queue = UploadQueue(
             num_workers=1,
             settings=settings,
-            logger=logger,
+            logger=self.logger,
         )
 
         # ── Hardware managers (telescope-specific) ─────────────────────
@@ -164,6 +167,7 @@ class SensorRuntime:
                 self.logger,
                 hardware_adapter,
                 imaging_queue=self.acquisition_queue,
+                sensor_id=self.sensor_id,
             )
 
     def set_dispatcher(self, dispatcher: TaskDispatcher) -> None:
@@ -221,6 +225,33 @@ class SensorRuntime:
 
     def are_queues_idle(self) -> bool:
         return self.acquisition_queue.is_idle() and self.processing_queue.is_idle() and self.upload_queue.is_idle()
+
+    def busy_reason(self) -> str:
+        """Return a human-readable reason this sensor is busy, or ``""`` when idle.
+
+        Used by the web layer to gate per-sensor manual hardware calls
+        (preview, jog, filter move, focuser move, etc.) — we only want to
+        return 409 when *this* sensor is busy, not when some other sensor
+        in the site is imaging.
+        """
+        reasons: list[str] = []
+        if not self.acquisition_queue.is_idle():
+            reasons.append("imaging")
+        af = self.autofocus_manager
+        if af and af.is_running():
+            reasons.append("autofocus")
+        al = self.alignment_manager
+        if al and al.is_running():
+            reasons.append("alignment")
+        if al and al.is_calibrating():
+            reasons.append("pointing calibration")
+        hm = self.homing_manager
+        if hm and (hm.is_running() or hm.is_requested()):
+            reasons.append("homing")
+        cm = self.calibration_manager
+        if cm and (cm.is_running() or cm.is_requested()):
+            reasons.append("calibration capture")
+        return ", ".join(reasons)
 
     @property
     def sensor_config(self):

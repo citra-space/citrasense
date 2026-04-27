@@ -121,10 +121,20 @@ class TestFilterPreservationAcrossMigration:
         }
         s, mock_sfm = _make_settings(disk)
 
+        # Send the update in the modern per-sensor shape (the legacy
+        # top-level ``adapter_settings`` blob is now dropped — see
+        # test_settings_update_and_save_ignores_legacy_adapter_settings).
+        sensor_id = s.sensors[0].id
         s.update_and_save(
             {
                 "hardware_adapter": "nina",
-                "adapter_settings": {"host": "10.0.0.1"},
+                "sensors": [
+                    {
+                        "id": sensor_id,
+                        "adapter": "nina",
+                        "adapter_settings": {"host": "10.0.0.1"},
+                    }
+                ],
             }
         )
 

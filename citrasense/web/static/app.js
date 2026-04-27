@@ -29,26 +29,18 @@ function updateStoreFromStatus(status) {
         : {};
     store.currentTaskIds = taskIdMap;
     store.activeTaskIdSet = new Set(Object.values(taskIdMap));
-    store.isTaskActive = store.activeTaskIdSet.size > 0;
-    if (store.isTaskActive) {
-        store.nextTaskStartTime = null;
-    }
-
-    if (!store.isTaskActive && store.tasks.length > 0) {
-        const sorted = [...store.tasks].sort((a, b) => new Date(a.start_time) - new Date(b.start_time));
-        store.nextTaskStartTime = sorted[0].start_time;
-    }
 
     // Per-sensor task preview: push the newest annotated image into
     // ``previewDataUrls[sensor_id]`` so each sensor card shows its own
     // latest result.  There is no singular ``previewDataUrl`` — the
     // fullscreen modal reads ``previewDataUrls[activePreviewSensorId]``
     // set by the card's click handler.
-    if (status.sensors && !store.isLooping) {
+    if (status.sensors) {
         if (!store._lastTaskImageUrlBySensor) store._lastTaskImageUrlBySensor = {};
         const next = { ...store.previewDataUrls };
         let changed = false;
         for (const [sid, info] of Object.entries(status.sensors)) {
+            if (store.isLoopingFor(sid)) continue;
             const url = info?.latest_task_image_url;
             if (url && url !== store._lastTaskImageUrlBySensor[sid]) {
                 store._lastTaskImageUrlBySensor[sid] = url;
@@ -64,12 +56,6 @@ function updateStoreFromTasks(tasks) {
     const store = Alpine.store('citrasense');
     const sorted = [...(tasks || [])].sort((a, b) => new Date(a.start_time) - new Date(b.start_time));
     store.tasks = sorted;
-
-    if (!store.isTaskActive && sorted.length > 0) {
-        store.nextTaskStartTime = sorted[0].start_time;
-    } else if (store.isTaskActive) {
-        store.nextTaskStartTime = null;
-    }
 }
 
 const MAX_CLIENT_LOGS = 500;
@@ -85,11 +71,11 @@ function appendLogToStore(log) {
 
 function updatePreviewFromPush(dataUrl, source, sensorId) {
     const store = Alpine.store('citrasense');
-    if (store.isLooping) return;
     if (!sensorId) {
         console.warn('updatePreviewFromPush called without sensorId; dropping preview push');
         return;
     }
+    if (store.isLoopingFor(sensorId)) return;
     store.previewDataUrls = { ...store.previewDataUrls, [sensorId]: dataUrl };
     store.previewSource = source || '';
 }
@@ -108,13 +94,15 @@ function updateStoreFromConnection(connected, reconnectAt = 0) {
     }
 }
 
-// --- 1Hz heartbeat: bumps store.now and refreshes store.countdown ---
+// --- 1Hz heartbeat: bumps $store.citrasense.now ---
 //
 // Reactive Alpine getters that depend on wall-clock time read
 // `$store.citrasense.now` so they re-render once per second without each
 // component running its own setInterval.  The Scheduled Tasks countdown,
 // for instance, is just a getter on `taskRow` that reads `now` and the
-// task's start/stop times.
+// task's start/stop times — so the heartbeat no longer computes a
+// site-wide countdown string (that field was never read by any
+// template, and was ambiguous across sensors anyway).
 let countdownInterval = null;
 
 function startCountdownUpdater() {
@@ -122,13 +110,6 @@ function startCountdownUpdater() {
     countdownInterval = setInterval(() => {
         const store = Alpine.store('citrasense');
         store.now = Date.now();
-
-        if (!store.nextTaskStartTime || store.isTaskActive) {
-            store.countdown = '';
-            return;
-        }
-        const timeUntil = new Date(store.nextTaskStartTime) - store.now;
-        store.countdown = timeUntil > 0 ? store.formatCountdown(timeUntil) : 'Starting soon...';
     }, 1000);
 }
 

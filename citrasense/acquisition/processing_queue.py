@@ -41,16 +41,28 @@ class ProcessingQueue(BaseWorkQueue):
             {"task_id": task_id, "image_path": image_path, "context": context, "on_complete": on_complete}
         )
 
-    def _get_working_dir(self, task_id: str) -> Path:
-        """Return the task-specific working directory path."""
-        if self.settings and getattr(self.settings, "directories", None):
-            return self.settings.directories.processing_dir / task_id
-        return Path(tempfile.gettempdir()) / "citrasense" / "processing" / task_id
+    def _get_working_dir(self, task_id: str, sensor_id: str = "") -> Path:
+        """Return the task-specific working directory path.
 
-    def _cleanup_working_dir(self, task_id: str):
+        In multi-sensor deployments each task is namespaced by ``sensor_id``
+        so two sensors can never collide on a shared ``processing/<task_id>``
+        directory — even if the API task IDs ever stop being globally
+        unique.  Legacy single-sensor tasks (no ``sensor_id`` in the
+        runtime context) fall back to the flat layout for backwards
+        compatibility with existing on-disk artifacts.
+        """
+        if self.settings and getattr(self.settings, "directories", None):
+            base = self.settings.directories.processing_dir
+        else:
+            base = Path(tempfile.gettempdir()) / "citrasense" / "processing"
+        if sensor_id:
+            return base / sensor_id / task_id
+        return base / task_id
+
+    def _cleanup_working_dir(self, task_id: str, sensor_id: str = ""):
         """Remove the task-specific working directory, logging any failure."""
         try:
-            working_dir = self._get_working_dir(task_id)
+            working_dir = self._get_working_dir(task_id, sensor_id)
             if working_dir.exists():
                 shutil.rmtree(working_dir)
                 self.logger.debug(f"Cleaned up working directory: {working_dir}")
@@ -62,6 +74,7 @@ class ProcessingQueue(BaseWorkQueue):
         task_id = item["task_id"]
         task_obj = item["context"].get("task")
         timing_info = item["context"].get("timing_info")
+        sensor_id = item["context"].get("sensor_id", "") or ""
 
         if timing_info:
             timing_info.stamp_now("processing_started_at")
@@ -70,12 +83,12 @@ class ProcessingQueue(BaseWorkQueue):
 
         try:
             # Create task-specific working directory
-            working_dir = self._get_working_dir(task_id)
+            working_dir = self._get_working_dir(task_id, sensor_id)
             working_dir.mkdir(parents=True, exist_ok=True)
             self.logger.debug(f"Created working directory: {working_dir}")
 
             context = OpticalProcessingContext(
-                sensor_id=item["context"].get("sensor_id", ""),
+                sensor_id=sensor_id,
                 image_path=item["image_path"],
                 working_image_path=item["image_path"],
                 working_dir=working_dir,
@@ -125,6 +138,7 @@ class ProcessingQueue(BaseWorkQueue):
         """Handle successful processing completion."""
         task_id = item["task_id"]
         task_obj = item["context"].get("task")
+        sensor_id = item["context"].get("sensor_id", "") or ""
         on_complete = item["on_complete"]
 
         if task_obj:
@@ -132,7 +146,7 @@ class ProcessingQueue(BaseWorkQueue):
 
         retention = getattr(self.settings, "processing_output_retention_hours", 0)
         if retention == 0:
-            self._cleanup_working_dir(task_id)
+            self._cleanup_working_dir(task_id, sensor_id)
 
         on_complete(task_id, result)
 
@@ -140,6 +154,7 @@ class ProcessingQueue(BaseWorkQueue):
         """Handle permanent processing failure (fail-open: upload raw image)."""
         task_id = item["task_id"]
         task_obj = item["context"].get("task")
+        sensor_id = item["context"].get("sensor_id", "") or ""
         on_complete = item["on_complete"]
 
         self.logger.error(f"Task {task_id} processing permanently failed, uploading raw image")
@@ -149,7 +164,7 @@ class ProcessingQueue(BaseWorkQueue):
 
         retention = getattr(self.settings, "processing_output_retention_hours", 0)
         if retention == 0:
-            self._cleanup_working_dir(task_id)
+            self._cleanup_working_dir(task_id, sensor_id)
 
         # Fail-open: notify with None result (will upload raw image)
         on_complete(task_id, None)

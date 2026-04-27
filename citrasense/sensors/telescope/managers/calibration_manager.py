@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, Any
 from citrasense.calibration import FilterSlot
 from citrasense.calibration.calibration_library import CalibrationLibrary
 from citrasense.calibration.master_builder import MasterBuilder
+from citrasense.logging.sensor_logger import SensorLoggerAdapter
 
 if TYPE_CHECKING:
     from citrasense.acquisition.base_work_queue import BaseWorkQueue
@@ -31,7 +32,7 @@ class CalibrationManager:
 
     def __init__(
         self,
-        logger: logging.Logger,
+        logger: logging.Logger | SensorLoggerAdapter,
         hardware_adapter: AbstractAstroHardwareAdapter,
         library: CalibrationLibrary,
         imaging_queue: BaseWorkQueue | None = None,

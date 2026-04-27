@@ -806,7 +806,7 @@
                                         </button>
                                         <button class="btn btn-sm btn-outline-danger"
                                                 x-show="pm.state !== 'untrained'"
-                                                :disabled="$store.citrasense.isSystemBusy"
+                                                :disabled="$store.citrasense.isImagingTaskActive(sensor.id)"
                                                 @click="if (confirm('Reset the pointing model? This clears all calibration data.')) resetPointingModel(sensor.id)">
                                             Reset
                                         </button>
@@ -835,14 +835,14 @@
                             <!-- Mount Controls (direct hardware adapters only) -->
                             <div x-show="sensor?.supports_direct_mount_control"
                                  x-data="{ gotoRa: '', gotoDec: '', jogActive: null,
-                                            jogStart(dir) { if ($store.citrasense.isSystemBusy) return; this.jogActive = dir; mountMove(sensor.id, 'start', dir); },
+                                            jogStart(dir) { if ($store.citrasense.isImagingTaskActive(sensor.id)) return; this.jogActive = dir; mountMove(sensor.id, 'start', dir); },
                                             jogStop(dir)  { if (this.jogActive === dir) { this.jogActive = null; mountMove(sensor.id, 'stop', dir); } } }"
                                  class="mt-3 pt-3 border-top border-secondary">
 
-                                <div x-show="$store.citrasense.isSystemBusy"
+                                <div x-show="$store.citrasense.isImagingTaskActive(sensor.id)"
                                      class="alert alert-info py-1 px-2 mb-2 small">
                                     <i class="bi bi-lock-fill me-1"></i>
-                                    Controls locked — <span x-text="$store.citrasense.systemBusyReason"></span> in progress
+                                    Controls locked — <span x-text="sensor?.system_busy_reason || $store.citrasense.systemBusyReason"></span> in progress
                                 </div>
 
                                 <div class="d-flex align-items-start gap-4">
@@ -852,7 +852,7 @@
                                             <div></div>
                                             <button class="btn btn-sm btn-outline-light d-flex align-items-center justify-content-center p-0"
                                                     style="width:36px;height:36px;"
-                                                    :disabled="$store.citrasense.isSystemBusy"
+                                                    :disabled="$store.citrasense.isImagingTaskActive(sensor.id)"
                                                     @mousedown="jogStart('north')"
                                                     @mouseup="jogStop('north')"
                                                     @mouseleave="jogStop('north')"
@@ -865,7 +865,7 @@
                                             <div></div>
                                             <button class="btn btn-sm btn-outline-light d-flex align-items-center justify-content-center p-0"
                                                     style="width:36px;height:36px;"
-                                                    :disabled="$store.citrasense.isSystemBusy"
+                                                    :disabled="$store.citrasense.isImagingTaskActive(sensor.id)"
                                                     @mousedown="jogStart('west')"
                                                     @mouseup="jogStop('west')"
                                                     @mouseleave="jogStop('west')"
@@ -877,14 +877,14 @@
                                             </button>
                                             <button class="btn btn-sm btn-outline-danger d-flex align-items-center justify-content-center p-0"
                                                     style="width:36px;height:36px;"
-                                                    :disabled="$store.citrasense.isSystemBusy"
+                                                    :disabled="$store.citrasense.isImagingTaskActive(sensor.id)"
                                                     @click="jogActive = null; mountMove(sensor.id,'stop','north'); mountMove(sensor.id,'stop','south'); mountMove(sensor.id,'stop','east'); mountMove(sensor.id,'stop','west')"
                                                     title="Stop all motion">
                                                 <i class="bi bi-stop-fill"></i>
                                             </button>
                                             <button class="btn btn-sm btn-outline-light d-flex align-items-center justify-content-center p-0"
                                                     style="width:36px;height:36px;"
-                                                    :disabled="$store.citrasense.isSystemBusy"
+                                                    :disabled="$store.citrasense.isImagingTaskActive(sensor.id)"
                                                     @mousedown="jogStart('east')"
                                                     @mouseup="jogStop('east')"
                                                     @mouseleave="jogStop('east')"
@@ -897,7 +897,7 @@
                                             <div></div>
                                             <button class="btn btn-sm btn-outline-light d-flex align-items-center justify-content-center p-0"
                                                     style="width:36px;height:36px;"
-                                                    :disabled="$store.citrasense.isSystemBusy"
+                                                    :disabled="$store.citrasense.isImagingTaskActive(sensor.id)"
                                                     @mousedown="jogStart('south')"
                                                     @mouseup="jogStop('south')"
                                                     @mouseleave="jogStop('south')"
@@ -926,7 +926,7 @@
                                                            x-model.lazy="gotoDec" step="any" min="-90" max="90" placeholder="-90–90">
                                                 </div>
                                                 <button class="btn btn-sm btn-outline-primary text-nowrap"
-                                                        :disabled="gotoRa === '' || gotoDec === '' || sensor?.mount_slewing || $store.citrasense.isSystemBusy"
+                                                        :disabled="gotoRa === '' || gotoDec === '' || sensor?.mount_slewing || $store.citrasense.isImagingTaskActive(sensor.id)"
                                                         @click="mountGoto(sensor.id, gotoRa, gotoDec)">
                                                     <i class="bi bi-cursor"></i> Go
                                                 </button>
@@ -952,7 +952,7 @@
                                             </button>
                                             <button class="btn btn-sm"
                                                     :class="sensor?.mount_tracking ? 'btn-success' : 'btn-outline-secondary'"
-                                                    :disabled="$store.citrasense.isSystemBusy"
+                                                    :disabled="$store.citrasense.isImagingTaskActive(sensor.id)"
                                                     @click="mountSetTracking(sensor.id, !sensor?.mount_tracking)">
                                                 <i class="bi bi-broadcast me-1"></i>Sidereal Tracking
                                             </button>
@@ -1080,37 +1080,38 @@
                                     <div>
                                         <label class="form-label small mb-0">Exp (s)</label>
                                         <input type="number" class="form-control form-control-sm" style="width: 80px;"
-                                               x-model.number="$store.citrasense.previewExposure"
+                                               :value="$store.citrasense.previewExposureFor(sensor.id)"
+                                               @input="$store.citrasense.setPreviewExposure(sensor.id, Number($event.target.value))"
                                                min="0.01" max="30" step="0.1"
-                                               :disabled="$store.citrasense.isLooping">
+                                               :disabled="$store.citrasense.isLoopingFor(sensor.id)">
                                     </div>
                                     <button class="btn btn-sm btn-outline-light"
-                                            :disabled="$store.citrasense.isCapturing || $store.citrasense.isLooping || $store.citrasense.isSystemBusy"
+                                            :disabled="$store.citrasense.isCapturingFor(sensor.id) || $store.citrasense.isLoopingFor(sensor.id) || $store.citrasense.isImagingTaskActive(sensor.id)"
                                             @click="$store.citrasense.singlePreview(sensor.id)">
                                         <i class="bi bi-camera"></i> Snap
                                     </button>
                                     <button class="btn btn-sm"
-                                            :class="$store.citrasense.isLooping ? 'btn-danger' : 'btn-success'"
-                                            :disabled="!$store.citrasense.isLooping && $store.citrasense.isSystemBusy"
-                                            @click="$store.citrasense.isLooping ? $store.citrasense.stopFocusLoop() : $store.citrasense.startFocusLoop(sensor.id)">
-                                        <i class="bi" :class="$store.citrasense.isLooping ? 'bi-stop-fill' : 'bi-play-fill'"></i>
-                                        <span x-text="$store.citrasense.isLooping ? 'Stop' : 'Loop'"></span>
+                                            :class="$store.citrasense.isLoopingFor(sensor.id) ? 'btn-danger' : 'btn-success'"
+                                            :disabled="!$store.citrasense.isLoopingFor(sensor.id) && ($store.citrasense.isImagingTaskActive(sensor.id) || $store.citrasense.isAnyLooping)"
+                                            @click="$store.citrasense.isLoopingFor(sensor.id) ? $store.citrasense.stopFocusLoop() : $store.citrasense.startFocusLoop(sensor.id)">
+                                        <i class="bi" :class="$store.citrasense.isLoopingFor(sensor.id) ? 'bi-stop-fill' : 'bi-play-fill'"></i>
+                                        <span x-text="$store.citrasense.isLoopingFor(sensor.id) ? 'Stop' : 'Loop'"></span>
                                     </button>
                                     <button class="btn btn-sm btn-outline-secondary"
-                                            :disabled="$store.citrasense.isSaving || $store.citrasense.isLooping || $store.citrasense.isSystemBusy"
+                                            :disabled="$store.citrasense.isSavingFor(sensor.id) || $store.citrasense.isLoopingFor(sensor.id) || $store.citrasense.isImagingTaskActive(sensor.id)"
                                             @click="$store.citrasense.captureImage(sensor.id)"
                                             data-bs-toggle="tooltip" data-bs-theme="dark" title="Capture to FITS using current exposure">
                                         <i class="bi bi-save"></i>
-                                        <span x-text="$store.citrasense.isSaving ? 'Saving...' : 'Save'"></span>
+                                        <span x-text="$store.citrasense.isSavingFor(sensor.id) ? 'Saving...' : 'Save'"></span>
                                     </button>
                                     <button class="btn btn-sm"
-                                            :class="$store.citrasense.previewFlipH ? 'btn-info' : 'btn-outline-secondary'"
-                                            @click="$store.citrasense.previewFlipH = !$store.citrasense.previewFlipH"
+                                            :class="$store.citrasense.previewFlipHFor(sensor.id) ? 'btn-info' : 'btn-outline-secondary'"
+                                            @click="$store.citrasense.togglePreviewFlipH(sensor.id)"
                                             data-bs-toggle="tooltip" data-bs-theme="dark" title="Flip preview horizontally (corrects diagonal mirror)">
                                         <i class="bi bi-symmetry-vertical"></i>
                                     </button>
-                                    <span class="text-warning small" x-show="$store.citrasense.isSystemBusy" x-cloak>
-                                        <i class="bi bi-lock-fill"></i> System busy
+                                    <span class="text-warning small" x-show="$store.citrasense.isImagingTaskActive(sensor.id)" x-cloak>
+                                        <i class="bi bi-lock-fill"></i> <span x-text="sensor?.system_busy_reason ? 'Busy (' + sensor.system_busy_reason + ')' : 'Sensor busy'"></span>
                                     </span>
                                 </div>
                             </div>
@@ -1130,7 +1131,7 @@
                                             <span class="rounded-circle d-inline-block flex-shrink-0"
                                                   :style="{ width: '10px', height: '10px', minWidth: '10px', backgroundColor: $store.citrasense.filterColors[sensor?.current_filter_name] || '#777' }"></span>
                                             <select class="form-select form-select-sm"
-                                                    :disabled="$store.citrasense.isSystemBusy"
+                                                    :disabled="$store.citrasense.isImagingTaskActive(sensor.id)"
                                                     :value="String(sensor?.current_filter_position ?? '')"
                                                     @change="window.changeFilterPosition(sensor.id, $event.target.value)">
                                                 <template x-for="[fid, fdata] in Object.entries($store.citrasense.filters || {}).filter(([_, f]) => f.enabled !== false)" :key="fid">
@@ -1163,12 +1164,12 @@
                                     <div class="col-12 col-md">
                                         <div class="d-flex align-items-center gap-1">
                                             <button type="button" class="btn btn-sm btn-outline-secondary"
-                                                    :disabled="sensor?.focuser_moving || $store.citrasense.isSystemBusy"
+                                                    :disabled="sensor?.focuser_moving || $store.citrasense.isImagingTaskActive(sensor.id)"
                                                     @click="window.moveFocuserRelative(sensor.id, -stepSize * 10)" title="In (coarse)">
                                                 <i class="bi bi-chevron-double-left"></i>
                                             </button>
                                             <button type="button" class="btn btn-sm btn-outline-secondary"
-                                                    :disabled="sensor?.focuser_moving || $store.citrasense.isSystemBusy"
+                                                    :disabled="sensor?.focuser_moving || $store.citrasense.isImagingTaskActive(sensor.id)"
                                                     @click="window.moveFocuserRelative(sensor.id, -stepSize)" title="In (fine)">
                                                 <i class="bi bi-chevron-left"></i>
                                             </button>
@@ -1178,12 +1179,12 @@
                                                 <span class="input-group-text">steps</span>
                                             </div>
                                             <button type="button" class="btn btn-sm btn-outline-secondary"
-                                                    :disabled="sensor?.focuser_moving || $store.citrasense.isSystemBusy"
+                                                    :disabled="sensor?.focuser_moving || $store.citrasense.isImagingTaskActive(sensor.id)"
                                                     @click="window.moveFocuserRelative(sensor.id, stepSize)" title="Out (fine)">
                                                 <i class="bi bi-chevron-right"></i>
                                             </button>
                                             <button type="button" class="btn btn-sm btn-outline-secondary"
-                                                    :disabled="sensor?.focuser_moving || $store.citrasense.isSystemBusy"
+                                                    :disabled="sensor?.focuser_moving || $store.citrasense.isImagingTaskActive(sensor.id)"
                                                     @click="window.moveFocuserRelative(sensor.id, stepSize * 10)" title="Out (coarse)">
                                                 <i class="bi bi-chevron-double-right"></i>
                                             </button>
@@ -1213,7 +1214,7 @@
                                                    x-model.number="targetPos" min="0" placeholder="Pos"
                                                    :max="sensor?.focuser_max_position || 999999">
                                             <button type="button" class="btn btn-sm btn-outline-primary"
-                                                    :disabled="sensor?.focuser_moving || $store.citrasense.isSystemBusy"
+                                                    :disabled="sensor?.focuser_moving || $store.citrasense.isImagingTaskActive(sensor.id)"
                                                     @click="window.moveFocuserAbsolute(sensor.id, targetPos)">
                                                 Go
                                             </button>

@@ -445,11 +445,27 @@ def autotune_extraction(
 
 
 def _discover_bundles(base_dir: Path, max_bundles: int = 10) -> list[Path]:
-    """Find debug bundle directories under *base_dir* that have WCS-solved FITS."""
-    bundles = []
-    for d in sorted(base_dir.iterdir(), key=lambda p: p.stat().st_mtime, reverse=True):
-        if not d.is_dir() or not (d / "task.json").exists():
+    """Find debug bundle directories under *base_dir* that have WCS-solved FITS.
+
+    Supports the legacy flat layout (``base_dir/<task_id>``) and the
+    multi-sensor layout (``base_dir/<sensor_id>/<task_id>``).  Bundles
+    across both layouts are combined and returned sorted by mtime
+    (newest first).
+    """
+    candidates: list[Path] = []
+    for d in base_dir.iterdir():
+        if not d.is_dir():
             continue
+        if (d / "task.json").exists():
+            candidates.append(d)
+        else:
+            # Possible sensor dir — walk one level deeper.
+            for nested in d.iterdir():
+                if nested.is_dir() and (nested / "task.json").exists():
+                    candidates.append(nested)
+
+    bundles = []
+    for d in sorted(candidates, key=lambda p: p.stat().st_mtime, reverse=True):
         fits_files = list(d.glob("*.fits"))
         has_wcs = any(f.name.endswith("_wcs.fits") or f.name == "calibrated.fits" for f in fits_files)
         if not has_wcs:
@@ -465,7 +481,23 @@ def _discover_bundles(base_dir: Path, max_bundles: int = 10) -> list[Path]:
 @click.option("--num-bundles", default=5, help="Max bundles to evaluate against.")
 @click.option("--apply", "apply_settings", is_flag=True, help="Write best settings to config.json.")
 @click.option("--top", default=10, help="Number of top results to display.")
-def cli(processing_dir: Path, num_bundles: int, apply_settings: bool, top: int) -> None:
+@click.option(
+    "--sensor-id",
+    "sensor_id",
+    default=None,
+    help=(
+        "Sensor ID to apply tuning to.  Required when --apply is used and the "
+        "site has more than one sensor configured (so we don't silently write "
+        "tuning for the wrong rig)."
+    ),
+)
+def cli(
+    processing_dir: Path,
+    num_bundles: int,
+    apply_settings: bool,
+    top: int,
+    sensor_id: str | None,
+) -> None:
     """Auto-tune SExtractor parameters against retained debug bundles."""
     log = logging.getLogger("citrasense.Autotune")
     log.setLevel(logging.INFO)
@@ -509,15 +541,40 @@ def cli(processing_dir: Path, num_bundles: int, apply_settings: bool, top: int) 
     if apply_settings and results:
         best = results[0]
         settings = CitraSenseSettings.load()
-        if settings.sensors:
-            sc = settings.sensors[0]
-            sc.sextractor_detect_thresh = best["detect_thresh"]
-            sc.sextractor_detect_minarea = best["detect_minarea"]
-            sc.sextractor_filter_name = best["filter_name"]
+        if not settings.sensors:
+            click.echo("No sensors configured; cannot apply tuning.", err=True)
+            sys.exit(1)
+
+        # Pick the target sensor.  Refuse to silently default to sensors[0]
+        # when more than one rig is configured — the operator must pick.
+        target = None
+        if sensor_id:
+            target = next((sc for sc in settings.sensors if sc.id == sensor_id), None)
+            if target is None:
+                ids = ", ".join(sc.id for sc in settings.sensors)
+                click.echo(
+                    f"Sensor id {sensor_id!r} not found in config. Available: {ids}",
+                    err=True,
+                )
+                sys.exit(2)
+        elif len(settings.sensors) == 1:
+            target = settings.sensors[0]
+        else:
+            ids = ", ".join(sc.id for sc in settings.sensors)
+            click.echo(
+                f"Multiple sensors configured ({ids}); pass --sensor-id to pick one.",
+                err=True,
+            )
+            sys.exit(2)
+
+        target.sextractor_detect_thresh = best["detect_thresh"]
+        target.sextractor_detect_minarea = best["detect_minarea"]
+        target.sextractor_filter_name = best["filter_name"]
         settings.save()
         click.echo()
         click.echo(
-            f"Applied best config: thresh={best['detect_thresh']}, "
+            f"Applied best config to sensor {target.id!r}: "
+            f"thresh={best['detect_thresh']}, "
             f"minarea={best['detect_minarea']}, filter={best['filter_name']}"
         )
 

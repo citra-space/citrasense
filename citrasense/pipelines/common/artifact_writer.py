@@ -23,7 +23,16 @@ import pandas as pd
 if TYPE_CHECKING:
     from citrasense.pipelines.common.processor_result import AggregatedResult
 
-logger = logging.getLogger("citrasense.ArtifactWriter")
+_module_logger = logging.getLogger("citrasense.ArtifactWriter")
+
+
+def _log(logger: Any) -> Any:
+    """Return the caller-provided logger, falling back to the module logger.
+
+    Callers that have a ``ProcessingContext`` should pass ``context.logger`` so
+    artifact-write failures are tagged with the originating ``sensor_id``.
+    """
+    return logger if logger is not None else _module_logger
 
 
 def _safe_value(v: Any) -> Any:
@@ -62,20 +71,21 @@ def _sanitize(obj: Any) -> Any:
     return _safe_value(obj)
 
 
-def dump_json(working_dir: Path, filename: str, data: Any) -> None:
+def dump_json(working_dir: Path, filename: str, data: Any, logger: Any | None = None) -> None:
     """Write *data* as pretty-printed JSON to *working_dir/filename*.
 
-    Best-effort: exceptions are logged and swallowed.
+    Best-effort: exceptions are logged and swallowed.  Pass
+    ``context.logger`` so failures are attributed to the correct sensor.
     """
     try:
         path = working_dir / filename
         with open(path, "w", encoding="utf-8") as f:
             json.dump(_sanitize(data), f, indent=2, default=str)
     except Exception as exc:
-        logger.warning("Failed to write artifact %s: %s", filename, exc)
+        _log(logger).warning("Failed to write artifact %s: %s", filename, exc)
 
 
-def dump_csv(working_dir: Path, filename: str, dataframe: pd.DataFrame) -> None:
+def dump_csv(working_dir: Path, filename: str, dataframe: pd.DataFrame, logger: Any | None = None) -> None:
     """Write a pandas DataFrame as CSV to *working_dir/filename*.
 
     Best-effort: exceptions are logged and swallowed.
@@ -84,7 +94,7 @@ def dump_csv(working_dir: Path, filename: str, dataframe: pd.DataFrame) -> None:
         path = working_dir / filename
         dataframe.to_csv(path, index=False)
     except Exception as exc:
-        logger.warning("Failed to write artifact %s: %s", filename, exc)
+        _log(logger).warning("Failed to write artifact %s: %s", filename, exc)
 
 
 def task_to_dict(task: Any) -> dict:
@@ -101,7 +111,13 @@ def task_to_dict(task: Any) -> dict:
     return {"repr": repr(task)}
 
 
-def dump_processor_result(working_dir: Path, filename: str, result: Any, extra: dict | None = None) -> None:
+def dump_processor_result(
+    working_dir: Path,
+    filename: str,
+    result: Any,
+    extra: dict | None = None,
+    logger: Any | None = None,
+) -> None:
     """Write a ProcessorResult's key fields (plus optional extras) to JSON."""
     data: dict[str, Any] = {
         "processor_name": result.processor_name,
@@ -113,13 +129,14 @@ def dump_processor_result(working_dir: Path, filename: str, result: Any, extra: 
     }
     if extra:
         data.update(extra)
-    dump_json(working_dir, filename, data)
+    dump_json(working_dir, filename, data, logger=logger)
 
 
 def dump_processing_summary(
     working_dir: Path,
     aggregated: AggregatedResult,
     sensor_id: str = "",
+    logger: Any | None = None,
 ) -> None:
     """Write the full aggregated processing result to ``processing_summary.json``.
 
@@ -147,4 +164,4 @@ def dump_processing_summary(
         "processors": processors,
         "extracted_data": {k: _safe_value(v) for k, v in aggregated.extracted_data.items()},
     }
-    dump_json(working_dir, "processing_summary.json", data)
+    dump_json(working_dir, "processing_summary.json", data, logger=logger)

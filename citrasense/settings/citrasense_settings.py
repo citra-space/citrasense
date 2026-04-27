@@ -648,33 +648,22 @@ class CitraSenseSettings(BaseModel):
                     merged_as = {**existing.adapter_settings, **sd.get("adapter_settings", {})}
                     sd["adapter_settings"] = merged_as
 
-        # Handle legacy top-level adapter_settings from old web clients.
-        #
-        # TODO(multi-sensor cleanup — remove after v1.0 once all clients
-        # send adapter_settings nested under ``sensors[].adapter_settings``):
-        # This path unconditionally funnels a top-level ``adapter_settings``
-        # blob into ``sensors[0]``, which is wrong for multi-rig
-        # deployments. The modern web UI (post multi-sensor migration)
-        # already sends per-sensor adapter_settings inside ``sensors[]``, so
-        # this branch only triggers for stale/older clients. When removed,
-        # also drop any remaining self-test fixtures that rely on it.
-        old_as: dict | None = config.pop("adapter_settings", None)
-        if old_as and isinstance(old_as, dict) and self.sensors:
+        # Top-level ``adapter_settings`` blobs from pre-multi-sensor clients
+        # are no longer honoured.  The shim that funnelled them into
+        # ``sensors[0]`` was wrong for multi-rig deployments and has been
+        # removed — the in-tree web UI has shipped per-sensor
+        # ``sensors[].adapter_settings`` for several releases.  We still
+        # pop the key so it doesn't leak into the persisted config, but
+        # we drop it on the floor with a warning so stale clients are
+        # loudly told to update.
+        if "adapter_settings" in config:
             import logging
 
+            config.pop("adapter_settings", None)
             logging.getLogger("citrasense.Settings").warning(
-                "Received deprecated top-level 'adapter_settings' in config update; "
-                "merging into sensors[0] (%s). Update the client to send "
-                "sensors[].adapter_settings instead — this shim will be removed.",
-                self.sensors[0].id,
+                "Ignoring deprecated top-level 'adapter_settings' in config update; "
+                "update the client to send sensors[].adapter_settings instead.",
             )
-            head = self.sensors[0]
-            head.adapter_settings = {**head.adapter_settings, **old_as}
-            if incoming_sensors:
-                for sd in incoming_sensors:
-                    if sd.get("id") == head.id:
-                        sd["adapter_settings"] = head.adapter_settings
-                        break
 
         with self._save_lock:
             merged = self.to_dict()

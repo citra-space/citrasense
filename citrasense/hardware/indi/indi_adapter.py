@@ -17,9 +17,6 @@ class IndiAdapter(PyIndi.BaseClient, AbstractAstroHardwareAdapter):
     # Minimum angular distance (degrees) to consider a move significant for slew rate measurement
     _slew_min_distance_deg: float = 2.0
 
-    our_scope: PyIndi.BaseDevice
-    our_camera: PyIndi.BaseDevice
-
     def __init__(self, logger: logging.Logger, images_dir: Path, **kwargs):
         PyIndi.BaseClient.__init__(self)
         AbstractAstroHardwareAdapter.__init__(self, images_dir=images_dir)
@@ -30,6 +27,14 @@ class IndiAdapter(PyIndi.BaseClient, AbstractAstroHardwareAdapter):
         self.port = int(kwargs.get("port", 7624))
         self.telescope_name = kwargs.get("telescope_name", "")
         self.camera_name = kwargs.get("camera_name", "")
+        # Per-instance device handles.  These used to live as class-level
+        # annotations which, combined with ``IndiAdapter.our_scope`` reads,
+        # risked aliasing two IndiAdapter instances into the same slot in
+        # multi-sensor deployments.  Initialize to ``None`` on ``self`` so
+        # the state is strictly per-instance and type-narrowed via explicit
+        # ``assert self.our_scope is not None`` in hot paths.
+        self.our_scope: PyIndi.BaseDevice | None = None
+        self.our_camera: PyIndi.BaseDevice | None = None
         # Per-instance mutable state. These used to live at class scope,
         # which silently aliased two IndiAdapter instances into the same
         # slots for any code path that accidentally used ``IndiAdapter._x``
@@ -125,6 +130,7 @@ class IndiAdapter(PyIndi.BaseClient, AbstractAstroHardwareAdapter):
                 )
 
             if p.getType() == PyIndi.INDI_BLOB:
+                assert self.our_camera is not None, "our_camera must be set before BLOB callback fires"
                 blobProperty = self.our_camera.getBLOB(p.getName())
                 format = blobProperty[0].getFormat()
                 bloblen = blobProperty[0].getBlobLen()
@@ -636,7 +642,7 @@ class IndiAdapter(PyIndi.BaseClient, AbstractAstroHardwareAdapter):
         """Set the tracking rate for the telescope in RA and Dec (arcseconds per second)."""
         self.logger.info(f"Setting tracking rate: RA {ra_rate} arcseconds/s, Dec {dec_rate} arcseconds/s")
         try:
-
+            assert self.our_scope is not None, "our_scope must be set before tracking rate commands"
             track_state_prop = self.our_scope.getSwitch("TELESCOPE_TRACK_STATE")
             track_state_prop[0].setState(PyIndi.ISS_OFF)
             self.sendNewSwitch(track_state_prop)
@@ -666,6 +672,7 @@ class IndiAdapter(PyIndi.BaseClient, AbstractAstroHardwareAdapter):
 
     def get_tracking_rate(self) -> tuple[float, float]:
         """Get the current tracking rate for the telescope in RA and Dec (arcseconds per second)."""
+        assert self.our_scope is not None, "our_scope must be set before reading tracking rate"
         ra_rate = self.our_scope.getNumber("TELESCOPE_TRACK_RATE_RA")[0].value
         dec_rate = self.our_scope.getNumber("TELESCOPE_TRACK_RATE_DEC")[0].value
         return ra_rate, dec_rate

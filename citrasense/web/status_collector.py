@@ -69,23 +69,33 @@ class StatusCollector:
                 status.tasks_pending = td.pending_task_count
                 status.processing_active = td.is_processing_active()
 
-            # Aggregate system_busy from all sensor runtimes
+            # Per-sensor and aggregate ``system_busy`` flags.  The site-wide
+            # aggregate is retained for the top-level status bar, but
+            # per-sensor manual-control gating (preview, jog, filter move
+            # etc.) now reads ``status.sensors[sid].system_busy`` so one
+            # sensor imaging doesn't freeze the other sensor's card.
             busy_reasons: list[str] = []
             if td and td.is_processing_active():
                 busy_reasons.append("processing")
             for sd in status.sensors.values():
                 if sd.get("type") != "telescope":
+                    sd["system_busy"] = False
+                    sd["system_busy_reason"] = ""
                     continue
+                sensor_reasons: list[str] = []
                 if not sd.get("acquisition_idle", True):
-                    busy_reasons.append("imaging")
+                    sensor_reasons.append("imaging")
                 if sd.get("alignment_running"):
-                    busy_reasons.append("alignment")
+                    sensor_reasons.append("alignment")
                 if sd.get("autofocus_running"):
-                    busy_reasons.append("autofocus")
+                    sensor_reasons.append("autofocus")
                 if sd.get("pointing_calibration_running"):
-                    busy_reasons.append("calibration")
+                    sensor_reasons.append("calibration")
                 if sd.get("mount_homing"):
-                    busy_reasons.append("homing")
+                    sensor_reasons.append("homing")
+                sd["system_busy"] = bool(sensor_reasons)
+                sd["system_busy_reason"] = ", ".join(sensor_reasons)
+                busy_reasons.extend(sensor_reasons)
             status.system_busy = bool(busy_reasons)
             status.system_busy_reason = ", ".join(busy_reasons)
             _mark("task_dispatcher")

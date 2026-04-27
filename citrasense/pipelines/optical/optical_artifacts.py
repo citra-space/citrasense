@@ -134,8 +134,9 @@ def dump_optical_context_artifacts(context: ProcessingContext) -> None:
     """
     assert isinstance(context, OpticalProcessingContext)
     wd = context.working_dir
+    ctx_logger = context.logger
     try:
-        dump_json(wd, "task.json", task_to_dict(context.task))
+        dump_json(wd, "task.json", task_to_dict(context.task), logger=ctx_logger)
 
         elsets: list[dict] = []
         if context.elset_cache:
@@ -143,7 +144,7 @@ def dump_optical_context_artifacts(context: ProcessingContext) -> None:
                 elsets = context.elset_cache.get_elsets()
             except Exception:
                 pass
-        dump_json(wd, "elset_cache_snapshot.json", elsets)
+        dump_json(wd, "elset_cache_snapshot.json", elsets, logger=ctx_logger)
 
         location: dict[str, Any] = {}
         if context.location_service:
@@ -151,16 +152,16 @@ def dump_optical_context_artifacts(context: ProcessingContext) -> None:
                 location = context.location_service.get_current_location() or {}
             except Exception:
                 pass
-        dump_json(wd, "observer_location.json", location)
+        dump_json(wd, "observer_location.json", location, logger=ctx_logger)
 
-        dump_json(wd, "telescope_record.json", context.telescope_record or {})
+        dump_json(wd, "telescope_record.json", context.telescope_record or {}, logger=ctx_logger)
 
-        dump_json(wd, "fits_header.json", _read_fits_header(context.working_image_path))
+        dump_json(wd, "fits_header.json", _read_fits_header(context.working_image_path), logger=ctx_logger)
 
         if context.satellite_data:
-            dump_json(wd, "target_satellite.json", context.satellite_data)
+            dump_json(wd, "target_satellite.json", context.satellite_data, logger=ctx_logger)
 
         if context.pointing_report:
-            dump_json(wd, "pointing_report.json", context.pointing_report)
+            dump_json(wd, "pointing_report.json", context.pointing_report, logger=ctx_logger)
     except Exception as exc:
-        logger.warning("Failed to dump optical context artifacts: %s", exc)
+        (ctx_logger or logger).warning("Failed to dump optical context artifacts: %s", exc)

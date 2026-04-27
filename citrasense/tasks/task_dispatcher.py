@@ -134,6 +134,17 @@ class TaskDispatcher:
                 len(candidates),
                 task.sensor_type,
             )
+        else:
+            # No candidates: either nothing of this type is registered or
+            # the site has no runtimes at all.  Either way, the task can't
+            # be routed — make that visible in the log so operators can
+            # correlate dropped tasks with config mistakes (wrong sensor
+            # type on the API side, no telescope registered, etc.).
+            self.logger.warning(
+                "Task %s (sensor_type=%r) has no sensor_id and no matching runtime; dropping",
+                getattr(task, "id", "?"),
+                task.sensor_type,
+            )
         return None
 
     @property
@@ -570,15 +581,20 @@ class TaskDispatcher:
             if is_new:
                 self.clear_pending_tasks()
                 trigger_name = triggered_check.name if triggered_check else "unknown"
+                trigger_sid_raw = getattr(triggered_check, "sensor_id", None) if triggered_check else None
+                trigger_sid = trigger_sid_raw if isinstance(trigger_sid_raw, str) and trigger_sid_raw else None
                 self.logger.critical(
-                    "EMERGENCY — cancelled in-flight imaging (trigger: %s)",
+                    "EMERGENCY — cancelled in-flight imaging (trigger: %s, sensor: %s)",
                     trigger_name,
+                    trigger_sid or "site",
                 )
                 if self.on_toast:
+                    where = f" on {trigger_sid}" if trigger_sid else ""
+                    toast_id = f"safety-emergency:{trigger_sid}" if trigger_sid else "safety-emergency"
                     self.on_toast(
-                        f"Safety EMERGENCY: {trigger_name} — imaging cancelled",
+                        f"Safety EMERGENCY: {trigger_name}{where} — imaging cancelled",
                         "danger",
-                        "safety-emergency",
+                        toast_id,
                     )
             if triggered_check and is_new:
                 try:

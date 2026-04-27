@@ -18,6 +18,7 @@ from enum import Enum
 from typing import TYPE_CHECKING, Any
 
 from citrasense.location.twilight import ObservingWindow, compute_observing_window
+from citrasense.logging.sensor_logger import SensorLoggerAdapter
 
 _SHUTDOWN_TIMEOUT_SECONDS = 300  # 5 minutes — force-park if imaging hasn't drained
 
@@ -53,7 +54,7 @@ class ObservingSessionManager:
     def __init__(
         self,
         sensor_config: SensorConfig,
-        logger: logging.Logger,
+        logger: logging.Logger | SensorLoggerAdapter,
         get_location: Callable[[], tuple[float, float] | None],
         request_autofocus: Callable[[], Any],
         is_autofocus_running: Callable[[], bool],

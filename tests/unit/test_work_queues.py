@@ -401,7 +401,7 @@ def test_processing_queue_on_success():
     }
     with patch.object(pq, "_cleanup_working_dir") as mock_cleanup:
         pq._on_success(item, "result")
-        mock_cleanup.assert_called_once_with("t1")
+        mock_cleanup.assert_called_once_with("t1", "")
     task_obj.set_status_msg.assert_called_with("Processing complete")
     on_complete.assert_called_once_with("t1", "result")
 
@@ -439,7 +439,7 @@ def test_processing_queue_on_permanent_failure():
     }
     with patch.object(pq, "_cleanup_working_dir") as mock_cleanup:
         pq._on_permanent_failure(item)
-        mock_cleanup.assert_called_once_with("t1")
+        mock_cleanup.assert_called_once_with("t1", "")
     on_complete.assert_called_once_with("t1", None)
 
 

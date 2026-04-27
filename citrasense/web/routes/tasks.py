@@ -51,6 +51,11 @@ def build_tasks_router(ctx: CitraSenseWebApp) -> APIRouter:
                         "status_msg": task_info.get("status_msg"),
                         "retry_scheduled_time": task_info.get("retry_scheduled_time"),
                         "is_being_executed": task_info.get("is_being_executed", False),
+                        # Include sensor_id so the monitoring UI can filter
+                        # per-sensor pipeline stages.  ``task_dispatcher``
+                        # already enriches this in ``get_tasks_by_stage``.
+                        "sensor_id": task_info.get("sensor_id"),
+                        "sensor_type": task_info.get("sensor_type"),
                     }
                 )
 

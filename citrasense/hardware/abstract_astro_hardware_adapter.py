@@ -20,6 +20,7 @@ if TYPE_CHECKING:
     from citrasense.hardware.devices.focuser.abstract_focuser import AbstractFocuser
     from citrasense.hardware.devices.mount.abstract_mount import AbstractMount
     from citrasense.hardware.devices.mount.altaz_pointing_model import AltAzPointingModel
+    from citrasense.logging.sensor_logger import SensorLoggerAdapter
     from citrasense.safety.safety_monitor import SafetyMonitor
 
 
@@ -127,7 +128,13 @@ class SlewRateTracker:
 
 
 class AbstractAstroHardwareAdapter(ABC):
-    logger: logging.Logger  # Logger instance, must be provided by subclasses
+    # Accept either a plain Logger or our ``SensorLoggerAdapter`` (which
+    # overrides ``getChild`` to preserve the sensor tag) so TelescopeSensor
+    # can pass a per-sensor adapter that tags every record with ``sensor_id``.
+    # Typed against the concrete subclass — pyright rejects ``getChild`` on
+    # the base ``logging.LoggerAdapter``, and every callsite that does
+    # ``adapter.logger.getChild(...)`` would fail there.
+    logger: logging.Logger | SensorLoggerAdapter  # Logger instance, must be provided by subclasses
     images_dir: Path  # Path to images directory, must be provided during initialization
 
     _slew_min_distance_deg: float = 2.0

@@ -23,9 +23,9 @@ def build_camera_router(ctx: CitraSenseWebApp) -> APIRouter:
     @router.post("/camera/capture")
     async def camera_capture(sensor_id: str, request: dict[str, Any]):
         """Trigger a test camera capture."""
-        if busy := ctx._require_system_idle():
-            return busy
         sensor, _runtime = get_sensor_context(ctx, sensor_id)
+        if busy := ctx._require_sensor_idle(_runtime):
+            return busy
         adapter = sensor.adapter
 
         if not adapter.supports_direct_camera_control():

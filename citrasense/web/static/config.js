@@ -179,9 +179,17 @@ async function loadConfiguration() {
                 config.use_dummy_api = false; // Default to false
             }
 
-            // Set configSensorId to the first sensor
-            const firstSensor = config.sensors?.[0];
-            store.configSensorId = firstSensor?.id || null;
+            // Prefer the last-selected sensor (persisted in localStorage)
+            // so reopening the Config tab lands back on the rig the
+            // operator was editing.  Fall back to the first configured
+            // sensor only when the persisted id is no longer valid or
+            // nothing has been persisted yet.
+            const persistedId = store.loadPersistedConfigSensorId?.();
+            const persistedSensor = persistedId
+                ? (config.sensors || []).find(s => s.id === persistedId)
+                : null;
+            const initialSensor = persistedSensor || config.sensors?.[0] || null;
+            store.configSensorId = initialSensor?.id || null;
 
             // Load autofocus presets before setting config so the select renders with options
             try {
@@ -194,9 +202,10 @@ async function loadConfiguration() {
             }
 
             store.config = config;
-            if (store.previewExposure === null) {
-                const firstSc = config.sensors?.[0] || {};
-                store.previewExposure = firstSc.exposure_seconds || 2.0;
+            for (const sc of (config.sensors || [])) {
+                if (store.previewExposures[sc.id] == null) {
+                    store.setPreviewExposure(sc.id, sc.exposure_seconds || 2.0);
+                }
             }
             // Track per-sensor saved adapter for change detection
             for (const s of (config.sensors || [])) {
@@ -206,10 +215,10 @@ async function loadConfiguration() {
                 config.host === PROD_API_HOST ? 'production' :
                 config.host === DEV_API_HOST ? 'development' : 'custom';
 
-            // Load adapter-specific settings for the first sensor
-            if (firstSensor?.adapter) {
-                const currentAdapterSettings = firstSensor.adapter_settings || {};
-                await loadAdapterSchema(firstSensor.adapter, currentAdapterSettings);
+            // Load adapter-specific settings for the initially selected sensor
+            if (initialSensor?.adapter) {
+                const currentAdapterSettings = initialSensor.adapter_settings || {};
+                await loadAdapterSchema(initialSensor.adapter, currentAdapterSettings);
             }
         }
     } catch (error) {
@@ -728,8 +737,7 @@ async function triggerAutofocus(sensorId) {
         return;
     }
 
-    // Request autofocus
-    store.isAutofocusing = true;
+    store._setAutofocusing(sensorId, true);
 
     try {
         const response = await fetch(`${store.sensorApiBaseFor(sensorId)}/autofocus`, {
@@ -747,7 +755,7 @@ async function triggerAutofocus(sensorId) {
         console.error('Error triggering autofocus:', error);
         showToast('Failed to trigger autofocus', 'danger');
     } finally {
-        store.isAutofocusing = false;
+        store._setAutofocusing(sensorId, false);
     }
 }
 
@@ -918,7 +926,7 @@ async function clearOperatorStop() {
  */
 async function changeFilterPosition(sensorId, position) {
     const store = Alpine.store('citrasense');
-    const wasLooping = store.isLooping;
+    const wasLooping = store.isLoopingFor(sensorId);
     if (wasLooping) store.stopFocusLoop();
 
     try {
@@ -938,7 +946,7 @@ async function changeFilterPosition(sensorId, position) {
         showToast('Failed to change filter', 'danger');
     }
 
-    if (wasLooping) store.startFocusLoop();
+    if (wasLooping) store.startFocusLoop(sensorId);
 }
 
 async function moveFocuserRelative(sensorId, steps) {

@@ -45,9 +45,6 @@ function compareVersions(v1, v2) {
             // "is this task in-flight anywhere" check.
             currentTaskIds: {},
             activeTaskIdSet: new Set(),
-            isTaskActive: false,
-            nextTaskStartTime: null,
-            countdown: '',
             // Wall-clock heartbeat bumped once per second by the ticker in
             // app.js.  Alpine getters that depend on "now" (e.g. taskRow's
             // countdownText) read this so they re-render reactively without
@@ -76,14 +73,29 @@ function compareVersions(v1, v2) {
                 return `/api/sensors/${sensorId}`;
             },
 
-            // Config editing state
+            // Config editing state.  The selected sensor id is persisted
+            // to ``localStorage`` so reopening the Config tab lands back
+            // on the sensor the operator was last editing (important on
+            // multi-sensor sites where silently defaulting to sensors[0]
+            // has caused operators to edit the wrong rig).
             _configSensorId: null,
+            _configSensorStorageKey: 'citrasense.configSensorId',
             get configSensorId() {
                 return this._configSensorId;
             },
             set configSensorId(value) {
                 if (this._configSensorId === value) return;
                 this._configSensorId = value;
+                try {
+                    if (value) {
+                        localStorage.setItem(this._configSensorStorageKey, value);
+                    } else {
+                        localStorage.removeItem(this._configSensorStorageKey);
+                    }
+                } catch {
+                    // localStorage may be unavailable in private browsing /
+                    // iframes; silently fall back to in-memory state.
+                }
                 // Reload adapter schema+values, filter config, and processors
                 // for the newly selected sensor so the hardware / calibration /
                 // pipeline tabs reflect that sensor's settings instead of
@@ -99,9 +111,23 @@ function compareVersions(v1, v2) {
                 }
             },
             get configSensorIndex() {
-                if (!this.config?.sensors) return 0;
-                const idx = this.config.sensors.findIndex(s => s.id === this.configSensorId);
-                return idx >= 0 ? idx : 0;
+                if (!this.config?.sensors?.length) return -1;
+                // When no sensor is explicitly selected yet (e.g. the
+                // config hasn't finished loading), fall back to 0 so the
+                // many ``x-model="config.sensors[configSensorIndex]..."``
+                // bindings don't explode on first paint.  But when a
+                // non-null ``configSensorId`` doesn't match any sensor,
+                // return -1 so the form doesn't silently let the
+                // operator edit the wrong rig.
+                if (!this.configSensorId) return 0;
+                return this.config.sensors.findIndex(s => s.id === this.configSensorId);
+            },
+            loadPersistedConfigSensorId() {
+                try {
+                    return localStorage.getItem(this._configSensorStorageKey);
+                } catch {
+                    return null;
+                }
             },
             get configSensorStatus() {
                 const sid = this.configSensorId;
@@ -129,16 +155,19 @@ function compareVersions(v1, v2) {
             // Autofocus target presets (loaded from API)
             autofocusPresets: [],
 
-            // Loading states for async operations
+            // Loading states for async operations.  ``isSavingConfig``,
+            // ``isScanning``, and ``isReconnecting`` are intrinsically
+            // site-wide.  Per-sensor "is X happening" state lives in the
+            // maps below so one sensor's Snap/Save/Loop/Autofocus doesn't
+            // flip the same button on a different sensor's card.
             isSavingConfig: false,
             isScanning: false,
             isReconnecting: false,
-            isCapturing: false,
-            isSaving: false,
-            isAutofocusing: false,
             captureResult: null,
-            // Focus loop state
-            isLooping: false,
+
+            // Which sensor's focus loop is currently running (only one at a
+            // time since it occupies a single RAF loop on the client).
+            loopingSensorId: null,
             previewSource: '',
             // Per-sensor preview data URLs.  There is no singular
             // ``previewDataUrl`` slot — the fullscreen modal reads
@@ -148,11 +177,65 @@ function compareVersions(v1, v2) {
             // Which sensor owns the fullscreen preview modal right now.
             activePreviewSensorId: null,
             loopCount: 0,
-            previewExposure: null,
+            // Per-sensor transient flags and settings.  Accessed through
+            // helper methods below so call sites never have to know the
+            // underlying map shape.
+            capturingSensors: {},
+            savingSensors: {},
+            autofocusingSensors: {},
+            previewExposures: {},
+            previewFlipHFlags: {},
             // Per-sensor "last seen task image URL" tracking used by
             // updateStoreFromStatus in app.js to decide when to refresh
             // previewDataUrls[sensor_id].  Initialized lazily there.
             _lastTaskImageUrlBySensor: {},
+
+            isLoopingFor(sensorId) {
+                return !!sensorId && this.loopingSensorId === sensorId;
+            },
+            get isAnyLooping() {
+                return this.loopingSensorId !== null;
+            },
+            isCapturingFor(sensorId) {
+                return !!sensorId && this.capturingSensors[sensorId] === true;
+            },
+            isSavingFor(sensorId) {
+                return !!sensorId && this.savingSensors[sensorId] === true;
+            },
+            isAutofocusingFor(sensorId) {
+                return !!sensorId && this.autofocusingSensors[sensorId] === true;
+            },
+            previewExposureFor(sensorId) {
+                if (!sensorId) return 2.0;
+                const v = this.previewExposures[sensorId];
+                return v == null ? 2.0 : v;
+            },
+            setPreviewExposure(sensorId, value) {
+                if (!sensorId) return;
+                this.previewExposures = { ...this.previewExposures, [sensorId]: value };
+            },
+            previewFlipHFor(sensorId) {
+                return !!sensorId && this.previewFlipHFlags[sensorId] === true;
+            },
+            togglePreviewFlipH(sensorId) {
+                if (!sensorId) return;
+                this.previewFlipHFlags = {
+                    ...this.previewFlipHFlags,
+                    [sensorId]: !this.previewFlipHFlags[sensorId],
+                };
+            },
+            _setCapturing(sensorId, value) {
+                if (!sensorId) return;
+                this.capturingSensors = { ...this.capturingSensors, [sensorId]: !!value };
+            },
+            _setSaving(sensorId, value) {
+                if (!sensorId) return;
+                this.savingSensors = { ...this.savingSensors, [sensorId]: !!value };
+            },
+            _setAutofocusing(sensorId, value) {
+                if (!sensorId) return;
+                this.autofocusingSensors = { ...this.autofocusingSensors, [sensorId]: !!value };
+            },
 
             // Spread all formatter functions from shared module
             ...formatters,
@@ -189,18 +272,15 @@ function compareVersions(v1, v2) {
                 return tip;
             },
 
-            // Store methods
-            previewFlipH: false,
-
             async captureImage(sensorId) {
-                const duration = this.previewExposure;
+                const duration = this.previewExposureFor(sensorId);
                 if (Number.isNaN(duration) || duration <= 0) {
                     const { showToast } = await import('./config.js');
                     showToast('Invalid exposure duration', 'danger');
                     return;
                 }
 
-                this.isSaving = true;
+                this._setSaving(sensorId, true);
                 try {
                     const response = await fetch(`${this.sensorApiBaseFor(sensorId)}/camera/capture`, {
                         method: 'POST',
@@ -222,7 +302,7 @@ function compareVersions(v1, v2) {
                     const { showToast } = await import('./config.js');
                     showToast('Failed to capture image: ' + error.message, 'danger');
                 } finally {
-                    this.isSaving = false;
+                    this._setSaving(sensorId, false);
                 }
             },
 
@@ -375,17 +455,20 @@ function compareVersions(v1, v2) {
 
             async capturePreview(sensorId) {
                 if (this.isImagingTaskActive(sensorId)) {
-                    this.isLooping = false;
+                    if (this.isLoopingFor(sensorId)) this.loopingSensorId = null;
                     return;
                 }
                 try {
                     const response = await fetch(`${this.sensorApiBaseFor(sensorId)}/camera/preview`, {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ duration: this.previewExposure, flip_horizontal: this.previewFlipH })
+                        body: JSON.stringify({
+                            duration: this.previewExposureFor(sensorId),
+                            flip_horizontal: this.previewFlipHFor(sensorId),
+                        })
                     });
                     if (response.status === 409) {
-                        if (this.isLooping) {
+                        if (this.isLoopingFor(sensorId)) {
                             setTimeout(() => this.capturePreview(sensorId), 250);
                         }
                         return;
@@ -397,40 +480,43 @@ function compareVersions(v1, v2) {
                     } else {
                         const { showToast } = await import('./config.js');
                         showToast(data.error || 'Preview failed', 'danger');
-                        this.isLooping = false;
+                        if (this.isLoopingFor(sensorId)) this.loopingSensorId = null;
                         return;
                     }
                 } catch (error) {
                     console.error('Preview error:', error);
-                    this.isLooping = false;
+                    if (this.isLoopingFor(sensorId)) this.loopingSensorId = null;
                     return;
                 }
 
-                if (this.isLooping) {
+                if (this.isLoopingFor(sensorId)) {
                     requestAnimationFrame(() => this.capturePreview(sensorId));
                 }
             },
 
             startFocusLoop(sensorId) {
-                if (this.isLooping || this.isImagingTaskActive(sensorId)) return;
-                this.isLooping = true;
+                if (!sensorId) return;
+                if (this.loopingSensorId !== null || this.isImagingTaskActive(sensorId)) return;
+                this.loopingSensorId = sensorId;
                 this.loopCount = 0;
-                this._loopSensorId = sensorId;
                 this.capturePreview(sensorId);
             },
 
             stopFocusLoop() {
-                this.isLooping = false;
+                this.loopingSensorId = null;
             },
 
             async singlePreview(sensorId) {
-                if (this.isLooping) return;
-                this.isCapturing = true;
+                if (this.loopingSensorId !== null) return;
+                this._setCapturing(sensorId, true);
                 try {
                     const response = await fetch(`${this.sensorApiBaseFor(sensorId)}/camera/preview`, {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ duration: this.previewExposure, flip_horizontal: this.previewFlipH })
+                        body: JSON.stringify({
+                            duration: this.previewExposureFor(sensorId),
+                            flip_horizontal: this.previewFlipHFor(sensorId),
+                        })
                     });
                     const data = await response.json();
                     if (response.ok && data.image_data) {
@@ -444,7 +530,7 @@ function compareVersions(v1, v2) {
                     const { showToast } = await import('./config.js');
                     showToast('Preview failed: ' + error.message, 'danger');
                 } finally {
-                    this.isCapturing = false;
+                    this._setCapturing(sensorId, false);
                 }
             },
 

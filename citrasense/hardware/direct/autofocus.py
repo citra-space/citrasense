@@ -28,6 +28,7 @@ if TYPE_CHECKING:
 
     from citrasense.hardware.devices.camera import AbstractCamera
     from citrasense.hardware.devices.focuser import AbstractFocuser
+    from citrasense.logging.sensor_logger import SensorLoggerAdapter
 
 MIN_STARS_FOR_HFR = 5
 MAX_STARS_FOR_HFR = 20
@@ -281,7 +282,7 @@ def _is_monotonic(pos_arr: np.ndarray, val_arr: np.ndarray, tolerance: float = 0
 def _fit_measurements(
     pos_arr: np.ndarray,
     val_arr: np.ndarray,
-    log: logging.Logger,
+    log: logging.Logger | SensorLoggerAdapter,
 ) -> float | None:
     """Fit V-curve data and return the optimal position, or None on failure.
 
@@ -315,7 +316,7 @@ def _sweep_positions(
     crop_ratio: float,
     step_size: int,
     label: str,
-    log: logging.Logger,
+    log: logging.Logger | SensorLoggerAdapter,
     report: Callable[[str], None],
     cancel_event: threading.Event | None,
     on_point: Callable[[int, float], None] | None,
@@ -390,7 +391,7 @@ def run_autofocus(
     exposure_time: float = 3.0,
     crop_ratio: float = 0.5,
     on_progress: Callable[[str], None] | None = None,
-    logger: logging.Logger | None = None,
+    logger: logging.Logger | SensorLoggerAdapter | None = None,
     cancel_event: threading.Event | None = None,
     on_point: Callable[[int, float], None] | None = None,
     on_image: Callable[[np.ndarray], None] | None = None,

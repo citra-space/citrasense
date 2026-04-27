@@ -45,9 +45,9 @@ def build_mount_router(ctx: CitraSenseWebApp) -> APIRouter:
     @router.post("/mount/limits")
     async def set_mount_limits(sensor_id: str, request: dict[str, Any]):
         """Set the mount's altitude limits."""
-        if busy := ctx._require_system_idle():
-            return busy
         sensor, _runtime = get_sensor_context(ctx, sensor_id)
+        if busy := ctx._require_sensor_idle(_runtime):
+            return busy
         adapter = sensor.adapter
         results: dict[str, Any] = {}
         try:
@@ -82,9 +82,9 @@ def build_mount_router(ctx: CitraSenseWebApp) -> APIRouter:
     @router.post("/mount/move")
     async def mount_move(sensor_id: str, body: dict[str, Any]):
         """Start or stop directional mount motion (jog control)."""
-        if busy := ctx._require_system_idle():
-            return busy
         sensor, _runtime = get_sensor_context(ctx, sensor_id)
+        if busy := ctx._require_sensor_idle(_runtime):
+            return busy
 
         mount = sensor.adapter.mount
         if mount is None or not sensor.adapter.is_telescope_connected():
@@ -118,9 +118,9 @@ def build_mount_router(ctx: CitraSenseWebApp) -> APIRouter:
     @router.post("/mount/goto")
     async def mount_goto(sensor_id: str, body: dict[str, Any]):
         """Slew the mount to arbitrary RA/Dec coordinates (degrees)."""
-        if busy := ctx._require_system_idle():
-            return busy
         sensor, _runtime = get_sensor_context(ctx, sensor_id)
+        if busy := ctx._require_sensor_idle(_runtime):
+            return busy
 
         mount = sensor.adapter.mount
         if mount is None or not sensor.adapter.is_telescope_connected():
@@ -147,9 +147,9 @@ def build_mount_router(ctx: CitraSenseWebApp) -> APIRouter:
     @router.post("/mount/tracking")
     async def mount_tracking(sensor_id: str, body: dict[str, Any]):
         """Start or stop sidereal tracking."""
-        if busy := ctx._require_system_idle():
-            return busy
         sensor, _runtime = get_sensor_context(ctx, sensor_id)
+        if busy := ctx._require_sensor_idle(_runtime):
+            return busy
 
         mount = sensor.adapter.mount
         if mount is None or not sensor.adapter.is_telescope_connected():

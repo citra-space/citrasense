@@ -24,6 +24,7 @@ from citrasense.location.gps_fix import GPSFix
 if TYPE_CHECKING:
     from citrasense.hardware.devices.camera.abstract_camera import CalibrationProfile
     from citrasense.hardware.devices.moravian_bindings import GxccdCamera
+    from citrasense.logging.sensor_logger import SensorLoggerAdapter
 
 
 def _probe_moravian_cameras() -> tuple[list[dict[str, str | int]], list[dict[str, str | int]]]:
@@ -748,8 +749,12 @@ class MoravianIntegratedFilterWheel(AbstractFilterWheel):
     GBP_FILTERS is true, and returned via get_integrated_filter_wheel().
     """
 
-    def __init__(self, gxccd_camera: GxccdCamera, num_filters: int, logger: logging.Logger):
-        # Skip AbstractHardwareDevice.__init__ kwargs since we're not registry-created
+    def __init__(
+        self,
+        gxccd_camera: GxccdCamera,
+        num_filters: int,
+        logger: logging.Logger | SensorLoggerAdapter,
+    ):
         self.logger = logger.getChild(type(self).__name__)
         self._cam = gxccd_camera
         self._num_filters = num_filters

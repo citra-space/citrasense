@@ -182,6 +182,11 @@ def mock_daemon(mock_settings):
     mock_runtime.calibration_manager = None
     mock_runtime.observing_session_manager = None
     mock_runtime.self_tasking_manager = None
+    # Per-sensor routes gate on ``runtime.busy_reason()``; default MagicMock
+    # returns a truthy mock which would 409 every hardware test.  Pin an
+    # empty string so the tests run against an idle sensor unless they
+    # explicitly override it.
+    mock_runtime.busy_reason.return_value = ""
     d.task_dispatcher.get_runtime.side_effect = lambda sid: mock_runtime if sid == "scope-0" else None
     d.task_dispatcher._telescope_runtimes.return_value = [mock_runtime]
     d.task_dispatcher._runtimes = {"scope-0": mock_runtime}

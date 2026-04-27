@@ -82,18 +82,37 @@ def _default_output_dir(debug_dir: Path) -> Path:
 
 
 def _resolve_sensor_id_from_bundle(debug_dir: Path) -> str | None:
-    """Best-effort: pull ``sensor_id`` from ``task.json`` if present."""
+    """Best-effort: infer ``sensor_id`` from bundle metadata.
+
+    Looks in this order:
+
+    1. ``task.json``'s ``sensor_id`` field (if present and truthy).
+    2. ``processing_summary.json``'s ``sensor_id`` field — written by
+       :func:`dump_processing_summary` for every run.
+    3. The debug dir's parent name, when the bundle lives under the
+       sensor-scoped layout ``processing/<sensor_id>/<task_id>``.
+    """
     import json
 
-    task_json = debug_dir / "task.json"
-    if not task_json.exists():
-        return None
-    try:
-        data = json.loads(task_json.read_text())
-    except (OSError, ValueError):
-        return None
-    sid = data.get("sensor_id")
-    return str(sid) if sid else None
+    for name in ("task.json", "processing_summary.json"):
+        path = debug_dir / name
+        if not path.exists():
+            continue
+        try:
+            data = json.loads(path.read_text())
+        except (OSError, ValueError):
+            continue
+        sid = data.get("sensor_id")
+        if sid:
+            return str(sid)
+
+    parent = debug_dir.parent
+    if parent.name and parent.name != "processing":
+        # Heuristic: if the parent isn't the top-level "processing" root
+        # it's probably a sensor namespace.  Return its name so callers
+        # can validate it against the loaded settings.
+        return parent.name
+    return None
 
 
 def reprocess_bundle(
@@ -116,8 +135,11 @@ def reprocess_bundle(
         image_override: Use this FITS path instead of auto-discovering one.
         logger: Logger instance.  Falls back to a console logger.
         sensor_id: Which sensor's :class:`SensorConfig` to target with
-            per-sensor overrides. Defaults to the ``sensor_id`` found in
-            the bundle's ``task.json`` and, failing that, to ``sensors[0]``.
+            per-sensor overrides.  When omitted the sensor is inferred
+            from the bundle (``task.json`` → ``processing_summary.json``
+            → parent directory name).  Raises :class:`ValueError` when
+            inference fails on a multi-sensor config so we never write
+            tuning to the wrong rig.
 
     Returns:
         ``(aggregated_result, output_dir)`` tuple.
@@ -135,15 +157,21 @@ def reprocess_bundle(
         if resolved_sensor_id:
             target_sensor = settings.get_sensor_config(resolved_sensor_id)
             if target_sensor is None:
-                log.warning(
-                    "Requested sensor_id %r not found in settings; falling back to first sensor",
-                    resolved_sensor_id,
+                ids = ", ".join(sc.id for sc in settings.sensors)
+                raise ValueError(
+                    f"Sensor id {resolved_sensor_id!r} not found in settings "
+                    f"(available: {ids}). Pass --sensor-id explicitly."
                 )
-        if target_sensor is None:
+        elif len(settings.sensors) == 1:
+            # Single-sensor site: unambiguous, use it.
             target_sensor = settings.sensors[0]
-            log.info("Reprocessing against sensor %r", target_sensor.id)
         else:
-            log.info("Reprocessing against sensor %r", target_sensor.id)
+            ids = ", ".join(sc.id for sc in settings.sensors)
+            raise ValueError(
+                "Bundle does not carry a sensor_id and the site has multiple "
+                f"sensors configured ({ids}); pass --sensor-id explicitly."
+            )
+        log.info("Reprocessing against sensor %r", target_sensor.id)
 
     if settings_overrides:
         from citrasense.settings.citrasense_settings import SensorConfig

@@ -105,9 +105,16 @@ class TestUpdateAndSaveFilterPreservation:
             }
         )
 
+        sensor_id = s.sensors[0].id
         s.update_and_save(
             {
-                "adapter_settings": {"simulate_slow_operations": True},
+                "sensors": [
+                    {
+                        "id": sensor_id,
+                        "adapter": "dummy",
+                        "adapter_settings": {"simulate_slow_operations": True},
+                    }
+                ],
             }
         )
 
@@ -134,9 +141,16 @@ class TestUpdateAndSaveFilterPreservation:
         )
 
         new_filters = {"0": {"name": "Ha", "focus_position": 8500, "enabled": True}}
+        sensor_id = s.sensors[0].id
         s.update_and_save(
             {
-                "adapter_settings": {"filters": new_filters},
+                "sensors": [
+                    {
+                        "id": sensor_id,
+                        "adapter": "dummy",
+                        "adapter_settings": {"filters": new_filters},
+                    }
+                ],
             }
         )
 

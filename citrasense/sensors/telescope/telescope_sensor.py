@@ -99,9 +99,20 @@ class TelescopeSensor(AbstractSensor):
         instantiates it with the same kwargs the daemon's legacy
         ``_create_hardware_adapter`` used: ``logger``, ``images_dir``, and
         the adapter-specific settings dict splat.
+
+        The logger handed to the adapter is wrapped in a sensor-scoped
+        :class:`SensorLoggerAdapter` so every record emitted by INDI /
+        NINA / KStars / Direct flows carries ``extra={'sensor_id': ...}``
+        for the web UI's per-sensor log filter.
         """
+        from citrasense.logging.sensor_logger import get_sensor_logger
+
         adapter_class = get_adapter_class(cfg.adapter)
-        adapter = adapter_class(logger=logger, images_dir=images_dir, **cfg.adapter_settings)
+        adapter_logger = get_sensor_logger(
+            logger.getChild(f"{adapter_class.__name__}[{cfg.id}]"),
+            cfg.id,
+        )
+        adapter = adapter_class(logger=adapter_logger, images_dir=images_dir, **cfg.adapter_settings)
         return cls(sensor_id=cfg.id, adapter=adapter, adapter_key=cfg.adapter)
 
     # ── AbstractSensor surface ────────────────────────────────────────

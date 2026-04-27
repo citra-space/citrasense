@@ -18,6 +18,7 @@ from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 
 from citrasense.location.twilight import ObservingWindow
+from citrasense.logging.sensor_logger import SensorLoggerAdapter
 from citrasense.sensors.telescope.observing_session import SessionState
 
 if TYPE_CHECKING:
@@ -41,7 +42,7 @@ class SelfTaskingManager:
         self,
         api_client: AbstractCitraApiClient,
         sensor_config: SensorConfig,
-        logger: logging.Logger,
+        logger: logging.Logger | SensorLoggerAdapter,
         ground_station_id: str,
         sensor_id: str,
         get_session_state: Callable[[], SessionState],

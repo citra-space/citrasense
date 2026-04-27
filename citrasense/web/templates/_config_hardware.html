@@ -257,7 +257,7 @@
                     </div>
                 </div>
                 <button type="button" class="btn btn-sm btn-outline-primary w-100"
-                    :disabled="$store.citrasense.configSensorStatus?.mount_at_home || $store.citrasense.isSystemBusy"
+                    :disabled="$store.citrasense.configSensorStatus?.mount_at_home || $store.citrasense.isImagingTaskActive($store.citrasense.configSensorId)"
                     @click="window.manualSync($store.citrasense.configSensorId, syncRa, syncDec)">
                     <i class="bi bi-crosshair me-1"></i> Manually Sync Mount
                 </button>

@@ -35,14 +35,18 @@ def build_core_router(ctx: CitraSenseWebApp) -> APIRouter:
 
     @router.get("/api/task-preview/latest")
     async def get_latest_task_preview(sensor_id: str | None = None):
-        """Serve the latest annotated task image, optionally for a sensor."""
+        """Serve the latest annotated task image for *sensor_id*.
+
+        Previously this endpoint fell back to "newest preview across all
+        sensors" when ``sensor_id`` was missing or unrecognised, which
+        in multi-sensor deployments silently aliased two telescopes to
+        the same preview slot.  Now the caller must name the sensor —
+        other callers should reach for the per-sensor runtime directly.
+        """
         paths = getattr(ctx.daemon, "latest_annotated_image_paths", {})
-        if sensor_id and sensor_id in paths:
-            ann_path = paths[sensor_id]
-        elif paths:
-            ann_path = max(paths.values(), key=lambda p: Path(p).stat().st_mtime if Path(p).exists() else 0)
-        else:
-            ann_path = None
+        if not sensor_id:
+            return JSONResponse({"error": "sensor_id is required"}, status_code=400)
+        ann_path = paths.get(sensor_id)
         if not ann_path or not Path(ann_path).exists():
             return JSONResponse({"error": "No preview available"}, status_code=404)
         mime = "image/jpeg" if Path(ann_path).suffix.lower() in (".jpg", ".jpeg") else "image/png"

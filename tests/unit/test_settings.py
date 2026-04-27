@@ -212,13 +212,21 @@ def test_settings_save(tmp_path):
     instance.save_config.assert_called_once()
 
 
-def test_settings_update_and_save():
+def test_settings_update_and_save_ignores_legacy_adapter_settings():
+    """The pre-multi-sensor top-level ``adapter_settings`` blob is dropped.
+
+    Historically this endpoint merged the blob into ``sensors[0]`` —
+    that shim has been removed because in multi-rig deployments it
+    silently wrote scope B's keys into scope A's config.  The modern UI
+    sends per-sensor ``sensors[].adapter_settings`` instead.
+    """
     with patch("citrasense.settings.citrasense_settings.SettingsFileManager") as MockSFM:
         instance = MockSFM.return_value
         instance.load_config.return_value = {"hardware_adapter": "dummy"}
         from citrasense.settings.citrasense_settings import CitraSenseSettings
 
         s = CitraSenseSettings.load()
+        previous_adapter_settings = dict(s.sensors[0].adapter_settings)
         s.update_and_save(
             {
                 "hardware_adapter": "dummy",
@@ -230,7 +238,9 @@ def test_settings_update_and_save():
     instance.save_config.assert_called_once()
     saved = instance.save_config.call_args[0][0]
     assert "web_port" not in saved
-    assert saved["sensors"][0]["adapter_settings"]["some_key"] == "val"
+    assert "adapter_settings" not in saved
+    assert saved["sensors"][0]["adapter_settings"] == previous_adapter_settings
+    assert "some_key" not in saved["sensors"][0]["adapter_settings"]
 
 
 def test_update_and_save_preserves_fields_not_in_payload():

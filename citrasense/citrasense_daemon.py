@@ -103,24 +103,33 @@ class CitraSenseDaemon:
         # Create web server instance (always enabled)
         self.web_server = CitraSenseWebServer(daemon=self, host="0.0.0.0", port=self.settings.web_port)
 
-    def _on_annotated_image(self, path: str, sensor_id: str = "") -> None:
+    def _on_annotated_image(self, path: str, sensor_id: str) -> None:
         """Handle a new annotated task image: store path and notify preview bus via URL.
 
         Uses a lightweight URL notification instead of base64-encoding the
         full image through the WebSocket, keeping the socket clear for
         status/log/task updates on bandwidth-constrained links.
 
-        The ``latest_annotated_image_paths`` dict and ``PreviewBus`` both
-        key by ``sensor_id``. When the caller doesn't supply one we fall
-        back to an empty string in *both* places so the two slots stay in
-        sync — an untagged annotated image published to the bus is the
-        same slot the ``_on_annotated_image`` store writes to.
+        ``sensor_id`` is required — every callsite must supply the id of
+        the sensor that produced the image so per-sensor preview slots
+        don't alias under an empty-string key in multi-sensor
+        deployments.  Callers that don't know the id (e.g. future
+        site-wide captures) should pass the explicit site sentinel, not
+        rely on a default.
         """
-        slot = sensor_id or ""
-        self.latest_annotated_image_paths[slot] = path
+        if not sensor_id:
+            CITRASENSE_LOGGER.warning(
+                "Annotated image %s published without sensor_id; dropping to avoid empty-key aliasing",
+                path,
+            )
+            return
+        self.latest_annotated_image_paths[sensor_id] = path
         try:
+            from urllib.parse import quote
+
             mtime_ns = Path(path).stat().st_mtime_ns
-            self.preview_bus.push_url(f"/api/task-preview/latest?t={mtime_ns}", "task", sensor_id=slot)
+            url = f"/api/task-preview/latest?sensor_id={quote(sensor_id, safe='')}&t={mtime_ns}"
+            self.preview_bus.push_url(url, "task", sensor_id=sensor_id)
         except Exception as e:
             CITRASENSE_LOGGER.warning("Failed to publish annotated image preview for %s: %s", path, e)
 
@@ -595,9 +604,12 @@ class CitraSenseDaemon:
 
         can_park = adapter.supports_park()
         alignment_mgr = telescope_runtime.alignment_manager
+        # Use the sensor-scoped runtime logger so ObservingSession /
+        # SelfTasking / Calibration manager records carry ``sensor_id``.
+        rt_logger = telescope_runtime.logger
         osm = ObservingSessionManager(
             sensor_config=sensor_cfg,
-            logger=CITRASENSE_LOGGER,
+            logger=rt_logger,
             get_location=_get_location_tuple,
             request_autofocus=telescope_runtime.autofocus_manager.request,
             is_autofocus_running=telescope_runtime.autofocus_manager.is_running,
@@ -611,7 +623,7 @@ class CitraSenseDaemon:
         stm = SelfTaskingManager(
             api_client=self.api_client,
             sensor_config=sensor_cfg,
-            logger=CITRASENSE_LOGGER,
+            logger=rt_logger,
             ground_station_id=ground_station["id"],
             sensor_id=citra_telescope_record["id"],
             get_session_state=lambda osm=osm: osm.state,
@@ -634,7 +646,7 @@ class CitraSenseDaemon:
             library = CalibrationLibrary()
             telescope_runtime.attach_calibration_library(library)
             telescope_runtime.calibration_manager = CalibrationManager(
-                CITRASENSE_LOGGER,
+                rt_logger,
                 adapter,
                 library,
                 imaging_queue=telescope_runtime.acquisition_queue,

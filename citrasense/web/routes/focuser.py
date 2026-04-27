@@ -22,9 +22,9 @@ def build_focuser_router(ctx: CitraSenseWebApp) -> APIRouter:
     @router.post("/focuser/move")
     async def focuser_move(sensor_id: str, body: dict[str, Any]):
         """Move the focuser to an absolute position or by relative steps."""
-        if busy := ctx._require_system_idle():
-            return busy
         sensor, _runtime = get_sensor_context(ctx, sensor_id)
+        if busy := ctx._require_sensor_idle(_runtime):
+            return busy
 
         focuser = sensor.adapter.focuser
         if focuser is None or not focuser.is_connected():

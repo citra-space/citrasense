@@ -511,13 +511,17 @@ class AutofocusManager:
                 else:
                     self._last_result = self._progress
             if self.on_toast:
-                self.on_toast("Autofocus completed successfully", "success", "autofocus-result")
+                prefix = f"[{self._sensor_id}] " if self._sensor_id else ""
+                toast_id = f"autofocus-result:{self._sensor_id}" if self._sensor_id else "autofocus-result"
+                self.on_toast(f"{prefix}Autofocus completed successfully", "success", toast_id)
         except Exception as e:
             self.logger.error(f"Autofocus failed: {e!s}", exc_info=True)
             with self._lock:
                 self._last_result = f"Failed: {e!s}"
             if self.on_toast:
-                self.on_toast(f"Autofocus failed: {e!s}", "danger", "autofocus-result")
+                prefix = f"[{self._sensor_id}] " if self._sensor_id else ""
+                toast_id = f"autofocus-result:{self._sensor_id}" if self._sensor_id else "autofocus-result"
+                self.on_toast(f"{prefix}Autofocus failed: {e!s}", "danger", toast_id)
         finally:
             with self._lock:
                 self._running = False
