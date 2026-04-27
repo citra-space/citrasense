@@ -767,7 +767,7 @@ class DummyAdapter(AbstractAstroHardwareAdapter):
         if self._mount.is_home():
             self.logger.info("DummyAdapter: Mount already homed")
             return True
-        if self._safety_monitor and not self._safety_monitor.is_action_safe("home"):
+        if self._safety_monitor and not self._safety_monitor.is_action_safe("home", sensor_id=self.sensor_id or None):
             from citrasense.safety.safety_monitor import SafetyError
 
             raise SafetyError("Homing blocked by safety monitor")
@@ -779,7 +779,7 @@ class DummyAdapter(AbstractAstroHardwareAdapter):
         return True
 
     def home_mount(self) -> bool:
-        if self._safety_monitor and not self._safety_monitor.is_action_safe("home"):
+        if self._safety_monitor and not self._safety_monitor.is_action_safe("home", sensor_id=self.sensor_id or None):
             from citrasense.safety.safety_monitor import SafetyError
 
             raise SafetyError("Homing blocked by safety monitor")

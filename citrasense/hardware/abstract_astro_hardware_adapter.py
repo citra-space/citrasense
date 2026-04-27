@@ -421,7 +421,9 @@ class AbstractAstroHardwareAdapter(ABC):
         Returns the full correction snapshot so the caller can thread it
         through to processing artifacts without shared mutable state.
         """
-        if self._safety_monitor and not self._safety_monitor.is_action_safe("slew", ra=ra, dec=dec):
+        if self._safety_monitor and not self._safety_monitor.is_action_safe(
+            "slew", sensor_id=self.sensor_id or None, ra=ra, dec=dec
+        ):
             from citrasense.safety.safety_monitor import SafetyError
 
             raise SafetyError("Slew blocked by safety monitor")
@@ -728,7 +730,7 @@ class AbstractAstroHardwareAdapter(ABC):
         Returns:
             True if homing was initiated successfully.
         """
-        if self._safety_monitor and not self._safety_monitor.is_action_safe("home"):
+        if self._safety_monitor and not self._safety_monitor.is_action_safe("home", sensor_id=self.sensor_id or None):
             from citrasense.safety.safety_monitor import SafetyError
 
             raise SafetyError("Homing blocked by safety monitor")
