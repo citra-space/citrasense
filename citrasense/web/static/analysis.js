@@ -89,6 +89,41 @@ document.addEventListener('alpine:init', () => {
         _autotunePollTimer: null,
         _autotuneStarting: false,
 
+        // Multi-sensor selector.  Empty string = "All telescopes" (site-wide).
+        // When a specific sensor id is selected, the stats cards, task list,
+        // auto-tune run, and auto-tune apply all scope to that sensor.
+        //
+        // We use "" instead of ``null`` as the "all" sentinel because HTML
+        // <option value="..."> values always round-trip as strings through
+        // the DOM.  With :value="null", Alpine writes back the *string*
+        // "null" after user interaction and every scoped read returns
+        // zero rows.  Empty string is falsy for the ``if (x)`` checks
+        // below, which keeps the rest of the logic unchanged.
+        selectedSensorId: "",
+
+        // Telescope sensors from the Alpine store.  Used by the sensor
+        // selector (shown only when > 1) and by pointingClass / the
+        // Telescope column name lookup.
+        get telescopeSensors() {
+            const sensors = Alpine.store('citrasense').sensors || [];
+            return sensors.filter(s => s && s.type === 'telescope');
+        },
+
+        // Show the Telescope column only when the operator is looking at
+        // the site-wide "All" view of a multi-sensor deployment — in the
+        // single-sensor or already-filtered case it would just repeat the
+        // same name on every row.
+        get showSensorColumn() {
+            return !this.selectedSensorId && this.telescopeSensors.length > 1;
+        },
+
+        // Gate Run Auto-tune.  In multi-sensor deployments the sweep must
+        // target a single telescope; in single-sensor deployments anything
+        // goes.
+        get canAutotune() {
+            return this.telescopeSensors.length <= 1 || !!this.selectedSensorId;
+        },
+
         // Monotonic counter for toggleDetail() so a slower fetch can't overwrite
         // a faster, more-recent one when the user clicks rows in quick succession.
         _detailFetchToken: 0,
@@ -124,7 +159,9 @@ document.addEventListener('alpine:init', () => {
 
         async loadStats() {
             try {
-                const resp = await fetch('/api/analysis/stats?hours=24');
+                const params = new URLSearchParams({ hours: 24 });
+                if (this.selectedSensorId) params.set('sensor_id', this.selectedSensorId);
+                const resp = await fetch('/api/analysis/stats?' + params.toString());
                 this.stats = await resp.json();
             } catch (e) {
                 console.error('Failed to load analysis stats', e);
@@ -152,6 +189,7 @@ document.addEventListener('alpine:init', () => {
                 if (this.filterMatchDetail) params.set('match_detail', this.filterMatchDetail);
                 if (this.filterWindow) params.set('missed_window', this.filterWindow);
                 if (this.filterUploadStatus) params.set('upload_status', this.filterUploadStatus);
+                if (this.selectedSensorId) params.set('sensor_id', this.selectedSensorId);
 
                 const resp = await fetch('/api/analysis/tasks?' + params.toString());
                 const data = await resp.json();
@@ -160,6 +198,22 @@ document.addEventListener('alpine:init', () => {
             } catch (e) {
                 console.error('Failed to load analysis tasks', e);
             }
+        },
+
+        // Called when the telescope selector changes.  Reset pagination
+        // and clear stale auto-tune results — those are keyed to the old
+        // sensor's bundles.
+        onSensorChange() {
+            this.offset = 0;
+            this.autotuneResult = null;
+            this.loadAll();
+        },
+
+        // Display name for a sensor_id, used by the Telescope column.
+        telescopeName(sensorId) {
+            if (!sensorId) return '—';
+            const s = (Alpine.store('citrasense').sensors || []).find(x => x && x.id === sensorId);
+            return s?.name || sensorId;
         },
 
         toggleSort(col) {
@@ -263,10 +317,30 @@ document.addEventListener('alpine:init', () => {
             } catch { return iso; }
         },
 
-        pointingClass(deg) {
-            const sensors = Alpine.store('citrasense').status?.sensors || {};
-            const first = Object.values(sensors).find(s => s.type === 'telescope');
-            return Alpine.store('citrasense').pointingAccuracyClass(deg, first?.fov_short_deg);
+        // Colour a pointing-error cell against the owning telescope's FOV.
+        // We pass the full task row so rows from a wide-field scope aren't
+        // judged against a narrow-field scope's FOV (or vice versa) in a
+        // multi-sensor deployment.  Legacy rows without sensor_id fall
+        // back to the widest telescope FOV in the fleet — the most
+        // forgiving threshold — so we don't false-flag good pointing as
+        // bad until the startup backfill fills the column in.
+        pointingClass(deg, task) {
+            const store = Alpine.store('citrasense');
+            const sensors = store.status?.sensors || {};
+            const sensorList = Object.values(sensors).filter(s => s && s.type === 'telescope');
+            let fov = null;
+            const sid = task?.sensor_id;
+            if (sid) {
+                const match = sensorList.find(s => s.id === sid);
+                if (match) fov = match.fov_short_deg;
+            }
+            if (fov == null && sensorList.length > 0) {
+                fov = sensorList.reduce((max, s) => {
+                    const v = s.fov_short_deg;
+                    return (v != null && (max == null || v > max)) ? v : max;
+                }, null);
+            }
+            return store.pointingAccuracyClass(deg, fov);
         },
 
         // Window utilization mini-bar: delay | slew | imaging | margin
@@ -614,12 +688,21 @@ document.addEventListener('alpine:init', () => {
             // Same in-flight guard as doBatchReprocess — autotuneRunning is also
             // user-visible via :disabled, so set it synchronously here too.
             if (this.autotuneRunning || this._autotuneStarting) return;
+            if (!this.canAutotune) return;
+
             const ids = Object.entries(this.selectedTasks).filter(([, v]) => v).map(([k]) => k);
             this._autotuneStarting = true;
             this.autotuneResult = null;
             this.autotuneRunning = true;
+
+            // Prefer the sensor-scoped endpoint when a telescope is selected;
+            // fall back to the site-wide sweep for single-sensor deployments
+            // (selectedSensorId stays null when only one telescope exists).
+            const url = this.selectedSensorId
+                ? `/api/sensors/${this.selectedSensorId}/autotune/run`
+                : '/api/analysis/autotune';
             try {
-                const resp = await fetch('/api/analysis/autotune', {
+                const resp = await fetch(url, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ task_ids: ids.length ? ids : undefined }),
@@ -685,14 +768,45 @@ document.addEventListener('alpine:init', () => {
         },
 
         async applyAutotuneSettings(config) {
-            const store = Alpine.store('citrasense');
-            if (!store || !store.config) return;
+            // Resolve the sensor to apply against: the selector's choice
+            // takes priority; fall back to the lone telescope sensor in a
+            // single-sensor deployment.  If somehow neither is available
+            // (no telescopes registered), surface an error toast so the
+            // operator isn't left guessing.
+            const { showToast } = await import('./config.js');
+            let sensorId = this.selectedSensorId;
+            if (!sensorId && this.telescopeSensors.length === 1) {
+                sensorId = this.telescopeSensors[0].id;
+            }
+            if (!sensorId) {
+                showToast('Pick a telescope above before applying auto-tune settings', 'warning');
+                return;
+            }
 
-            store.config.sextractor_detect_thresh = config.detect_thresh;
-            store.config.sextractor_detect_minarea = config.detect_minarea;
-            store.config.sextractor_filter_name = config.filter_name;
-
-            await window.saveConfiguration({ preventDefault() {} });
+            try {
+                const resp = await fetch(`/api/sensors/${sensorId}/autotune/apply`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        detect_thresh: config.detect_thresh,
+                        detect_minarea: config.detect_minarea,
+                        filter_name: config.filter_name,
+                    }),
+                });
+                const data = await resp.json();
+                if (!resp.ok || data.error) {
+                    showToast('Apply failed: ' + (data.error || resp.statusText), 'danger');
+                    return;
+                }
+                const name = this.telescopeName(sensorId);
+                showToast(
+                    `Applied to ${name}: thresh=${data.detect_thresh}, minarea=${data.detect_minarea}, filter=${data.filter_name}`,
+                    'success',
+                );
+            } catch (e) {
+                console.error('Apply autotune settings failed', e);
+                showToast('Apply auto-tune failed: ' + e, 'danger');
+            }
         },
     }));
 });

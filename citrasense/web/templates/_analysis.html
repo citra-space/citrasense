@@ -113,6 +113,25 @@
 
     <!-- Filters -->
     <div class="row g-2 mb-3 align-items-end">
+        {# Telescope selector.  Hidden when only one telescope sensor is
+           registered — keeps single-sensor deployments visually unchanged. #}
+        <template x-if="telescopeSensors.length > 1">
+            <div class="col-auto">
+                <select class="form-select form-select-sm" x-model="selectedSensorId" @change="onSensorChange()"
+                        title="Filter by telescope">
+                    {# value="" (plain string) on purpose — HTML option values
+                       always round-trip as strings through the DOM, so a
+                       :value="null" bind silently turns into the *string*
+                       "null" after user interaction and every scoped fetch
+                       returns zero rows.  Empty string is the sentinel for
+                       "All" and is falsy in every guard. #}
+                    <option value="">All telescopes</option>
+                    <template x-for="s in telescopeSensors" :key="s.id">
+                        <option :value="s.id" x-text="s.name || s.id"></option>
+                    </template>
+                </select>
+            </div>
+        </template>
         <div class="col-auto">
             <input type="text" class="form-control form-control-sm" placeholder="Target name..."
                    x-model.debounce.300ms="filterTarget" @input="applyFilter()">
@@ -190,7 +209,9 @@
                 <div class="d-flex justify-content-between align-items-center mb-2">
                     <h6 class="mb-0"><i class="bi bi-sliders"></i> SExtractor Auto-Tune <span class="badge bg-secondary" style="font-size: 0.6rem; vertical-align: middle;">BETA</span></h6>
                     <div class="btn-group btn-group-sm">
-                        <button class="btn btn-primary" @click="doAutotune()" :disabled="autotuneRunning">
+                        <button class="btn btn-primary" @click="doAutotune()"
+                                :disabled="autotuneRunning || !canAutotune"
+                                :title="canAutotune ? 'Run auto-tune' : 'Pick a telescope above to auto-tune'">
                             <span x-show="!autotuneRunning"><i class="bi bi-lightning"></i> Run</span>
                             <span x-show="autotuneRunning">
                                 <span class="spinner-border spinner-border-sm"></span>
@@ -208,6 +229,13 @@
                     extraction settings for your telescope.
                     Requires <strong>Keep Processing Output</strong> enabled in Settings.
                 </small>
+                <template x-if="telescopeSensors.length > 1 && !selectedSensorId">
+                    <div class="alert alert-warning py-2 px-3 mb-2 small">
+                        <i class="bi bi-exclamation-triangle"></i>
+                        Select a specific telescope above before running auto-tune.
+                        Tuning mixes bundles across scopes otherwise.
+                    </div>
+                </template>
                 <small class="text-muted d-block mb-2">
                     <template x-if="selectedCount > 0">
                         <span>
@@ -352,6 +380,9 @@
                     <th class="sortable" @click="toggleSort('completed_at')">
                         Time <span x-text="sortIcon('completed_at')"></span>
                     </th>
+                    <template x-if="showSensorColumn">
+                        <th>Telescope</th>
+                    </template>
                     <th class="sortable" @click="toggleSort('target_name')">
                         Target <span x-text="sortIcon('target_name')"></span>
                     </th>
@@ -383,6 +414,12 @@
                                    title="Shift+click to select a range">
                         </td>
                         <td><small x-text="formatTime(task.completed_at)"></small></td>
+                        <template x-if="showSensorColumn">
+                            <td class="text-nowrap">
+                                <small x-text="telescopeName(task.sensor_id)"
+                                       :class="task.sensor_id ? '' : 'text-muted'"></small>
+                            </td>
+                        </template>
                         <td x-text="task.target_name || '—'"></td>
                         <td>
                             <span x-show="task.filter_name" class="badge"
@@ -431,7 +468,7 @@
                         </td>
                         <td>
                             <span x-show="task.pointing_error_deg != null"
-                                  :class="pointingClass(task.pointing_error_deg)"
+                                  :class="pointingClass(task.pointing_error_deg, task)"
                                   x-text="task.pointing_error_deg?.toFixed(4) + '°'"></span>
                             <span x-show="task.pointing_error_deg == null" class="text-muted">—</span>
                         </td>
@@ -461,7 +498,7 @@
                         </td>
                     </tr>
                     <tr x-show="expanded === task.task_id && detail" class="analysis-detail-row">
-                        <td colspan="14" class="p-0 border-0">
+                        <td :colspan="showSensorColumn ? 15 : 14" class="p-0 border-0">
                             <div class="analysis-detail-card mx-2 my-2">
                                 <div class="row g-0">
                                     <div class="col-md-6 p-3 d-flex flex-column">
@@ -732,7 +769,7 @@
                                                         </div>
                                                         <div class="d-flex gap-3">
                                                             <span x-show="detail.pointing_error_deg != null"
-                                                                  :class="pointingClass(detail.pointing_error_deg)"
+                                                                  :class="pointingClass(detail.pointing_error_deg, detail)"
                                                                   x-text="'Error: ' + detail.pointing_error_deg?.toFixed(4) + '°'"></span>
                                                         </div>
                                                     </div>

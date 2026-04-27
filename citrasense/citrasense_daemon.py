@@ -96,6 +96,10 @@ class CitraSenseDaemon:
         # Local analysis index — persists pipeline metrics across restarts
         db_path = self.settings.directories.analysis_dir / "task_index.db"
         self.task_index = TaskIndex(db_path)
+        # Stamp sensor_id onto any legacy rows recorded before multi-sensor
+        # analysis landed.  Idempotent and cheap after convergence (early
+        # short-circuit when no NULL rows remain), so safe on every start.
+        self.task_index.backfill_sensor_ids(self.settings.directories.processing_dir)
         self._retention_timer: threading.Timer | None = None
 
         # Note: Work queues and stage tracking now managed by TaskDispatcher + SensorRuntime
