@@ -326,7 +326,7 @@ class AbstractAstroHardwareAdapter(ABC):
                     self.logger.warning("Could not migrate pointing model file %s: %s", legacy, exc)
                 break
 
-        self._pointing_model = AltAzPointingModel(state_file=state_file)
+        self._pointing_model = AltAzPointingModel(state_file=state_file, logger=self.logger)
 
         if self._pointing_model.is_active:
             status = self._pointing_model.status()
