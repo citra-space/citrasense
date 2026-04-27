@@ -275,29 +275,28 @@ def test_acquisition_queue_get_task_from_item():
 def test_processing_queue_get_working_dir_with_settings():
     from citrasense.acquisition.processing_queue import ProcessingQueue
 
+    mock_settings = MagicMock(max_task_retries=3, initial_retry_delay_seconds=1, max_retry_delay_seconds=10)
+    mock_settings.directories.processing_dir = Path("/data/processing")
     pq = ProcessingQueue(
         num_workers=1,
-        settings=MagicMock(max_task_retries=3, initial_retry_delay_seconds=1, max_retry_delay_seconds=10),
+        settings=mock_settings,
         logger=MagicMock(),
     )
-    mock_settings = MagicMock()
-    mock_settings.directories.processing_dir = Path("/data/processing")
-    wd = pq._get_working_dir("task-123", mock_settings)
+    wd = pq._get_working_dir("task-123")
     assert wd == Path("/data/processing/task-123")
 
 
 def test_processing_queue_get_working_dir_no_settings():
     from citrasense.acquisition.processing_queue import ProcessingQueue
 
-    pq = ProcessingQueue(num_workers=1, settings=MagicMock(), logger=MagicMock())
-    wd = pq._get_working_dir("task-123", None)
+    pq = ProcessingQueue(num_workers=1, settings=None, logger=MagicMock())
+    wd = pq._get_working_dir("task-123")
     assert "task-123" in str(wd)
 
 
 def test_processing_queue_cleanup(tmp_path):
     from citrasense.acquisition.processing_queue import ProcessingQueue
 
-    pq = ProcessingQueue(num_workers=1, settings=MagicMock(), logger=MagicMock())
     mock_settings = MagicMock()
     processing_dir = tmp_path / "processing"
     processing_dir.mkdir()
@@ -305,7 +304,8 @@ def test_processing_queue_cleanup(tmp_path):
     work_dir.mkdir(parents=True)
     (work_dir / "file.txt").write_text("data")
     mock_settings.directories.processing_dir = processing_dir
-    pq._cleanup_working_dir("task-1", mock_settings)
+    pq = ProcessingQueue(num_workers=1, settings=mock_settings, logger=MagicMock())
+    pq._cleanup_working_dir("task-1")
     assert not work_dir.exists()
 
 
@@ -389,19 +389,19 @@ def test_processing_queue_execute_exception(tmp_path):
 def test_processing_queue_on_success():
     from citrasense.acquisition.processing_queue import ProcessingQueue
 
-    pq = ProcessingQueue(num_workers=1, settings=MagicMock(), logger=MagicMock())
+    global_settings = MagicMock()
+    global_settings.processing_output_retention_hours = 0
+    pq = ProcessingQueue(num_workers=1, settings=global_settings, logger=MagicMock())
     on_complete = MagicMock()
     task_obj = MagicMock()
-    mock_settings = MagicMock()
-    mock_settings.processing_output_retention_hours = 0
     item = {
         "task_id": "t1",
-        "context": {"task": task_obj, "settings": mock_settings},
+        "context": {"task": task_obj},
         "on_complete": on_complete,
     }
     with patch.object(pq, "_cleanup_working_dir") as mock_cleanup:
         pq._on_success(item, "result")
-        mock_cleanup.assert_called_once_with("t1", mock_settings)
+        mock_cleanup.assert_called_once_with("t1")
     task_obj.set_status_msg.assert_called_with("Processing complete")
     on_complete.assert_called_once_with("t1", "result")
 
@@ -409,13 +409,13 @@ def test_processing_queue_on_success():
 def test_processing_queue_on_success_keeps_output():
     from citrasense.acquisition.processing_queue import ProcessingQueue
 
-    pq = ProcessingQueue(num_workers=1, settings=MagicMock(), logger=MagicMock())
+    global_settings = MagicMock()
+    global_settings.processing_output_retention_hours = -1
+    pq = ProcessingQueue(num_workers=1, settings=global_settings, logger=MagicMock())
     on_complete = MagicMock()
-    mock_settings = MagicMock()
-    mock_settings.processing_output_retention_hours = -1
     item = {
         "task_id": "t1",
-        "context": {"task": MagicMock(), "settings": mock_settings},
+        "context": {"task": MagicMock()},
         "on_complete": on_complete,
     }
     with patch.object(pq, "_cleanup_working_dir") as mock_cleanup:
@@ -427,32 +427,32 @@ def test_processing_queue_on_success_keeps_output():
 def test_processing_queue_on_permanent_failure():
     from citrasense.acquisition.processing_queue import ProcessingQueue
 
-    pq = ProcessingQueue(num_workers=1, settings=MagicMock(), logger=MagicMock())
+    global_settings = MagicMock()
+    global_settings.processing_output_retention_hours = 0
+    pq = ProcessingQueue(num_workers=1, settings=global_settings, logger=MagicMock())
     on_complete = MagicMock()
     task_obj = MagicMock()
-    mock_settings = MagicMock()
-    mock_settings.processing_output_retention_hours = 0
     item = {
         "task_id": "t1",
-        "context": {"task": task_obj, "settings": mock_settings},
+        "context": {"task": task_obj},
         "on_complete": on_complete,
     }
     with patch.object(pq, "_cleanup_working_dir") as mock_cleanup:
         pq._on_permanent_failure(item)
-        mock_cleanup.assert_called_once_with("t1", mock_settings)
+        mock_cleanup.assert_called_once_with("t1")
     on_complete.assert_called_once_with("t1", None)
 
 
 def test_processing_queue_on_permanent_failure_keeps_output():
     from citrasense.acquisition.processing_queue import ProcessingQueue
 
-    pq = ProcessingQueue(num_workers=1, settings=MagicMock(), logger=MagicMock())
+    global_settings = MagicMock()
+    global_settings.processing_output_retention_hours = -1
+    pq = ProcessingQueue(num_workers=1, settings=global_settings, logger=MagicMock())
     on_complete = MagicMock()
-    mock_settings = MagicMock()
-    mock_settings.processing_output_retention_hours = -1
     item = {
         "task_id": "t1",
-        "context": {"task": MagicMock(), "settings": mock_settings},
+        "context": {"task": MagicMock()},
         "on_complete": on_complete,
     }
     with patch.object(pq, "_cleanup_working_dir") as mock_cleanup:

@@ -41,16 +41,16 @@ class ProcessingQueue(BaseWorkQueue):
             {"task_id": task_id, "image_path": image_path, "context": context, "on_complete": on_complete}
         )
 
-    def _get_working_dir(self, task_id: str, settings) -> Path:
+    def _get_working_dir(self, task_id: str) -> Path:
         """Return the task-specific working directory path."""
-        if settings:
-            return settings.directories.processing_dir / task_id
+        if self.settings and getattr(self.settings, "directories", None):
+            return self.settings.directories.processing_dir / task_id
         return Path(tempfile.gettempdir()) / "citrasense" / "processing" / task_id
 
-    def _cleanup_working_dir(self, task_id: str, settings):
+    def _cleanup_working_dir(self, task_id: str):
         """Remove the task-specific working directory, logging any failure."""
         try:
-            working_dir = self._get_working_dir(task_id, settings)
+            working_dir = self._get_working_dir(task_id)
             if working_dir.exists():
                 shutil.rmtree(working_dir)
                 self.logger.debug(f"Cleaned up working directory: {working_dir}")
@@ -70,8 +70,7 @@ class ProcessingQueue(BaseWorkQueue):
 
         try:
             # Create task-specific working directory
-            settings = item["context"].get("settings")
-            working_dir = self._get_working_dir(task_id, settings)
+            working_dir = self._get_working_dir(task_id)
             working_dir.mkdir(parents=True, exist_ok=True)
             self.logger.debug(f"Created working directory: {working_dir}")
 
@@ -130,9 +129,9 @@ class ProcessingQueue(BaseWorkQueue):
         if task_obj:
             task_obj.set_status_msg("Processing complete")
 
-        settings = item["context"].get("settings")
-        if not settings or settings.processing_output_retention_hours == 0:
-            self._cleanup_working_dir(task_id, settings)
+        retention = getattr(self.settings, "processing_output_retention_hours", 0)
+        if retention == 0:
+            self._cleanup_working_dir(task_id)
 
         on_complete(task_id, result)
 
@@ -147,9 +146,9 @@ class ProcessingQueue(BaseWorkQueue):
         if task_obj:
             task_obj.set_status_msg("Processing permanently failed (uploading raw image)")
 
-        settings = item["context"].get("settings")
-        if not settings or settings.processing_output_retention_hours == 0:
-            self._cleanup_working_dir(task_id, settings)
+        retention = getattr(self.settings, "processing_output_retention_hours", 0)
+        if retention == 0:
+            self._cleanup_working_dir(task_id)
 
         # Fail-open: notify with None result (will upload raw image)
         on_complete(task_id, None)
