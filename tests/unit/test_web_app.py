@@ -479,7 +479,7 @@ def test_cancel_task_server_refused(client, mock_daemon):
 
 
 def test_cancel_task_active_refused(client, mock_daemon):
-    mock_daemon.task_dispatcher.current_task_id = "abc-123"
+    mock_daemon.task_dispatcher.current_task_ids = {"scope-0": "abc-123"}
     resp = client.post("/api/tasks/abc-123/cancel")
     assert resp.status_code == 409
     mock_daemon.api_client.cancel_task.assert_not_called()
@@ -536,7 +536,7 @@ def test_clear_operator_stop(client, mock_daemon):
     data = resp.json()
     assert data["success"] is True
     mock_daemon.safety_monitor.clear_operator_stop.assert_called_once()
-    mock_daemon.task_dispatcher.resume.assert_not_called()
+    mock_daemon.task_dispatcher.resume_all.assert_not_called()
     mock_daemon.settings.save.assert_not_called()
 
 

@@ -70,7 +70,19 @@ class SensorRuntime:
         if sensor.sensor_type == "telescope" and hardware_adapter is None:
             raise ValueError(f"SensorRuntime for telescope sensor {sensor.sensor_id!r} " "requires a hardware_adapter")
         self.hardware_adapter = hardware_adapter
+        # Per-sensor pipeline registry. Callers may still inject a registry
+        # (older unit tests do), but production code builds one here so two
+        # runtimes don't share a single CalibrationProcessor instance.
+        if processor_registry is None and sensor.sensor_type == "telescope":
+            from citrasense.pipelines.common.pipeline_registry import PipelineRegistry
+
+            processor_registry = PipelineRegistry(settings=settings, logger=self.logger)
         self.processor_registry = processor_registry
+        # Per-sensor calibration library — assigned later by the daemon when
+        # the adapter is known to support direct camera control. The library
+        # is then wired into this runtime's CalibrationProcessor via
+        # ``attach_calibration_library``.
+        self.calibration_library: Any = None
         self.elset_cache = elset_cache
         self.apass_catalog = apass_catalog
         self.location_service = location_service
@@ -149,6 +161,23 @@ class SensorRuntime:
     def set_dispatcher(self, dispatcher: TaskDispatcher) -> None:
         """Wire the parent dispatcher after construction (resolves circular dependency)."""
         self._dispatcher = dispatcher
+
+    def attach_calibration_library(self, library: Any) -> None:
+        """Bind a CalibrationLibrary to this runtime and its CalibrationProcessor.
+
+        Each runtime gets its own library so two telescopes don't end up
+        sharing a single processor whose ``library`` attribute reflects
+        whichever sensor connected last.
+        """
+        self.calibration_library = library
+        if self.processor_registry is None:
+            return
+        from citrasense.pipelines.optical.calibration_processor import CalibrationProcessor
+
+        for proc in self.processor_registry.processors:
+            if isinstance(proc, CalibrationProcessor):
+                proc.library = library
+                break
 
     # ── Stage tracking proxies ─────────────────────────────────────────
 

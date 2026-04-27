@@ -78,6 +78,9 @@ class TelescopeSensor(AbstractSensor):
         self.adapter_key = adapter_key
         self.citra_record: dict[str, Any] | None = None
         self._cable_wrap_check: CableWrapCheck | None = None
+        # Let the adapter namespace its per-sensor state files
+        # (e.g. pointing_model_<sensor_id>.json) via self.sensor_id.
+        self.adapter.sensor_id = sensor_id
 
     # ── Factory ───────────────────────────────────────────────────────
 

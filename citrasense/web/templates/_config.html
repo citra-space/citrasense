@@ -466,7 +466,7 @@
                                                     <td x-text="b.ncombine"></td>
                                                     <td><small x-text="b.date ? new Date(b.date).toLocaleString([], {month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit'}) : ''"></small></td>
                                                     <td class="text-nowrap">
-                                                        <a class="btn btn-outline-secondary btn-sm py-0 px-1 me-1" :href="'/api/calibration/master/download?filename=' + encodeURIComponent(b.filename)" title="Download"><i class="bi bi-download"></i></a>
+                                                        <a class="btn btn-outline-secondary btn-sm py-0 px-1 me-1" :href="$store.citrasense.sensorApiBaseFor($store.citrasense.configSensorId) + '/calibration/master/download?filename=' + encodeURIComponent(b.filename)" title="Download"><i class="bi bi-download"></i></a>
                                                         <button type="button" class="btn btn-outline-danger btn-sm py-0 px-1" @click="deleteMaster('bias', b)" title="Delete"><i class="bi bi-trash"></i></button>
                                                     </td>
                                                 </tr>
@@ -483,7 +483,7 @@
                                                     <td x-text="d.ncombine"></td>
                                                     <td><small x-text="d.date ? new Date(d.date).toLocaleString([], {month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit'}) : ''"></small></td>
                                                     <td class="text-nowrap">
-                                                        <a class="btn btn-outline-secondary btn-sm py-0 px-1 me-1" :href="'/api/calibration/master/download?filename=' + encodeURIComponent(d.filename)" title="Download"><i class="bi bi-download"></i></a>
+                                                        <a class="btn btn-outline-secondary btn-sm py-0 px-1 me-1" :href="$store.citrasense.sensorApiBaseFor($store.citrasense.configSensorId) + '/calibration/master/download?filename=' + encodeURIComponent(d.filename)" title="Download"><i class="bi bi-download"></i></a>
                                                         <button type="button" class="btn btn-outline-danger btn-sm py-0 px-1" @click="deleteMaster('dark', d)" title="Delete"><i class="bi bi-trash"></i></button>
                                                     </td>
                                                 </tr>
@@ -500,7 +500,7 @@
                                                     <td x-text="f.ncombine"></td>
                                                     <td><small x-text="f.date ? new Date(f.date).toLocaleString([], {month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit'}) : ''"></small></td>
                                                     <td class="text-nowrap">
-                                                        <a class="btn btn-outline-secondary btn-sm py-0 px-1 me-1" :href="'/api/calibration/master/download?filename=' + encodeURIComponent(f.filename)" title="Download"><i class="bi bi-download"></i></a>
+                                                        <a class="btn btn-outline-secondary btn-sm py-0 px-1 me-1" :href="$store.citrasense.sensorApiBaseFor($store.citrasense.configSensorId) + '/calibration/master/download?filename=' + encodeURIComponent(f.filename)" title="Download"><i class="bi bi-download"></i></a>
                                                         <button type="button" class="btn btn-outline-danger btn-sm py-0 px-1" @click="deleteMaster('flat', f)" title="Delete"><i class="bi bi-trash"></i></button>
                                                     </td>
                                                 </tr>
@@ -589,13 +589,13 @@
                                             <div class="col-auto">
                                                 <label class="form-label small mb-0">Bias/Dark frame count</label>
                                                 <input type="number" class="form-control form-control-sm" style="width: 80px;"
-                                                       x-model.number="$store.citrasense.config.calibration_frame_count"
+                                                       x-model.number="$store.citrasense.config.sensors[$store.citrasense.configSensorIndex].calibration_frame_count"
                                                        min="5" max="100" step="1">
                                             </div>
                                             <div class="col-auto">
                                                 <label class="form-label small mb-0">Flat frame count</label>
                                                 <input type="number" class="form-control form-control-sm" style="width: 80px;"
-                                                       x-model.number="$store.citrasense.config.flat_frame_count"
+                                                       x-model.number="$store.citrasense.config.sensors[$store.citrasense.configSensorIndex].flat_frame_count"
                                                        min="5" max="50" step="1">
                                             </div>
                                         </div>

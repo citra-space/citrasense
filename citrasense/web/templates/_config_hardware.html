@@ -229,7 +229,7 @@
                     <label for="alignment_exposure_seconds" class="form-label small">Alignment Exposure (seconds)</label>
                     <input type="number" id="alignment_exposure_seconds" class="form-control form-control-sm"
                         step="0.5" min="0.5" max="30"
-                        x-model.number="$store.citrasense.config.alignment_exposure_seconds">
+                        x-model.number="$store.citrasense.config.sensors[$store.citrasense.configSensorIndex].alignment_exposure_seconds">
                 </div>
             </div>
 

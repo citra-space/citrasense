@@ -15,6 +15,16 @@ if TYPE_CHECKING:
     from citrasense.web.app import CitraSenseWebApp
 
 
+def _sensor_calibration_count(ctx: CitraSenseWebApp, sensor_id: str, field: str, default: int) -> int:
+    """Read ``field`` from the per-sensor config, falling back to ``default``."""
+    if not ctx.daemon or not ctx.daemon.settings:
+        return default
+    sc = ctx.daemon.settings.get_sensor_config(sensor_id)
+    if sc is None:
+        return default
+    return int(getattr(sc, field, default) or default)
+
+
 def build_calibration_router(ctx: CitraSenseWebApp) -> APIRouter:
     """Calibration status, capture, suite, and master management."""
     router = APIRouter(prefix="/api/sensors/{sensor_id}", tags=["calibration"])
@@ -26,7 +36,7 @@ def build_calibration_router(ctx: CitraSenseWebApp) -> APIRouter:
             return JSONResponse({"error": "Daemon not available"}, status_code=503)
         sensor, runtime = get_sensor_context(ctx, sensor_id)
         adapter = sensor.adapter
-        lib = getattr(ctx.daemon, "calibration_library", None)
+        lib = getattr(runtime, "calibration_library", None)
         if not lib or not adapter.supports_direct_camera_control():
             return {"available": False}
 
@@ -68,8 +78,8 @@ def build_calibration_router(ctx: CitraSenseWebApp) -> APIRouter:
             "capture_running": cal_mgr.is_running() if cal_mgr else False,
             "capture_requested": cal_mgr.is_requested() if cal_mgr else False,
             "capture_progress": cal_mgr.get_progress() if cal_mgr else {},
-            "frame_count_setting": ctx.daemon.settings.calibration_frame_count if ctx.daemon.settings else 30,
-            "flat_frame_count_setting": ctx.daemon.settings.flat_frame_count if ctx.daemon.settings else 15,
+            "frame_count_setting": _sensor_calibration_count(ctx, sensor_id, "calibration_frame_count", 30),
+            "flat_frame_count_setting": _sensor_calibration_count(ctx, sensor_id, "flat_frame_count", 15),
         }
 
     @router.post("/calibration/capture")
@@ -134,8 +144,8 @@ def build_calibration_router(ctx: CitraSenseWebApp) -> APIRouter:
             if not profile.calibration_applicable:
                 return JSONResponse({"error": "Camera does not support calibration"}, status_code=400)
 
-            frame_count = ctx.daemon.settings.calibration_frame_count if ctx.daemon.settings else 30
-            flat_count = ctx.daemon.settings.flat_frame_count if ctx.daemon.settings else 15
+            frame_count = _sensor_calibration_count(ctx, sensor_id, "calibration_frame_count", 30)
+            flat_count = _sensor_calibration_count(ctx, sensor_id, "flat_frame_count", 15)
 
             if suite_name == "bias_and_dark":
                 jobs = bias_and_dark_suite(profile, frame_count)
@@ -169,8 +179,8 @@ def build_calibration_router(ctx: CitraSenseWebApp) -> APIRouter:
         """Delete a specific master calibration frame."""
         if not ctx.daemon:
             return JSONResponse({"error": "Daemon not available"}, status_code=503)
-        get_sensor_context(ctx, sensor_id)
-        lib = getattr(ctx.daemon, "calibration_library", None)
+        _sensor, runtime = get_sensor_context(ctx, sensor_id)
+        lib = getattr(runtime, "calibration_library", None)
         if not lib:
             return JSONResponse({"error": "Calibration not available"}, status_code=400)
         try:
@@ -194,8 +204,8 @@ def build_calibration_router(ctx: CitraSenseWebApp) -> APIRouter:
         """Download a master calibration FITS file by filename."""
         if not ctx.daemon:
             return JSONResponse({"error": "Daemon not available"}, status_code=503)
-        get_sensor_context(ctx, sensor_id)
-        lib = getattr(ctx.daemon, "calibration_library", None)
+        _sensor, runtime = get_sensor_context(ctx, sensor_id)
+        lib = getattr(runtime, "calibration_library", None)
         if not lib:
             return JSONResponse({"error": "Calibration not available"}, status_code=400)
         safe_name = Path(filename).name

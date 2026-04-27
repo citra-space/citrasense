@@ -160,10 +160,18 @@ class IndiAdapter(PyIndi.BaseClient, AbstractAstroHardwareAdapter):
         self.logger.info(f"INDI Server disconnected (exit code = {code},{self.getHost()}:{self.getPort()})")
 
     def newBLOB(self, bp):
-        for b in bp:
-            with open("image.fits", "wb") as f:
-                f.write(b.getblob())
-                self.logger.info("Saved image.fits")
+        """INDI BLOB arrival callback.
+
+        Actual image persistence happens in :meth:`updateProperty` where we
+        have access to the current task id and can write into the sensor's
+        ``images_dir``. Writing ``image.fits`` into the process CWD here
+        would clobber between multiple INDI sensors sharing one daemon.
+        """
+        try:
+            count = sum(1 for _ in bp)
+        except Exception:
+            count = 0
+        self.logger.debug("newBLOB received %d payload(s); handled in updateProperty", count)
 
     # ========================= AstroHardwareAdapter Methods =========================
 

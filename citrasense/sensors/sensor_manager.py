@@ -82,9 +82,12 @@ class SensorManager:
             if s.sensor_type == sensor_type:
                 yield s
 
-    def first_of_type(self, sensor_type: str) -> AbstractSensor | None:
-        """Return the first registered sensor of ``sensor_type`` or ``None``."""
-        return next(self.iter_by_type(sensor_type), None)
+    # NOTE: ``first_of_type`` used to live here as a convenience helper, but it
+    # was a classic "first sensor wins" footgun in multi-sensor deployments —
+    # callers that needed *a* telescope silently got the first one registered
+    # and hid bugs where the actual sensor should have been selected by id.
+    # Use ``iter_by_type`` + explicit selection, or resolve via
+    # ``TaskDispatcher._runtime_for_task`` / ``SensorManager.get``.
 
     # ── Bulk lifecycle ────────────────────────────────────────────────
 

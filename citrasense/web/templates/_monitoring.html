@@ -192,7 +192,7 @@
                             <div class="card bg-dark text-light border-secondary h-100">
                                 <div class="card-body py-2 px-3">
                                     <div class="text-muted small">Safety</div>
-                                    <div x-data="{ get s() { return $store.citrasense.status?.safety; } }">
+                                    <div x-data="{ get s() { return $store.citrasense.status?.safety_status; } }">
                                         <template x-if="s">
                                             <span :class="{
                                                 'text-success': s.safe,

@@ -100,12 +100,23 @@ class PreviewBus:
         self._frames: dict[str, _Frame] = {}
 
     def push(self, data_url: str, source: str = "", sensor_id: str = "") -> None:
-        """Store a data-URL preview frame for *sensor_id*."""
+        """Store a data-URL preview frame for *sensor_id*.
+
+        ``sensor_id`` should be a real sensor id in multi-sensor
+        deployments — the empty-string default is a compatibility escape
+        hatch for producers that don't yet know which sensor they belong
+        to, and every producer keyed ``""`` shares the same slot on the
+        bus (later writers overwrite earlier ones). Pass an explicit
+        ``sensor_id`` from per-sensor call sites.
+        """
         with self._lock:
             self._frames[sensor_id] = (data_url, source, "data", sensor_id)
 
     def push_url(self, url: str, source: str = "", sensor_id: str = "") -> None:
-        """Store a URL notification frame for *sensor_id*."""
+        """Store a URL notification frame for *sensor_id*.
+
+        See :meth:`push` for the ``sensor_id=""`` caveat.
+        """
         with self._lock:
             self._frames[sensor_id] = (url, source, "url", sensor_id)
 

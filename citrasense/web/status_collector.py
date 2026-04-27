@@ -49,6 +49,13 @@ class StatusCollector:
                         "adapter_key": getattr(s, "adapter_key", None),
                     }
 
+            # Populate site-wide tasks_by_stage BEFORE enrichment so each
+            # sensor can filter the site map down to its own tasks.
+            if td:
+                status.tasks_by_stage = td.get_tasks_by_stage()
+            else:
+                status.tasks_by_stage = None
+
             # Enrich each telescope sensor with hw/manager/session state
             self._enrich_sensors(status, sm, td)
             _mark("sensor_enrichment")
@@ -56,6 +63,7 @@ class StatusCollector:
             # Site-level: task dispatcher aggregate
             if td:
                 status.current_task = td.current_task_id
+                status.current_task_ids = dict(td.current_task_ids)
                 status.tasks_pending = td.pending_task_count
                 status.processing_active = td.is_processing_active()
 
@@ -80,12 +88,11 @@ class StatusCollector:
             status.system_busy_reason = ", ".join(busy_reasons)
             _mark("task_dispatcher")
 
-            # Site-level autofocus timing (first sensor as representative)
-            if self.daemon.settings and self.daemon.settings.sensors:
-                sc0 = self.daemon.settings.sensors[0]
-                status.last_autofocus_timestamp = sc0.last_autofocus_timestamp
-                status.last_alignment_timestamp = sc0.last_alignment_timestamp
-                status.autofocus_target_name = _resolve_autofocus_target_name(sc0)
+            # Per-sensor autofocus/alignment timing lives in
+            # ``status.sensors[sid]`` (populated by ``_enrich_sensors`` →
+            # ``_add_autofocus_alignment_fields``). No site-level
+            # "representative sensor" copy — site-level duplicates were
+            # dropped in the multi-sensor cleanup.
             _mark("autofocus")
 
             # Time sync status
@@ -163,12 +170,6 @@ class StatusCollector:
             else:
                 status.active_processors = []
 
-            # Tasks by pipeline stage (site-wide aggregate)
-            if td:
-                status.tasks_by_stage = td.get_tasks_by_stage()
-            else:
-                status.tasks_by_stage = None
-
             # Aggregate pipeline stats across all runtimes
             if td:
                 agg_imaging: dict[str, int] = {}
@@ -189,10 +190,22 @@ class StatusCollector:
                 }
             else:
                 status.pipeline_stats = None
-            if hasattr(self.daemon, "processor_registry") and self.daemon.processor_registry:
-                if status.pipeline_stats is None:
-                    status.pipeline_stats = {}
-                status.pipeline_stats["processors"] = self.daemon.processor_registry.get_processor_stats()
+            if td:
+                agg_proc_stats: dict[str, dict[str, Any]] = {}
+                for rt in td._runtimes.values():
+                    reg = getattr(rt, "processor_registry", None)
+                    if not reg:
+                        continue
+                    for name, stats in reg.get_processor_stats().items():
+                        cur = agg_proc_stats.setdefault(name, {"runs": 0, "failures": 0, "last_failure_reason": None})
+                        cur["runs"] += stats.get("runs", 0)
+                        cur["failures"] += stats.get("failures", 0)
+                        if stats.get("last_failure_reason"):
+                            cur["last_failure_reason"] = stats["last_failure_reason"]
+                if agg_proc_stats:
+                    if status.pipeline_stats is None:
+                        status.pipeline_stats = {}
+                    status.pipeline_stats["processors"] = agg_proc_stats
 
             _mark("pipeline")
 
@@ -565,7 +578,7 @@ class StatusCollector:
         """Build calibration status dict for SystemStatus."""
         if not self.daemon:
             return None
-        lib = getattr(self.daemon, "calibration_library", None)
+        lib = getattr(runtime, "calibration_library", None) if runtime else None
         if not lib or not adapter or not adapter.supports_direct_camera_control():
             return None
 

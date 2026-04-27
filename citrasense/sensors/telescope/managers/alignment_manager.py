@@ -160,8 +160,18 @@ class AlignmentManager:
         return True
 
     def _get_exposure_seconds(self) -> float:
-        if self.settings:
-            return self.settings.alignment_exposure_seconds
+        sc = getattr(self, "_sensor_config", None)
+        if sc is not None and getattr(sc, "alignment_exposure_seconds", None) is not None:
+            return sc.alignment_exposure_seconds
+        # Backward-compat for pre-v7 in-memory settings objects (e.g.
+        # external test fixtures) that may still carry
+        # ``alignment_exposure_seconds`` at the top level even though the
+        # field was moved to ``SensorConfig``. ``getattr`` with a default
+        # avoids a pyright attribute-access error for the post-migration
+        # class layout.
+        legacy = getattr(self.settings, "alignment_exposure_seconds", None) if self.settings else None
+        if legacy is not None:
+            return legacy
         return 2.0
 
     def _execute(self) -> None:
@@ -658,13 +668,8 @@ class AlignmentManager:
 
         Reusable for any calibration phase (pre-walk, pre-verification, etc.).
         """
-        if not self.safety_monitor:
-            return
-
-        from citrasense.sensors.telescope.safety.cable_wrap_check import CableWrapCheck
-
-        check = self.safety_monitor.get_check("cable_wrap")
-        if not isinstance(check, CableWrapCheck):
+        check = self._get_cable_wrap_check()
+        if check is None:
             return
 
         cumulative = check.cumulative_deg
@@ -724,16 +729,30 @@ class AlignmentManager:
 
         return None
 
-    def _get_cable_wrap_cumulative(self) -> float:
-        """Read current cable wrap cumulative rotation, or 0.0 if unavailable."""
-        if not self.safety_monitor:
-            return 0.0
+    def _get_cable_wrap_check(self) -> Any:
+        """Resolve the CableWrapCheck owned by *this* sensor, if any.
+
+        Scoped via ``SafetyMonitor.get_sensor_checks(sensor_id)`` so a
+        multi-telescope site doesn't return another mount's check.
+        """
+        if not self.safety_monitor or not self._sensor_id:
+            return None
         try:
             from citrasense.sensors.telescope.safety.cable_wrap_check import CableWrapCheck
 
-            check = self.safety_monitor.get_check("cable_wrap")
-            if isinstance(check, CableWrapCheck):
-                return check.cumulative_deg
+            for chk in self.safety_monitor.get_sensor_checks(self._sensor_id):
+                if isinstance(chk, CableWrapCheck):
+                    return chk
         except Exception:
             pass
-        return 0.0
+        return None
+
+    def _get_cable_wrap_cumulative(self) -> float:
+        """Read current cable wrap cumulative rotation, or 0.0 if unavailable."""
+        check = self._get_cable_wrap_check()
+        if check is None:
+            return 0.0
+        try:
+            return check.cumulative_deg
+        except Exception:
+            return 0.0

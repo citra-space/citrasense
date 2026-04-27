@@ -90,12 +90,25 @@ def build_core_router(ctx: CitraSenseWebApp) -> APIRouter:
         return get_version_info()
 
     @router.get("/api/processors")
-    async def get_processors():
-        """Get list of all available processors with metadata."""
+    async def get_processors(sensor_id: str | None = None):
+        """Get list of all available processors with metadata.
+
+        ``sensor_id`` selects which sensor's ``enabled_processors`` map to
+        apply to the returned ``enabled`` flags. If omitted, the first
+        configured sensor is used for back-compat with single-sensor deployments.
+        """
         if not ctx.daemon or not hasattr(ctx.daemon, "processor_registry") or not ctx.daemon.processor_registry:
             return []
 
-        return ctx.daemon.processor_registry.get_all_processors()
+        sensor_config = None
+        settings = getattr(ctx.daemon, "settings", None)
+        if settings and settings.sensors:
+            if sensor_id:
+                sensor_config = settings.get_sensor_config(sensor_id)
+            if sensor_config is None:
+                sensor_config = settings.sensors[0]
+
+        return ctx.daemon.processor_registry.get_all_processors(sensor_config=sensor_config)
 
     @router.get("/api/logs")
     async def get_logs(limit: int = 100):

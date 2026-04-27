@@ -13,11 +13,20 @@ from citrasense.web.app import CitraSenseWebApp
 
 
 class _HighFrequencyEndpointFilter(logging.Filter):
-    """Suppress access-log entries for endpoints that fire many times per second."""
+    """Suppress access-log entries for endpoints that fire many times per second.
 
-    _SUPPRESSED = ("/api/camera/preview",)
+    Post multi-sensor migration the frontend pulls status over the
+    WebSocket rather than polling ``/api/camera/preview``, so the
+    suppression list is currently empty. Kept in place as a cheap hook
+    for future high-frequency endpoints (add paths/substrings to
+    ``_SUPPRESSED`` if one emerges).
+    """
+
+    _SUPPRESSED: tuple[str, ...] = ()
 
     def filter(self, record: logging.LogRecord) -> bool:
+        if not self._SUPPRESSED:
+            return True
         msg = record.getMessage()
         return not any(ep in msg for ep in self._SUPPRESSED)
 

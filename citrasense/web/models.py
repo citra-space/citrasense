@@ -15,6 +15,12 @@ class SystemStatus(BaseModel):
 
     # Site-level task orchestration
     current_task: str | None = None
+    # ``sensor_id -> currently-executing task id`` for every sensor that is
+    # actively running a task. Drives per-row ``isActive`` styling and
+    # cancel-button gating in the web UI (a task is "active" if its id
+    # appears in *any* sensor's slot, not just the first one ``current_task``
+    # happens to surface).
+    current_task_ids: dict[str, str] = {}
     tasks_pending: int = 0
     processing_active: bool = True
     system_busy: bool = False
@@ -38,11 +44,6 @@ class SystemStatus(BaseModel):
     time_health: dict[str, Any] | None = None
     gpsd_fix: dict[str, Any] | None = None
     adapter_gps: dict[str, Any] | None = None
-
-    # Global autofocus timing (settings-level, not per-sensor runtime)
-    autofocus_target_name: str = ""
-    last_autofocus_timestamp: int | None = None
-    last_alignment_timestamp: int | None = None
 
     # Dependencies & processors
     missing_dependencies: list[dict[str, str]] = []

@@ -100,13 +100,6 @@ class TestSensorManager:
         assert len(list(mgr.iter_by_type("dummy_test"))) == 1
         assert len(list(mgr.iter_by_type("nonexistent"))) == 0
 
-    def test_first_of_type(self):
-        mgr = SensorManager(logger=_logger)
-        s = _DummySensor("first")
-        mgr.register(s)
-        assert mgr.first_of_type("dummy_test") is s
-        assert mgr.first_of_type("nope") is None
-
     def test_connect_all(self):
         mgr = SensorManager(logger=_logger)
         mgr.register(_DummySensor("a"))

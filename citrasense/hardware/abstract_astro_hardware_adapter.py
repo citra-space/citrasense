@@ -153,6 +153,9 @@ class AbstractAstroHardwareAdapter(ABC):
         self.elset_cache: Any | None = None
         self._pointing_model: AltAzPointingModel | None = None
         self.slew_rate_tracker: SlewRateTracker = SlewRateTracker()
+        # Set by TelescopeSensor.__init__ so per-sensor state files
+        # (e.g. pointing model) can be namespaced; empty until attached.
+        self.sensor_id: str = ""
 
         # Load filter configuration from settings if available
         saved_filters = kwargs.get("filters", {})
@@ -277,19 +280,45 @@ class AbstractAstroHardwareAdapter(ABC):
     def _init_pointing_model(self, adapter_name: str) -> None:
         """Initialize the pointing model, loading persisted state if available.
 
-        State file is namespaced per adapter so different adapters don't
-        share calibration data.
-
-        Args:
-            adapter_name: Used to derive the state file name
-                (e.g. ``"DirectHardwareAdapter"``).
+        State file is namespaced per ``sensor_id`` (falling back to
+        ``adapter_name`` if the adapter has not been attached to a sensor yet)
+        so two telescope sensors using the same adapter class don't clobber
+        each other's calibration.
         """
         import platformdirs
 
+        from citrasense.constants import APP_AUTHOR, APP_NAME
         from citrasense.hardware.devices.mount.altaz_pointing_model import AltAzPointingModel
 
-        data_dir = Path(platformdirs.user_data_dir("citrasense", appauthor="citrasense"))
-        state_file = data_dir / f"pointing_model_{adapter_name}.json"
+        # Use the canonical APP_NAME / APP_AUTHOR constants — older code
+        # here hard-coded ``appauthor="citrasense"`` which diverged from
+        # the APASS / elset caches that use ``"citra-space"``; migration
+        # below handles the legacy path.
+        data_dir = Path(platformdirs.user_data_dir(APP_NAME, appauthor=APP_AUTHOR))
+        legacy_data_dir = Path(platformdirs.user_data_dir("citrasense", appauthor="citrasense"))
+        key = self.sensor_id or adapter_name
+        state_file = data_dir / f"pointing_model_{key}.json"
+
+        # One-time migration: if only a legacy file exists (either
+        # per-adapter-class name, or under the pre-cleanup appauthor) and
+        # the current per-sensor file does not, rename it so the first
+        # sensor to boot inherits the previous calibration.
+        data_dir.mkdir(parents=True, exist_ok=True)
+        legacy_candidates: list[Path] = []
+        if self.sensor_id:
+            legacy_candidates.append(data_dir / f"pointing_model_{adapter_name}.json")
+        legacy_candidates.append(legacy_data_dir / f"pointing_model_{key}.json")
+        if self.sensor_id:
+            legacy_candidates.append(legacy_data_dir / f"pointing_model_{adapter_name}.json")
+        for legacy in legacy_candidates:
+            if legacy.exists() and not state_file.exists():
+                try:
+                    legacy.rename(state_file)
+                    self.logger.info("Migrated pointing model file %s → %s", legacy, state_file)
+                except OSError as exc:
+                    self.logger.warning("Could not migrate pointing model file %s: %s", legacy, exc)
+                break
+
         self._pointing_model = AltAzPointingModel(state_file=state_file)
 
         if self._pointing_model.is_active:

@@ -52,6 +52,13 @@ export async function initConfig() {
     window.saveConfiguration = saveConfiguration;
     window.handleInvalidConfigField = handleInvalidConfigField;
 
+    // Called by the Alpine store's configSensorId setter whenever the user
+    // picks a different sensor in the config nav. Keeps adapterFields,
+    // filters, and processor toggles in sync with the selected sensor so
+    // saves don't accidentally merge the previous sensor's hardware
+    // settings into the new sensor's adapter_settings.
+    window._configOnSensorSwitch = onConfigSensorSwitch;
+
     // Load initial config
     await loadConfiguration();
 
@@ -59,6 +66,24 @@ export async function initConfig() {
     await loadProcessors();
 
     checkConfigStatus();
+}
+
+async function onConfigSensorSwitch(sensorId) {
+    const store = (typeof Alpine !== 'undefined' && Alpine.store)
+        ? Alpine.store('citrasense')
+        : null;
+    if (!store || !sensorId) return;
+
+    const sensor = store.config?.sensors?.find(s => s.id === sensorId);
+    if (!sensor) return;
+
+    if (sensor.adapter) {
+        await loadAdapterSchema(sensor.adapter, sensor.adapter_settings || {});
+    } else {
+        store.adapterFields = [];
+    }
+    await loadFilterConfig();
+    await loadProcessors();
 }
 
 /**
@@ -106,15 +131,17 @@ async function loadAdapterOptions() {
  */
 async function loadProcessors() {
     try {
-        const processors = await getProcessors();
+        const store = (typeof Alpine !== 'undefined' && Alpine.store)
+            ? Alpine.store('citrasense')
+            : null;
+        const sensorId = store?.configSensorId || null;
+        const processors = await getProcessors(sensorId);
 
-        if (typeof Alpine !== 'undefined' && Alpine.store) {
-            const store = Alpine.store('citrasense');
-
-            // Update processor enabled states from config
-            const enabledProcessors = store.config?.enabled_processors || {};
+        if (store) {
+            // Per-sensor processor toggles live on sensor_config.enabled_processors
+            const sensor = store.config?.sensors?.find(s => s.id === sensorId);
+            const enabledProcessors = sensor?.enabled_processors || {};
             processors.forEach(proc => {
-                // If config has an explicit setting, use it; otherwise use the default from API
                 if (proc.name in enabledProcessors) {
                     proc.enabled = enabledProcessors[proc.name];
                 }

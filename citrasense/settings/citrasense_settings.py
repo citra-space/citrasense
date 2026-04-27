@@ -7,6 +7,7 @@ eliminate the need to maintain separate field lists.
 
 from __future__ import annotations
 
+import threading
 from pathlib import Path
 from typing import Any
 
@@ -24,7 +25,7 @@ from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, field_validator,
 #     the model; ``load()`` migrates v1/v2 files automatically.
 # v4: operational settings (task_processing_paused, observing_session_*,
 #     self_tasking_*) moved from global to per-sensor.
-CONFIG_VERSION = 6
+CONFIG_VERSION = 7
 # Legacy scalar-only shape — synthesized ``sensors`` entries are marked with
 # this id so they round-trip cleanly on resave.
 # Migration-only: default sensor id assigned when upgrading legacy single-sensor configs.
@@ -119,6 +120,13 @@ class SensorConfig(BaseModel):
     # Per-sensor timestamps (moved from global in config_version 6).
     last_autofocus_timestamp: int | None = None
     last_alignment_timestamp: int | None = None
+
+    # Per-sensor hardware-dependent capture settings (moved from global in
+    # config_version 7). Each rig has its own camera/optics, so defaults
+    # like alignment exposure and calibration frame counts can't be shared.
+    alignment_exposure_seconds: float = 2.0
+    calibration_frame_count: int = 30
+    flat_frame_count: int = 15
 
     @field_validator("observing_session_sun_altitude_threshold", mode="before")
     @classmethod
@@ -254,6 +262,43 @@ class SensorConfig(BaseModel):
                 return None
         return v
 
+    @field_validator("alignment_exposure_seconds", mode="before")
+    @classmethod
+    def _validate_sensor_alignment_exposure(cls, v: Any) -> float:
+        try:
+            v = float(v)
+        except (TypeError, ValueError):
+            return 2.0
+        return max(0.1, min(60.0, v))
+
+    @field_validator("calibration_frame_count", mode="before")
+    @classmethod
+    def _validate_sensor_calibration_frame_count(cls, v: Any) -> int:
+        try:
+            v = int(v)
+        except (TypeError, ValueError):
+            CITRASENSE_LOGGER.warning("Invalid calibration_frame_count (%r). Falling back to 30.", v)
+            return 30
+        if v < 5 or v > 100:
+            clamped = max(5, min(100, v))
+            CITRASENSE_LOGGER.warning("calibration_frame_count %d out of range [5, 100]. Clamped to %d.", v, clamped)
+            return clamped
+        return v
+
+    @field_validator("flat_frame_count", mode="before")
+    @classmethod
+    def _validate_sensor_flat_frame_count(cls, v: Any) -> int:
+        try:
+            v = int(v)
+        except (TypeError, ValueError):
+            CITRASENSE_LOGGER.warning("Invalid flat_frame_count (%r). Falling back to 15.", v)
+            return 15
+        if v < 5 or v > 50:
+            clamped = max(5, min(50, v))
+            CITRASENSE_LOGGER.warning("flat_frame_count %d out of range [5, 50]. Clamped to %d.", v, clamped)
+            return clamped
+        return v
+
     @model_validator(mode="after")
     def _validate_sensor_adaptive_range(self) -> SensorConfig:
         if self.adaptive_exposure_min_seconds > self.adaptive_exposure_max_seconds:
@@ -306,9 +351,6 @@ class CitraSenseSettings(BaseModel):
     custom_data_dir: str = ""
     custom_log_dir: str = ""
 
-    # Alignment
-    alignment_exposure_seconds: float = 2.0
-
     # Time synchronization
     time_check_interval_minutes: int = 5
     time_offset_pause_ms: float = 500.0
@@ -324,16 +366,17 @@ class CitraSenseSettings(BaseModel):
     # MSI / elset cache
     elset_refresh_interval_hours: float = 6
 
-    # Calibration
-    calibration_frame_count: int = 30
-    flat_frame_count: int = 15
-
     # ── Non-persisted public attrs (excluded from model_dump) ─────────
     web_port: int = Field(default=DEFAULT_WEB_PORT, exclude=True)
 
     # ── Private infrastructure ────────────────────────────────────────
     _config_manager: SettingsFileManager = PrivateAttr()
     _dir_manager: DirectoryManager = PrivateAttr()
+    # Serializes concurrent ``save()`` / ``update_and_save()`` calls so
+    # per-sensor managers (autofocus, alignment, …) finishing near
+    # simultaneously don't race on the config file. Module-level import so
+    # the lock is shared across all instances in the process.
+    _save_lock: threading.Lock = PrivateAttr(default_factory=threading.Lock)
 
     # ── Validators (only for fields that remain on CitraSenseSettings) ─
 
@@ -352,34 +395,6 @@ class CitraSenseSettings(BaseModel):
         if v < -1:
             CITRASENSE_LOGGER.warning("processing_output_retention_hours (%d) below -1. Clamped to -1.", v)
             return -1
-        return v
-
-    @field_validator("calibration_frame_count", mode="before")
-    @classmethod
-    def _validate_calibration_frame_count(cls, v: Any) -> int:
-        try:
-            v = int(v)
-        except (TypeError, ValueError):
-            CITRASENSE_LOGGER.warning("Invalid calibration_frame_count (%r). Falling back to 30.", v)
-            return 30
-        if v < 5 or v > 100:
-            clamped = max(5, min(100, v))
-            CITRASENSE_LOGGER.warning("calibration_frame_count %d out of range [5, 100]. Clamped to %d.", v, clamped)
-            return clamped
-        return v
-
-    @field_validator("flat_frame_count", mode="before")
-    @classmethod
-    def _validate_flat_frame_count(cls, v: Any) -> int:
-        try:
-            v = int(v)
-        except (TypeError, ValueError):
-            CITRASENSE_LOGGER.warning("Invalid flat_frame_count (%r). Falling back to 15.", v)
-            return 15
-        if v < 5 or v > 50:
-            clamped = max(5, min(50, v))
-            CITRASENSE_LOGGER.warning("flat_frame_count %d out of range [5, 50]. Clamped to %d.", v, clamped)
-            return clamped
         return v
 
     @field_validator("custom_data_dir", "custom_log_dir", mode="before")
@@ -427,6 +442,13 @@ class CitraSenseSettings(BaseModel):
             config.pop("keep_processing_output", None)
 
         # ── v1/v2 → v3 migration ──────────────────────────────────────
+        # TODO(multi-sensor cleanup — drop on or after CitraSense v1.0):
+        # The v1/v2 → v3/v4/v5/v6 migration ladder below is only relevant
+        # for operators upgrading from the pre-sensors-list era. Once the
+        # 1.0 release notes warn users to upgrade through v0.x first, this
+        # block and the ``_OPS_FIELDS`` / ``_V5_FIELDS`` tuples can be
+        # removed — ``load()`` will then only need to handle v6→v7 (and
+        # later) migrations.
         hw_adapter = config.pop("hardware_adapter", "")
         telescope_id = config.pop("telescope_id", "")
 
@@ -521,6 +543,20 @@ class CitraSenseSettings(BaseModel):
                 for k, v in top_v6.items():
                     sd.setdefault(k, v)
 
+        # ── v6 → v7: move hardware-dependent capture settings into each
+        # sensor. These are camera/optics-specific, so every rig needs its
+        # own defaults.
+        _V7_FIELDS = (
+            "alignment_exposure_seconds",
+            "calibration_frame_count",
+            "flat_frame_count",
+        )
+        top_v7 = {k: config.pop(k) for k in _V7_FIELDS if k in config}
+        if top_v7:
+            for sd in config.get("sensors") or []:
+                for k, v in top_v7.items():
+                    sd.setdefault(k, v)
+
         instance = cls.model_validate(config)
         instance._config_manager = mgr
         instance._dir_manager = DirectoryManager(instance.custom_data_dir, instance.custom_log_dir)
@@ -539,11 +575,17 @@ class CitraSenseSettings(BaseModel):
         return self._dir_manager
 
     def is_configured(self) -> bool:
-        """Check if minimum required configuration is present."""
+        """Check if minimum required configuration is present.
+
+        For multi-sensor deployments this now evaluates *every* sensor —
+        any sensor missing an adapter or a Citra-side sensor id counts as
+        "not configured". That matches the setup-wizard's mental model:
+        the UI should surface configuration gaps for every rig, not only
+        the first.
+        """
         if not self.personal_access_token or not self.sensors:
             return False
-        head = self.sensors[0]
-        return bool(head.citra_sensor_id and head.adapter)
+        return all(bool(sc.citra_sensor_id and sc.adapter) for sc in self.sensors)
 
     def get_sensor_config(self, sensor_id: str) -> SensorConfig | None:
         """Look up a sensor config by its local id."""
@@ -566,8 +608,14 @@ class CitraSenseSettings(BaseModel):
         return d
 
     def save(self) -> None:
-        """Save current settings to JSON config file."""
-        self._config_manager.save_config(self.to_dict())
+        """Save current settings to JSON config file.
+
+        Serialized via ``_save_lock`` so per-sensor managers finishing
+        near-simultaneously (autofocus/alignment writing timestamps, etc.)
+        don't interleave writes to the JSON file.
+        """
+        with self._save_lock:
+            self._config_manager.save_config(self.to_dict())
         CITRASENSE_LOGGER.info("Configuration saved to %s", self._config_manager.get_config_path())
 
     def update_and_save(self, config: dict[str, Any]) -> None:
@@ -601,8 +649,25 @@ class CitraSenseSettings(BaseModel):
                     sd["adapter_settings"] = merged_as
 
         # Handle legacy top-level adapter_settings from old web clients.
+        #
+        # TODO(multi-sensor cleanup — remove after v1.0 once all clients
+        # send adapter_settings nested under ``sensors[].adapter_settings``):
+        # This path unconditionally funnels a top-level ``adapter_settings``
+        # blob into ``sensors[0]``, which is wrong for multi-rig
+        # deployments. The modern web UI (post multi-sensor migration)
+        # already sends per-sensor adapter_settings inside ``sensors[]``, so
+        # this branch only triggers for stale/older clients. When removed,
+        # also drop any remaining self-test fixtures that rely on it.
         old_as: dict | None = config.pop("adapter_settings", None)
         if old_as and isinstance(old_as, dict) and self.sensors:
+            import logging
+
+            logging.getLogger("citrasense.Settings").warning(
+                "Received deprecated top-level 'adapter_settings' in config update; "
+                "merging into sensors[0] (%s). Update the client to send "
+                "sensors[].adapter_settings instead — this shim will be removed.",
+                self.sensors[0].id,
+            )
             head = self.sensors[0]
             head.adapter_settings = {**head.adapter_settings, **old_as}
             if incoming_sensors:
@@ -611,11 +676,12 @@ class CitraSenseSettings(BaseModel):
                         sd["adapter_settings"] = head.adapter_settings
                         break
 
-        merged = self.to_dict()
-        merged.update(config)
+        with self._save_lock:
+            merged = self.to_dict()
+            merged.update(config)
 
-        allowed_keys = {k for k, v in type(self).model_fields.items() if not v.exclude}
-        merged = {k: v for k, v in merged.items() if k in allowed_keys}
-        merged["config_version"] = CONFIG_VERSION
+            allowed_keys = {k for k, v in type(self).model_fields.items() if not v.exclude}
+            merged = {k: v for k, v in merged.items() if k in allowed_keys}
+            merged["config_version"] = CONFIG_VERSION
 
-        self._config_manager.save_config(merged)
+            self._config_manager.save_config(merged)

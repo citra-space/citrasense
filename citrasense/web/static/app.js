@@ -19,12 +19,21 @@ function updateStoreFromStatus(status) {
         store.sensors = list;
     }
 
+    // Per-sensor map of actively-executing tasks. Used by taskRow.isActive
+    // (and the cancel-button gate) so every sensor's in-flight task is
+    // flagged, not just the first one ``current_task`` happens to surface.
+    const taskIdMap = status.current_task_ids && typeof status.current_task_ids === 'object'
+        ? status.current_task_ids
+        : {};
+    store.currentTaskIds = taskIdMap;
+    store.activeTaskIdSet = new Set(Object.values(taskIdMap));
+
     if (status.current_task && status.current_task !== 'None') {
         store.isTaskActive = true;
         store.currentTaskId = status.current_task;
         store.nextTaskStartTime = null;
     } else {
-        store.isTaskActive = false;
+        store.isTaskActive = store.activeTaskIdSet.size > 0;
         store.currentTaskId = null;
     }
 
@@ -33,11 +42,27 @@ function updateStoreFromStatus(status) {
         store.nextTaskStartTime = sorted[0].start_time;
     }
 
-    if (status.latest_task_image_url && status.latest_task_image_url !== store._lastTaskImageUrl) {
-        store._lastTaskImageUrl = status.latest_task_image_url;
-        if (!store.isLooping) {
-            store.previewDataUrl = status.latest_task_image_url;
+    // Per-sensor task preview: push the newest annotated image into
+    // ``previewDataUrls[sensor_id]`` so each sensor card shows its own
+    // latest result. We intentionally no longer touch the site-wide
+    // ``store.previewDataUrl`` slot here — that slot is reserved for the
+    // full-screen modal and gets set explicitly by the card's click
+    // handler. Previously this line would flip ``previewDataUrl`` between
+    // sensors every status tick, corrupting the modal and the "card
+    // fallback" display.
+    if (status.sensors && !store.isLooping) {
+        if (!store._lastTaskImageUrlBySensor) store._lastTaskImageUrlBySensor = {};
+        const next = { ...store.previewDataUrls };
+        let changed = false;
+        for (const [sid, info] of Object.entries(status.sensors)) {
+            const url = info?.latest_task_image_url;
+            if (url && url !== store._lastTaskImageUrlBySensor[sid]) {
+                store._lastTaskImageUrlBySensor[sid] = url;
+                next[sid] = url;
+                changed = true;
+            }
         }
+        if (changed) store.previewDataUrls = next;
     }
 }
 

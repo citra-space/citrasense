@@ -8,7 +8,7 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 from astropy.io import fits
@@ -130,18 +130,24 @@ class PipelineRegistry:
         with self._stats_lock:
             return copy.deepcopy(self._processor_stats)
 
-    def get_all_processors(self) -> list[dict]:
+    def get_all_processors(self, sensor_config: Any = None) -> list[dict]:
         """Get metadata for all processors (enabled and disabled).
 
-        Returns:
-            List of dicts with processor metadata
+        ``enabled_processors`` lives on ``SensorConfig`` in the multi-sensor
+        model, so callers should supply the sensor's config to get the right
+        per-sensor toggles. Falls back to the site-level settings (legacy
+        shape) only if no ``sensor_config`` is provided.
         """
+        if sensor_config is not None:
+            ep_map = getattr(sensor_config, "enabled_processors", {}) or {}
+        else:
+            ep_map = getattr(self.settings, "enabled_processors", {}) or {}
         return [
             {
                 "name": p.name,
                 "friendly_name": p.friendly_name,
                 "description": p.description,
-                "enabled": getattr(self.settings, "enabled_processors", {}).get(p.name, True),
+                "enabled": ep_map.get(p.name, True),
             }
             for p in self.processors
         ]

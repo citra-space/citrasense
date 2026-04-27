@@ -40,6 +40,8 @@ function compareVersions(v1, v2) {
             wsReconnectAt: 0,
             wsLastMessage: 0,
             currentTaskId: null,
+            currentTaskIds: {},
+            activeTaskIdSet: new Set(),
             isTaskActive: false,
             nextTaskStartTime: null,
             countdown: '',
@@ -54,13 +56,34 @@ function compareVersions(v1, v2) {
             sensorCollapse: {},
 
             sensorApiBaseFor(sensorId) {
-                return sensorId
-                    ? `/api/sensors/${sensorId}`
-                    : '/api/sensors/_default';
+                if (!sensorId) {
+                    throw new Error('sensorApiBaseFor called without sensorId');
+                }
+                return `/api/sensors/${sensorId}`;
             },
 
             // Config editing state
-            configSensorId: null,
+            _configSensorId: null,
+            get configSensorId() {
+                return this._configSensorId;
+            },
+            set configSensorId(value) {
+                if (this._configSensorId === value) return;
+                this._configSensorId = value;
+                // Reload adapter schema+values, filter config, and processors
+                // for the newly selected sensor so the hardware / calibration /
+                // pipeline tabs reflect that sensor's settings instead of
+                // bleeding the previous sensor's adapterFields into saves.
+                if (typeof window !== 'undefined' && typeof window._configOnSensorSwitch === 'function') {
+                    Promise.resolve().then(() => {
+                        try {
+                            window._configOnSensorSwitch(value);
+                        } catch (err) {
+                            console.error('configSensorId switch handler failed:', err);
+                        }
+                    });
+                }
+            },
             get configSensorIndex() {
                 if (!this.config?.sensors) return 0;
                 const idx = this.config.sensors.findIndex(s => s.id === this.configSensorId);

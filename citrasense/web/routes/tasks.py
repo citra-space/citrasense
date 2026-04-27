@@ -71,7 +71,8 @@ def build_tasks_router(ctx: CitraSenseWebApp) -> APIRouter:
         if tm is None:
             return JSONResponse({"error": "Task manager not available"}, status_code=503)
 
-        if getattr(tm, "current_task_id", None) == task_id:
+        active_ids = set(getattr(tm, "current_task_ids", {}).values())
+        if task_id in active_ids:
             return JSONResponse(
                 {"error": "Cannot cancel the currently executing task"},
                 status_code=409,

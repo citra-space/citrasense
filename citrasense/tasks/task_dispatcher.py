@@ -98,8 +98,14 @@ class TaskDispatcher:
     def _runtime_for_task(self, task: Task) -> SensorRuntime | None:
         """Resolve the runtime responsible for this task.
 
-        Matches by config-level sensor_id first, then by API-side telescope
-        ID (from citra_record).  Returns None (task is dropped) if no match.
+        Matches by config-level ``sensor_id`` first, then by API-side
+        telescope ID (from ``citra_record.id``). When ``task.sensor_id`` is
+        unset and only one runtime of the requested type exists, that
+        single runtime is used — this keeps single-sensor deployments and
+        migrations from breaking without silently misrouting on multi-rig
+        sites.
+
+        Returns ``None`` (task is dropped) if no unambiguous match exists.
         """
         sid = task.sensor_id
         if sid:
@@ -109,28 +115,47 @@ class TaskDispatcher:
                 rec = getattr(rt.sensor, "citra_record", None)
                 if rec and rec.get("id") == sid:
                     return rt
-        for rt in self._runtimes.values():
-            if rt.sensor_type == task.sensor_type:
-                return rt
+            self.logger.warning(
+                "Task %s has sensor_id=%r but no matching runtime; dropping",
+                getattr(task, "id", "?"),
+                sid,
+            )
+            return None
+
+        # No sensor_id on the task. Fall back to the single runtime of the
+        # requested type if (and only if) exactly one is registered.
+        candidates = [rt for rt in self._runtimes.values() if rt.sensor_type == task.sensor_type]
+        if len(candidates) == 1:
+            return candidates[0]
+        if len(candidates) > 1:
+            self.logger.warning(
+                "Task %s has no sensor_id but %d %s runtimes are registered; dropping",
+                getattr(task, "id", "?"),
+                len(candidates),
+                task.sensor_type,
+            )
         return None
 
     @property
     def automated_scheduling(self) -> bool:
-        """Check if any telescope runtime has automated scheduling enabled."""
+        """True if *any* telescope has automated scheduling enabled.
+
+        ``automatedScheduling`` is a **per-sensor** flag on the Citra-side
+        telescope record — there is no site-level counterpart. This
+        property is an explicit "any of them" summary used by the
+        self-tasking gate and the monitoring UI; callers that need a
+        specific rig's state should read
+        ``runtime.sensor.citra_record["automatedScheduling"]`` directly
+        and toggles go through
+        ``POST /api/tasks/automated-scheduling`` (which updates exactly
+        one rig at a time).
+        """
         for rt in self._runtimes.values():
             if rt.sensor_type == "telescope":
                 rec = getattr(rt.sensor, "citra_record", None)
                 if rec and rec.get("automatedScheduling", False):
                     return True
         return False
-
-    @automated_scheduling.setter
-    def automated_scheduling(self, value: bool) -> None:
-        for rt in self._runtimes.values():
-            if rt.sensor_type == "telescope":
-                rec = getattr(rt.sensor, "citra_record", None)
-                if rec:
-                    rec["automatedScheduling"] = value
 
     # ── Queue helpers (facade) ─────────────────────────────────────────
 
@@ -270,11 +295,25 @@ class TaskDispatcher:
 
     @property
     def current_task_id(self) -> str | None:
-        """Return the first non-None current task id (site-level summary)."""
+        """Return the first non-None current task id (site-level summary).
+
+        Prefer :meth:`current_task_ids` in multi-sensor contexts; this
+        scalar is kept for back-compat with single-sensor call sites.
+        """
         for tid in self._current_task_ids.values():
             if tid is not None:
                 return tid
         return None
+
+    @property
+    def current_task_ids(self) -> dict[str, str]:
+        """Mapping of ``sensor_id -> currently-executing task id``.
+
+        Excludes sensors that are idle. Used by the web layer to decide
+        per-row ``isActive`` flags and to reject cancel requests for any
+        task currently executing on *any* sensor.
+        """
+        return {sid: tid for sid, tid in self._current_task_ids.items() if tid}
 
     @property
     def task_dict(self) -> dict[str, Task]:
@@ -606,12 +645,12 @@ class TaskDispatcher:
                 rt.set_paused(False)
                 self.logger.info("Task processing resumed for sensor %s", sid)
 
-    def pause(self) -> None:
-        """Pause all sensors (backward-compat convenience)."""
+    def pause_all(self) -> None:
+        """Pause every registered sensor (site-wide halt)."""
         self.pause_sensor(None)
 
-    def resume(self) -> None:
-        """Resume all sensors (backward-compat convenience)."""
+    def resume_all(self) -> None:
+        """Resume every registered sensor (site-wide)."""
         self.resume_sensor(None)
 
     def is_processing_active(self) -> bool:

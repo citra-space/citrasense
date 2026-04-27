@@ -58,11 +58,13 @@ export async function getHardwareAdapters() {
 }
 
 /**
- * Get available processors
+ * Get available processors, optionally scoped to a specific sensor so that
+ * the per-sensor `enabled_processors` map is reflected in the `enabled` flag.
  */
-export async function getProcessors() {
+export async function getProcessors(sensorId) {
     try {
-        const result = await fetchJSON('/api/processors');
+        const qs = sensorId ? `?sensor_id=${encodeURIComponent(sensorId)}` : '';
+        const result = await fetchJSON(`/api/processors${qs}`);
         return result.data;
     } catch (error) {
         console.error('Error fetching processors:', error);
