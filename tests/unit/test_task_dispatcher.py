@@ -289,8 +289,9 @@ def test_poll_tasks_adds_new_tasks(wired_dispatcher):
                 api_task_map[tid] = task
 
         now = int(time.time())
+        active_ids = set(td.current_task_ids.values())
         for tid, task in api_task_map.items():
-            if tid not in ids and tid != td.current_task_id:
+            if tid not in ids and tid not in active_ids:
                 start_epoch = int(dtparser.isoparse(task.taskStart).timestamp())
                 stop_epoch = int(dtparser.isoparse(task.taskStop).timestamp()) if task.taskStop else 0
                 if not (stop_epoch and stop_epoch < now):
@@ -335,10 +336,11 @@ def test_poll_tasks_removes_cancelled_tasks(wired_dispatcher):
             if tid and task.status in ["Pending", "Scheduled"]:
                 api_task_map[tid] = task
 
+        active_ids = set(td.current_task_ids.values())
         new_heap = []
         removed = 0
         for se, so, tid, task in heap:
-            if tid == td.current_task_id or tid in api_task_map:
+            if tid in active_ids or tid in api_task_map:
                 new_heap.append((se, so, tid, task))
             else:
                 ids.discard(tid)
@@ -378,9 +380,10 @@ def test_poll_tasks_removes_tasks_with_changed_status(wired_dispatcher):
             if t.id and t.status in ["Pending", "Scheduled"]:
                 api_task_map[t.id] = t
 
+        active_ids = set(td.current_task_ids.values())
         new_heap = []
         for se2, so2, tid, task in heap:
-            if tid == td.current_task_id or tid in api_task_map:
+            if tid in active_ids or tid in api_task_map:
                 new_heap.append((se2, so2, tid, task))
             else:
                 ids.discard(tid)
@@ -417,9 +420,10 @@ def test_poll_tasks_does_not_remove_current_task(wired_dispatcher):
             if t.id and t.status in ["Pending", "Scheduled"]:
                 api_task_map[t.id] = t
 
+        active_ids = set(td.current_task_ids.values())
         new_heap = []
         for se2, so2, tid, task in heap:
-            if tid == td.current_task_id or tid in api_task_map:
+            if tid in active_ids or tid in api_task_map:
                 new_heap.append((se2, so2, tid, task))
             else:
                 ids.discard(tid)

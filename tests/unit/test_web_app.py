@@ -121,7 +121,7 @@ def mock_daemon(mock_settings):
     d.hardware_adapter.get_missing_dependencies.return_value = []
     d.hardware_adapter.mount.cached_state = None
     d.task_dispatcher = MagicMock()
-    d.task_dispatcher.current_task_id = None
+    d.task_dispatcher.current_task_ids = {}
     d.task_dispatcher.autofocus_manager = MagicMock()
     d.task_dispatcher.autofocus_manager.is_requested.return_value = False
     d.task_dispatcher.autofocus_manager.is_running.return_value = False
@@ -182,7 +182,7 @@ def mock_daemon(mock_settings):
     mock_runtime.calibration_manager = None
     mock_runtime.observing_session_manager = None
     mock_runtime.self_tasking_manager = None
-    d.task_dispatcher.get_runtime.return_value = mock_runtime
+    d.task_dispatcher.get_runtime.side_effect = lambda sid: mock_runtime if sid == "scope-0" else None
     d.task_dispatcher._telescope_runtimes.return_value = [mock_runtime]
     d.task_dispatcher._runtimes = {"scope-0": mock_runtime}
     return d
@@ -442,22 +442,39 @@ def test_get_active_tasks_empty(client):
 
 
 def test_pause_tasks(client, mock_daemon):
-    resp = client.post("/api/tasks/pause")
+    resp = client.post("/api/tasks/pause", json={"sensor_id": "scope-0"})
     assert resp.status_code == 200
-    mock_daemon.task_dispatcher.pause_sensor.assert_called_once_with(None)
+    mock_daemon.task_dispatcher.pause_sensor.assert_called_once_with("scope-0")
+
+
+def test_pause_tasks_requires_sensor_id(client):
+    """POST /api/tasks/pause must reject payloads without ``sensor_id`` — the
+    old "no body = all sensors" broadcast is gone in multi-sensor mode."""
+    resp = client.post("/api/tasks/pause", json={})
+    assert resp.status_code == 400
+
+
+def test_pause_tasks_unknown_sensor_id(client):
+    resp = client.post("/api/tasks/pause", json={"sensor_id": "does-not-exist"})
+    assert resp.status_code == 400
 
 
 def test_resume_tasks(client, mock_daemon):
-    resp = client.post("/api/tasks/resume")
+    resp = client.post("/api/tasks/resume", json={"sensor_id": "scope-0"})
     assert resp.status_code == 200
-    mock_daemon.task_dispatcher.resume_sensor.assert_called_once_with(None)
+    mock_daemon.task_dispatcher.resume_sensor.assert_called_once_with("scope-0")
+
+
+def test_resume_tasks_requires_sensor_id(client):
+    resp = client.post("/api/tasks/resume", json={})
+    assert resp.status_code == 400
 
 
 def test_pause_no_daemon():
     with patch("citrasense.web.app.StaticFiles"):
         app = CitraSenseWebApp(daemon=None)
     c = TestClient(app.app)
-    assert c.post("/api/tasks/pause").status_code == 503
+    assert c.post("/api/tasks/pause", json={"sensor_id": "scope-0"}).status_code == 503
 
 
 def test_cancel_task_success(client, mock_daemon):
@@ -630,8 +647,21 @@ def test_get_filters_no_sensor():
 # ---------------------------------------------------------------------------
 
 
-def test_get_processors(client):
+def test_get_processors_requires_sensor_id(client):
+    """GET /api/processors has no "default" sensor — a missing ``sensor_id``
+    used to fall back to ``sensors[0]``; now it must 422 (FastAPI's default
+    for a missing required query param)."""
     resp = client.get("/api/processors")
+    assert resp.status_code == 422
+
+
+def test_get_processors_unknown_sensor_id(client):
+    resp = client.get("/api/processors?sensor_id=does-not-exist")
+    assert resp.status_code == 400
+
+
+def test_get_processors(client):
+    resp = client.get("/api/processors?sensor_id=scope-0")
     assert resp.status_code == 200
 
 
@@ -664,13 +694,22 @@ def test_camera_capture_too_long(client, mock_daemon):
 
 
 def test_toggle_automated_scheduling(client, mock_daemon):
-    mock_daemon.api_client._request.return_value = True
-    resp = client.patch("/api/telescope/automated-scheduling", json={"enabled": True})
+    mock_daemon.api_client.update_telescope_automated_scheduling.return_value = True
+    resp = client.patch(
+        "/api/telescope/automated-scheduling",
+        json={"enabled": True, "sensor_id": "scope-0"},
+    )
     assert resp.status_code == 200
 
 
-def test_toggle_automated_scheduling_missing_field(client):
-    resp = client.patch("/api/telescope/automated-scheduling", json={})
+def test_toggle_automated_scheduling_missing_enabled(client):
+    resp = client.patch("/api/telescope/automated-scheduling", json={"sensor_id": "scope-0"})
+    assert resp.status_code == 400
+
+
+def test_toggle_automated_scheduling_missing_sensor_id(client):
+    """The old "no sensor_id = all telescopes" broadcast form is gone."""
+    resp = client.patch("/api/telescope/automated-scheduling", json={"enabled": True})
     assert resp.status_code == 400
 
 
@@ -958,3 +997,147 @@ def test_remove_last_sensor_blocked(client, mock_daemon):
     resp = client.delete("/api/config/sensors/scope-0")
     assert resp.status_code == 400
     assert "last sensor" in resp.json()["error"].lower()
+
+
+# ---------------------------------------------------------------------------
+# Dual-telescope routing
+#
+# These tests exercise the new "require sensor_id + route only to that sensor"
+# contract with two telescopes configured at the same site.  They protect the
+# user-visible behavior that each monitoring card targets its own sensor and
+# never bleeds into the other's hardware.
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def mock_daemon_two_telescopes(mock_settings):
+    """Daemon with two fully-wired telescope runtimes (``scope-0``, ``scope-1``)."""
+    # Extend settings to include a second sensor config.
+    sc2 = MagicMock()
+    sc2.id = "scope-1"
+    sc2.task_processing_paused = False
+    sc2.observing_session_enabled = False
+    sc2.self_tasking_enabled = False
+    sc2.processors_enabled = False
+    sc2.enabled_processors = {}
+    sc2.self_tasking_satellite_group_ids = []
+    sc2.self_tasking_exclude_object_types = []
+    sc2.self_tasking_include_orbit_regimes = []
+    sc2.self_tasking_collection_type = "Track"
+    mock_settings.sensors.append(sc2)
+    sc0 = mock_settings.sensors[0]
+    sc0.processors_enabled = True
+    sc0.enabled_processors = {}
+    sc0.self_tasking_satellite_group_ids = []
+    sc0.self_tasking_exclude_object_types = []
+    sc0.self_tasking_include_orbit_regimes = []
+    sc0.self_tasking_collection_type = "Track"
+    mock_settings.get_sensor_config = lambda sid: next((c for c in mock_settings.sensors if c.id == sid), None)
+
+    d = MagicMock()
+    d.settings = mock_settings
+    d.api_client = MagicMock()
+    d.ground_station = {"id": "gs-1", "name": "Test Site"}
+    d.task_dispatcher = MagicMock()
+    d.task_dispatcher.current_task_ids = {}
+
+    def _make_sensor(sensor_id: str, citra_id: str) -> MagicMock:
+        s = MagicMock()
+        s.sensor_id = sensor_id
+        s.sensor_type = "telescope"
+        s.is_connected.return_value = True
+        s.name = f"Scope {sensor_id}"
+        s.adapter_key = "nina"
+        s.citra_record = {"id": citra_id, "automatedScheduling": False, "maxSlewRate": 5.0}
+        adapter = MagicMock()
+        adapter.is_telescope_connected.return_value = True
+        adapter.is_camera_connected.return_value = True
+        adapter.supports_direct_camera_control.return_value = False
+        adapter.supports_filter_management.return_value = True
+        adapter.get_filter_config.return_value = {}
+        adapter.get_missing_dependencies.return_value = []
+        adapter.telescope_record = s.citra_record
+        s.adapter = adapter
+        return s
+
+    sensor0 = _make_sensor("scope-0", "tel-1")
+    sensor1 = _make_sensor("scope-1", "tel-2")
+
+    def _make_runtime(sensor):
+        rt = MagicMock()
+        rt.sensor_id = sensor.sensor_id
+        rt.sensor = sensor
+        rt.acquisition_queue = MagicMock()
+        rt.processing_queue = MagicMock()
+        rt.upload_queue = MagicMock()
+        return rt
+
+    rt0 = _make_runtime(sensor0)
+    rt1 = _make_runtime(sensor1)
+
+    d.task_dispatcher._runtimes = {"scope-0": rt0, "scope-1": rt1}
+    d.task_dispatcher._telescope_runtimes = lambda: [rt0, rt1]
+    d.task_dispatcher.get_runtime = lambda sid: {"scope-0": rt0, "scope-1": rt1}.get(sid)
+
+    sm = MagicMock()
+    sensors = {"scope-0": sensor0, "scope-1": sensor1}
+    sm.get_sensor = lambda sid: sensors.get(sid)
+    sm.get = lambda sid: sensors.get(sid)
+    sm.__iter__ = lambda self: iter(sensors.values())
+    sm.iter_by_type = lambda _t: iter(sensors.values())
+    sm.first_of_type = lambda _t: sensor0
+    d.sensor_manager = sm
+
+    d.processor_registry = MagicMock()
+    d.processor_registry.get_all_processors = lambda sensor_config=None: [
+        {"name": "plate_solver", "enabled": True, "config": {}},
+    ]
+    return d
+
+
+@pytest.fixture
+def client_two(mock_daemon_two_telescopes):
+    with patch("citrasense.web.app.StaticFiles"):
+        app = CitraSenseWebApp(daemon=mock_daemon_two_telescopes)
+    return TestClient(app.app)
+
+
+def test_request_batch_now_targets_the_requested_sensor(client_two, mock_daemon_two_telescopes):
+    """POST /api/self-tasking/request-now must call the Citra API with the
+    ``citra_sensor_id`` of the sensor named in the request body, not whichever
+    sensor happens to be first in the dispatcher."""
+    mock_daemon_two_telescopes.api_client.create_batch_collection_requests.return_value = {"created": 3}
+
+    resp = client_two.post("/api/self-tasking/request-now", json={"sensor_id": "scope-1"})
+    assert resp.status_code == 200
+
+    call_kwargs = mock_daemon_two_telescopes.api_client.create_batch_collection_requests.call_args.kwargs
+    assert call_kwargs["sensor_id"] == "tel-2"
+    assert call_kwargs["ground_station_id"] == "gs-1"
+
+
+def test_request_batch_now_rejects_missing_sensor_id(client_two):
+    resp = client_two.post("/api/self-tasking/request-now", json={})
+    assert resp.status_code == 400
+
+
+def test_request_batch_now_rejects_unknown_sensor_id(client_two):
+    resp = client_two.post("/api/self-tasking/request-now", json={"sensor_id": "does-not-exist"})
+    assert resp.status_code == 404
+
+
+def test_get_processors_returns_per_sensor_enabled_flags(client_two, mock_daemon_two_telescopes):
+    """``/api/processors`` routes through ``processor_registry`` with the
+    sensor-specific ``SensorConfig`` so ``enabled`` reflects that sensor's
+    ``enabled_processors`` map rather than some "default" sensor's."""
+    captured = {}
+
+    def _get_all(sensor_config=None):
+        captured["sensor_id"] = getattr(sensor_config, "id", None)
+        return [{"name": "plate_solver", "enabled": True, "config": {}}]
+
+    mock_daemon_two_telescopes.processor_registry.get_all_processors = _get_all
+
+    resp = client_two.get("/api/processors?sensor_id=scope-1")
+    assert resp.status_code == 200
+    assert captured["sensor_id"] == "scope-1"

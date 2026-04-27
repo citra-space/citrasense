@@ -116,8 +116,17 @@ def dump_processor_result(working_dir: Path, filename: str, result: Any, extra: 
     dump_json(working_dir, filename, data)
 
 
-def dump_processing_summary(working_dir: Path, aggregated: AggregatedResult) -> None:
-    """Write the full aggregated processing result to processing_summary.json."""
+def dump_processing_summary(
+    working_dir: Path,
+    aggregated: AggregatedResult,
+    sensor_id: str = "",
+) -> None:
+    """Write the full aggregated processing result to ``processing_summary.json``.
+
+    ``sensor_id`` is included so downstream artifact consumers (HTML report,
+    debug bundles) can attribute the run to a specific sensor in
+    multi-sensor deployments. Empty string means "unknown / manual capture".
+    """
     processors = []
     for r in aggregated.all_results:
         processors.append(
@@ -131,6 +140,7 @@ def dump_processing_summary(working_dir: Path, aggregated: AggregatedResult) -> 
             }
         )
     data = {
+        "sensor_id": sensor_id,
         "should_upload": aggregated.should_upload,
         "skip_reason": aggregated.skip_reason,
         "total_time": aggregated.total_time,

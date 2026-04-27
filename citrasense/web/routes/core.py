@@ -90,23 +90,23 @@ def build_core_router(ctx: CitraSenseWebApp) -> APIRouter:
         return get_version_info()
 
     @router.get("/api/processors")
-    async def get_processors(sensor_id: str | None = None):
+    async def get_processors(sensor_id: str):
         """Get list of all available processors with metadata.
 
         ``sensor_id`` selects which sensor's ``enabled_processors`` map to
-        apply to the returned ``enabled`` flags. If omitted, the first
-        configured sensor is used for back-compat with single-sensor deployments.
+        apply to the returned ``enabled`` flags. It is required — there is
+        no "default" sensor in a multi-sensor deployment.
         """
         if not ctx.daemon or not hasattr(ctx.daemon, "processor_registry") or not ctx.daemon.processor_registry:
             return []
 
-        sensor_config = None
         settings = getattr(ctx.daemon, "settings", None)
-        if settings and settings.sensors:
-            if sensor_id:
-                sensor_config = settings.get_sensor_config(sensor_id)
-            if sensor_config is None:
-                sensor_config = settings.sensors[0]
+        if not settings or not settings.sensors:
+            return JSONResponse({"error": "No sensors configured"}, status_code=503)
+
+        sensor_config = settings.get_sensor_config(sensor_id)
+        if sensor_config is None:
+            return JSONResponse({"error": f"Unknown sensor_id: {sensor_id}"}, status_code=400)
 
         return ctx.daemon.processor_registry.get_all_processors(sensor_config=sensor_config)
 

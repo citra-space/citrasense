@@ -95,7 +95,7 @@ class TestQueueForUploadGuard:
 
 
 class TestConfigReloadDropsInFlightStages:
-    """_initialize_telescope must not restore processing_tasks or uploading_tasks."""
+    """_initialize_telescopes must not restore processing_tasks or uploading_tasks."""
 
     def _make_daemon(self):
         from citrasense.citrasense_daemon import CitraSenseDaemon
@@ -165,7 +165,7 @@ class TestConfigReloadDropsInFlightStages:
             MockRT.return_value = MagicMock()
 
             old_task_dict = {"task-1": MagicMock()}
-            success, _error = daemon._initialize_telescope(
+            success, _error = daemon._initialize_telescopes(
                 old_task_dict=old_task_dict,
                 old_imaging_tasks={"task-i1": MagicMock()},
                 old_processing_tasks=old_processing,

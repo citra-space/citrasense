@@ -60,9 +60,11 @@ class StatusCollector:
             self._enrich_sensors(status, sm, td)
             _mark("sensor_enrichment")
 
-            # Site-level: task dispatcher aggregate
+            # Site-level: task dispatcher aggregate.  No scalar
+            # ``current_task`` — consumers use ``current_task_ids`` (keyed by
+            # sensor) and the per-sensor ``sensors[sid].current_task``
+            # populated by ``_enrich_sensors``.
             if td:
-                status.current_task = td.current_task_id
                 status.current_task_ids = dict(td.current_task_ids)
                 status.tasks_pending = td.pending_task_count
                 status.processing_active = td.is_processing_active()
@@ -226,18 +228,12 @@ class StatusCollector:
 
             _mark("safety_elset")
 
-            # Latest annotated task image (most recent across all sensors)
-            paths = getattr(self.daemon, "latest_annotated_image_paths", {})
-            ann_path = None
-            if paths:
-                candidates = [p for p in paths.values() if Path(p).exists()]
-                if candidates:
-                    ann_path = max(candidates, key=lambda p: Path(p).stat().st_mtime)
-            if ann_path:
-                mtime_ns = Path(ann_path).stat().st_mtime_ns
-                status.latest_task_image_url = f"/api/task-preview/latest?t={mtime_ns}"
-            else:
-                status.latest_task_image_url = None
+            # The "latest annotated image" used to be aggregated into a
+            # single site-level URL here.  In the multi-sensor world that
+            # concept doesn't make sense, so the per-sensor URL lives on
+            # ``status.sensors[sid]['latest_task_image_url']`` (populated by
+            # :meth:`_collect_telescope_optics`) and the fullscreen preview
+            # modal picks the one for the sensor the user clicked.
 
             _mark("optics_calibration")
 
@@ -458,14 +454,17 @@ class StatusCollector:
         sd["pointing_calibration_progress"] = runtime.alignment_manager.calibration_progress
 
     def _collect_telescope_autofocus_timing(self, sd: dict, runtime: Any) -> None:
-        """Populate autofocus timing fields for one telescope."""
+        """Populate autofocus timing fields for one telescope.
+
+        Resolves this runtime's ``SensorConfig`` strictly by ``sensor_id`` — no
+        first-sensor fallback, which would report the wrong telescope's
+        autofocus timestamps in a multi-sensor deployment.
+        """
         if not self.daemon or not self.daemon.settings:
             return
         settings = self.daemon.settings
         sensor_id = getattr(runtime, "sensor_id", None)
         sc = settings.get_sensor_config(sensor_id) if sensor_id else None
-        if sc is None and settings.sensors:
-            sc = settings.sensors[0]
         if sc is None:
             return
         afs = sc
@@ -488,11 +487,25 @@ class StatusCollector:
             sd["next_autofocus_minutes"] = None
 
     def _collect_telescope_session(self, sd: dict, sensor_id: str, runtime: Any, td: Any) -> None:
-        """Populate observing session and self-tasking state for one telescope."""
+        """Populate observing session, self-tasking, and processing-toggle state
+        for one telescope.
+
+        Templates read these fields off the per-sensor ``status.sensors[sid]``
+        object so they never have to reach into the root ``config`` (where
+        these fields no longer live after the per-sensor config migration).
+        """
         sensor_cfg = self.daemon.settings.get_sensor_config(sensor_id) if self.daemon and self.daemon.settings else None
         sd["task_processing_paused"] = sensor_cfg.task_processing_paused if sensor_cfg else False
         sd["observing_session_enabled"] = sensor_cfg.observing_session_enabled if sensor_cfg else False
         sd["self_tasking_enabled"] = sensor_cfg.self_tasking_enabled if sensor_cfg else False
+        sd["processors_enabled"] = sensor_cfg.processors_enabled if sensor_cfg else True
+        sd["self_tasking_collection_type"] = sensor_cfg.self_tasking_collection_type if sensor_cfg else "Track"
+        sd["self_tasking_include_orbit_regimes"] = list(
+            sensor_cfg.self_tasking_include_orbit_regimes if sensor_cfg else []
+        )
+        sd["self_tasking_exclude_object_types"] = list(
+            sensor_cfg.self_tasking_exclude_object_types if sensor_cfg else []
+        )
 
         if runtime:
             osm = runtime.observing_session_manager

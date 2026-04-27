@@ -13,13 +13,14 @@ class SystemStatus(BaseModel):
     dicts.  Only true site-level aggregates remain at the top level.
     """
 
-    # Site-level task orchestration
-    current_task: str | None = None
-    # ``sensor_id -> currently-executing task id`` for every sensor that is
-    # actively running a task. Drives per-row ``isActive`` styling and
-    # cancel-button gating in the web UI (a task is "active" if its id
-    # appears in *any* sensor's slot, not just the first one ``current_task``
-    # happens to surface).
+    # Site-level task orchestration.
+    #
+    # ``current_task_ids`` maps ``sensor_id -> currently-executing task id``
+    # for every sensor actively running a task.  There is intentionally no
+    # scalar ``current_task`` field: the legacy "first non-None wins" shape
+    # was ambiguous in multi-sensor deployments.  The UI uses the keys of
+    # this dict to drive per-row ``isActive`` styling and cancel-button
+    # gating.
     current_task_ids: dict[str, str] = {}
     tasks_pending: int = 0
     processing_active: bool = True
@@ -53,8 +54,12 @@ class SystemStatus(BaseModel):
     safety_status: dict[str, Any] | None = None
     elset_health: dict[str, Any] | None = None
 
-    # Misc site-level
-    latest_task_image_url: str | None = None
+    # Misc site-level.
+    #
+    # The legacy scalar ``latest_task_image_url`` was removed: in a
+    # multi-sensor deployment "latest" is per sensor and lives at
+    # ``sensors[sid]['latest_task_image_url']`` (populated by
+    # :class:`StatusCollector`).
     last_update: str = ""
     status_collection_ms: float | None = None
     status_collection_breakdown: dict[str, float] | None = None

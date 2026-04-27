@@ -21,20 +21,17 @@ function updateStoreFromStatus(status) {
 
     // Per-sensor map of actively-executing tasks. Used by taskRow.isActive
     // (and the cancel-button gate) so every sensor's in-flight task is
-    // flagged, not just the first one ``current_task`` happens to surface.
+    // flagged. There is intentionally no scalar ``current_task`` fallback —
+    // the site-level scalar was removed because "first non-None wins" was
+    // ambiguous in multi-sensor deployments.
     const taskIdMap = status.current_task_ids && typeof status.current_task_ids === 'object'
         ? status.current_task_ids
         : {};
     store.currentTaskIds = taskIdMap;
     store.activeTaskIdSet = new Set(Object.values(taskIdMap));
-
-    if (status.current_task && status.current_task !== 'None') {
-        store.isTaskActive = true;
-        store.currentTaskId = status.current_task;
+    store.isTaskActive = store.activeTaskIdSet.size > 0;
+    if (store.isTaskActive) {
         store.nextTaskStartTime = null;
-    } else {
-        store.isTaskActive = store.activeTaskIdSet.size > 0;
-        store.currentTaskId = null;
     }
 
     if (!store.isTaskActive && store.tasks.length > 0) {
@@ -44,12 +41,9 @@ function updateStoreFromStatus(status) {
 
     // Per-sensor task preview: push the newest annotated image into
     // ``previewDataUrls[sensor_id]`` so each sensor card shows its own
-    // latest result. We intentionally no longer touch the site-wide
-    // ``store.previewDataUrl`` slot here — that slot is reserved for the
-    // full-screen modal and gets set explicitly by the card's click
-    // handler. Previously this line would flip ``previewDataUrl`` between
-    // sensors every status tick, corrupting the modal and the "card
-    // fallback" display.
+    // latest result.  There is no singular ``previewDataUrl`` — the
+    // fullscreen modal reads ``previewDataUrls[activePreviewSensorId]``
+    // set by the card's click handler.
     if (status.sensors && !store.isLooping) {
         if (!store._lastTaskImageUrlBySensor) store._lastTaskImageUrlBySensor = {};
         const next = { ...store.previewDataUrls };
@@ -92,10 +86,11 @@ function appendLogToStore(log) {
 function updatePreviewFromPush(dataUrl, source, sensorId) {
     const store = Alpine.store('citrasense');
     if (store.isLooping) return;
-    if (sensorId) {
-        store.previewDataUrls = { ...store.previewDataUrls, [sensorId]: dataUrl };
+    if (!sensorId) {
+        console.warn('updatePreviewFromPush called without sensorId; dropping preview push');
+        return;
     }
-    store.previewDataUrl = dataUrl;
+    store.previewDataUrls = { ...store.previewDataUrls, [sensorId]: dataUrl };
     store.previewSource = source || '';
 }
 

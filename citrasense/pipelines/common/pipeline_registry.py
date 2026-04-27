@@ -219,7 +219,7 @@ class PipelineRegistry:
             f"Total extracted keys: {len(aggregated.extracted_data)}, should_upload={aggregated.should_upload}"
         )
 
-        dump_processing_summary(context.working_dir, aggregated)
+        dump_processing_summary(context.working_dir, aggregated, sensor_id=context.sensor_id)
         for hook in self._post_hooks:
             hook(context.working_dir, aggregated)
 

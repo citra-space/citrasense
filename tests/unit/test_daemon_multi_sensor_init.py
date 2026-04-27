@@ -1,6 +1,6 @@
 """Integration-style test: daemon init with 2+ telescope SensorConfig entries.
 
-Verifies that _initialize_telescope correctly:
+Verifies that _initialize_telescopes correctly:
 - Iterates all telescope sensors (not just the first)
 - Creates a SensorRuntime per telescope
 - Registers each runtime with the TaskDispatcher
@@ -101,7 +101,7 @@ class TestMultiSensorDaemonInit:
             rt_a, rt_b = MagicMock(), MagicMock()
             MockRT.side_effect = [rt_a, rt_b]
 
-            success, error = daemon._initialize_telescope()
+            success, error = daemon._initialize_telescopes()
 
         assert success is True
         assert error is None
@@ -129,7 +129,7 @@ class TestMultiSensorDaemonInit:
             mock_td.uploading_tasks = {}
             MockTD.return_value = mock_td
 
-            daemon._initialize_telescope()
+            daemon._initialize_telescopes()
 
         assert scope_a.citra_record is not None
         assert scope_b.citra_record is not None
@@ -156,7 +156,7 @@ class TestMultiSensorDaemonInit:
             mock_td.uploading_tasks = {}
             MockTD.return_value = mock_td
 
-            success, error = daemon._initialize_telescope()
+            success, error = daemon._initialize_telescopes()
 
         assert success is False
         assert "Failed to connect" in error
@@ -180,7 +180,7 @@ class TestMultiSensorDaemonInit:
             MockTD.return_value = mock_td
 
             old_tasks = {"t1": MagicMock(), "t2": MagicMock()}
-            daemon._initialize_telescope(old_task_dict=old_tasks)
+            daemon._initialize_telescopes(old_task_dict=old_tasks)
 
         mock_td.restore_task_dict.assert_called_once_with(old_tasks)
 
@@ -203,7 +203,7 @@ class TestMultiSensorDaemonInit:
             mock_td.uploading_tasks = {}
             MockTD.return_value = mock_td
 
-            daemon._initialize_telescope()
+            daemon._initialize_telescopes()
 
         assert daemon.ground_station is not None
         assert daemon.ground_station["id"] == "gs-1"

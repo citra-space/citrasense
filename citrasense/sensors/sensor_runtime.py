@@ -19,6 +19,7 @@ from typing import TYPE_CHECKING, Any
 from citrasense.acquisition.acquisition_queue import AcquisitionQueue
 from citrasense.acquisition.processing_queue import ProcessingQueue
 from citrasense.acquisition.upload_queue import UploadQueue
+from citrasense.logging.sensor_logger import get_sensor_logger
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -64,7 +65,14 @@ class SensorRuntime:
         self.sensor = sensor
         self.sensor_id = sensor.sensor_id
         self.sensor_type = sensor.sensor_type
-        self.logger = logger.getChild(f"SensorRuntime[{sensor.sensor_id}]")
+        # Wrap the runtime logger in a sensor-scoped adapter so every record
+        # it emits carries ``extra={'sensor_id': ...}``.  WebLogHandler
+        # forwards that onto the WebSocket payload for per-sensor filtering
+        # in the log panel.
+        self.logger = get_sensor_logger(
+            logger.getChild(f"SensorRuntime[{sensor.sensor_id}]"),
+            sensor.sensor_id,
+        )
         self.settings = settings
         self.api_client = api_client
         if sensor.sensor_type == "telescope" and hardware_adapter is None:

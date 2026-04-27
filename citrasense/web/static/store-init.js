@@ -39,7 +39,10 @@ function compareVersions(v1, v2) {
             wsReconnecting: false,
             wsReconnectAt: 0,
             wsLastMessage: 0,
-            currentTaskId: null,
+            // Per-sensor "currently executing" map keyed by sensor_id.
+            // No scalar currentTaskId — in a multi-sensor deployment
+            // "current" is per sensor; use activeTaskIdSet for any
+            // "is this task in-flight anywhere" check.
             currentTaskIds: {},
             activeTaskIdSet: new Set(),
             isTaskActive: false,
@@ -54,6 +57,17 @@ function compareVersions(v1, v2) {
             // Multi-sensor support
             sensors: [],
             sensorCollapse: {},
+
+            // Log panel per-sensor filter. ``null`` = show all, ``"__site__"``
+            // = only entries without a sensor_id, otherwise a specific
+            // sensor_id.
+            logSensorFilter: null,
+            get filteredLogs() {
+                const f = this.logSensorFilter;
+                if (f === null) return this.logs;
+                if (f === '__site__') return this.logs.filter(l => !l.sensor_id);
+                return this.logs.filter(l => l.sensor_id === f);
+            },
 
             sensorApiBaseFor(sensorId) {
                 if (!sensorId) {
@@ -125,12 +139,20 @@ function compareVersions(v1, v2) {
             captureResult: null,
             // Focus loop state
             isLooping: false,
-            previewDataUrl: null,
             previewSource: '',
+            // Per-sensor preview data URLs.  There is no singular
+            // ``previewDataUrl`` slot — the fullscreen modal reads
+            // ``previewDataUrls[activePreviewSensorId]`` from the card
+            // that opened it.
             previewDataUrls: {},
+            // Which sensor owns the fullscreen preview modal right now.
+            activePreviewSensorId: null,
             loopCount: 0,
             previewExposure: null,
-            _lastTaskImageUrl: null,
+            // Per-sensor "last seen task image URL" tracking used by
+            // updateStoreFromStatus in app.js to decide when to refresh
+            // previewDataUrls[sensor_id].  Initialized lazily there.
+            _lastTaskImageUrlBySensor: {},
 
             // Spread all formatter functions from shared module
             ...formatters,
@@ -205,8 +227,13 @@ function compareVersions(v1, v2) {
             },
 
             async toggleProcessing(enabled, sensorId) {
+                if (!sensorId) {
+                    console.error('toggleProcessing called without sensorId');
+                    alert('Cannot toggle task processing: missing sensor_id');
+                    return;
+                }
                 const endpoint = enabled ? '/api/tasks/resume' : '/api/tasks/pause';
-                const body = sensorId ? { sensor_id: sensorId } : {};
+                const body = { sensor_id: sensorId };
                 try {
                     const response = await fetch(endpoint, {
                         method: 'POST',
@@ -227,8 +254,12 @@ function compareVersions(v1, v2) {
             },
 
             async toggleObservingSession(enabled, sensorId) {
-                const body = { enabled };
-                if (sensorId) body.sensor_id = sensorId;
+                if (!sensorId) {
+                    console.error('toggleObservingSession called without sensorId');
+                    alert('Cannot toggle observing session: missing sensor_id');
+                    return;
+                }
+                const body = { enabled, sensor_id: sensorId };
                 try {
                     const response = await fetch('/api/observing-session', {
                         method: 'PATCH',
@@ -249,8 +280,12 @@ function compareVersions(v1, v2) {
             },
 
             async toggleSelfTasking(enabled, sensorId) {
-                const body = { enabled };
-                if (sensorId) body.sensor_id = sensorId;
+                if (!sensorId) {
+                    console.error('toggleSelfTasking called without sensorId');
+                    alert('Cannot toggle self-tasking: missing sensor_id');
+                    return;
+                }
+                const body = { enabled, sensor_id: sensorId };
                 try {
                     const response = await fetch('/api/self-tasking', {
                         method: 'PATCH',
@@ -271,8 +306,12 @@ function compareVersions(v1, v2) {
             },
 
             async toggleAutomatedScheduling(enabled, sensorId) {
-                const body = { enabled };
-                if (sensorId) body.sensor_id = sensorId;
+                if (!sensorId) {
+                    console.error('toggleAutomatedScheduling called without sensorId');
+                    alert('Cannot toggle automated scheduling: missing sensor_id');
+                    return;
+                }
+                const body = { enabled, sensor_id: sensorId };
                 try {
                     const response = await fetch('/api/telescope/automated-scheduling', {
                         method: 'PATCH',
@@ -319,12 +358,23 @@ function compareVersions(v1, v2) {
             get systemBusyReason() {
                 return this.status?.system_busy_reason || '';
             },
-            get isImagingTaskActive() {
-                return this.isSystemBusy || this.status?.processing_active === true;
+            /**
+             * True when the given sensor is running an imaging task or its
+             * processing queue is active.  Always takes a sensorId — there
+             * is no "site-wide" imaging state in a multi-sensor deployment.
+             */
+            isImagingTaskActive(sensorId) {
+                if (!sensorId) {
+                    console.error('isImagingTaskActive called without sensorId');
+                    return false;
+                }
+                const sd = this.status?.sensors?.[sensorId];
+                if (!sd) return false;
+                return sd.system_busy === true || sd.processing_active === true;
             },
 
             async capturePreview(sensorId) {
-                if (this.isImagingTaskActive) {
+                if (this.isImagingTaskActive(sensorId)) {
                     this.isLooping = false;
                     return;
                 }
@@ -343,7 +393,6 @@ function compareVersions(v1, v2) {
                     const data = await response.json();
                     if (response.ok && data.image_data) {
                         this.previewDataUrls = { ...this.previewDataUrls, [sensorId]: data.image_data };
-                        this.previewDataUrl = data.image_data;
                         this.loopCount++;
                     } else {
                         const { showToast } = await import('./config.js');
@@ -363,7 +412,7 @@ function compareVersions(v1, v2) {
             },
 
             startFocusLoop(sensorId) {
-                if (this.isLooping || this.isSystemBusy) return;
+                if (this.isLooping || this.isImagingTaskActive(sensorId)) return;
                 this.isLooping = true;
                 this.loopCount = 0;
                 this._loopSensorId = sensorId;
@@ -386,7 +435,6 @@ function compareVersions(v1, v2) {
                     const data = await response.json();
                     if (response.ok && data.image_data) {
                         this.previewDataUrls = { ...this.previewDataUrls, [sensorId]: data.image_data };
-                        this.previewDataUrl = data.image_data;
                         this.loopCount++;
                     } else {
                         const { showToast } = await import('./config.js');

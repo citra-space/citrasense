@@ -83,8 +83,7 @@ export function taskRow(task) {
         get isActive() {
             if (!this.task || !this.task.id) return false;
             const store = this.$store.citrasense;
-            if (store.activeTaskIdSet && store.activeTaskIdSet.has(this.task.id)) return true;
-            return this.task.id === store.currentTaskId;
+            return !!(store.activeTaskIdSet && store.activeTaskIdSet.has(this.task.id));
         },
 
         get canCancel() {

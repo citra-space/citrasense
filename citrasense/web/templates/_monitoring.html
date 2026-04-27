@@ -344,7 +344,7 @@
                                 <template x-if="_preview">
                                     <img :src="_preview" alt="Preview"
                                          style="width: 40px; height: 40px; object-fit: cover; cursor: pointer;"
-                                         @click="$store.citrasense.previewDataUrl = _preview; $dispatch('open-preview-modal')">
+                                         @click="$store.citrasense.activePreviewSensorId = sensor.id; $dispatch('open-preview-modal')">
                                 </template>
                                 <template x-if="!_preview">
                                     <i class="bi bi-camera text-muted" style="font-size: 1rem;"></i>
@@ -435,20 +435,26 @@
                          const m = Math.ceil(secs / 60);
                          return m > 0 ? '~' + m + 'm' : 'now';
                      },
-                     get targetingLabel() {
-                         const cfg = $store.citrasense.config || {};
-                         const collType = cfg.self_tasking_collection_type || 'Track';
-                         const regimes = cfg.self_tasking_include_orbit_regimes || [];
-                         const excluded = cfg.self_tasking_exclude_object_types || [];
-                         const allTypes = ['Payload', 'Rocket Body', 'Debris', 'Unknown'];
-                         const included = allTypes.filter(t => !excluded.includes(t));
-                         const parts = [collType];
-                         if (regimes.length) parts.push(regimes.join(', '));
-                         else parts.push('All orbits');
-                         if (excluded.length && included.length) parts.push(included.join(', '));
-                         else if (!excluded.length) parts.push('all object types');
-                         return parts.join(' \u00b7 ');
-                     }
+                    get targetingLabel() {
+                        // Resolve this sensor's SensorConfig so the label
+                        // reflects the card's sensor, not whichever sensor
+                        // happens to sit at root of config in a multi-sensor
+                        // deployment.
+                        const sensorId = this.sensor?.id;
+                        const sensorCfgs = ($store.citrasense.config?.sensors || []);
+                        const cfg = sensorCfgs.find(s => s.id === sensorId) || {};
+                        const collType = cfg.self_tasking_collection_type || 'Track';
+                        const regimes = cfg.self_tasking_include_orbit_regimes || [];
+                        const excluded = cfg.self_tasking_exclude_object_types || [];
+                        const allTypes = ['Payload', 'Rocket Body', 'Debris', 'Unknown'];
+                        const included = allTypes.filter(t => !excluded.includes(t));
+                        const parts = [collType];
+                        if (regimes.length) parts.push(regimes.join(', '));
+                        else parts.push('All orbits');
+                        if (excluded.length && included.length) parts.push(included.join(', '));
+                        else if (!excluded.length) parts.push('all object types');
+                        return parts.join(' \u00b7 ');
+                    }
                  }">
                 <div class="card-header d-flex align-items-center gap-2">
                     <i class="bi bi-moon-stars me-1"></i>Robotic Session
@@ -1062,7 +1068,7 @@
                                              alt="Preview image"
                                              class="img-fluid"
                                              style="max-height: 360px; width: auto; cursor: pointer;"
-                                             @click="$store.citrasense.previewDataUrl = sensorPreview; $dispatch('open-preview-modal')"
+                                             @click="$store.citrasense.activePreviewSensorId = sensor.id; $dispatch('open-preview-modal')"
                                              title="Click to enlarge">
                                     </template>
                                 </div>
@@ -1413,7 +1419,7 @@
                         <div class="card-header d-flex align-items-center justify-content-between">
                             <span><i class="bi bi-lightning-charge-fill me-2"></i>Active Tasks</span>
                             <span class="d-flex flex-wrap gap-3 text-muted small"
-                                  x-show="$store.citrasense.status?.pipeline_stats?.tasks?.started > 0">
+                                  x-show="sensor?.pipeline_stats?.tasks?.started > 0">
                                 <span><i class="bi bi-check-circle me-1 text-success"></i><span x-text="sensor?.pipeline_stats?.uploading?.successes || 0"></span> Completed</span>
                                 <span><i class="bi bi-rocket me-1 text-info"></i><span x-text="sensor?.pipeline_stats?.uploading?.satellites_identified || 0"></span> Satellites</span>
                                 <span><i class="bi bi-eye me-1 text-success"></i><span x-text="sensor?.pipeline_stats?.uploading?.observation_uploads || 0"></span> Obs</span>
@@ -1429,9 +1435,9 @@
                                     <i class="bi bi-arrow-right text-secondary" style="font-size: 1.5rem;"></i>
                                 </div>
 
-                                {% call stage_box('processing', 'Processing', 'gear-fill', 'warning', 'x-show="$store.citrasense.config?.processors_enabled"') %}
+                                {% call stage_box('processing', 'Processing', 'gear-fill', 'warning', 'x-show="sensor?.processors_enabled"') %}
                                 <div class="d-flex flex-column gap-1 mb-2" style="cursor: default;"
-                                     x-show="$store.citrasense.status?.active_processors?.length > 0 && sensor?.pipeline_stats?.processing?.attempts > 0">
+                                     x-show="sensor?.processors_enabled && sensor?.pipeline_stats?.processing?.attempts > 0">
                                     <div class="progress" style="height: 3px;">
                                         <div class="progress-bar bg-success" role="progressbar"
                                              :style="`width: ${(() => { const s = sensor?.pipeline_stats?.processing; if (!s) return 0; const r = s.successes + s.permanent_failures; return r > 0 ? (s.successes / r) * 100 : 0; })()}%`"></div>
@@ -1442,7 +1448,7 @@
                                 {% endcall %}
 
                                 <!-- Arrow 2 (Processing → Uploading, only shown when processing enabled) -->
-                                <div class="col-auto align-items-center px-2" x-show="$store.citrasense.config?.processors_enabled" :class="{'d-flex': $store.citrasense.config?.processors_enabled}">
+                                <div class="col-auto align-items-center px-2" x-show="sensor?.processors_enabled" :class="{'d-flex': sensor?.processors_enabled}">
                                     <i class="bi bi-arrow-right text-secondary d-none d-md-inline-block" style="font-size: 1.5rem;"></i>
                                 </div>
 
@@ -1477,7 +1483,11 @@
                                      this.batchLoading = true;
                                      this.batchResult = null;
                                      try {
-                                         const resp = await fetch('/api/self-tasking/request-now', { method: 'POST' });
+                                         const resp = await fetch('/api/self-tasking/request-now', {
+                                             method: 'POST',
+                                             headers: {'Content-Type': 'application/json'},
+                                             body: JSON.stringify({sensor_id: sensor.id})
+                                         });
                                          const data = await resp.json();
                                          if (resp.ok) {
                                              this.batchResult = { ok: true, msg: (data.created ?? 0) + ' created' };
@@ -1499,7 +1509,7 @@
                                 <button class="btn btn-sm btn-outline-primary"
                                         :disabled="batchLoading"
                                         @click="requestBatch()"
-                                        x-show="$store.citrasense.status?.connected !== false">
+                                        x-show="sensor?.connected !== false">
                                     <span x-show="!batchLoading"><i class="bi bi-plus-circle me-1"></i>Request Batch</span>
                                     <span x-show="batchLoading"><span class="spinner-border spinner-border-sm me-1"></span>Requesting…</span>
                                 </button>
@@ -1523,10 +1533,18 @@
                                             <th class="text-end" style="width: 1%;">Actions</th>
                                         </tr>
                                     </thead>
-                                    <tbody>
+                                    {# Capture the per-sensor filtered task list once in tbody scope so
+                                       the overlap badge can reference the prior row *in this sensor's
+                                       list* — indexing back into $store.citrasense.tasks directly
+                                       mixes rows from other sensors. #}
+                                    <tbody x-data="{
+                                        get sensorTasks() {
+                                            return $store.citrasense.tasks.filter(t => t.sensor_id === (sensor.api_id || sensor.id));
+                                        }
+                                    }">
                                         {# Need `index` in scope so the overlap check can compare this
                                            row's start time against the previous row's stop time. #}
-                                        <template x-for="(task, index) in $store.citrasense.tasks.filter(t => t.sensor_id === (sensor.api_id || sensor.id))" :key="task.id">
+                                        <template x-for="(task, index) in sensorTasks" :key="task.id">
                                             <tr x-data="taskRow(task)"
                                                 class="task-row" :class="rowClass">
                                                 <td class="fw-semibold">
@@ -1605,8 +1623,8 @@
                                                        lateness. #}
                                                     <span x-show="index > 0
                                                                   && task.start_time
-                                                                  && $store.citrasense.tasks[index - 1].stop_time
-                                                                  && new Date(task.start_time) < new Date($store.citrasense.tasks[index - 1].stop_time)"
+                                                                  && sensorTasks[index - 1]?.stop_time
+                                                                  && new Date(task.start_time) < new Date(sensorTasks[index - 1].stop_time)"
                                                           class="badge bg-warning-subtle text-warning-emphasis ms-1"
                                                           title="This window opens before the previous task's window closes.">overlap</span>
                                                 </td>
@@ -1679,7 +1697,7 @@
                     </div>
                     <div class="modal-body d-flex align-items-center justify-content-center p-0"
                          data-bs-dismiss="modal" style="cursor: pointer;">
-                        <img :src="$store.citrasense.previewDataUrl"
+                        <img :src="$store.citrasense.previewDataUrls?.[$store.citrasense.activePreviewSensorId] || ''"
                              alt="Full preview"
                              style="width: 100%; height: 100%; object-fit: contain;"
                              @click.stop>

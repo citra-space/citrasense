@@ -83,7 +83,7 @@ def _embed_image(path: Path) -> str | None:
 # ---------------------------------------------------------------------------
 
 
-def _section_header(task: dict | None, fits_header: dict | None) -> str:
+def _section_header(task: dict | None, fits_header: dict | None, summary: dict | None = None) -> str:
     if not task:
         return ""
     sat = task.get("satelliteName", "Unknown")
@@ -91,11 +91,13 @@ def _section_header(task: dict | None, fits_header: dict | None) -> str:
     task_id = task.get("id", "")
     gs = task.get("groundStationName", "")
     date_obs = (fits_header or {}).get("DATE-OBS", "")
+    sensor_id = (summary or {}).get("sensor_id") or ""
+    sensor_pill = f'<span class="sensor-pill">Sensor: {_esc(sensor_id)}</span>' if sensor_id else ""
     return f"""
     <div class="header">
         <h1>{_esc(sat)}</h1>
         <div class="subtitle">{_esc(task_type)} &middot; {_esc(date_obs)} &middot; {_esc(gs)}</div>
-        <div class="task-id">Task {_esc(task_id)}</div>
+        <div class="task-id">Task {_esc(task_id)} {sensor_pill}</div>
     </div>"""
 
 
@@ -565,7 +567,7 @@ def _build_report(working_dir: Path) -> Path:
 
     body = "".join(
         [
-            _section_header(task, fits_header),
+            _section_header(task, fits_header, summary),
             _section_image(working_dir),
             _section_pipeline_summary(summary),
             _section_pointing(pointing),

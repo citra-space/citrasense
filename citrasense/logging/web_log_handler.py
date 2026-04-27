@@ -43,11 +43,18 @@ class WebLogHandler(logging.Handler):
             _prefix = "citrasense."
             short_name = record.name[len(_prefix) :] if record.name.startswith(_prefix) else record.name
 
+            # ``sensor_id`` is populated by a LoggerAdapter in per-sensor
+            # scopes (SensorRuntime, TelescopeSensor, managers, …) so the web
+            # log panel can render per-sensor filter chips.  Site-level
+            # logging has no adapter and therefore no ``sensor_id``.
+            sensor_id = getattr(record, "sensor_id", None)
+
             log_entry = {
                 "timestamp": self.format_time(record),
                 "level": level,
                 "message": record.getMessage(),
                 "module": short_name,
+                "sensor_id": sensor_id,
             }
             self.log_buffer.append(log_entry)
 

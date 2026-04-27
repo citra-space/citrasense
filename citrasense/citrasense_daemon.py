@@ -62,6 +62,11 @@ class CitraSenseDaemon:
         self.task_dispatcher = None
         self.time_monitor = None
         self.location_service = None
+        # Site-level ground station record returned by the Citra API.  One
+        # per daemon instance: CitraSense treats one ground station = one
+        # deployed site, and all configured sensors belong to it.  The
+        # per-sensor citra_sensor_id on each SensorConfig then selects
+        # which API sensor slot that local sensor drives.
         self.ground_station = None
         self.safety_monitor = None
         self.configuration_error: str | None = None
@@ -151,14 +156,15 @@ class CitraSenseDaemon:
                 images_dir=images_dir,
             )
         except ImportError as e:
-            adapter_key = self.settings.sensors[0].adapter if self.settings.sensors else "unknown"
+            adapter_keys = sorted({s.adapter for s in self.settings.sensors}) or ["unknown"]
+            adapter_list = ", ".join(adapter_keys)
             CITRASENSE_LOGGER.error(
-                "%s adapter requested but dependencies not available. Error: %s",
-                adapter_key,
+                "Configured adapter(s) [%s] requested but dependencies not available. Error: %s",
+                adapter_list,
                 e,
             )
             raise RuntimeError(
-                f"{adapter_key} adapter requires additional dependencies. "
+                f"Configured adapter(s) [{adapter_list}] require additional dependencies. "
                 "Check documentation for installation instructions."
             ) from e
 
@@ -307,8 +313,9 @@ class CitraSenseDaemon:
             self.time_monitor.start()
             CITRASENSE_LOGGER.info("Time synchronization monitoring started")
 
-            # Initialize telescope
-            success, error = self._initialize_telescope(
+            # Initialize every configured sensor (historically telescope-only,
+            # now multi-sensor) + TaskDispatcher + polling.
+            success, error = self._initialize_telescopes(
                 old_task_dict=old_task_dict,
                 old_imaging_tasks=old_imaging_tasks,
                 old_processing_tasks=old_processing_tasks,
@@ -345,7 +352,7 @@ class CitraSenseDaemon:
             CITRASENSE_LOGGER.warning(f"Hardware reconnect failed: {error}")
         return success, error
 
-    def _initialize_telescope(
+    def _initialize_telescopes(
         self,
         old_task_dict: dict | None = None,
         old_imaging_tasks: dict | None = None,

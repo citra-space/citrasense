@@ -20,12 +20,6 @@ class IndiAdapter(PyIndi.BaseClient, AbstractAstroHardwareAdapter):
     our_scope: PyIndi.BaseDevice
     our_camera: PyIndi.BaseDevice
 
-    _current_task_id: str = ""
-    _last_saved_filename: str = ""
-
-    _alignment_offset_ra: float = 0.0
-    _alignment_offset_dec: float = 0.0
-
     def __init__(self, logger: logging.Logger, images_dir: Path, **kwargs):
         PyIndi.BaseClient.__init__(self)
         AbstractAstroHardwareAdapter.__init__(self, images_dir=images_dir)
@@ -36,6 +30,15 @@ class IndiAdapter(PyIndi.BaseClient, AbstractAstroHardwareAdapter):
         self.port = int(kwargs.get("port", 7624))
         self.telescope_name = kwargs.get("telescope_name", "")
         self.camera_name = kwargs.get("camera_name", "")
+        # Per-instance mutable state. These used to live at class scope,
+        # which silently aliased two IndiAdapter instances into the same
+        # slots for any code path that accidentally used ``IndiAdapter._x``
+        # instead of ``self._x``.  Multi-sensor deployments construct one
+        # IndiAdapter per telescope sensor — keep the state local.
+        self._current_task_id: str = ""
+        self._last_saved_filename: str = ""
+        self._alignment_offset_ra: float = 0.0
+        self._alignment_offset_dec: float = 0.0
 
     @classmethod
     def get_settings_schema(cls, **kwargs) -> list[SettingSchemaEntry]:

@@ -75,6 +75,7 @@ class ProcessingQueue(BaseWorkQueue):
             self.logger.debug(f"Created working directory: {working_dir}")
 
             context = OpticalProcessingContext(
+                sensor_id=item["context"].get("sensor_id", ""),
                 image_path=item["image_path"],
                 working_image_path=item["image_path"],
                 working_dir=working_dir,

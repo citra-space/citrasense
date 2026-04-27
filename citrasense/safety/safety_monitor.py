@@ -41,6 +41,9 @@ class SafetyCheck(ABC):
     """Abstract base for a single safety check."""
 
     _last_action: SafetyAction = SafetyAction.SAFE
+    # Set by :meth:`SafetyMonitor.register_sensor_check` when the check is
+    # scoped to a particular sensor.  ``None`` means a site-level check.
+    sensor_id: str | None = None
 
     @property
     @abstractmethod
@@ -128,6 +131,7 @@ class SafetyMonitor:
                     sensor_id,
                 )
                 return
+            check.sensor_id = sensor_id
             sensor_list.append(check)
             self._checks.append(check)
         self._logger.info("Registered sensor check %r for sensor %s", check.name, sensor_id)

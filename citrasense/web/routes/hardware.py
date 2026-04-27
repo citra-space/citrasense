@@ -90,7 +90,27 @@ def build_hardware_router(ctx: CitraSenseWebApp) -> APIRouter:
 
     @router.post("/hardware/scan")
     async def scan_hardware(body: dict[str, Any]):
-        """Clear hardware probe caches and return a fresh adapter schema."""
+        """Clear hardware probe caches and return a fresh adapter schema.
+
+        .. note::
+
+           This endpoint clears the **process-wide**
+           :attr:`AbstractHardwareDevice._hardware_probe_cache`, plus a few
+           device-class-specific caches (``ZwoAmMount._port_cache``,
+           ``MoravianCamera._read_mode_cache``).  In a multi-sensor
+           deployment this invalidates probe results for *every* sensor's
+           devices, not just the one whose adapter schema is being
+           refreshed — subsequent ``get_settings_schema`` calls for other
+           sensors will re-enumerate their hardware.  That is safe (probes
+           are idempotent) and inexpensive (probes run in a subprocess
+           with a timeout), but it is worth being aware of if you are
+           debugging why a different sensor's USB scan happens to run at
+           the same time.
+
+           Narrower, per-adapter invalidation would require a mapping from
+           adapter → probed device classes; we intentionally keep the
+           scan broad until that inventory is needed.
+        """
         adapter_name = body.get("adapter_name", "")
         if not adapter_name:
             return JSONResponse({"error": "adapter_name is required"}, status_code=400)
@@ -100,6 +120,8 @@ def build_hardware_router(ctx: CitraSenseWebApp) -> APIRouter:
             return JSONResponse({"error": "current_settings must be a JSON object"}, status_code=400)
 
         def _scan() -> list:
+            # Process-wide cache clear — see the endpoint docstring for
+            # the multi-sensor implication.
             AbstractHardwareDevice._hardware_probe_cache.clear()
             try:
                 from citrasense.hardware.devices.mount.zwo_am_mount import ZwoAmMount

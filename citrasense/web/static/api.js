@@ -58,12 +58,17 @@ export async function getHardwareAdapters() {
 }
 
 /**
- * Get available processors, optionally scoped to a specific sensor so that
- * the per-sensor `enabled_processors` map is reflected in the `enabled` flag.
+ * Get available processors scoped to a specific sensor.  The backend
+ * requires ``sensor_id`` so the per-sensor ``enabled_processors`` map
+ * is reflected in the ``enabled`` flag — there is no "default" sensor.
  */
 export async function getProcessors(sensorId) {
+    if (!sensorId) {
+        console.error('getProcessors called without sensorId');
+        return [];
+    }
     try {
-        const qs = sensorId ? `?sensor_id=${encodeURIComponent(sensorId)}` : '';
+        const qs = `?sensor_id=${encodeURIComponent(sensorId)}`;
         const result = await fetchJSON(`/api/processors${qs}`);
         return result.data;
     } catch (error) {

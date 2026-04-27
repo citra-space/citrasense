@@ -7,6 +7,8 @@ import threading
 import time
 from typing import TYPE_CHECKING
 
+from citrasense.logging.sensor_logger import SensorLoggerAdapter
+
 if TYPE_CHECKING:
     from citrasense.acquisition.base_work_queue import BaseWorkQueue
     from citrasense.hardware.abstract_astro_hardware_adapter import AbstractAstroHardwareAdapter
@@ -32,7 +34,7 @@ class HomingManager:
 
     def __init__(
         self,
-        logger: logging.Logger,
+        logger: logging.Logger | SensorLoggerAdapter,
         hardware_adapter: AbstractAstroHardwareAdapter,
         imaging_queue: BaseWorkQueue | None = None,
     ):

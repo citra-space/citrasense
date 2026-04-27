@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING
 
 from citrasense.constants import AUTOFOCUS_TARGET_PRESETS
 from citrasense.hardware.abstract_astro_hardware_adapter import AbstractAstroHardwareAdapter
+from citrasense.logging.sensor_logger import SensorLoggerAdapter
 from citrasense.preview_bus import PreviewBus
 
 if TYPE_CHECKING:
@@ -37,7 +38,7 @@ class AutofocusManager:
 
     def __init__(
         self,
-        logger: logging.Logger,
+        logger: logging.Logger | SensorLoggerAdapter,
         hardware_adapter: AbstractAstroHardwareAdapter,
         settings: CitraSenseSettings,
         imaging_queue: BaseWorkQueue | None = None,

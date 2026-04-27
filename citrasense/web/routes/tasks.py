@@ -97,31 +97,52 @@ def build_tasks_router(ctx: CitraSenseWebApp) -> APIRouter:
 
     @router.post("/tasks/pause")
     async def pause_tasks(request: dict | None = None):
-        """Pause task processing for a sensor (or all sensors)."""
+        """Pause task processing for a specific sensor.
+
+        ``sensor_id`` is required; there is no site-wide broadcast pause.
+        Use the emergency-stop endpoint for a full site halt.
+        """
         if not ctx.daemon or not ctx.daemon.task_dispatcher:
             return JSONResponse({"error": "Task manager not available"}, status_code=503)
 
         sensor_id = (request or {}).get("sensor_id")
+        if not sensor_id:
+            return JSONResponse({"error": "sensor_id is required"}, status_code=400)
+        if ctx.daemon.task_dispatcher.get_runtime(sensor_id) is None:
+            return JSONResponse({"error": f"Unknown sensor_id: {sensor_id}"}, status_code=400)
+
         ctx.daemon.task_dispatcher.pause_sensor(sensor_id)
         await ctx.broadcast_status()
 
-        return {"status": "paused", "message": "Task processing paused"}
+        return {"status": "paused", "message": f"Task processing paused for {sensor_id}"}
 
     @router.post("/tasks/resume")
     async def resume_tasks(request: dict | None = None):
-        """Resume task processing for a sensor (or all sensors)."""
+        """Resume task processing for a specific sensor.
+
+        ``sensor_id`` is required.
+        """
         if not ctx.daemon or not ctx.daemon.task_dispatcher:
             return JSONResponse({"error": "Task manager not available"}, status_code=503)
 
         sensor_id = (request or {}).get("sensor_id")
+        if not sensor_id:
+            return JSONResponse({"error": "sensor_id is required"}, status_code=400)
+        if ctx.daemon.task_dispatcher.get_runtime(sensor_id) is None:
+            return JSONResponse({"error": f"Unknown sensor_id: {sensor_id}"}, status_code=400)
+
         ctx.daemon.task_dispatcher.resume_sensor(sensor_id)
         await ctx.broadcast_status()
 
-        return {"status": "active", "message": "Task processing resumed"}
+        return {"status": "active", "message": f"Task processing resumed for {sensor_id}"}
 
     @router.patch("/telescope/automated-scheduling")
     async def update_automated_scheduling(request: dict[str, Any]):
-        """Toggle automated scheduling on/off for a sensor (or all sensors)."""
+        """Toggle automated scheduling on/off for a specific telescope sensor.
+
+        ``sensor_id`` is required; broadcast semantics were removed to avoid
+        accidental site-wide flips in multi-sensor deployments.
+        """
         if not ctx.daemon or not ctx.daemon.task_dispatcher:
             return JSONResponse({"error": "Task manager not available"}, status_code=503)
 
@@ -133,6 +154,8 @@ def build_tasks_router(ctx: CitraSenseWebApp) -> APIRouter:
             return JSONResponse({"error": "Missing 'enabled' field in request body"}, status_code=400)
 
         sensor_id = request.get("sensor_id")
+        if not sensor_id:
+            return JSONResponse({"error": "sensor_id is required"}, status_code=400)
 
         try:
             updated = 0
@@ -140,7 +163,7 @@ def build_tasks_router(ctx: CitraSenseWebApp) -> APIRouter:
                 ts = trt.sensor
                 if not getattr(ts, "citra_record", None):
                     continue
-                if sensor_id is not None and ts.sensor_id != sensor_id:
+                if ts.sensor_id != sensor_id:
                     continue
                 telescope_api_id = ts.citra_record["id"]
                 success = ctx.daemon.api_client.update_telescope_automated_scheduling(telescope_api_id, enabled)
@@ -149,12 +172,12 @@ def build_tasks_router(ctx: CitraSenseWebApp) -> APIRouter:
                     updated += 1
 
             if updated == 0:
-                return JSONResponse({"error": "No matching telescope found"}, status_code=404)
+                return JSONResponse({"error": f"No matching telescope for sensor_id={sensor_id}"}, status_code=404)
 
             CITRASENSE_LOGGER.info(
-                "Automated scheduling set to %s for %d telescope(s)",
+                "Automated scheduling set to %s for sensor %s",
                 "enabled" if enabled else "disabled",
-                updated,
+                sensor_id,
             )
             await ctx.broadcast_status()
             return {"status": "success", "enabled": enabled}
@@ -165,30 +188,9 @@ def build_tasks_router(ctx: CitraSenseWebApp) -> APIRouter:
 
     @router.patch("/observing-session")
     async def toggle_observing_session(request: dict[str, Any]):
-        """Toggle observing session on/off for a sensor."""
-        if not ctx.daemon:
-            return JSONResponse({"error": "Daemon not available"}, status_code=503)
+        """Toggle observing session on/off for a specific sensor.
 
-        enabled = request.get("enabled")
-        if enabled is None:
-            return JSONResponse({"error": "Missing 'enabled' field in request body"}, status_code=400)
-
-        sensor_id = request.get("sensor_id")
-        for sc in ctx.daemon.settings.sensors:
-            if sensor_id is None or sc.id == sensor_id:
-                sc.observing_session_enabled = enabled
-        ctx.daemon.settings.save()
-        CITRASENSE_LOGGER.info(f"Observing session set to {'enabled' if enabled else 'disabled'}")
-        await ctx.broadcast_status()
-        return {"status": "success", "enabled": enabled}
-
-    @router.patch("/self-tasking")
-    async def toggle_self_tasking(request: dict[str, Any]):
-        """Toggle self-tasking on/off for a sensor.
-
-        When enabling, also enables Observing Session, Scheduling
-        (server-side), and Processing (local) so the autonomous
-        pipeline is fully active.
+        ``sensor_id`` is required; there is no broadcast form.
         """
         if not ctx.daemon:
             return JSONResponse({"error": "Daemon not available"}, status_code=503)
@@ -198,50 +200,92 @@ def build_tasks_router(ctx: CitraSenseWebApp) -> APIRouter:
             return JSONResponse({"error": "Missing 'enabled' field in request body"}, status_code=400)
 
         sensor_id = request.get("sensor_id")
-        target_configs = [sc for sc in ctx.daemon.settings.sensors if sensor_id is None or sc.id == sensor_id]
-        for sc in target_configs:
-            sc.self_tasking_enabled = enabled
+        if not sensor_id:
+            return JSONResponse({"error": "sensor_id is required"}, status_code=400)
+
+        sc = ctx.daemon.settings.get_sensor_config(sensor_id)
+        if sc is None:
+            return JSONResponse({"error": f"Unknown sensor_id: {sensor_id}"}, status_code=400)
+
+        sc.observing_session_enabled = enabled
+        ctx.daemon.settings.save()
+        CITRASENSE_LOGGER.info(
+            "Observing session set to %s for sensor %s",
+            "enabled" if enabled else "disabled",
+            sensor_id,
+        )
+        await ctx.broadcast_status()
+        return {"status": "success", "enabled": enabled}
+
+    @router.patch("/self-tasking")
+    async def toggle_self_tasking(request: dict[str, Any]):
+        """Toggle self-tasking on/off for a specific sensor.
+
+        ``sensor_id`` is required. When enabling, also enables Observing
+        Session, Scheduling (server-side), and Processing (local) for
+        that sensor so the autonomous pipeline is fully active.
+        """
+        if not ctx.daemon:
+            return JSONResponse({"error": "Daemon not available"}, status_code=503)
+
+        enabled = request.get("enabled")
+        if enabled is None:
+            return JSONResponse({"error": "Missing 'enabled' field in request body"}, status_code=400)
+
+        sensor_id = request.get("sensor_id")
+        if not sensor_id:
+            return JSONResponse({"error": "sensor_id is required"}, status_code=400)
+
+        sc = ctx.daemon.settings.get_sensor_config(sensor_id)
+        if sc is None:
+            return JSONResponse({"error": f"Unknown sensor_id: {sensor_id}"}, status_code=400)
+
+        sc.self_tasking_enabled = enabled
+        if enabled and not sc.observing_session_enabled:
+            sc.observing_session_enabled = True
+            CITRASENSE_LOGGER.info("Self-tasking: auto-enabled observing session for %s", sensor_id)
         ctx.daemon.settings.save()
 
-        if enabled:
-            for sc in target_configs:
-                if not sc.observing_session_enabled:
-                    sc.observing_session_enabled = True
-                    CITRASENSE_LOGGER.info("Self-tasking: auto-enabled observing session for %s", sc.id)
-            ctx.daemon.settings.save()
-
         if enabled and ctx.daemon.task_dispatcher:
-            if not ctx.daemon.task_dispatcher.is_processing_active():
+            rt = ctx.daemon.task_dispatcher.get_runtime(sensor_id)
+            if rt is not None and rt.paused:
                 ctx.daemon.task_dispatcher.resume_sensor(sensor_id)
-                CITRASENSE_LOGGER.info("Self-tasking: auto-enabled processing")
+                CITRASENSE_LOGGER.info("Self-tasking: auto-enabled processing for %s", sensor_id)
 
-            if not ctx.daemon.task_dispatcher.automated_scheduling:
-                try:
-                    for trt in ctx.daemon.task_dispatcher._telescope_runtimes():
-                        ts = trt.sensor
-                        if not getattr(ts, "citra_record", None):
-                            continue
-                        if sensor_id is not None and ts.sensor_id != sensor_id:
-                            continue
-                        tid = ts.citra_record["id"]
-                        ok = ctx.daemon.api_client.update_telescope_automated_scheduling(tid, True)
-                        if ok:
-                            ts.citra_record["automatedScheduling"] = True
-                            CITRASENSE_LOGGER.info("Self-tasking: auto-enabled scheduling for %s", ts.sensor_id)
-                        else:
-                            CITRASENSE_LOGGER.warning(
-                                "Self-tasking: failed to enable scheduling on server for %s", ts.sensor_id
-                            )
-                except Exception as e:
-                    CITRASENSE_LOGGER.warning(f"Self-tasking: could not enable scheduling: {e}")
+            try:
+                for trt in ctx.daemon.task_dispatcher._telescope_runtimes():
+                    ts = trt.sensor
+                    if ts.sensor_id != sensor_id or not getattr(ts, "citra_record", None):
+                        continue
+                    if ts.citra_record.get("automatedScheduling"):
+                        continue
+                    tid = ts.citra_record["id"]
+                    ok = ctx.daemon.api_client.update_telescope_automated_scheduling(tid, True)
+                    if ok:
+                        ts.citra_record["automatedScheduling"] = True
+                        CITRASENSE_LOGGER.info("Self-tasking: auto-enabled scheduling for %s", ts.sensor_id)
+                    else:
+                        CITRASENSE_LOGGER.warning(
+                            "Self-tasking: failed to enable scheduling on server for %s", ts.sensor_id
+                        )
+            except Exception as e:
+                CITRASENSE_LOGGER.warning(f"Self-tasking: could not enable scheduling: {e}")
 
-        CITRASENSE_LOGGER.info(f"Self-tasking set to {'enabled' if enabled else 'disabled'}")
+        CITRASENSE_LOGGER.info(
+            "Self-tasking set to %s for sensor %s",
+            "enabled" if enabled else "disabled",
+            sensor_id,
+        )
         await ctx.broadcast_status()
         return {"status": "success", "enabled": enabled}
 
     @router.post("/self-tasking/request-now")
     async def request_batch_now(request: dict[str, Any] | None = None):
-        """Fire a single batch collection request, bypassing session-state and timer gating."""
+        """Fire a single batch collection request for a specific telescope.
+
+        ``sensor_id`` is required; there is no implicit "first telescope"
+        fallback.
+        """
         if not ctx.daemon or not ctx.daemon.task_dispatcher:
             return JSONResponse({"error": "Daemon not available"}, status_code=503)
 
@@ -250,18 +294,20 @@ def build_tasks_router(ctx: CitraSenseWebApp) -> APIRouter:
             return JSONResponse({"error": "Ground station not configured"}, status_code=503)
 
         req_sensor_id = (request or {}).get("sensor_id")
+        if not req_sensor_id:
+            return JSONResponse({"error": "sensor_id is required"}, status_code=400)
 
         target_ts = None
         for trt in ctx.daemon.task_dispatcher._telescope_runtimes():
             ts = trt.sensor
             if not getattr(ts, "citra_record", None):
                 continue
-            if req_sensor_id is None or ts.sensor_id == req_sensor_id:
+            if ts.sensor_id == req_sensor_id:
                 target_ts = ts
                 break
 
         if not target_ts or not target_ts.citra_record:
-            return JSONResponse({"error": "No matching telescope found"}, status_code=404)
+            return JSONResponse({"error": f"No matching telescope for sensor_id={req_sensor_id}"}, status_code=404)
 
         sc = ctx.daemon.settings.get_sensor_config(target_ts.sensor_id)
         ground_station_id = gs["id"]

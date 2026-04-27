@@ -294,18 +294,6 @@ class TaskDispatcher:
             return None
 
     @property
-    def current_task_id(self) -> str | None:
-        """Return the first non-None current task id (site-level summary).
-
-        Prefer :meth:`current_task_ids` in multi-sensor contexts; this
-        scalar is kept for back-compat with single-sensor call sites.
-        """
-        for tid in self._current_task_ids.values():
-            if tid is not None:
-                return tid
-        return None
-
-    @property
     def current_task_ids(self) -> dict[str, str]:
         """Mapping of ``sensor_id -> currently-executing task id``.
 
@@ -601,16 +589,34 @@ class TaskDispatcher:
             return True
 
         if action == SafetyAction.QUEUE_STOP:
-            all_idle = all(rt.acquisition_queue.is_idle() for rt in self._runtimes.values())
-            if all_idle and triggered_check:
-                is_new = self._last_safety_action != SafetyAction.QUEUE_STOP
-                if is_new:
-                    self.logger.warning("Executing safety action from %r (queue idle)", triggered_check.name)
-                try:
-                    triggered_check.execute_action()
-                except Exception:
+            # Per-sensor isolation: a sensor-scoped check only waits for *its*
+            # acquisition queue to go idle before running its corrective
+            # action.  Site-level checks (``sensor_id is None``) still gate on
+            # every runtime being idle so they don't yank hardware out from
+            # under another rig mid-exposure.
+            if triggered_check is not None:
+                scoped_sid_raw = getattr(triggered_check, "sensor_id", None)
+                # Only treat it as per-sensor if it's an actual string; MagicMock
+                # tests (and site-level checks) leave this as None.
+                scoped_sid = scoped_sid_raw if isinstance(scoped_sid_raw, str) else None
+                if scoped_sid is not None:
+                    rt = self._runtimes.get(scoped_sid)
+                    idle = rt is not None and rt.acquisition_queue.is_idle()
+                else:
+                    idle = all(rt.acquisition_queue.is_idle() for rt in self._runtimes.values())
+                if idle:
+                    is_new = self._last_safety_action != SafetyAction.QUEUE_STOP
                     if is_new:
-                        self.logger.error("Safety corrective action failed", exc_info=True)
+                        self.logger.warning(
+                            "Executing safety action from %r (queue idle, scope=%s)",
+                            triggered_check.name,
+                            scoped_sid or "site",
+                        )
+                    try:
+                        triggered_check.execute_action()
+                    except Exception:
+                        if is_new:
+                            self.logger.error("Safety corrective action failed", exc_info=True)
             self._last_safety_action = action
             return True
 

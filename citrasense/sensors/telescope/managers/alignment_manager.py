@@ -19,6 +19,7 @@ import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from citrasense.logging.sensor_logger import SensorLoggerAdapter
 from citrasense.preview_bus import PreviewBus
 
 if TYPE_CHECKING:
@@ -40,7 +41,7 @@ class AlignmentManager:
 
     def __init__(
         self,
-        logger: logging.Logger,
+        logger: logging.Logger | SensorLoggerAdapter,
         hardware_adapter: AbstractAstroHardwareAdapter,
         settings: CitraSenseSettings,
         imaging_queue: BaseWorkQueue | None = None,

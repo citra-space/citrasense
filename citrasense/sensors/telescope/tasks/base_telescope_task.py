@@ -228,6 +228,7 @@ class AbstractBaseTelescopeTask(ABC):
                     task_id=self.task.id,
                     image_path=Path(image_path),
                     context={
+                        "sensor_id": self.runtime.sensor_id,
                         "task": self.task,
                         "telescope_record": self.telescope_record,
                         "ground_station_record": self.ground_station,

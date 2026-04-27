@@ -112,7 +112,7 @@ class TelescopeSensor(AbstractSensor):
         ``ctx`` is accepted for protocol compatibility but not consumed here;
         the telescope adapter gets its site services wired by the daemon
         separately (``set_location_service``, ``set_safety_monitor``, ...)
-        during ``_initialize_telescope``. Phase-4 follow-ups will consolidate
+        during ``_initialize_telescopes``. Phase-4 follow-ups will consolidate
         that wiring through the context.
         """
         del ctx
