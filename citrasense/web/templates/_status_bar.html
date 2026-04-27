@@ -25,6 +25,29 @@
                  }
              }">
 
+            <!-- Site label: ground-station name (→ Citra app) + Google Maps pin -->
+            <span class="d-inline-flex align-items-center gap-1 me-1 fw-semibold">
+                <template x-if="$store.citrasense.status?.ground_station_name && $store.citrasense.status?.ground_station_url">
+                    <a :href="$store.citrasense.status.ground_station_url" target="_blank" rel="noopener noreferrer"
+                       class="ground-station-link"
+                       x-text="$store.citrasense.status.ground_station_name + ' \u2197'"></a>
+                </template>
+                <template x-if="$store.citrasense.status?.ground_station_name && !$store.citrasense.status?.ground_station_url">
+                    <span x-text="$store.citrasense.status.ground_station_name"></span>
+                </template>
+                <template x-if="!$store.citrasense.status?.ground_station_name">
+                    <span class="text-muted">&mdash;</span>
+                </template>
+                <a target="_blank" rel="noopener noreferrer"
+                   class="text-body text-decoration-none"
+                   x-show="$store.citrasense.status?.location_latitude != null && $store.citrasense.status?.location_longitude != null"
+                   :href="'https://www.google.com/maps/search/?api=1&query=' + $store.citrasense.status?.location_latitude + ',' + $store.citrasense.status?.location_longitude"
+                   data-bs-toggle="tooltip" data-bs-theme="dark"
+                   :data-bs-title="'Open ' + $store.citrasense.formatCompactLocation($store.citrasense.status) + ' in Google Maps'">
+                    <i class="bi bi-geo-alt-fill"></i>
+                </a>
+            </span>
+
             <span class="badge rounded-pill"
                   data-bs-toggle="tooltip" data-bs-theme="dark"
                   style="white-space:pre-line;" :data-bs-title="safetyTip"
