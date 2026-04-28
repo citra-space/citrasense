@@ -170,6 +170,120 @@
                     </div>
                 </div>
 
+                <!-- Range-Doppler scatter card.  The shared partial fills
+                     its container — we give it an explicit height so the
+                     SVG has something to stretch into.  The empty-state
+                     overlay ("Waiting for first detection…") is handled
+                     inside the partial; no need to x-show this card. -->
+                <div class="card bg-dark text-light border-secondary my-3">
+                    <div class="card-header d-flex align-items-center">
+                        <i class="bi bi-radar me-1"></i>
+                        <span>Range-Doppler (last 5 min)</span>
+                        <span class="ms-auto small text-muted font-monospace"
+                              x-effect="$store.citrasense.now"
+                              x-text="(() => {
+                                  const rate = $store.citrasense.radarDetectionRate(sensor.id, 60);
+                                  const n = ($store.citrasense.radarDetections[sensor.id] || []).length;
+                                  return n + ' detections · ' + rate.toFixed(2) + ' Hz';
+                              })()"></span>
+                    </div>
+                    <div class="card-body p-2">
+                        <div style="height: 360px;">
+                            {% with size='full' %}{% include "_radar_range_doppler.html" %}{% endwith %}
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Active Tracks table.  Groups recent detections by
+                     ``sat_uuid`` (falling back to ``sat_name`` or
+                     "unknown") and surfaces the most-recent values per
+                     track plus the per-60s hit count.  Sorted by last
+                     update descending so active passes are on top. -->
+                <div class="card bg-dark text-light border-secondary my-3"
+                     x-data="{
+                         get _dets() { return $store.citrasense.radarDetections[sensor.id] || []; },
+                         get tracks() {
+                             const map = new Map();
+                             const nowUnix = $store.citrasense.now / 1000;
+                             const oneMinAgo = nowUnix - 60;
+                             for (const d of this._dets) {
+                                 const key = d.sat_uuid || d.sat_name || 'unknown';
+                                 let t = map.get(key);
+                                 if (!t) {
+                                     t = {
+                                         key,
+                                         uuid: d.sat_uuid || null,
+                                         name: d.sat_name || null,
+                                         last: d,
+                                         count60: 0,
+                                     };
+                                     map.set(key, t);
+                                 }
+                                 if (Number(d.ts_unix || 0) >= Number(t.last.ts_unix || 0)) {
+                                     t.last = d;
+                                 }
+                                 if (Number(d.ts_unix || 0) >= oneMinAgo) {
+                                     t.count60++;
+                                 }
+                             }
+                             return Array.from(map.values()).sort(
+                                 (a, b) => Number(b.last.ts_unix || 0) - Number(a.last.ts_unix || 0)
+                             );
+                         },
+                         formatAge(ts_unix) {
+                             const ts = Number(ts_unix);
+                             if (!Number.isFinite(ts)) return '—';
+                             const age = Math.max(0, ($store.citrasense.now / 1000) - ts);
+                             if (age < 1) return 'just now';
+                             if (age < 60) return age.toFixed(0) + 's ago';
+                             if (age < 3600) return Math.floor(age / 60) + 'm ' + Math.floor(age % 60) + 's ago';
+                             return Math.floor(age / 3600) + 'h ago';
+                         },
+                         fmt(v, digits) {
+                             return v == null ? '—' : Number(v).toFixed(digits);
+                         },
+                     }"
+                     x-effect="$store.citrasense.now"
+                     x-show="tracks.length">
+                    <div class="card-header">
+                        <i class="bi bi-diagram-3 me-1"></i>Active tracks
+                        (<span x-text="tracks.length"></span>)
+                    </div>
+                    <div class="card-body p-0">
+                        <div class="table-responsive">
+                            <table class="table table-sm table-dark mb-0">
+                                <thead>
+                                    <tr>
+                                        <th>Target</th>
+                                        <th class="text-end">Last SNR (dB)</th>
+                                        <th class="text-end">Last range (km)</th>
+                                        <th class="text-end">Last rate (km/s)</th>
+                                        <th class="text-end">Last update</th>
+                                        <th class="text-end">Hits/60s</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <template x-for="t in tracks" :key="t.key">
+                                        <tr>
+                                            <td>
+                                                <div class="fw-semibold"
+                                                     x-text="t.name || (t.uuid ? ('UUID ' + t.uuid.substring(0, 8)) : 'unknown')"></div>
+                                                <div class="text-muted small text-truncate" style="max-width: 22em;"
+                                                     x-text="t.uuid || ''"></div>
+                                            </td>
+                                            <td class="text-end font-monospace" x-text="fmt(t.last.snr_db, 1)"></td>
+                                            <td class="text-end font-monospace" x-text="fmt(t.last.range_km, 1)"></td>
+                                            <td class="text-end font-monospace" x-text="fmt(t.last.range_rate_km_s, 3)"></td>
+                                            <td class="text-end small text-muted" x-text="formatAge(t.last.ts_unix)"></td>
+                                            <td class="text-end font-monospace" x-text="t.count60"></td>
+                                        </tr>
+                                    </template>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+
                 <!-- Stations list (collapsible) -->
                 <div class="card bg-dark text-light border-secondary my-3"
                      x-show="radar?.stations?.stations?.length">

@@ -45,34 +45,52 @@
      }"
      x-effect="$store.citrasense.now">
     <div class="row g-2">
-        <!-- Engine state hero -->
+        <!-- Range-Doppler plot hero (the canonical passive-radar display).
+             The shared partial reads ``sensor.id`` from the Alpine scope
+             and renders ``$store.citrasense.radarDetections[sensor.id]``
+             as an SVG scatter.  No overlays — connection state lives in
+             the stats column so nothing obscures the plot. -->
         <div class="col-md-7">
-            <div class="sensor-hero-preview position-relative rounded overflow-hidden d-flex flex-column align-items-center justify-content-center text-light p-3">
-                <i class="bi bi-broadcast" style="font-size: 2.75rem;"
-                   :class="sensor?.radar?.state === 'running' ? 'text-success' : (sensor?.radar?.state === 'error' ? 'text-danger' : 'text-muted')"></i>
-                <div class="mt-2">
-                    <span class="badge fs-6 px-3 py-2"
-                          :class="stateBadgeClass(sensor?.radar?.state, sensor?.radar?.is_stale)"
-                          x-text="sensor?.radar?.state || 'unknown'"></span>
-                </div>
-                <div class="mt-2 small text-muted text-center"
-                     x-text="_heartbeatText"></div>
-                <template x-if="sensor?.radar?.error">
-                    <div class="mt-2 small text-danger text-center text-truncate" style="max-width: 95%;">
-                        <i class="bi bi-exclamation-octagon me-1"></i>
-                        <span x-text="sensor.radar.error.error || 'pr_sensor reported an error'"></span>
-                    </div>
-                </template>
+            <div class="sensor-hero-preview position-relative rounded overflow-hidden">
+                {% include "_radar_range_doppler.html" %}
             </div>
         </div>
         <!-- Stats column -->
         <div class="col-md-5 d-flex flex-column gap-2">
-            <!-- Detection rate -->
-            <div class="small">
+            <!-- Connection state + heartbeat age.  Lives here rather than
+                 overlaying the plot so nothing covers the scatter. -->
+            <div class="small d-flex align-items-center flex-wrap gap-2">
+                <i class="bi bi-broadcast"
+                   :class="sensor?.radar?.state === 'running' ? 'text-success' : (sensor?.radar?.state === 'error' ? 'text-danger' : 'text-muted')"></i>
+                <span class="badge"
+                      :class="stateBadgeClass(sensor?.radar?.state, sensor?.radar?.is_stale)"
+                      x-text="sensor?.radar?.state || 'unknown'"></span>
+                <span class="text-muted"
+                      x-show="!(sensor?.radar?.state === 'running' && !sensor?.radar?.is_stale)"
+                      x-text="_heartbeatText"></span>
+            </div>
+            <template x-if="sensor?.radar?.error">
+                <div class="small text-danger text-truncate">
+                    <i class="bi bi-exclamation-octagon me-1"></i>
+                    <span x-text="sensor.radar.error.error || 'pr_sensor reported an error'"></span>
+                </div>
+            </template>
+            <!-- Detection rate.  Prefer our own 60s-window computation
+                 from live WebSocket detections (reactive — updates once
+                 per second via $store.citrasense.now); fall back to the
+                 cached pr_sensor status rate until the first detection
+                 lands. -->
+            <div class="small" x-effect="$store.citrasense.now">
                 <i class="bi bi-radar me-1 text-muted"></i>
                 <span class="text-muted">Detection rate </span>
                 <span class="fw-semibold font-monospace"
-                      x-text="sensor?.radar?.status?.detection_rate != null ? Number(sensor.radar.status.detection_rate).toFixed(2) + ' Hz' : '\u2014'"></span>
+                      x-text="(() => {
+                          const live = $store.citrasense.radarDetectionRate(sensor.id, 60);
+                          if (live > 0) return live.toFixed(2) + ' Hz';
+                          const cached = sensor?.radar?.status?.detection_rate;
+                          if (cached != null) return Number(cached).toFixed(2) + ' Hz';
+                          return '\u2014';
+                      })()"></span>
             </div>
             <!-- Uptime -->
             <div class="small">

@@ -84,6 +84,12 @@ function handleBackendToast(data) {
     showToast(data.message, data.toast_type || 'info', { id: data.id });
 }
 
+function handleRadarDetection(sensorId, det) {
+    if (!sensorId || !det) return;
+    const store = Alpine.store('citrasense');
+    store.appendRadarDetection(sensorId, det);
+}
+
 function updateStoreFromConnection(connected, reconnectAt = 0) {
     const store = Alpine.store('citrasense');
     store.wsConnected = connected;
@@ -242,6 +248,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         onTasks: updateStoreFromTasks,
         onPreview: updatePreviewFromPush,
         onToast: handleBackendToast,
+        onRadarDetection: handleRadarDetection,
         onConnectionChange: updateStoreFromConnection
     });
 

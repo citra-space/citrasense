@@ -149,6 +149,23 @@ class CitraSenseWebServer:
                 self._loop,
             )
 
+    def send_radar_detection(self, sensor_id: str, slim: dict) -> None:
+        """Thread-safe bridge: schedule a radar-detection broadcast on the web loop.
+
+        Intended to be wired into
+        :attr:`PassiveRadarSensor.on_detection_broadcast` — ``pr_sensor``
+        observations arrive on the NATS asyncio thread, which is *not*
+        the same event loop uvicorn is running on, so any ``await`` must
+        go through :func:`asyncio.run_coroutine_threadsafe`.  Drops the
+        detection silently if the web loop isn't running yet (happens
+        briefly during startup).
+        """
+        if self.web_app and self._loop and self._loop.is_running():
+            asyncio.run_coroutine_threadsafe(
+                self.web_app.broadcast_radar_detection(sensor_id, slim),
+                self._loop,
+            )
+
     async def _status_broadcast_loop(self):
         """Periodically broadcast status and tasks to web clients."""
         check_counter = 0

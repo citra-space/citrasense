@@ -101,4 +101,24 @@ def build_radar_router(ctx: CitraSenseWebApp) -> APIRouter:
             CITRASENSE_LOGGER.warning("radar_ping(%s) failed: %s", sensor_id, exc)
             return JSONResponse({"error": str(exc)}, status_code=502)
 
+    @router.get("/radar/detections")
+    async def radar_detections(sensor_id: str, since: float | None = None):
+        """Return the recent slim-dict detection snapshot.
+
+        ``since`` cursor semantics match
+        :meth:`DetectionRingBuffer.snapshot_since`:
+
+        - unset / ``None`` → whole buffer (≤ ring-buffer cap)
+        - non-negative → absolute Unix epoch (return newer than that)
+        - negative → "last |since| seconds" (convenience for hydration)
+
+        Used by the monitoring and detail pages on page entry to
+        back-fill the range-Doppler plot before live WebSocket
+        broadcasts take over.
+        """
+        sensor = _get_radar_sensor(sensor_id)
+        if isinstance(sensor, JSONResponse):
+            return sensor
+        return {"detections": sensor.get_recent_detections(since)}
+
     return router

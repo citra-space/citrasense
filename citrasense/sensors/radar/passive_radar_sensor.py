@@ -34,6 +34,7 @@ from __future__ import annotations
 import logging
 import threading
 import time
+from collections import deque
 from collections.abc import Callable
 from datetime import datetime, timezone
 from logging import Logger, LoggerAdapter
@@ -48,6 +49,21 @@ from citrasense.sensors.abstract_sensor import (
 )
 from citrasense.sensors.radar.detection_source import DetectionSource
 from citrasense.sensors.radar.events import RadarObservationEvent
+
+#: Speed of light in m/s — used for bistatic Doppler → range-rate so the
+#: slim dict carries both quantities (the plot uses range-rate; some
+#: readouts prefer Doppler).  Matches the constant in
+#: :mod:`citrasense.pipelines.radar.radar_detection_formatter`.
+_SPEED_OF_LIGHT_M_S = 299_792_458.0
+
+#: Default FM-carrier sanity value when neither the payload nor the
+#: sensor's configured radar_config provides one.
+_DEFAULT_CARRIER_HZ = 100e6
+
+#: Maximum number of detections retained in each sensor's ring buffer.
+#: At ~10 Hz this is ~50 s of history — enough to hydrate a reloaded
+#: browser tab without bloating the WebSocket payload size.
+_RING_BUFFER_MAX = 500
 
 #: Anything that quacks like a logger.  ``SensorLoggerAdapter`` (which
 #: ``get_sensor_logger`` returns) extends :class:`logging.LoggerAdapter`
@@ -114,6 +130,54 @@ _RADAR_CONFIG_FIELDS: tuple[tuple[str, str, str, str], ...] = (
     ("min_range_sharp_db", "Min range sharpness (dB)", "float", "Peak sharpness gate (range)."),
     ("min_doppler_sharp_db", "Min Doppler sharpness (dB)", "float", "Peak sharpness gate (Doppler)."),
 )
+
+
+class DetectionRingBuffer:
+    """Thread-safe bounded queue of slim-dict radar detections.
+
+    Backed by a :class:`collections.deque` with ``maxlen`` — appends
+    drop the oldest entry in O(1), which matches what we want for a
+    live scatter plot.  A single :class:`threading.Lock` serialises
+    ``append`` and ``snapshot_since`` because the former runs on the
+    NATS asyncio thread and the latter runs on the FastAPI worker
+    thread (or any other reader).
+
+    ``snapshot_since`` returns a *copy* — callers must never mutate
+    the returned list because doing so would race other readers.
+    """
+
+    __slots__ = ("_buf", "_lock")
+
+    def __init__(self, maxlen: int = _RING_BUFFER_MAX) -> None:
+        self._buf: deque[dict[str, Any]] = deque(maxlen=maxlen)
+        self._lock = threading.Lock()
+
+    def append(self, slim: dict[str, Any]) -> None:
+        with self._lock:
+            self._buf.append(slim)
+
+    def snapshot_since(self, since_ts: float | None) -> list[dict[str, Any]]:
+        """Return a copy of all detections with ``ts_unix > since_ts``.
+
+        ``since_ts`` is interpreted as follows:
+
+        - ``None`` → return the full buffer (bounded by ``maxlen``).
+        - Non-negative value → treated as an absolute Unix epoch cursor.
+        - Negative value → treated as "last ``|since_ts|`` seconds"
+          relative to ``time.time()``.
+
+        The list is returned in insertion order (oldest first).
+        """
+        with self._lock:
+            snapshot = list(self._buf)
+        if since_ts is None:
+            return snapshot
+        cutoff = since_ts if since_ts >= 0 else time.time() + since_ts
+        return [d for d in snapshot if float(d.get("ts_unix") or 0.0) > cutoff]
+
+    def __len__(self) -> int:
+        with self._lock:
+            return len(self._buf)
 
 
 class PassiveRadarSensor(AbstractSensor):
@@ -187,6 +251,15 @@ class PassiveRadarSensor(AbstractSensor):
         # Optional toast callback set by the daemon (web_server.send_toast).
         self.on_toast: Callable[[str, str, str | None], None] | None = None
         self._last_staleness_warning: float = 0.0
+
+        # Detection ring buffer + live broadcast callback.  The buffer
+        # always accumulates; the callback is only invoked when the web
+        # layer has wired it — see :meth:`_on_observation`.  The callback
+        # is free-threading on purpose: consumers are expected to marshal
+        # onto their own event loop (the web app uses
+        # :func:`asyncio.run_coroutine_threadsafe`).
+        self._detections = DetectionRingBuffer()
+        self.on_detection_broadcast: Callable[[str, dict[str, Any]], None] | None = None
 
     # ── Factory ────────────────────────────────────────────────────────
 
@@ -379,8 +452,12 @@ class PassiveRadarSensor(AbstractSensor):
         if self._connected:
             return True
 
+        # One unified observation handler handles both the pre-stream
+        # and streaming cases.  Pre-stream it still populates the ring
+        # buffer and pushes live WebSocket updates; it just can't
+        # publish to the sensor bus until ``start_stream`` wires one up.
         self._source.start(
-            on_observation=self._on_observation_before_stream,
+            on_observation=self._on_observation,
             on_status=self._on_status,
             on_health=self._on_health,
             on_stations=self._on_stations,
@@ -433,9 +510,10 @@ class PassiveRadarSensor(AbstractSensor):
         del ctx
         self._bus = bus
         self._streaming = True
-        # Upgrade the placeholder observation handler installed on
-        # connect() to the real bus-publisher now that we have a bus.
-        self._source.set_handlers(on_observation=self._on_observation)
+        # ``_on_observation`` is already installed on connect(); it just
+        # starts publishing to the bus now that ``self._bus`` is set
+        # and ``self._streaming`` flipped on.  Ring-buffer appends and
+        # WebSocket broadcasts keep running independently either way.
         self._logger.info("Radar streaming started for %s", self.sensor_id)
 
     def stop_stream(self) -> None:
@@ -443,9 +521,9 @@ class PassiveRadarSensor(AbstractSensor):
             return
         self._streaming = False
         self._bus = None
-        # Fall back to the cache-only pre-stream handler so the UI
-        # still sees status heartbeats when the bus is detached.
-        self._source.set_handlers(on_observation=self._on_observation_before_stream)
+        # Leave the observation handler wired so the ring buffer and
+        # live-broadcast path keep feeding the UI even with the bus
+        # detached.
         self._logger.info("Radar streaming stopped for %s", self.sensor_id)
 
     # ── Control commands (used by web routes) ─────────────────────────
@@ -576,14 +654,33 @@ class PassiveRadarSensor(AbstractSensor):
             except Exception:
                 pass
 
-    def _on_observation_before_stream(self, payload: dict[str, Any]) -> None:
-        # Pre-stream: we don't have a bus yet; silently drop observations
-        # but let the rest of the subscription (status/health) populate
-        # the UI cache.  On ``start_stream`` this handler is replaced
-        # with :meth:`_on_observation`.
-        del payload
-
     def _on_observation(self, payload: dict[str, Any]) -> None:
+        """Unified observation handler.
+
+        Runs on the NATS asyncio thread.  Always:
+
+        1. Projects a slim dict for the UI and appends it to the
+           detection ring buffer (hydrates deep-linked reloads).
+        2. Invokes :attr:`on_detection_broadcast` when set — the web
+           layer hands off to its own event loop via
+           :func:`asyncio.run_coroutine_threadsafe` so we stay
+           thread-agnostic here.
+        3. Publishes the *full* payload to the sensor bus when a bus is
+           attached *and* streaming is active.  Matches the old
+           pre-stream / streaming split without needing two handlers.
+        """
+        slim = self._project_slim_dict(payload)
+        if slim is not None:
+            self._detections.append(slim)
+            cb = self.on_detection_broadcast
+            if cb is not None:
+                try:
+                    cb(self.sensor_id, slim)
+                except Exception as exc:
+                    # A broken callback must never take down the NATS
+                    # subscriber; log and continue.
+                    self._logger.debug("on_detection_broadcast raised: %s", exc)
+
         bus = self._bus
         if bus is None or not self._streaming:
             return
@@ -598,6 +695,86 @@ class PassiveRadarSensor(AbstractSensor):
             bus.publish(f"sensors.{self.sensor_id}.events.acquisition", event)
         except Exception as exc:
             self._logger.error("Failed to publish observation to bus: %s", exc, exc_info=True)
+
+    # ── Detection buffer / slim projection ───────────────────────────
+
+    def get_recent_detections(self, since_ts: float | None = None) -> list[dict[str, Any]]:
+        """Return a snapshot of the detection ring buffer.
+
+        See :meth:`DetectionRingBuffer.snapshot_since` for the cursor
+        semantics (``None`` = all, non-negative = absolute epoch,
+        negative = "last N seconds").
+        """
+        return self._detections.snapshot_since(since_ts)
+
+    def _project_slim_dict(self, payload: dict[str, Any]) -> dict[str, Any] | None:
+        """Reduce a full radar observation payload to a UI-sized dict.
+
+        Returns ``None`` for payloads without usable bistatic fields so
+        garbage / keepalive messages don't pollute the ring buffer.
+        Field names stay camelCase-free to match the rest of the
+        citrasense API (snake_case); the frontend reads them directly.
+        """
+        bistatic = payload.get("bistatic") or {}
+        quality = payload.get("quality") or {}
+        target = payload.get("target") or {}
+
+        bistatic_range = _as_float(bistatic.get("bistatic_range_km"))
+        if bistatic_range is None:
+            bistatic_range = _as_float(payload.get("range_km"))
+        doppler_hz = _as_float(bistatic.get("doppler_hz"))
+        if doppler_hz is None:
+            doppler_hz = _as_float(bistatic.get("doppler_meas"))
+
+        # A "real" detection needs at least range *or* Doppler; without
+        # either we have nothing to plot.  Drop silently.
+        if bistatic_range is None and doppler_hz is None:
+            return None
+
+        carrier_hz = self._resolve_carrier_hz(payload)
+        range_rate_km_s: float | None = None
+        if doppler_hz is not None and carrier_hz and carrier_hz > 0:
+            # Bistatic Doppler: f_D = -(dR/dt) * f_c / c
+            range_rate_km_s = -doppler_hz * _SPEED_OF_LIGHT_M_S / carrier_hz / 1000.0
+
+        timestamp_iso = payload.get("timestamp")
+        ts_parsed = _parse_iso8601(timestamp_iso)
+        ts_unix = ts_parsed.timestamp()
+
+        slim: dict[str, Any] = {
+            "ts": timestamp_iso if isinstance(timestamp_iso, str) else ts_parsed.isoformat(),
+            "ts_unix": ts_unix,
+            "sensor_id": self.sensor_id,
+            "range_km": bistatic_range,
+            "range_rate_km_s": range_rate_km_s,
+            "doppler_hz": doppler_hz,
+            "snr_db": _as_float(quality.get("snr_db")) or _as_float(payload.get("snr_db")),
+            "sat_uuid": target.get("citra_uuid") or None,
+            "sat_name": target.get("name") or None,
+        }
+        return slim
+
+    def _resolve_carrier_hz(self, payload: dict[str, Any]) -> float | None:
+        """Best-effort FM-carrier resolution.
+
+        Mirrors :meth:`RadarDetectionFormatter._resolve_carrier_hz`:
+        configured override → transmitter field on the observation →
+        first per-station entry → the default 100 MHz sanity value.
+        """
+        configured = _as_float(self._radar_config.get("center_freq_hz"))
+        if configured and configured > 0:
+            return configured
+        geometry = payload.get("geometry") or {}
+        transmitter = geometry.get("transmitter") or {}
+        freq = _as_float(transmitter.get("freq_hz"))
+        if freq:
+            return freq
+        per_station = payload.get("per_station") or []
+        for ps in per_station:
+            freq = _as_float(ps.get("freq_hz"))
+            if freq:
+                return freq
+        return _DEFAULT_CARRIER_HZ
 
     # ── Staleness polling (called from a background timer) ───────────
 
@@ -679,6 +856,27 @@ class PassiveRadarSensor(AbstractSensor):
             self.sensor_id,
             self._start_wait,
         )
+
+
+def _as_float(value: Any) -> float | None:
+    """Coerce int/float/numeric-string to float; otherwise ``None``.
+
+    Mirrors the helper in
+    :mod:`citrasense.pipelines.radar.radar_detection_formatter` so the
+    slim-dict projection and the upload formatter treat payload fields
+    the same way (pr_sensor has been known to emit both numeric and
+    string-formatted numbers for the same field).
+    """
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        return float(value)
+    if isinstance(value, str):
+        try:
+            return float(value)
+        except ValueError:
+            return None
+    return None
 
 
 def _parse_iso8601(value: Any) -> datetime:

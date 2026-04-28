@@ -735,6 +735,11 @@ class CitraSenseDaemon:
         # fine (headless testing).
         if self.web_server:
             radar_sensor.on_toast = self.web_server.send_toast
+            # Live-broadcast every detection to browser clients via the
+            # web loop.  ``send_radar_detection`` is a thread-safe
+            # bridge (``run_coroutine_threadsafe``); the NATS asyncio
+            # thread never awaits here.
+            radar_sensor.on_detection_broadcast = self.web_server.send_radar_detection
 
         try:
             ok = radar_sensor.connect()
