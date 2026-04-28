@@ -1447,7 +1447,7 @@
                 async refresh() {
                     this.radarLoading = true;
                     try {
-                        const url = store.sensorApiBaseFor(sensor.id) + '/radar/status';
+                        const url = this.$store.citrasense.sensorApiBaseFor(sensor.id) + '/radar/status';
                         const r = await fetch(url);
                         if (r.ok) { this.radar = await r.json(); }
                     } catch (e) { this.lastError = String(e); }
@@ -1456,7 +1456,7 @@
                 async radarControl(action, body) {
                     this.lastError = null;
                     try {
-                        const url = store.sensorApiBaseFor(sensor.id) + '/radar/' + action;
+                        const url = this.$store.citrasense.sensorApiBaseFor(sensor.id) + '/radar/' + action;
                         const r = await fetch(url, { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body || {}) });
                         const data = await r.json();
                         if (!r.ok || data.error) {

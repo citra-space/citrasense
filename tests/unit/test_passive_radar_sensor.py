@@ -134,6 +134,63 @@ class TestCapabilities:
         assert "Filters" in groups
         assert "Radar" in groups
 
+    def test_schema_is_normalized_to_setting_schema_entry_shape(self):
+        """Field keys must match ``SettingSchemaEntry`` so the web form renders them."""
+        schema = PassiveRadarSensor.build_settings_schema("radar-0")
+        names = {field["name"] for field in schema}
+        assert {"nats_url", "radar_sensor_id", "detection_min_snr_db"}.issubset(names)
+        # Every row must expose the name/friendly_name/type trio the
+        # web-form field renderer reads.
+        for field in schema:
+            assert "name" in field
+            assert "friendly_name" in field
+            assert field["type"] in {"str", "int", "float", "bool"}
+        # Radar sensors reuse SensorConfig.citra_sensor_id, so the
+        # legacy adapter_settings field must not appear in the schema.
+        assert "citra_antenna_id" not in names
+        # The ``radar_sensor_id`` field's default seeds off the caller's
+        # sensor_id so the Add Sensor form can pre-populate it.
+        radar_sid = next(f for f in schema if f["name"] == "radar_sensor_id")
+        assert radar_sid["default"] == "radar-0"
+
+
+class TestFromConfig:
+    def test_citra_sensor_id_takes_precedence_over_legacy_adapter_setting(self, tmp_path):
+        """``cfg.citra_sensor_id`` is authoritative; adapter_settings fallback only fires when empty."""
+        from citrasense.settings.citrasense_settings import SensorConfig
+
+        cfg = SensorConfig(
+            id="radar-0",
+            type="passive_radar",
+            adapter="",
+            citra_sensor_id="new-antenna-uuid",
+            adapter_settings={"citra_antenna_id": "legacy-antenna-uuid"},
+        )
+        sensor = PassiveRadarSensor.from_config(
+            cfg,
+            logger=logging.getLogger("test.radar.from_config"),
+            images_dir=tmp_path,
+        )
+        assert sensor.citra_antenna_id == "new-antenna-uuid"
+
+    def test_adapter_settings_fallback_when_citra_sensor_id_empty(self, tmp_path):
+        """Legacy configs (pre-UI) keep working through the adapter_settings fallback."""
+        from citrasense.settings.citrasense_settings import SensorConfig
+
+        cfg = SensorConfig(
+            id="radar-0",
+            type="passive_radar",
+            adapter="",
+            citra_sensor_id="",
+            adapter_settings={"citra_antenna_id": "legacy-antenna-uuid"},
+        )
+        sensor = PassiveRadarSensor.from_config(
+            cfg,
+            logger=logging.getLogger("test.radar.from_config"),
+            images_dir=tmp_path,
+        )
+        assert sensor.citra_antenna_id == "legacy-antenna-uuid"
+
 
 class TestConnect:
     def test_connect_succeeds_after_announce(self):

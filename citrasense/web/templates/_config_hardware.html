@@ -1,8 +1,20 @@
 <!-- Hardware Configuration (included by _config.html) -->
-<div class="row g-3 mb-3">
+<!-- Hardware adapter picker + reconnect/scan controls — telescope-only.
+     Streaming sensors (passive_radar) don't sit behind the
+     AbstractAstroHardwareAdapter registry; their transport config lives
+     entirely in adapter_settings below. -->
+<div class="row g-3 mb-3"
+     x-show="$store.citrasense.config.sensors?.[$store.citrasense.configSensorIndex]?.type !== 'passive_radar'">
     <div class="col">
         <label for="hardwareAdapterSelect" class="form-label">Hardware Adapter <span class="text-danger">*</span></label>
-        <select id="hardwareAdapterSelect" class="form-select" required
+        <!-- ``:required`` is bound to the same sensor-type gate as ``x-show``.
+             ``x-show`` only toggles display:none — it keeps the <select> in
+             the DOM with a static ``required`` attribute, which would make
+             HTML5 form validation reject the save for a radar sensor even
+             though the field is hidden.  See CLAUDE.md "Alpine.js x-show vs
+             HTML5 required". -->
+        <select id="hardwareAdapterSelect" class="form-select"
+            :required="$store.citrasense.config.sensors?.[$store.citrasense.configSensorIndex]?.type !== 'passive_radar'"
             x-model="$store.citrasense.config.sensors[$store.citrasense.configSensorIndex].adapter"
             @change="$store.citrasense.handleAdapterChange($event.target.value)">
             <option value="">-- Select Hardware Adapter --</option>
@@ -33,13 +45,26 @@
     </div>
 </div>
 
-<!-- Citra Sensor ID (per-sensor link to remote telescope record) -->
+<!-- Citra Sensor ID (per-sensor link to remote telescope/antenna record).
+     For passive_radar sensors this field carries the Citra antenna UUID
+     used in observation uploads; the label flips but the bound storage
+     stays on SensorConfig.citra_sensor_id. -->
 <div class="row g-3 mb-3">
     <div class="col-12 col-md-6">
-        <label for="citraSensorId" class="form-label">Citra Sensor ID <span class="text-danger">*</span></label>
-        <input type="text" id="citraSensorId" class="form-control" placeholder="Enter Citra sensor ID" required
+        <label for="citraSensorId" class="form-label">
+            <span x-show="$store.citrasense.config.sensors?.[$store.citrasense.configSensorIndex]?.type === 'passive_radar'">Citra Antenna ID</span>
+            <span x-show="$store.citrasense.config.sensors?.[$store.citrasense.configSensorIndex]?.type !== 'passive_radar'">Citra Sensor ID</span>
+            <span class="text-danger">*</span>
+        </label>
+        <input type="text" id="citraSensorId" class="form-control"
+               :placeholder="$store.citrasense.config.sensors?.[$store.citrasense.configSensorIndex]?.type === 'passive_radar' ? 'Enter Citra antenna UUID' : 'Enter Citra sensor ID'"
+               required
                x-model="$store.citrasense.config.sensors[$store.citrasense.configSensorIndex].citra_sensor_id">
-        <small class="text-muted">Links this sensor to the matching telescope record on <a :href="$store.citrasense.config.app_url || ''" target="_blank" rel="noopener noreferrer" x-text="($store.citrasense.config.app_url || '').replace('https://', '')"></a></small>
+        <small class="text-muted">
+            <span x-show="$store.citrasense.config.sensors?.[$store.citrasense.configSensorIndex]?.type === 'passive_radar'">Registered antenna record on</span>
+            <span x-show="$store.citrasense.config.sensors?.[$store.citrasense.configSensorIndex]?.type !== 'passive_radar'">Links this sensor to the matching telescope record on</span>
+            <a :href="$store.citrasense.config.app_url || ''" target="_blank" rel="noopener noreferrer" x-text="($store.citrasense.config.app_url || '').replace('https://', '')"></a>
+        </small>
     </div>
 </div>
 
@@ -141,8 +166,9 @@
     </template>
 </div>
 
-<!-- Filter Configuration -->
-<div x-show="$store.citrasense.filterConfigVisible" class="card bg-dark border-secondary mb-3 mt-3">
+<!-- Filter Configuration (telescope-only) -->
+<div x-show="$store.citrasense.filterConfigVisible && $store.citrasense.config.sensors?.[$store.citrasense.configSensorIndex]?.type !== 'passive_radar'"
+     class="card bg-dark border-secondary mb-3 mt-3">
     <div class="card-header">
         <h6 class="mb-0">Filter Configuration</h6>
     </div>
@@ -209,8 +235,8 @@
     </div>
 </div>
 
-<!-- Mount Alignment -->
-<div x-show="$store.citrasense.configSensorStatus?.supports_alignment || $store.citrasense.configSensorStatus?.supports_manual_sync"
+<!-- Mount Alignment (telescope-only) -->
+<div x-show="($store.citrasense.configSensorStatus?.supports_alignment || $store.citrasense.configSensorStatus?.supports_manual_sync) && $store.citrasense.config.sensors?.[$store.citrasense.configSensorIndex]?.type !== 'passive_radar'"
      class="card bg-dark border-secondary mb-3"
      x-data="{ syncRa: $store.citrasense.configSensorStatus?.telescope_ra ?? '', syncDec: $store.citrasense.configSensorStatus?.telescope_dec ?? '' }">
     <div class="card-header d-flex justify-content-between align-items-center">
@@ -266,8 +292,8 @@
     </div>
 </div>
 
-<!-- Hardware Safety Monitor -->
-<div x-show="$store.citrasense.configSensorStatus?.supports_hardware_safety_monitor"
+<!-- Hardware Safety Monitor (telescope-only) -->
+<div x-show="$store.citrasense.configSensorStatus?.supports_hardware_safety_monitor && $store.citrasense.config.sensors?.[$store.citrasense.configSensorIndex]?.type !== 'passive_radar'"
      class="card bg-dark border-secondary mb-3">
     <div class="card-header">
         <h6 class="mb-0"><i class="bi bi-shield-check me-1"></i>Hardware Safety Monitor</h6>

@@ -86,26 +86,33 @@ DEFAULT_RADAR_CONFIG: dict[str, Any] = {
     "min_doppler_sharp_db": 4.0,
 }
 
+#: Per-field schema rows for the ``pr_sensor`` ``RadarConfig`` subset.
+#:
+#: Each entry is ``(name, friendly_name, type, description)`` where
+#: ``type`` uses the same vocabulary as the hardware-adapter schema
+#: (:class:`~citrasense.hardware.abstract_astro_hardware_adapter.SettingSchemaEntry`):
+#: ``"int"``, ``"float"``, ``"str"``, ``"bool"``.  Using that vocabulary
+#: lets the existing web-form renderer (``components.adapterField``)
+#: drive radar fields without modification.
 _RADAR_CONFIG_FIELDS: tuple[tuple[str, str, str, str], ...] = (
-    # (key, label, input type, help text)
-    ("center_freq_hz", "Center frequency (Hz)", "number", "FM illuminator carrier."),
-    ("sample_rate_hz", "Sample rate (Hz)", "number", "USRP ADC rate."),
-    ("cpi_samples", "CPI samples", "number", "Samples per coherent integration window."),
-    ("decimation", "Decimation", "number", "Post-channelizer decimation factor."),
-    ("gain_db", "USRP gain (dB)", "number", "Front-end analog gain."),
-    ("threshold_db", "Detection threshold (dB)", "number", "Matched-filter SNR floor."),
-    ("eca_delay_taps", "ECA delay taps", "number", "Cancellation filter tap count."),
-    ("eca_doppler_bins", "ECA Doppler bins", "number", "ECA Doppler extent (bins)."),
-    ("eca_doppler_max_hz", "ECA Doppler max (Hz)", "number", "ECA Doppler extent (Hz)."),
-    ("eca_reg_factor", "ECA regularization", "number", "Tikhonov factor for ECA solve."),
-    ("nci_K", "NCI integrations (K)", "number", "Non-coherent integration count."),
-    ("nci_min_count", "NCI min count", "number", "Minimum hits across NCI frames."),
-    ("max_stations", "Max stations", "number", "Maximum FM illuminators to track."),
-    ("min_stations", "Min stations", "number", "Minimum illuminators for a detection."),
-    ("max_resid_doppler", "Max residual Doppler (Hz)", "number", "Gate on |Doppler residual|."),
-    ("spread_doppler", "Spread Doppler (Hz)", "number", "Doppler search half-width."),
-    ("min_range_sharp_db", "Min range sharpness (dB)", "number", "Peak sharpness gate (range)."),
-    ("min_doppler_sharp_db", "Min Doppler sharpness (dB)", "number", "Peak sharpness gate (Doppler)."),
+    ("center_freq_hz", "Center frequency (Hz)", "float", "FM illuminator carrier."),
+    ("sample_rate_hz", "Sample rate (Hz)", "float", "USRP ADC rate."),
+    ("cpi_samples", "CPI samples", "int", "Samples per coherent integration window."),
+    ("decimation", "Decimation", "int", "Post-channelizer decimation factor."),
+    ("gain_db", "USRP gain (dB)", "float", "Front-end analog gain."),
+    ("threshold_db", "Detection threshold (dB)", "float", "Matched-filter SNR floor."),
+    ("eca_delay_taps", "ECA delay taps", "int", "Cancellation filter tap count."),
+    ("eca_doppler_bins", "ECA Doppler bins", "int", "ECA Doppler extent (bins)."),
+    ("eca_doppler_max_hz", "ECA Doppler max (Hz)", "float", "ECA Doppler extent (Hz)."),
+    ("eca_reg_factor", "ECA regularization", "float", "Tikhonov factor for ECA solve."),
+    ("nci_K", "NCI integrations (K)", "int", "Non-coherent integration count."),
+    ("nci_min_count", "NCI min count", "int", "Minimum hits across NCI frames."),
+    ("max_stations", "Max stations", "int", "Maximum FM illuminators to track."),
+    ("min_stations", "Min stations", "int", "Minimum illuminators for a detection."),
+    ("max_resid_doppler", "Max residual Doppler (Hz)", "float", "Gate on |Doppler residual|."),
+    ("spread_doppler", "Spread Doppler (Hz)", "float", "Doppler search half-width."),
+    ("min_range_sharp_db", "Min range sharpness (dB)", "float", "Peak sharpness gate (range)."),
+    ("min_doppler_sharp_db", "Min Doppler sharpness (dB)", "float", "Peak sharpness gate (Doppler)."),
 )
 
 
@@ -206,6 +213,10 @@ class PassiveRadarSensor(AbstractSensor):
         adapter_settings = cfg.adapter_settings or {}
         nats_url = str(adapter_settings.get("nats_url") or "nats://127.0.0.1:4222")
         radar_sensor_id = str(adapter_settings.get("radar_sensor_id") or cfg.id)
+        # Prefer the top-level ``citra_sensor_id`` (shared with the telescope
+        # config form). Fall back to the legacy ``adapter_settings.citra_antenna_id``
+        # slot so existing config.json files keep working.
+        citra_antenna_id = str(cfg.citra_sensor_id or adapter_settings.get("citra_antenna_id") or "")
 
         source_logger = get_sensor_logger(
             logger.getChild(f"NatsDetectionSource[{cfg.id}]"),
@@ -233,7 +244,7 @@ class PassiveRadarSensor(AbstractSensor):
             announce_wait_seconds=float(adapter_settings.get("announce_wait_seconds", 15.0)),
             start_wait_seconds=float(adapter_settings.get("start_wait_seconds", 20.0)),
             status_staleness_timeout_s=float(adapter_settings.get("status_staleness_timeout_s", 15.0)),
-            citra_antenna_id=str(adapter_settings.get("citra_antenna_id") or ""),
+            citra_antenna_id=citra_antenna_id,
             detection_min_snr_db=float(adapter_settings.get("detection_min_snr_db", 0.0)),
             forward_only_tasked_satellites=bool(adapter_settings.get("forward_only_tasked_satellites", False)),
             pr_control_url=str(adapter_settings.get("pr_control_url") or ""),
@@ -244,91 +255,121 @@ class PassiveRadarSensor(AbstractSensor):
     def get_capabilities(self) -> SensorCapabilities:
         return self._CAPABILITIES
 
-    def get_settings_schema(self) -> list[dict[str, Any]]:
+    @classmethod
+    def build_settings_schema(cls, sensor_id: str = "") -> list[dict[str, Any]]:
+        """Return the radar adapter-settings schema.
+
+        Exposed as a classmethod so the web layer can fetch the schema
+        before a ``PassiveRadarSensor`` instance exists (for example
+        while the operator is still filling in the Add Sensor form).
+        Field shape matches
+        :class:`~citrasense.hardware.abstract_astro_hardware_adapter.SettingSchemaEntry`
+        (``name`` / ``friendly_name`` / ``type`` / ``default`` / ``group`` /
+        ``description``) so the existing Hardware-tab field renderer can
+        drive it unchanged.
+
+        ``sensor_id`` is used solely as the default for the
+        ``radar_sensor_id`` field — when unknown, leave empty.  The
+        ``citra_antenna_id`` field is intentionally absent: the Citra
+        antenna UUID lives on ``SensorConfig.citra_sensor_id`` (reused
+        for both telescopes and radars).
+        """
+        # ``required`` is set explicitly on every row — including optional
+        # ones — so the web form's ``:required="field.required"`` binding
+        # always resolves to a concrete boolean. Omitting the key leaves
+        # ``field.required`` as ``undefined`` in JS, which Alpine normally
+        # strips from the DOM but which has caused "this field is optional
+        # but I can't save it blank" reports in practice.
         schema: list[dict[str, Any]] = [
             {
-                "key": "nats_url",
-                "label": "NATS URL",
-                "type": "text",
+                "name": "nats_url",
+                "friendly_name": "NATS URL",
+                "type": "str",
                 "default": "nats://127.0.0.1:4222",
                 "group": "Connection",
-                "help": "NATS server pr_sensor publishes to.",
+                "description": "NATS server pr_sensor publishes to.",
+                "required": True,
             },
             {
-                "key": "radar_sensor_id",
-                "label": "pr_sensor --sensor-id",
-                "type": "text",
-                "default": self.sensor_id,
+                "name": "radar_sensor_id",
+                "friendly_name": "pr_sensor --sensor-id",
+                "type": "str",
+                "default": sensor_id,
                 "group": "Connection",
-                "help": "Target sensor id (as passed to pr_sensor on start).",
+                "description": "Target sensor id (as passed to pr_sensor on start).",
+                "required": False,
             },
             {
-                "key": "pr_control_url",
-                "label": "pr_control URL",
-                "type": "text",
+                "name": "pr_control_url",
+                "friendly_name": "pr_control URL",
+                "type": "str",
                 "default": "",
                 "group": "Connection",
-                "help": "Optional — link shown on the radar detail page.",
+                "description": "Optional — link shown on the radar detail page.",
+                "required": False,
             },
             {
-                "key": "citra_antenna_id",
-                "label": "Citra antenna UUID",
-                "type": "text",
-                "default": "",
-                "group": "Connection",
-                "help": "Registered backend antenna UUID used in observation uploads.",
-            },
-            {
-                "key": "autostart_on_connect",
-                "label": "Auto-start pipeline on connect",
-                "type": "boolean",
+                "name": "autostart_on_connect",
+                "friendly_name": "Auto-start pipeline on connect",
+                "type": "bool",
                 "default": False,
                 "group": "Connection",
+                "description": "Send 'start' to pr_sensor right after a successful connect.",
+                "required": False,
             },
             {
-                "key": "push_config_on_connect",
-                "label": "Push RadarConfig on connect",
-                "type": "boolean",
+                "name": "push_config_on_connect",
+                "friendly_name": "Push RadarConfig on connect",
+                "type": "bool",
                 "default": False,
                 "group": "Connection",
+                "description": "Send the configured RadarConfig to pr_sensor on connect.",
+                "required": False,
             },
             {
-                "key": "status_staleness_timeout_s",
-                "label": "Status staleness timeout (s)",
-                "type": "number",
+                "name": "status_staleness_timeout_s",
+                "friendly_name": "Status staleness timeout (s)",
+                "type": "float",
                 "default": 15.0,
                 "group": "Connection",
-                "help": "If no status heartbeat arrives for this long the sensor is marked offline.",
+                "description": "If no status heartbeat arrives for this long the sensor is marked offline.",
+                "required": False,
             },
             {
-                "key": "detection_min_snr_db",
-                "label": "Min detection SNR (dB)",
-                "type": "number",
+                "name": "detection_min_snr_db",
+                "friendly_name": "Min detection SNR (dB)",
+                "type": "float",
                 "default": 0.0,
                 "group": "Filters",
-                "help": "Observations below this SNR are not uploaded.",
+                "description": "Observations below this SNR are not uploaded.",
+                "required": False,
             },
             {
-                "key": "forward_only_tasked_satellites",
-                "label": "Only upload tasked satellites",
-                "type": "boolean",
+                "name": "forward_only_tasked_satellites",
+                "friendly_name": "Only upload tasked satellites",
+                "type": "bool",
                 "default": False,
                 "group": "Filters",
-                "help": "Drop detections that don't match a satellite tasked at this site.",
+                "description": "Drop detections that don't match a satellite tasked at this site.",
+                "required": False,
             },
         ]
-        for key, label, typ, help_text in _RADAR_CONFIG_FIELDS:
+        for name, friendly, typ, description in _RADAR_CONFIG_FIELDS:
             schema.append(
                 {
-                    "key": key,
-                    "label": label,
+                    "name": name,
+                    "friendly_name": friendly,
                     "type": typ,
-                    "default": DEFAULT_RADAR_CONFIG[key],
+                    "default": DEFAULT_RADAR_CONFIG[name],
                     "group": "Radar",
-                    "help": help_text,
+                    "description": description,
+                    "required": False,
                 }
             )
         return schema
+
+    def get_settings_schema(self) -> list[dict[str, Any]]:
+        return self.build_settings_schema(self.sensor_id)
 
     def is_connected(self) -> bool:
         return self._connected and self._source.is_running() and self._source.is_connected()

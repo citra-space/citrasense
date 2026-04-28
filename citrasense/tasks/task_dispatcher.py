@@ -828,11 +828,26 @@ class TaskDispatcher:
         self.runner_thread.start()
 
     def stop(self) -> None:
+        """Stop runtimes and worker threads.
+
+        Tolerant of a never-started dispatcher: ``_initialize_components``
+        constructs a ``TaskDispatcher`` *before* calling ``.start()``, so
+        if init fails in between (e.g. a sensor adapter blowup), the next
+        ``reload_configuration`` will hit this method on a dispatcher
+        whose ``poll_thread`` / ``runner_thread`` attributes were never
+        created. Silently no-op instead of raising ``AttributeError``,
+        which would otherwise mask the real init error behind an obscure
+        cleanup crash.
+        """
         self._stop_event.set()
 
         self.logger.info("Stopping sensor runtimes...")
         for rt in self._runtimes.values():
             rt.stop()
 
-        self.poll_thread.join()
-        self.runner_thread.join()
+        poll_thread = getattr(self, "poll_thread", None)
+        if poll_thread is not None:
+            poll_thread.join()
+        runner_thread = getattr(self, "runner_thread", None)
+        if runner_thread is not None:
+            runner_thread.join()

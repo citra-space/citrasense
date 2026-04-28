@@ -1082,6 +1082,67 @@ def test_add_sensor_config_missing_id(client):
     assert resp.status_code == 400
 
 
+def test_list_sensor_types_includes_both_modalities(client):
+    """GET /api/sensor-types lists every registered sensor type."""
+    resp = client.get("/api/sensor-types")
+    assert resp.status_code == 200
+    types = {t["value"] for t in resp.json()["types"]}
+    assert {"telescope", "passive_radar"}.issubset(types)
+
+
+def test_get_passive_radar_schema_normalized(client):
+    """The passive_radar class-level schema uses the SettingSchemaEntry shape."""
+    resp = client.get("/api/sensor-types/passive_radar/schema")
+    assert resp.status_code == 200
+    schema = resp.json()["schema"]
+    names = {field["name"] for field in schema}
+    assert {"nats_url", "radar_sensor_id", "detection_min_snr_db"}.issubset(names)
+    # Radar sensors reuse SensorConfig.citra_sensor_id for the antenna
+    # UUID — the legacy adapter_settings key must not leak back into the
+    # UI schema.
+    assert "citra_antenna_id" not in names
+    # Every field must carry the keys the web-form renderer reads.
+    for field in schema:
+        assert "name" in field
+        assert "friendly_name" in field
+        assert field["type"] in {"str", "int", "float", "bool", "select"}
+
+
+def test_get_unknown_sensor_type_schema_404(client):
+    resp = client.get("/api/sensor-types/does_not_exist/schema")
+    assert resp.status_code == 404
+
+
+def test_add_passive_radar_sensor_without_adapter(client, mock_daemon):
+    """A passive_radar sensor may be added with an empty adapter field."""
+    resp = client.post(
+        "/api/config/sensors",
+        json={"id": "radar-0", "type": "passive_radar", "adapter": ""},
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["sensor"]["type"] == "passive_radar"
+    assert data["sensor"]["adapter"] == ""
+    assert len(mock_daemon.settings.sensors) == 2
+
+
+def test_add_telescope_without_adapter_rejected(client):
+    """Telescopes still require an adapter — guardrail against the radar relaxation."""
+    resp = client.post(
+        "/api/config/sensors",
+        json={"id": "scope-1", "type": "telescope"},
+    )
+    assert resp.status_code == 400
+
+
+def test_add_sensor_unknown_type_rejected(client):
+    resp = client.post(
+        "/api/config/sensors",
+        json={"id": "scope-1", "type": "not_a_modality"},
+    )
+    assert resp.status_code == 400
+
+
 def test_add_sensor_config_invalid_id(client):
     resp = client.post(
         "/api/config/sensors",

@@ -601,15 +601,30 @@ class CitraSenseSettings(BaseModel):
     def is_configured(self) -> bool:
         """Check if minimum required configuration is present.
 
-        For multi-sensor deployments this now evaluates *every* sensor —
-        any sensor missing an adapter or a Citra-side sensor id counts as
-        "not configured". That matches the setup-wizard's mental model:
-        the UI should surface configuration gaps for every rig, not only
-        the first.
+        For multi-sensor deployments this evaluates *every* sensor — any
+        sensor missing its required wiring counts as "not configured".
+
+        The required wiring is modality-dependent:
+
+        * ``telescope`` sensors need both ``citra_sensor_id`` (backend
+          telescope record) and ``adapter`` (which N.I.N.A./KStars/INDI/
+          Direct adapter to drive).
+        * Streaming sensors like ``passive_radar`` don't use the
+          hardware-adapter registry — their transport config lives in
+          ``adapter_settings`` — so ``adapter`` is legitimately empty.
+          They still require ``citra_sensor_id`` (the antenna UUID).
+
+        That matches the setup-wizard's mental model: the UI should
+        surface configuration gaps for every rig, not only the first.
         """
         if not self.personal_access_token or not self.sensors:
             return False
-        return all(bool(sc.citra_sensor_id and sc.adapter) for sc in self.sensors)
+        for sc in self.sensors:
+            if not sc.citra_sensor_id:
+                return False
+            if sc.type == "telescope" and not sc.adapter:
+                return False
+        return True
 
     def get_sensor_config(self, sensor_id: str) -> SensorConfig | None:
         """Look up a sensor config by its local id."""

@@ -1,20 +1,25 @@
 <!-- Sensor picker + add/remove controls -->
 <div class="mb-3"
      x-effect="
-        /* Reload adapter schema + filters when the selected sensor changes */
+        /* Reload adapter schema + filters when the selected sensor changes.
+           Routes by sensor type: telescopes use the per-adapter schema,
+           streaming sensors (passive_radar) use the class-level one. */
         const sid = $store.citrasense.configSensorId;
         const idx = $store.citrasense.configSensorIndex;
         const sc  = $store.citrasense.config?.sensors?.[idx];
-        if (sc?.adapter) {
+        if (sc) {
             import('../static/config.js').then(m => {
-                m.loadAdapterSchema(sc.adapter, sc.adapter_settings || {});
-                m.loadFilterConfig();
+                m.loadSensorSchema(sc);
+                if ((sc.type || 'telescope') === 'telescope') {
+                    m.loadFilterConfig();
+                }
             });
         }
      "
      x-data="{
         showAddForm: false,
         newId: '',
+        newType: 'telescope',
         newAdapter: '',
         addError: '',
         adding: false,
@@ -24,19 +29,25 @@
             this.addError = '';
             const id = this.newId.trim();
             if (!id) { this.addError = 'Sensor ID is required'; return; }
+            const adapter = this.newType === 'telescope' ? this.newAdapter : '';
+            if (this.newType === 'telescope' && !adapter) {
+                this.addError = 'Select a hardware adapter';
+                return;
+            }
             this.adding = true;
             try {
                 const resp = await fetch('/api/config/sensors', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ id, type: 'telescope', adapter: this.newAdapter })
+                    body: JSON.stringify({ id, type: this.newType, adapter })
                 });
                 const data = await resp.json();
                 if (!resp.ok) { this.addError = data.error || 'Failed to add sensor'; return; }
                 $store.citrasense.config.sensors.push(data.sensor);
                 $store.citrasense.configSensorId = id;
-                $store.citrasense.savedAdapters[id] = this.newAdapter;
+                $store.citrasense.savedAdapters[id] = adapter;
                 this.newId = '';
+                this.newType = 'telescope';
                 this.newAdapter = '';
                 this.showAddForm = false;
             } catch (e) {
@@ -101,6 +112,14 @@
                        x-model="newId" style="width:140px">
             </div>
             <div class="col-auto">
+                <label class="form-label small mb-0">Type</label>
+                <select class="form-select form-select-sm" x-model="newType" style="width:160px">
+                    <template x-for="t in ($store.citrasense.sensorTypes || [])" :key="t.value">
+                        <option :value="t.value" x-text="t.label"></option>
+                    </template>
+                </select>
+            </div>
+            <div class="col-auto" x-show="newType === 'telescope'">
                 <label class="form-label small mb-0">Adapter</label>
                 <select class="form-select form-select-sm" x-model="newAdapter" style="width:140px">
                     <option value="">-- select --</option>

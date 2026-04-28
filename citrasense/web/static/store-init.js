@@ -146,6 +146,7 @@ function compareVersions(v1, v2) {
             config: {},
             apiEndpoint: 'production',
             hardwareAdapters: [], // [{value, label}]
+            sensorTypes: [], // [{value, label, description}] — populated from /api/sensor-types
             filters: {},
             savedAdapters: {},
             enabledFilters: [],

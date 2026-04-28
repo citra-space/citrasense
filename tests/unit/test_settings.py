@@ -174,6 +174,72 @@ def test_settings_is_configured(tmp_path):
     assert s.is_configured() is True
 
 
+def test_settings_is_configured_passive_radar_needs_no_adapter(tmp_path):
+    """Radar sensors have no hardware adapter — empty ``adapter`` is legit."""
+    with patch("citrasense.settings.citrasense_settings.SettingsFileManager") as MockSFM:
+        instance = MockSFM.return_value
+        instance.load_config.return_value = {
+            "personal_access_token": "tok",
+            "sensors": [
+                {
+                    "id": "radar-0",
+                    "type": "passive_radar",
+                    "adapter": "",
+                    "citra_sensor_id": "antenna-uuid-1",
+                }
+            ],
+        }
+        from citrasense.settings.citrasense_settings import CitraSenseSettings
+
+        s = CitraSenseSettings.load()
+
+    assert s.is_configured() is True
+
+
+def test_settings_is_configured_passive_radar_still_needs_citra_id(tmp_path):
+    """Radar sensors still need ``citra_sensor_id`` (the antenna UUID)."""
+    with patch("citrasense.settings.citrasense_settings.SettingsFileManager") as MockSFM:
+        instance = MockSFM.return_value
+        instance.load_config.return_value = {
+            "personal_access_token": "tok",
+            "sensors": [
+                {
+                    "id": "radar-0",
+                    "type": "passive_radar",
+                    "adapter": "",
+                    "citra_sensor_id": "",
+                }
+            ],
+        }
+        from citrasense.settings.citrasense_settings import CitraSenseSettings
+
+        s = CitraSenseSettings.load()
+
+    assert s.is_configured() is False
+
+
+def test_settings_is_configured_telescope_still_requires_adapter(tmp_path):
+    """Guardrail against the radar relaxation bleeding into telescopes."""
+    with patch("citrasense.settings.citrasense_settings.SettingsFileManager") as MockSFM:
+        instance = MockSFM.return_value
+        instance.load_config.return_value = {
+            "personal_access_token": "tok",
+            "sensors": [
+                {
+                    "id": "scope-0",
+                    "type": "telescope",
+                    "adapter": "",
+                    "citra_sensor_id": "tel-1",
+                }
+            ],
+        }
+        from citrasense.settings.citrasense_settings import CitraSenseSettings
+
+        s = CitraSenseSettings.load()
+
+    assert s.is_configured() is False
+
+
 def test_settings_validates_custom_ra_out_of_range():
     with patch("citrasense.settings.citrasense_settings.SettingsFileManager") as MockSFM:
         instance = MockSFM.return_value

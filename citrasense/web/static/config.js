@@ -44,8 +44,10 @@ export async function initConfig() {
     store.reloadAdapterSchema = reloadAdapterSchema;
     store.scanHardware = scanHardware;
 
-    // Populate hardware adapter dropdown
+    // Populate hardware adapter + sensor type dropdowns used by the
+    // Add Sensor form before the config finishes loading.
     await loadAdapterOptions();
+    await loadSensorTypes();
 
     // Config form submission handled by Alpine @submit.prevent in template
     // Expose saveConfiguration for template access
@@ -77,13 +79,76 @@ async function onConfigSensorSwitch(sensorId) {
     const sensor = store.config?.sensors?.find(s => s.id === sensorId);
     if (!sensor) return;
 
-    if (sensor.adapter) {
-        await loadAdapterSchema(sensor.adapter, sensor.adapter_settings || {});
-    } else {
-        store.adapterFields = [];
-    }
+    await loadSensorSchema(sensor);
     await loadFilterConfig();
     await loadProcessors();
+}
+
+/**
+ * Populate the Add Sensor type picker from the backend sensor-type
+ * registry. Falls back to a telescope-only list if the endpoint
+ * fails so existing sites keep working.
+ */
+async function loadSensorTypes() {
+    try {
+        const resp = await fetch('/api/sensor-types');
+        const data = await resp.json();
+        if (typeof Alpine !== 'undefined' && Alpine.store) {
+            Alpine.store('citrasense').sensorTypes = data.types || [];
+        }
+    } catch (error) {
+        console.error('Failed to load sensor types:', error);
+        if (typeof Alpine !== 'undefined' && Alpine.store) {
+            Alpine.store('citrasense').sensorTypes = [
+                { value: 'telescope', label: 'Telescope', description: '' },
+            ];
+        }
+    }
+}
+
+/**
+ * Fetch the adapter-settings schema for a sensor, routing on
+ * ``sensor.type``:
+ *   - ``telescope``: per-adapter classmethod via
+ *     ``/api/hardware-adapters/{adapter}/schema``
+ *   - anything else: class-level schema via
+ *     ``/api/sensor-types/{type}/schema``
+ *
+ * Both paths feed the same ``buildAdapterFields`` →
+ * ``$store.citrasense.adapterFields`` pipeline so the existing Hardware
+ * tab renderer doesn't need to care which modality it's showing.
+ */
+export async function loadSensorSchema(sensor) {
+    const store = Alpine.store('citrasense');
+    if (!sensor) {
+        store.adapterFields = [];
+        return;
+    }
+    const currentSettings = sensor.adapter_settings || {};
+    const sensorType = sensor.type || 'telescope';
+    if (sensorType === 'telescope') {
+        if (sensor.adapter) {
+            await loadAdapterSchema(sensor.adapter, currentSettings);
+        } else {
+            store.adapterFields = [];
+        }
+        return;
+    }
+    try {
+        const resp = await fetch(`/api/sensor-types/${encodeURIComponent(sensorType)}/schema`);
+        const data = await resp.json();
+        if (!resp.ok) {
+            console.error(`Failed to load ${sensorType} schema:`, data.error);
+            showConfigError(`Failed to load settings for ${sensorType}: ${data.error || 'unknown error'}`);
+            store.adapterFields = [];
+            return;
+        }
+        store.adapterFields = buildAdapterFields(data.schema || [], currentSettings);
+    } catch (error) {
+        console.error(`Failed to load ${sensorType} schema:`, error);
+        showConfigError(`Failed to load settings for ${sensorType}`);
+        store.adapterFields = [];
+    }
 }
 
 /**
@@ -215,10 +280,9 @@ async function loadConfiguration() {
                 config.host === PROD_API_HOST ? 'production' :
                 config.host === DEV_API_HOST ? 'development' : 'custom';
 
-            // Load adapter-specific settings for the initially selected sensor
-            if (initialSensor?.adapter) {
-                const currentAdapterSettings = initialSensor.adapter_settings || {};
-                await loadAdapterSchema(initialSensor.adapter, currentAdapterSettings);
+            // Load adapter/sensor-type settings for the initially selected sensor
+            if (initialSensor) {
+                await loadSensorSchema(initialSensor);
             }
         }
     } catch (error) {
@@ -328,9 +392,12 @@ async function saveConfiguration(event) {
         'images_dir_path', 'processing_dir_path'
     ];
 
-    // Coerce per-sensor numeric fields before save
+    // Coerce per-sensor numeric fields before save. These fields only
+    // apply to the telescope imaging/plate-solve/autofocus pipeline;
+    // streaming sensors (passive_radar) don't have them and would end
+    // up with spurious zeros persisted to SensorConfig.
     const sc = store.config.sensors?.[sensorIndex];
-    if (sc) {
+    if (sc && (sc.type || 'telescope') === 'telescope') {
         sc.plate_solve_timeout = parseInt(sc.plate_solve_timeout || 60, 10);
         sc.sextractor_detect_thresh = parseFloat(sc.sextractor_detect_thresh || 5.0);
         sc.sextractor_detect_minarea = parseInt(sc.sextractor_detect_minarea || 3, 10);
