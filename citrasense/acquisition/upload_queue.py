@@ -1,11 +1,20 @@
-"""Background upload queue for uploading images.
+"""Background upload queue for uploading images and radar observations.
+
+The queue dispatches on ``item["kind"]``: ``"optical"`` (legacy FITS
+or optical-observation path) and ``"radar"`` (one ``RadarObservationCreate``
+payload per item, posted in a batch-of-one to
+``POST /observations/radar``).
 
 Completion (mark_task_complete, stage cleanup, stats) is handled by the
 telescope task's _on_image_done callback after all images for a task finish.
+Radar uploads run independently of any Task object.
 """
+
+from __future__ import annotations
 
 from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
 from citrasense.acquisition.base_work_queue import BaseWorkQueue
 
@@ -35,6 +44,7 @@ class UploadQueue(BaseWorkQueue):
         self.observation_uploads: int = 0
         self.image_uploads: int = 0
         self.satellites_identified: int = 0
+        self.radar_observation_uploads: int = 0
 
     def get_stats(self) -> dict:
         """Return lifetime counters including upload path breakdown."""
@@ -43,6 +53,7 @@ class UploadQueue(BaseWorkQueue):
             stats["observation_uploads"] = self.observation_uploads
             stats["image_uploads"] = self.image_uploads
             stats["satellites_identified"] = self.satellites_identified
+            stats["radar_observation_uploads"] = self.radar_observation_uploads
         return stats
 
     def submit(
@@ -74,6 +85,7 @@ class UploadQueue(BaseWorkQueue):
         self.logger.info(f"Queuing task {task_id} for upload")
         self.work_queue.put(
             {
+                "kind": "optical",
                 "task_id": task_id,
                 "task": task,
                 "image_path": image_path,
@@ -86,8 +98,56 @@ class UploadQueue(BaseWorkQueue):
             }
         )
 
+    def submit_radar_observation(
+        self,
+        sensor_id: str,
+        payload: dict[str, Any],
+        api_client: Any,
+        settings: Any,
+        on_complete: Callable[[bool], None] | None = None,
+    ) -> None:
+        """Queue a single ``RadarObservationCreate`` dict for upload.
+
+        The backend accepts a batch, so we always POST a list-of-one.
+        Future follow-ups may introduce a tiny coalescing window (see
+        issue #307's "Integration plan"), but v1 stays synchronous and
+        straightforward.
+        """
+        task_id = f"radar:{sensor_id}:{id(payload)}"
+        self.work_queue.put(
+            {
+                "kind": "radar",
+                "task_id": task_id,
+                "sensor_id": sensor_id,
+                "payload": payload,
+                "api_client": api_client,
+                "settings": settings,
+                "on_complete": on_complete,
+            }
+        )
+
     def _execute_work(self, item):
-        """Execute upload work.
+        """Execute one upload work item — optical or radar."""
+        if item.get("kind") == "radar":
+            return self._execute_radar(item)
+        return self._execute_optical(item)
+
+    def _execute_radar(self, item: dict[str, Any]):
+        api_client = item["api_client"]
+        payload = item["payload"]
+        sensor_id = item["sensor_id"]
+        try:
+            ok = bool(api_client.upload_radar_observations([payload]))
+        except Exception as exc:
+            self.logger.error("Radar upload exception for sensor %s: %s", sensor_id, exc, exc_info=True)
+            return (False, None)
+        if not ok:
+            self.logger.error("Radar upload failed for sensor %s", sensor_id)
+            return (False, None)
+        return (True, {"radar": True})
+
+    def _execute_optical(self, item):
+        """Execute optical upload work.
 
         If the processing pipeline produced satellite observations, upload them via
         POST /observations/optical and skip the FITS upload entirely. Otherwise fall
@@ -153,6 +213,17 @@ class UploadQueue(BaseWorkQueue):
 
     def _on_success(self, item, result):
         """Handle successful upload completion."""
+        if item.get("kind") == "radar":
+            self.radar_observation_uploads += 1
+            self.logger.info("Radar observation uploaded for sensor %s", item.get("sensor_id"))
+            on_complete = item.get("on_complete")
+            if on_complete:
+                try:
+                    on_complete(True)
+                except Exception as exc:
+                    self.logger.warning("Radar upload on_complete raised: %s", exc)
+            return
+
         task_id = item["task_id"]
         task_obj = item.get("task")
         on_complete = item["on_complete"]
@@ -187,6 +258,16 @@ class UploadQueue(BaseWorkQueue):
         Stage cleanup is deferred to the on_complete callback (_on_image_done)
         which waits until all images for the task have finished.
         """
+        if item.get("kind") == "radar":
+            self.logger.error("Radar observation upload permanently failed for sensor %s", item.get("sensor_id"))
+            on_complete = item.get("on_complete")
+            if on_complete:
+                try:
+                    on_complete(False)
+                except Exception as exc:
+                    self.logger.warning("Radar upload on_complete raised: %s", exc)
+            return
+
         task_id = item["task_id"]
         task_obj = item.get("task")
         on_complete = item["on_complete"]
@@ -200,6 +281,8 @@ class UploadQueue(BaseWorkQueue):
 
     def _get_task_from_item(self, item):
         """Get Task object from work item."""
+        if item.get("kind") == "radar":
+            return None
         return item.get("task")
 
     def _cleanup_files(self, filepath: str):

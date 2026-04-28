@@ -265,6 +265,35 @@ class CitraApiClient(AbstractCitraApiClient):
             self.logger.info(f"upload_optical_observations: uploaded {len(payload)} observation(s) for task {task_id}")
         return True
 
+    def upload_radar_observations(self, observations: list) -> bool:
+        """POST /observations/radar — batch passive-radar observation upload.
+
+        The backend accepts a ``RadarObservationCreateList`` (JSON array of
+        ``RadarObservationCreate``).  Every payload in *observations* must
+        already be formatted by
+        :class:`~citrasense.pipelines.radar.radar_detection_formatter.RadarDetectionFormatter`.
+        """
+        if not observations:
+            if self.logger:
+                self.logger.warning("upload_radar_observations: empty list")
+            return False
+        if self.logger:
+            self.logger.info(
+                "upload_radar_observations: POSTing %d observation(s) to /observations/radar",
+                len(observations),
+            )
+        result = self._request("POST", "/observations/radar", json=observations)
+        if result is None:
+            if self.logger:
+                self.logger.error(
+                    "upload_radar_observations: POST /observations/radar failed (%d observations)",
+                    len(observations),
+                )
+            return False
+        if self.logger:
+            self.logger.info("upload_radar_observations: uploaded %d observation(s)", len(observations))
+        return True
+
     def upload_image(self, task_id, telescope_id, filepath):
         """Upload an image file for a given task."""
         file_size = os.path.getsize(filepath)

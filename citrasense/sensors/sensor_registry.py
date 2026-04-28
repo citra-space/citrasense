@@ -22,6 +22,11 @@ REGISTERED_SENSORS: dict[str, dict[str, str]] = {
         "class_name": "TelescopeSensor",
         "description": "Optical telescope (wraps an AbstractAstroHardwareAdapter)",
     },
+    "passive_radar": {
+        "module": "citrasense.sensors.radar.passive_radar_sensor",
+        "class_name": "PassiveRadarSensor",
+        "description": "Passive bistatic radar (NATS subscriber to pr_sensor)",
+    },
 }
 
 

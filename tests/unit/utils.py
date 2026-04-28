@@ -128,6 +128,10 @@ class MockCitraApiClient(AbstractCitraApiClient):
         """Simulate uploading optical observations — always succeeds."""
         return True
 
+    def upload_radar_observations(self, observations):
+        """Simulate uploading radar observations — always succeeds."""
+        return True
+
     def get_catalog_download_url(self, catalog_name):
         """Mock: no catalog download in test mode."""
         return None

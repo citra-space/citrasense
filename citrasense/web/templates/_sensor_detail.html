@@ -1430,8 +1430,210 @@
             </div> <!-- /telescope type template content -->
             </template> <!-- /x-if telescope -->
 
-            <!-- Generic sensor placeholder (non-telescope) -->
-            <template x-if="sensor.type !== 'telescope'">
+            <!-- Passive radar detail block -->
+            <template x-if="sensor.type === 'passive_radar'">
+            <div x-data="{
+                radar: null,
+                radarLoading: false,
+                lastError: null,
+                lastPing: null,
+                stateBadgeClass(state) {
+                    if (state === 'running') return 'bg-success';
+                    if (state === 'idle') return 'bg-secondary';
+                    if (state === 'error') return 'bg-danger';
+                    if (state === 'offline') return 'bg-warning text-dark';
+                    return 'bg-secondary';
+                },
+                async refresh() {
+                    this.radarLoading = true;
+                    try {
+                        const url = store.sensorApiBaseFor(sensor.id) + '/radar/status';
+                        const r = await fetch(url);
+                        if (r.ok) { this.radar = await r.json(); }
+                    } catch (e) { this.lastError = String(e); }
+                    finally { this.radarLoading = false; }
+                },
+                async radarControl(action, body) {
+                    this.lastError = null;
+                    try {
+                        const url = store.sensorApiBaseFor(sensor.id) + '/radar/' + action;
+                        const r = await fetch(url, { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body || {}) });
+                        const data = await r.json();
+                        if (!r.ok || data.error) {
+                            this.lastError = data.error || ('HTTP ' + r.status);
+                        } else if (data.ok === false) {
+                            this.lastError = data.error || 'pr_sensor rejected command';
+                        } else if (action === 'ping') {
+                            this.lastPing = new Date().toISOString();
+                        }
+                    } catch (e) { this.lastError = String(e); }
+                    finally { this.refresh(); }
+                },
+                init() {
+                    this.refresh();
+                    this._timer = setInterval(() => this.refresh(), 5000);
+                },
+                destroy() { if (this._timer) clearInterval(this._timer); },
+            }" x-init="init()" x-destroy="destroy()">
+
+                <!-- Header row: state + controls -->
+                <div class="card bg-dark text-light border-secondary mb-3">
+                    <div class="card-header d-flex flex-wrap align-items-center gap-2">
+                        <i class="bi bi-broadcast me-1"></i>
+                        <span class="fw-semibold">Passive Radar Engine</span>
+                        <span class="badge ms-2"
+                              :class="stateBadgeClass(radar?.state)"
+                              x-text="radar ? (radar.state || 'unknown') : '…'"></span>
+                        <template x-if="radar?.is_stale">
+                            <span class="badge bg-warning text-dark" title="No status heartbeat from pr_sensor">stale</span>
+                        </template>
+                        <div class="ms-md-auto d-flex flex-wrap gap-2">
+                            <button class="btn btn-sm btn-outline-success" @click="radarControl('start', {mock: false})">
+                                <i class="bi bi-play-fill"></i> Start
+                            </button>
+                            <button class="btn btn-sm btn-outline-warning" @click="radarControl('start', {mock: true})"
+                                    title="Start with synthetic source for bench testing">
+                                <i class="bi bi-play"></i> Start mock
+                            </button>
+                            <button class="btn btn-sm btn-outline-danger" @click="radarControl('stop')">
+                                <i class="bi bi-stop-fill"></i> Stop
+                            </button>
+                            <button class="btn btn-sm btn-outline-info" @click="radarControl('config', {persist: false})">
+                                <i class="bi bi-sliders"></i> Push config
+                            </button>
+                            <button class="btn btn-sm btn-outline-secondary" @click="radarControl('ping')">
+                                <i class="bi bi-hdd-network"></i> Ping
+                            </button>
+                            <template x-if="radar?.pr_control_url">
+                                <a :href="radar.pr_control_url" target="_blank" rel="noopener" class="btn btn-sm btn-outline-light">
+                                    <i class="bi bi-box-arrow-up-right"></i> pr_control
+                                </a>
+                            </template>
+                        </div>
+                    </div>
+                    <div class="card-body">
+                        <template x-if="lastError">
+                            <div class="alert alert-danger py-2 mb-2" x-text="'Last error: ' + lastError"></div>
+                        </template>
+                        <div class="row g-2">
+                            <div class="col-md-4">
+                                <div class="fw-semibold">Radar sensor id</div>
+                                <div x-text="radar?.radar_sensor_id ?? sensor.id"></div>
+                            </div>
+                            <div class="col-md-4">
+                                <div class="fw-semibold">Streaming</div>
+                                <div x-text="radar?.streaming ? 'yes' : 'no'"></div>
+                            </div>
+                            <div class="col-md-4">
+                                <div class="fw-semibold">Last status age</div>
+                                <div>
+                                    <span x-text="radar?.seconds_since_status != null ? (Number(radar.seconds_since_status).toFixed(1) + 's') : '—'"></span>
+                                </div>
+                            </div>
+                            <div class="col-md-4">
+                                <div class="fw-semibold">Detection rate</div>
+                                <div x-text="radar?.status?.detection_rate ?? '—'"></div>
+                            </div>
+                            <div class="col-md-4">
+                                <div class="fw-semibold">Uptime (s)</div>
+                                <div x-text="radar?.status?.uptime_s ?? '—'"></div>
+                            </div>
+                            <div class="col-md-4">
+                                <div class="fw-semibold">Realtime ratio</div>
+                                <div x-text="radar?.status?.realtime_ratio ?? '—'"></div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="row g-3">
+                    <!-- Receiver card -->
+                    <div class="col-md-6">
+                        <div class="card bg-dark text-light border-secondary h-100">
+                            <div class="card-header"><i class="bi bi-geo-alt me-1"></i>Receiver</div>
+                            <div class="card-body">
+                                <div class="row g-2">
+                                    <div class="col-6 fw-semibold">Latitude</div>
+                                    <div class="col-6" x-text="radar?.status?.receiver?.lat_deg ?? '—'"></div>
+                                    <div class="col-6 fw-semibold">Longitude</div>
+                                    <div class="col-6" x-text="radar?.status?.receiver?.lon_deg ?? '—'"></div>
+                                    <div class="col-6 fw-semibold">Altitude (m)</div>
+                                    <div class="col-6" x-text="radar?.status?.receiver?.alt_m ?? '—'"></div>
+                                    <div class="col-6 fw-semibold">Antenna UUID</div>
+                                    <div class="col-6 text-truncate" :title="radar?.citra_antenna_id"
+                                         x-text="radar?.citra_antenna_id ?? '— (not set)'"></div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Health card -->
+                    <div class="col-md-6">
+                        <div class="card bg-dark text-light border-secondary h-100">
+                            <div class="card-header"><i class="bi bi-activity me-1"></i>Health</div>
+                            <div class="card-body">
+                                <div class="row g-2">
+                                    <div class="col-6 fw-semibold">CPU (%)</div>
+                                    <div class="col-6" x-text="radar?.health?.cpu_pct ?? '—'"></div>
+                                    <div class="col-6 fw-semibold">RAM (MB)</div>
+                                    <div class="col-6" x-text="radar?.health?.ram_mb ?? '—'"></div>
+                                    <div class="col-6 fw-semibold">Overflow rate</div>
+                                    <div class="col-6" x-text="radar?.health?.overflow_rate ?? '—'"></div>
+                                    <div class="col-6 fw-semibold">NATS connected</div>
+                                    <div class="col-6" x-text="radar?.health?.nats_connected === true ? 'yes' : (radar?.health?.nats_connected === false ? 'no' : '—')"></div>
+                                    <div class="col-6 fw-semibold">Disk free (GB)</div>
+                                    <div class="col-6" x-text="radar?.health?.disk_free_gb ?? '—'"></div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Stations list (collapsible) -->
+                <div class="card bg-dark text-light border-secondary my-3"
+                     x-show="radar?.stations?.stations?.length">
+                    <div class="card-header">
+                        <i class="bi bi-broadcast-pin me-1"></i>FM illuminators
+                        (<span x-text="(radar?.stations?.stations || []).length"></span>)
+                    </div>
+                    <div class="card-body p-0">
+                        <div class="table-responsive">
+                            <table class="table table-sm table-dark mb-0">
+                                <thead>
+                                    <tr>
+                                        <th>Name</th>
+                                        <th>Frequency (Hz)</th>
+                                        <th>TX lat</th>
+                                        <th>TX lon</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <template x-for="st in (radar?.stations?.stations || [])" :key="(st.name || '') + '|' + (st.freq_hz || '')">
+                                        <tr>
+                                            <td x-text="st.name ?? '—'"></td>
+                                            <td x-text="st.freq_hz ?? '—'"></td>
+                                            <td x-text="st.lat_deg ?? '—'"></td>
+                                            <td x-text="st.lon_deg ?? '—'"></td>
+                                        </tr>
+                                    </template>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Last pr_sensor error -->
+                <div class="card bg-dark text-light border-danger mb-3" x-show="radar?.error">
+                    <div class="card-header text-danger"><i class="bi bi-exclamation-octagon me-1"></i>pr_sensor error</div>
+                    <div class="card-body">
+                        <pre class="mb-0 small text-danger" x-text="JSON.stringify(radar?.error, null, 2)"></pre>
+                    </div>
+                </div>
+            </div>
+            </template> <!-- /x-if passive_radar -->
+
+            <!-- Generic sensor placeholder (non-telescope, non-radar) -->
+            <template x-if="sensor.type !== 'telescope' && sensor.type !== 'passive_radar'">
             <div>
                 <div class="card bg-dark text-light border-secondary mb-3">
                     <div class="card-header"><i class="bi bi-cpu me-1"></i><span x-text="sensor.name"></span></div>
@@ -1450,7 +1652,7 @@
                     </div>
                 </div>
             </div>
-            </template> <!-- /x-if non-telescope -->
+            </template> <!-- /x-if non-telescope, non-radar -->
 
         </div> <!-- /container -->
     </div> <!-- /x-data sensor-alias wrapper -->

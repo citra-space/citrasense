@@ -53,6 +53,7 @@ dependencies = [
   "astropy-healpix>=1.0.0",
   "astroquery>=0.4.6",
   "Pillow>=10.0.0",
+  "nats-py>=2.7",
 ]
 
 [project.scripts]

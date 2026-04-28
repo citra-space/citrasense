@@ -23,8 +23,13 @@ from citrasense.logging.sensor_logger import get_sensor_logger
 
 if TYPE_CHECKING:
     from collections.abc import Callable
+    from datetime import datetime
+
+    from pydantic import BaseModel
 
     from citrasense.hardware.abstract_astro_hardware_adapter import AbstractAstroHardwareAdapter
+    from citrasense.pipelines.radar.radar_pipeline import RadarPipeline
+    from citrasense.pipelines.radar.radar_processing_context import RadarProcessingContext
     from citrasense.preview_bus import PreviewBus
     from citrasense.sensors.abstract_sensor import AbstractSensor
     from citrasense.sensors.bus import SensorBus, Subscription
@@ -136,6 +141,13 @@ class SensorRuntime:
         self.calibration_manager: Any = None
         self.observing_session_manager: ObservingSessionManager | None = None
         self.self_tasking_manager: SelfTaskingManager | None = None
+
+        # ── Radar pipeline (passive_radar only) ────────────────────────
+        self._radar_pipeline: RadarPipeline | None = None
+        if sensor.sensor_type == "passive_radar":
+            from citrasense.pipelines.radar import build_radar_pipeline
+
+            self._radar_pipeline = build_radar_pipeline()
 
         if sensor.sensor_type == "telescope" and hardware_adapter is not None:
             from citrasense.sensors.telescope.managers.alignment_manager import AlignmentManager
@@ -382,9 +394,75 @@ class SensorRuntime:
             self._streaming_sub = self._sensor_bus.subscribe(pattern, self._on_streaming_event)
             self.logger.info("Subscribed to streaming events: %s", pattern)
 
-    def _on_streaming_event(self, subject: str, event: Any) -> None:
-        """Handle a streaming acquisition event (placeholder for future sensors)."""
-        self.logger.debug("Streaming event on %s: %s", subject, type(event).__name__)
+    def _on_streaming_event(self, subject: str, event: BaseModel) -> None:
+        """Route an acquisition event into the correct modality pipeline.
+
+        Today only ``passive_radar`` emits on
+        ``sensors.{sensor_id}.events.acquisition``.  Future streaming
+        modalities can plug in here without touching the sensor itself.
+        """
+        del subject
+        if self.sensor_type == "passive_radar":
+            self._dispatch_radar_event(event)
+            return
+        self.logger.debug("Streaming event from non-radar sensor: %s", type(event).__name__)
+
+    def _dispatch_radar_event(self, event: BaseModel) -> None:
+        """Build a RadarProcessingContext and hand it off to the processing queue."""
+        if self._radar_pipeline is None:
+            return
+        from citrasense.pipelines.radar import radar_artifact_dir
+        from citrasense.pipelines.radar.radar_processing_context import RadarProcessingContext
+
+        # Event is a RadarObservationEvent (pydantic BaseModel).
+        payload = getattr(event, "payload", None)
+        timestamp: datetime | None = getattr(event, "timestamp", None)
+        if payload is None or timestamp is None:
+            self.logger.warning("Unexpected event shape on acquisition bus: %s", type(event).__name__)
+            return
+
+        sensor = self.sensor
+        antenna_id = getattr(sensor, "citra_antenna_id", "") or ""
+        detection_min_snr_db = float(getattr(sensor, "_detection_min_snr_db", 0.0))
+        forward_only_tasked = bool(getattr(sensor, "_forward_only_tasked", False))
+
+        base_dir = self.settings.directories.processing_dir if self.settings.directories else None
+        artifact_dir = radar_artifact_dir(base_dir, self.sensor_id) if base_dir else None
+
+        ctx = RadarProcessingContext(
+            sensor_id=self.sensor_id,
+            event=event,  # type: ignore[arg-type]
+            antenna_id=antenna_id,
+            api_client=self.api_client,
+            artifact_dir=artifact_dir or self.settings.directories.data_dir / "radar" / self.sensor_id,
+            detection_min_snr_db=detection_min_snr_db,
+            forward_only_tasked_satellites=forward_only_tasked,
+            task_index=self._dispatcher,
+            logger=self.logger,
+        )
+
+        self.processing_queue.submit_radar_event(ctx, self._radar_pipeline, self._on_radar_processed)
+
+    def _on_radar_processed(self, ctx: RadarProcessingContext, upload_ready: bool) -> None:
+        """Callback from the processing queue after a radar observation finishes.
+
+        On success (``upload_ready``), hand the formatter's payload off
+        to the upload queue.  On drop, just log and move on — the
+        artifact writer has already persisted the raw observation.
+        """
+        if not upload_ready:
+            if ctx.drop_reason:
+                self.logger.debug("Dropped radar observation for %s: %s", ctx.sensor_id, ctx.drop_reason)
+            return
+        if ctx.upload_payload is None:
+            self.logger.warning("Radar pipeline reported upload_ready without a payload for %s", ctx.sensor_id)
+            return
+        self.upload_queue.submit_radar_observation(
+            sensor_id=ctx.sensor_id,
+            payload=ctx.upload_payload,
+            api_client=self.api_client,
+            settings=self.settings,
+        )
 
     # ── Lifecycle ──────────────────────────────────────────────────────
 
@@ -393,11 +471,52 @@ class SensorRuntime:
         self.processing_queue.start()
         self.upload_queue.start()
         self._subscribe_streaming()
+        self._start_streaming_sensor()
 
     def stop(self) -> None:
+        self._stop_streaming_sensor()
         self.acquisition_queue.stop()
         self.processing_queue.stop()
         self.upload_queue.stop()
         if self._streaming_sub:
             self._streaming_sub.unsubscribe()
             self._streaming_sub = None
+
+    def _start_streaming_sensor(self) -> None:
+        """Ask a STREAMING sensor to begin publishing to the bus.
+
+        Called after :meth:`_subscribe_streaming` so the runtime is
+        ready to receive events the moment the sensor starts pushing
+        them.  Safe to call on ON_DEMAND sensors — they raise
+        :class:`NotImplementedError` on ``start_stream`` and we treat
+        that as the expected signal that there's nothing to do.
+        """
+        if not self._sensor_bus:
+            return
+        from citrasense.sensors.abstract_sensor import AcquisitionContext, SensorAcquisitionMode
+
+        caps = self.sensor.get_capabilities()
+        if caps.acquisition_mode != SensorAcquisitionMode.STREAMING:
+            return
+        try:
+            self.sensor.start_stream(self._sensor_bus, AcquisitionContext())
+        except NotImplementedError:
+            pass
+        except Exception as exc:
+            self.logger.warning("start_stream raised for %s: %s", self.sensor_id, exc)
+
+    def _stop_streaming_sensor(self) -> None:
+        from citrasense.sensors.abstract_sensor import SensorAcquisitionMode
+
+        try:
+            caps = self.sensor.get_capabilities()
+        except Exception:
+            return
+        if caps.acquisition_mode != SensorAcquisitionMode.STREAMING:
+            return
+        try:
+            self.sensor.stop_stream()
+        except NotImplementedError:
+            pass
+        except Exception as exc:
+            self.logger.debug("stop_stream raised for %s: %s", self.sensor_id, exc)

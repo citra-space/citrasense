@@ -305,6 +305,26 @@ class StatusCollector:
                 sd["pipeline_stats"] = None
                 sd["acquisition_idle"] = True
 
+            if sd.get("type") == "passive_radar":
+                try:
+                    sensor = sm.get(sensor_id) if sm else None
+                except KeyError:
+                    sensor = None
+                if sensor is not None:
+                    # Use the status tick as a rising edge for staleness
+                    # toasts — avoids a second daemon timer just for this.
+                    if hasattr(sensor, "poll_staleness"):
+                        try:
+                            sensor.poll_staleness()
+                        except Exception:
+                            pass
+                    if hasattr(sensor, "get_live_status"):
+                        try:
+                            sd["radar"] = sensor.get_live_status()
+                        except Exception:
+                            sd["radar"] = None
+                continue
+
             if sd.get("type") != "telescope":
                 continue
 
