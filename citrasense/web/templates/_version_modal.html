@@ -1,0 +1,76 @@
+    <!-- Version Check Modal -->
+    <div class="modal fade" id="versionModal" tabindex="-1" aria-labelledby="versionModalLabel" aria-hidden="true">
+        <div class="modal-dialog modal-dialog-centered">
+            <div class="modal-content bg-dark text-light border-secondary">
+                <div class="modal-header border-secondary">
+                    <h5 class="modal-title" id="versionModalLabel">Version Check</h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <div x-show="$store.citrasense.versionCheckState === 'loading'" style="text-align: center;">
+                        <div class="spinner-border text-primary" role="status">
+                            <span class="visually-hidden">Checking...</span>
+                        </div>
+                        <p class="mt-2">Checking for updates...</p>
+                    </div>
+                    <div x-show="$store.citrasense.versionCheckState === 'up-to-date'">
+                        <p class="text-success">✓ You're up to date!</p>
+                        <p>
+                            <strong>Current version:</strong> <span x-text="$store.citrasense.versionCheckResult?.currentVersion === 'development' ? 'development' : 'v' + ($store.citrasense.versionCheckResult?.currentVersion || '-')"></span>
+                        </p>
+                        <template x-if="$store.citrasense.versionCheckResult?.gitHash">
+                            <p class="text-muted mb-0" style="font-size: 0.85rem;">
+                                <span x-text="($store.citrasense.versionCheckResult?.gitBranch || '?') + '@' + $store.citrasense.versionCheckResult.gitHash"></span>
+                                <span x-show="$store.citrasense.versionCheckResult?.installType" x-text="' · ' + ($store.citrasense.versionCheckResult.installType === 'editable' ? 'Git install' : $store.citrasense.versionCheckResult.installType)"></span>
+                            </p>
+                        </template>
+                    </div>
+                    <div x-show="$store.citrasense.versionCheckState === 'update-available'">
+                        <!-- Git install: commits behind -->
+                        <template x-if="$store.citrasense.versionCheckResult?.behindBy">
+                            <div>
+                                <p class="text-warning">Your install is <span x-text="$store.citrasense.versionCheckResult.behindBy"></span> commit<span x-show="$store.citrasense.versionCheckResult.behindBy !== 1">s</span> behind main.</p>
+                                <p class="mb-3">
+                                    <strong>Version:</strong> <span x-text="'v' + ($store.citrasense.versionCheckResult?.currentVersion || '-')"></span><br>
+                                    <strong>Branch:</strong> <span x-text="$store.citrasense.versionCheckResult?.gitBranch || '-'"></span>
+                                    @ <code x-text="$store.citrasense.versionCheckResult?.gitHash || '-'"></code>
+                                </p>
+                                <p x-show="$store.citrasense.versionCheckResult?.gitDirty" class="text-warning mb-2" style="font-size: 0.85rem;">
+                                    ⚠ Working tree has uncommitted changes
+                                </p>
+                                <p class="mb-2">To upgrade, run:</p>
+                                <pre class="bg-secondary p-2 rounded"><code>git pull && pip install -e .</code></pre>
+                                <p class="mb-0">
+                                    <a href="https://github.com/citra-space/citrasense" target="_blank" class="text-info">View repository on GitHub →</a>
+                                </p>
+                            </div>
+                        </template>
+                        <!-- PyPI install: new release -->
+                        <template x-if="$store.citrasense.versionCheckResult?.latestVersion">
+                            <div>
+                                <p class="text-warning">A new version of CitraSense is available!</p>
+                                <p class="mb-3">
+                                    <strong>Current:</strong> <span x-text="'v' + ($store.citrasense.versionCheckResult?.currentVersion || '-')"></span><br>
+                                    <strong>Latest:</strong> <span x-text="$store.citrasense.versionCheckResult?.latestVersion || '-'"></span>
+                                </p>
+                                <p class="mb-2">To upgrade, run:</p>
+                                <pre class="bg-secondary p-2 rounded"><code>pip install -U citrasense</code></pre>
+                                <p class="mb-0">
+                                    <a :href="$store.citrasense.versionCheckResult?.releaseUrl || '#'" target="_blank" class="text-info">View release notes on GitHub →</a>
+                                </p>
+                            </div>
+                        </template>
+                    </div>
+                    <div x-show="$store.citrasense.versionCheckState === 'error'">
+                        <p class="text-muted">Unable to check for updates. You may be offline or GitHub is unreachable.</p>
+                        <p>
+                            <strong>Current version:</strong> <span x-text="$store.citrasense.versionCheckResult?.currentVersion === 'development' ? 'development' : ($store.citrasense.versionCheckResult?.currentVersion || '-')"></span>
+                        </p>
+                    </div>
+                </div>
+                <div class="modal-footer border-secondary">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+                </div>
+            </div>
+        </div>
+    </div>

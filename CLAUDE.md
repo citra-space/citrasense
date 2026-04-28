@@ -146,7 +146,7 @@ The monitoring tab has a site info row at the top followed by per-sensor card gr
    - Scheduled tasks are filtered per-sensor: `$store.citrasense.tasks.filter(t => t.sensor_id === sensor.id)`
    - Active pipeline stages use per-sensor `sensor.tasks_by_stage` and `sensor.pipeline_stats`
 
-The Alpine store (`$store.citrasense`) holds `sensors` (array of enriched sensor objects from `status.sensors`) and `sensorCollapse` (keyed by sensor ID). Frontend API calls use `store.sensorApiBaseFor(sensorId)` to prefix sensor-scoped requests. Template `@click` handlers pass `sensor.id` explicitly to all window functions (e.g., `homeMount(sensor.id)`).
+The Alpine store (`$store.citrasense`) holds `sensors` (array of enriched sensor objects from `status.sensors`) and `currentSensorId` (the sensor whose detail page is open, set by the path router in `app.js`). Frontend API calls use `store.sensorApiBaseFor(sensorId)` to prefix sensor-scoped requests. Template `@click` handlers pass `sensor.id` explicitly to all window functions (e.g., `homeMount(sensor.id)`). Navigation goes through `store.navigateTo(path)` — never mutate `window.location.hash`.
 
 ### Adding a new setting
 

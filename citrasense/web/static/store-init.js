@@ -53,7 +53,16 @@ function compareVersions(v1, v2) {
 
             // Multi-sensor support
             sensors: [],
-            sensorCollapse: {},
+            // ``currentSensorId`` is set by the client-side path router in
+            // app.js when the URL is ``/sensors/<id>``.  ``currentSensor``
+            // resolves it against the live enriched sensor list so the
+            // detail template's bindings are simple ``sensor.*`` reads.
+            currentSensorId: null,
+            get currentSensor() {
+                const id = this.currentSensorId;
+                if (!id) return null;
+                return (this.sensors || []).find(s => s.id === id) || null;
+            },
 
             // Log panel per-sensor filter. ``null`` = show all, ``"__site__"``
             // = only entries without a sensor_id, otherwise a specific
@@ -627,16 +636,56 @@ function compareVersions(v1, v2) {
                 }
             },
 
+            /**
+             * Client-side path navigation.  Pushes the new URL into the
+             * browser history and re-runs the route resolver in app.js
+             * (exposed as ``window.__spaApplyRoute``).  Use this instead
+             * of directly setting ``currentSection`` or mutating
+             * ``window.location`` — the browser bar, back/forward
+             * buttons, and deep links all stay in sync as a side effect.
+             */
+            navigateTo(path) {
+                if (!path || typeof path !== 'string') return;
+                if (window.location.pathname !== path) {
+                    history.pushState({}, '', path);
+                }
+                if (typeof window.__spaApplyRoute === 'function') {
+                    window.__spaApplyRoute();
+                }
+            },
+            /**
+             * Click handler for in-app <a> links that should route via
+             * pushState on plain click but still honor
+             * Cmd/Ctrl/Shift/middle-click so the browser can open the
+             * link's real ``href`` in a new tab/window.  ``@click.prevent``
+             * suppresses those modifier clicks too, which is why the
+             * nav links + "Open" buttons use this instead.
+             */
+            navigateOnClick(event, path) {
+                if (!event) return;
+                if (event.defaultPrevented) return;
+                if (event.button !== undefined && event.button !== 0) return;
+                if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+                event.preventDefault();
+                this.navigateTo(path);
+            },
+            showMonitoring() {
+                this.navigateTo('/monitoring');
+            },
+            showAnalysisSection() {
+                this.navigateTo('/analysis');
+            },
+            showSensorSection(sensorId) {
+                if (!sensorId) return;
+                this.navigateTo('/sensors/' + encodeURIComponent(sensorId));
+            },
             showConfigSection() {
-                // Close setup wizard modal
+                // Close setup wizard modal if it was what opened us.
                 const wizardModal = bootstrap.Modal.getInstance(document.getElementById('setupWizard'));
                 if (wizardModal) {
                     wizardModal.hide();
                 }
-
-                // Navigate to config section
-                this.currentSection = 'config';
-                window.location.hash = 'config';
+                this.navigateTo('/config');
             }
         });
     });

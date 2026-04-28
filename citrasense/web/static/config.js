@@ -556,19 +556,21 @@ function hideConfigMessages() {
 }
 
 /**
- * Show configuration section (called from setup wizard)
+ * Show configuration section (called from setup wizard).  Delegates to
+ * the Alpine store's ``showConfigSection`` so both entry points push the
+ * same ``/config`` URL into history instead of faking a nav click.
  */
 export function showConfigSection() {
-    // Close setup wizard modal
-    const wizardModal = bootstrap.Modal.getInstance(document.getElementById('setupWizard'));
-    if (wizardModal) {
-        wizardModal.hide();
+    const store = window.Alpine?.store?.('citrasense');
+    if (store && typeof store.showConfigSection === 'function') {
+        store.showConfigSection();
+        return;
     }
-
-    // Show config section
-    const configLink = document.querySelector('a[data-section="config"]');
-    if (configLink) {
-        configLink.click();
+    const wizardModal = bootstrap.Modal.getInstance(document.getElementById('setupWizard'));
+    if (wizardModal) wizardModal.hide();
+    history.pushState({}, '', '/config');
+    if (typeof window.__spaApplyRoute === 'function') {
+        window.__spaApplyRoute();
     }
 }
 

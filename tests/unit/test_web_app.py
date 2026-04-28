@@ -476,6 +476,37 @@ def test_get_status_no_daemon():
 
 
 # ---------------------------------------------------------------------------
+# SPA catchall / client-side routes
+# ---------------------------------------------------------------------------
+
+
+def test_spa_catchall_serves_dashboard_for_sensor_path(client):
+    """Any /sensors/<id> path must return the dashboard SPA shell.
+
+    The client-side router in ``app.js`` reads ``location.pathname`` at
+    boot and paints the matching section, so a hard-refresh on
+    ``/sensors/CoolScope`` has to come back with the shell (not a 404).
+    """
+    resp = client.get("/sensors/CoolScope")
+    assert resp.status_code == 200
+    assert "CitraSense Dashboard" in resp.text
+
+
+def test_spa_catchall_serves_dashboard_for_static_sections(client):
+    """``/monitoring``, ``/analysis``, ``/config`` also land on the shell."""
+    for path in ("/monitoring", "/analysis", "/config"):
+        resp = client.get(path)
+        assert resp.status_code == 200, path
+        assert "CitraSense Dashboard" in resp.text
+
+
+def test_spa_catchall_does_not_swallow_api_404(client):
+    """The catchall must sit *after* the API routers so unknown /api/* still 404."""
+    resp = client.get("/api/nonexistent-endpoint")
+    assert resp.status_code == 404
+
+
+# ---------------------------------------------------------------------------
 # Tasks
 # ---------------------------------------------------------------------------
 

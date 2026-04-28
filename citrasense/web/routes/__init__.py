@@ -25,6 +25,7 @@ from citrasense.web.routes.jobs import build_jobs_router
 from citrasense.web.routes.mount import build_mount_router
 from citrasense.web.routes.safety import build_safety_router
 from citrasense.web.routes.sensors import build_sensors_router
+from citrasense.web.routes.spa_fallback import build_spa_fallback_router
 from citrasense.web.routes.tasks import build_tasks_router
 from citrasense.web.routes.websocket import build_websocket_router
 
@@ -33,7 +34,13 @@ if TYPE_CHECKING:
 
 
 def build_all_routers() -> list[Callable[[CitraSenseWebApp], APIRouter]]:
-    """Return all router factories in the order they should be included."""
+    """Return all router factories in the order they should be included.
+
+    Order is load-bearing: FastAPI is first-match-wins, and the SPA
+    fallback catchall (``build_spa_fallback_router``) must sit at the end
+    so it only receives requests that didn't match any real backend
+    route.  Don't reorder unless you know what you're doing.
+    """
     return [
         build_websocket_router,
         build_core_router,
@@ -50,6 +57,8 @@ def build_all_routers() -> list[Callable[[CitraSenseWebApp], APIRouter]]:
         build_camera_router,
         build_analysis_router,
         build_jobs_router,
+        # Keep LAST — catchall for SPA client-side routes.
+        build_spa_fallback_router,
     ]
 
 
@@ -68,6 +77,7 @@ __all__ = [
     "build_mount_router",
     "build_safety_router",
     "build_sensors_router",
+    "build_spa_fallback_router",
     "build_tasks_router",
     "build_websocket_router",
 ]
