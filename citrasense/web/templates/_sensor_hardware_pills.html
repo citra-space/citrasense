@@ -1,0 +1,27 @@
+{#
+    Shared hardware-status pills for a single sensor (Telescope / Camera /
+    Focuser).  Included from both the dashboard hero card
+    (`_monitoring.html`) and the sensor detail page header
+    (`_sensor_detail.html`).
+
+    Contract: the including template must provide an Alpine ``sensor`` in
+    scope — either via ``x-for="sensor in ..."`` (monitoring) or
+    ``x-data="{ get sensor() { return $store.citrasense.currentSensor; } }"``
+    (detail).  All bindings use ``sensor?.`` so the partial renders safely
+    in both contexts, even when ``sensor`` resolves to null while the
+    sensor list is still loading on a deep-link page load.
+#}
+<span class="badge rounded-pill"
+      :class="sensor?.telescope_connected ? 'bg-success' : 'bg-danger'"
+      data-bs-toggle="tooltip" data-bs-theme="dark"
+      :data-bs-title="sensor?.telescope_connected ? 'Telescope connected' : 'Telescope disconnected'">Telescope</span>
+<span class="badge rounded-pill"
+      :class="sensor?.camera_connected ? (sensor?.calibration_status?.has_bias && sensor?.calibration_status?.has_dark && sensor?.calibration_status?.has_flat ? 'bg-success' : (sensor?.calibration_status?.calibration_applicable ? 'bg-warning text-dark' : 'bg-success')) : 'bg-danger'"
+      data-bs-toggle="tooltip" data-bs-theme="dark"
+      :data-bs-title="sensor?.camera_connected ? ('Camera' + (sensor?.camera_temperature != null ? ' ' + sensor.camera_temperature.toFixed(1) + '\u00b0C' : '')) : 'Camera disconnected'"
+      x-text="sensor?.camera_connected && sensor?.camera_temperature != null ? 'Camera ' + sensor.camera_temperature.toFixed(1) + '\u00b0C' : 'Camera'"></span>
+<span class="badge rounded-pill"
+      :class="sensor?.focuser_connected ? 'bg-success' : 'bg-secondary'"
+      data-bs-toggle="tooltip" data-bs-theme="dark"
+      :data-bs-title="sensor?.focuser_connected ? ('Focuser' + (sensor?.focuser_temperature != null ? ' ' + sensor.focuser_temperature.toFixed(1) + '\u00b0C' : '')) : 'No focuser'"
+      x-text="sensor?.focuser_connected && sensor?.focuser_temperature != null ? 'Focuser ' + sensor.focuser_temperature.toFixed(1) + '\u00b0C' : 'Focuser'"></span>

@@ -14,6 +14,7 @@ from citrasense.hardware.adapter_registry import get_adapter_schema as get_schem
 from citrasense.hardware.adapter_registry import list_adapters
 from citrasense.hardware.devices.abstract_hardware_device import AbstractHardwareDevice
 from citrasense.logging import CITRASENSE_LOGGER
+from citrasense.settings.citrasense_settings import CitraSenseSettings
 
 if TYPE_CHECKING:
     from citrasense.web.app import CitraSenseWebApp
@@ -166,6 +167,25 @@ def build_hardware_router(ctx: CitraSenseWebApp) -> APIRouter:
             sensors = config.get("sensors", [])
             if not sensors:
                 return JSONResponse({"error": "At least one sensor is required"}, status_code=400)
+
+            # Reject duplicate citra_sensor_id up front — two local sensors
+            # cannot share one backend telescope record without silently
+            # starving one of them (TaskDispatcher routes API ids to the
+            # first matching runtime; the second scope would sit idle).
+            dupes = CitraSenseSettings.find_duplicate_citra_sensor_ids(sensors)
+            if dupes:
+                detail = "; ".join(
+                    f"{api_id!r} claimed by {', '.join(local_ids)}" for api_id, local_ids in dupes.items()
+                )
+                return JSONResponse(
+                    {
+                        "error": (
+                            "Duplicate citra_sensor_id — each local sensor must map to a distinct "
+                            f"Citra telescope id. Collisions: {detail}."
+                        )
+                    },
+                    status_code=400,
+                )
 
             for sensor_cfg in sensors:
                 adapter_name = sensor_cfg.get("adapter")

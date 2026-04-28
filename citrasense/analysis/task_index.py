@@ -161,6 +161,17 @@ _MIGRATIONS: list[tuple[str, list[str]]] = [
             "CREATE INDEX IF NOT EXISTS idx_imaging_started_at " "ON completed_tasks(imaging_started_at)",
         ],
     ),
+    # v4: sensor_id column + index for multi-sensor Analysis tab filtering.
+    # Older rows from single-sensor deployments or pre-v4 writes stay NULL
+    # until the startup backfill (see _backfill_sensor_ids) fills them in
+    # from the nested processing_dir layout.
+    (
+        "add sensor_id column and idx_sensor_id for multi-sensor analysis",
+        [
+            "ALTER TABLE completed_tasks ADD COLUMN sensor_id TEXT",
+            "CREATE INDEX IF NOT EXISTS idx_completed_tasks_sensor_id ON completed_tasks(sensor_id)",
+        ],
+    ),
 ]
 
 _SCHEMA_VERSION = len(_MIGRATIONS)
@@ -209,6 +220,70 @@ class TaskIndex:
         with self._lock:
             self._conn.close()
 
+    def backfill_sensor_ids(self, processing_dir: Path) -> int:
+        """One-shot: fill in missing ``sensor_id`` values from on-disk layout.
+
+        Walks ``processing_dir`` one level deep looking for
+        ``<sensor_id>/<task_id>/`` directories (the multi-sensor layout
+        written by :class:`ProcessingQueue`).  For every row where
+        ``sensor_id IS NULL`` and the ``task_id`` matches a nested dir,
+        stamps the owning sensor.  Flat-layout bundles and unrelated
+        directories are ignored — flat-layout rows simply stay NULL and
+        render as "—" in the UI's Telescope column until they age out.
+
+        Safe to call every startup: rows already stamped are untouched
+        (``WHERE sensor_id IS NULL``), and the operation is a no-op when
+        ``processing_dir`` doesn't exist yet.  Returns the number of rows
+        backfilled, for the startup log.
+        """
+        if not processing_dir.is_dir():
+            return 0
+
+        # Short-circuit when no NULL rows remain — saves a directory walk
+        # on every restart once the backfill has converged.
+        with self._lock:
+            null_row = self._conn.execute("SELECT 1 FROM completed_tasks WHERE sensor_id IS NULL LIMIT 1").fetchone()
+        if null_row is None:
+            return 0
+
+        # Build the ``task_id → sensor_id`` map from directory names.  Only
+        # directories that look like sensor dirs (i.e. contain further
+        # subdirs, each of which has a ``task.json``) qualify; otherwise a
+        # flat-layout ``processing_dir/<task_id>/`` would be misread as a
+        # sensor with bogus "task ids" as children.
+        mapping: list[tuple[str, str]] = []
+        try:
+            for maybe_sensor in processing_dir.iterdir():
+                if not maybe_sensor.is_dir():
+                    continue
+                if (maybe_sensor / "task.json").exists():
+                    continue
+                for nested in maybe_sensor.iterdir():
+                    if not nested.is_dir():
+                        continue
+                    if (nested / "task.json").exists():
+                        mapping.append((maybe_sensor.name, nested.name))
+        except OSError:
+            return 0
+
+        if not mapping:
+            return 0
+
+        updated = 0
+        with self._lock:
+            cur = self._conn.cursor()
+            for sensor_id, task_id in mapping:
+                cur.execute(
+                    "UPDATE completed_tasks SET sensor_id = ? " "WHERE task_id = ? AND sensor_id IS NULL",
+                    (sensor_id, task_id),
+                )
+                updated += cur.rowcount
+            self._conn.commit()
+
+        if updated:
+            logger.info("Backfilled sensor_id on %d existing task_index rows", updated)
+        return updated
+
     # ── Writes ─────────────────────────────────────────────────────────
 
     def record_task(
@@ -218,6 +293,7 @@ class TaskIndex:
         result: AggregatedResult | None,
         pointing_report: dict | None,
         timing_info: Any | None,
+        sensor_id: str | None = None,
     ) -> None:
         """INSERT a completed-task row from the processing thread."""
         now = datetime.now(timezone.utc).isoformat()
@@ -309,6 +385,7 @@ class TaskIndex:
 
         row = {
             "task_id": task.id if task else "unknown",
+            "sensor_id": sensor_id,
             "target_name": tv.satellite_name if tv else None,
             "completed_at": now,
             "filter_name": _str(ed.get("photometry.filter")) or (tv.assigned_filter_name if tv else None),
@@ -429,6 +506,7 @@ class TaskIndex:
         filter_name: str | None = None,
         match_detail: str | None = None,
         upload_status: str | None = None,
+        sensor_id: str | None = None,
     ) -> dict:
         """Paginated, filterable task list.
 
@@ -459,6 +537,9 @@ class TaskIndex:
         where_clauses: list[str] = []
         params: list[Any] = []
 
+        if sensor_id:
+            where_clauses.append("sensor_id = ?")
+            params.append(sensor_id)
         if target_name:
             where_clauses.append("target_name LIKE ?")
             params.append(f"%{target_name}%")
@@ -520,24 +601,38 @@ class TaskIndex:
             _enrich_with_pointing_diag(t)
         return {"tasks": tasks, "total": total}
 
-    def get_distinct_filter_names(self) -> list[str]:
-        """Return all distinct non-NULL filter names, sorted."""
+    def get_distinct_filter_names(self, sensor_id: str | None = None) -> list[str]:
+        """Return all distinct non-NULL filter names, sorted.
+
+        When ``sensor_id`` is provided, only filter names observed by that
+        sensor are returned.
+        """
+        sql = "SELECT DISTINCT filter_name FROM completed_tasks WHERE filter_name IS NOT NULL"
+        params: list[Any] = []
+        if sensor_id:
+            sql += " AND sensor_id = ?"
+            params.append(sensor_id)
+        sql += " ORDER BY filter_name"
         with self._lock:
-            rows = self._conn.execute(
-                "SELECT DISTINCT filter_name FROM completed_tasks WHERE filter_name IS NOT NULL ORDER BY filter_name"
-            ).fetchall()
+            rows = self._conn.execute(sql, params).fetchall()
         return [row[0] for row in rows]
 
-    def get_stats(self, hours: int = 24) -> dict:
-        """Aggregate statistics over the most recent *hours*."""
+    def get_stats(self, hours: int = 24, sensor_id: str | None = None) -> dict:
+        """Aggregate statistics over the most recent *hours*.
+
+        When ``sensor_id`` is provided, aggregates cover only tasks from
+        that sensor; otherwise it's a site-wide rollup over every sensor.
+        """
         cutoff = datetime.now(timezone.utc)
         from datetime import timedelta
 
         cutoff_iso = (cutoff - timedelta(hours=hours)).isoformat()
+        sensor_clause = " AND sensor_id = ?" if sensor_id else ""
+        params: tuple[Any, ...] = (cutoff_iso, sensor_id) if sensor_id else (cutoff_iso,)
 
         with self._lock:
             row = self._conn.execute(
-                """
+                f"""
                 SELECT
                 COUNT(*)                                              AS task_count,
                 SUM(CASE WHEN plate_solved = 1 THEN 1 ELSE 0 END)    AS plate_solved_count,
@@ -571,9 +666,9 @@ class TaskIndex:
                 SUM(CASE WHEN target_satellite_id IS NOT NULL THEN 1 ELSE 0 END)
                                                                       AS satellite_task_count
                 FROM completed_tasks
-                WHERE completed_at >= ?
+                WHERE completed_at >= ?{sensor_clause}
                 """,
-                (cutoff_iso,),
+                params,
             ).fetchone()
 
         if not row or row["task_count"] == 0:
@@ -666,9 +761,12 @@ _TASK_QUERY_WITH_LAG = """
     WITH ordered AS (
         SELECT
             *,
-            LAG(imaging_finished_at) OVER (ORDER BY imaging_started_at) AS prev_imaging_finished_at,
-            LAG(task_id)             OVER (ORDER BY imaging_started_at) AS prev_task_id,
-            LAG(target_name)         OVER (ORDER BY imaging_started_at) AS prev_target_name
+            LAG(imaging_finished_at)
+                OVER (PARTITION BY sensor_id ORDER BY imaging_started_at) AS prev_imaging_finished_at,
+            LAG(task_id)
+                OVER (PARTITION BY sensor_id ORDER BY imaging_started_at) AS prev_task_id,
+            LAG(target_name)
+                OVER (PARTITION BY sensor_id ORDER BY imaging_started_at) AS prev_target_name
         FROM completed_tasks
     )
     SELECT * FROM ordered

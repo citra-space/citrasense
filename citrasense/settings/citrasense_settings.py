@@ -618,6 +618,47 @@ class CitraSenseSettings(BaseModel):
                 return s
         return None
 
+    @staticmethod
+    def find_duplicate_citra_sensor_ids(
+        sensors: list[SensorConfig] | list[dict[str, Any]],
+    ) -> dict[str, list[str]]:
+        """Detect backend-id collisions across the given sensor list.
+
+        Two sensors that share a ``citra_sensor_id`` both claim the same
+        Citra-side telescope record, which silently starves one of them
+        because :class:`citrasense.tasks.task_dispatcher.TaskDispatcher`
+        routes by matching ``task.sensor_id`` to the *first* runtime whose
+        ``citra_record["id"]`` matches.  The starving scope looks idle
+        with no operator-visible error.
+
+        Empty-string ids are ignored — they mean "not configured yet",
+        which is a different wizard-state concern handled by
+        :meth:`is_configured`.
+
+        Args:
+            sensors: Either parsed :class:`SensorConfig` instances (for
+                boot-time / reload-time checks) or raw dicts from the web
+                save payload (for save-time validation before the config
+                is persisted).
+
+        Returns:
+            Mapping of ``citra_sensor_id -> [local_sensor_id, ...]`` for
+            every id with two or more claimants. Empty dict means "no
+            collisions".
+        """
+        seen: dict[str, list[str]] = {}
+        for s in sensors:
+            if isinstance(s, SensorConfig):
+                api_id = s.citra_sensor_id
+                local_id = s.id
+            else:
+                api_id = (s.get("citra_sensor_id") or "").strip() if isinstance(s, dict) else ""
+                local_id = (s.get("id") or "?") if isinstance(s, dict) else "?"
+            if not api_id:
+                continue
+            seen.setdefault(api_id, []).append(local_id)
+        return {api_id: ids for api_id, ids in seen.items() if len(ids) > 1}
+
     # ── Serialization & persistence ───────────────────────────────────
 
     def to_dict(self) -> dict[str, Any]:

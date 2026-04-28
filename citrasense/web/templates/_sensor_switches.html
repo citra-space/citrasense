@@ -1,0 +1,80 @@
+{#
+    Shared operational-switches cluster for a single sensor: Scheduling,
+    Processing, Robotic, Self-Tasking, the self-tasking-misconfigured
+    warning badge, and the per-sensor cable-wrap alert.
+
+    Included from both the dashboard hero card (``_monitoring.html``,
+    inside the card-body) and the sensor detail page header
+    (``_sensor_detail.html``).  Each parent wraps this partial's children
+    in its own outer flex container — the monitoring card uses a plain
+    ``d-flex flex-wrap``, the detail header adds ``ms-md-auto`` so the
+    cluster pushes right of the status pills on desktop.
+
+    Contract: the including template provides ``sensor`` in Alpine scope
+    (monitoring via ``x-for``, detail via a getter) and bindings use
+    ``sensor?.`` throughout so null ``sensor`` during initial load is
+    safe.  ``sensor.id`` without the null-safe operator is used only
+    inside ``@change`` handlers — those only fire on user interaction,
+    by which point ``sensor`` is guaranteed populated.
+#}
+<div class="d-flex align-items-center gap-1"
+     data-bs-toggle="tooltip" data-bs-theme="dark"
+     title="Automated scheduling — server assigns tasks to this telescope">
+    <small class="text-muted text-nowrap">Scheduling</small>
+    <div class="form-check form-switch mb-0">
+        <input class="form-check-input" type="checkbox"
+               :checked="sensor?.automated_scheduling"
+               @change="$store.citrasense.toggleAutomatedScheduling($event.target.checked, sensor.id)">
+    </div>
+</div>
+<div class="d-flex align-items-center gap-1"
+     data-bs-toggle="tooltip" data-bs-theme="dark"
+     title="Task processing — daemon executes queued tasks">
+    <small class="text-muted text-nowrap">Processing</small>
+    <div class="form-check form-switch mb-0">
+        <input class="form-check-input" type="checkbox"
+               :checked="!sensor?.task_processing_paused"
+               @change="$store.citrasense.toggleProcessing($event.target.checked, sensor.id)">
+    </div>
+</div>
+<div class="d-flex align-items-center gap-1"
+     data-bs-toggle="tooltip" data-bs-theme="dark"
+     title="Robotic session — park/unpark and autofocus at dusk/dawn">
+    <small class="text-muted text-nowrap">Robotic</small>
+    <div class="form-check form-switch mb-0">
+        <input class="form-check-input" type="checkbox"
+               :checked="sensor?.observing_session_enabled"
+               @change="$store.citrasense.toggleObservingSession($event.target.checked, sensor.id)">
+    </div>
+</div>
+<div class="d-flex align-items-center gap-1"
+     data-bs-toggle="tooltip" data-bs-theme="dark"
+     title="Self-tasking — automatically request work when dark">
+    <small class="text-muted text-nowrap">Self-Tasking</small>
+    <div class="form-check form-switch mb-0">
+        <input class="form-check-input" type="checkbox"
+               :checked="sensor?.self_tasking_enabled"
+               @change="$store.citrasense.toggleSelfTasking($event.target.checked, sensor.id)">
+    </div>
+</div>
+<span class="badge rounded-pill bg-warning text-dark"
+      style="display:inline-flex; align-items:center;"
+      x-show="sensor?.self_tasking_enabled
+          && (!sensor?.observing_session_enabled
+              || !sensor?.automated_scheduling
+              || sensor?.task_processing_paused)"
+      data-bs-toggle="tooltip" data-bs-theme="dark"
+      :data-bs-title="(() => {
+          const issues = [];
+          if (!sensor?.observing_session_enabled) issues.push('Robotic session is off');
+          if (!sensor?.automated_scheduling) issues.push('Scheduling is off');
+          if (sensor?.task_processing_paused) issues.push('Processing is off');
+          return issues.join('\n');
+      })()"><i class="bi bi-exclamation-triangle-fill"></i></span>
+<template x-for="alert in ($store.citrasense.status?.safety_status?.checks || []).filter(c => c.name === 'cable_wrap' && c.sensor_id === sensor?.id && c.action !== 'safe')" :key="'cw-' + sensor?.id">
+    <span class="badge rounded-pill"
+          :class="alert.action === 'emergency' ? 'bg-danger' : 'bg-warning text-dark'"
+          data-bs-toggle="tooltip" data-bs-theme="dark"
+          :data-bs-title="'Cable wrap at ' + Math.abs(alert.cumulative_deg ?? 0) + '\u00b0'">
+        <i class="bi bi-exclamation-triangle-fill me-1"></i>Cable Wrap</span>
+</template>

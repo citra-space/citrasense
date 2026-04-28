@@ -137,33 +137,87 @@ async function fetchVersion() {
     }
 }
 
-// --- Navigation (Alpine-driven in Phase 3, keep hash sync for now) ---
-function navigateToSection(section) {
+// --- Navigation (History API, path-based) ---
+//
+// The backend serves dashboard.html for any non-/api/*, non-/static/*, non-/ws
+// GET via the SPA catchall in citrasense/web/routes/spa_fallback.py, so the
+// browser URL can be a real path (/monitoring, /analysis, /config,
+// /sensors/<id>) rather than a hash.  This function owns the mapping in
+// both directions: reading location.pathname -> {section, sensorId}, and
+// (via navigateTo on the store) pushing state when the user clicks an
+// in-app link.  ``popstate`` fires for browser back/forward.
+const STATIC_PATH_SECTIONS = {
+    '/': 'monitoring',
+    '/monitoring': 'monitoring',
+    '/analysis': 'analysis',
+    '/config': 'config',
+};
+
+// Browser tab titles per static section.  Sensor routes are titled
+// dynamically (placeholder = sensor id, upgraded to the real name once
+// the WebSocket delivers the sensor list — see store-init.js).
+const SECTION_TITLES = {
+    monitoring: 'Monitoring',
+    analysis: 'Analysis',
+    config: 'Config',
+};
+
+// Allow hyphen, dot, underscore, and URL-encoded chars in sensor IDs.
+// SensorConfig.id validation is stricter than this, but the router just
+// needs to capture whatever the backend considers valid.
+const SENSOR_PATH_RE = /^\/sensors\/([^/?#]+)$/;
+
+function parsePath(pathname) {
+    const p = pathname.replace(/\/+$/, '') || '/';
+    if (STATIC_PATH_SECTIONS[p]) {
+        return { section: STATIC_PATH_SECTIONS[p], sensorId: null };
+    }
+    const m = p.match(SENSOR_PATH_RE);
+    if (m) {
+        try {
+            return { section: 'sensor', sensorId: decodeURIComponent(m[1]) };
+        } catch {
+            return { section: 'sensor', sensorId: m[1] };
+        }
+    }
+    return null;
+}
+
+function applyRoute() {
+    const parsed = parsePath(window.location.pathname);
     const store = Alpine.store('citrasense');
-    store.currentSection = section;
-    window.location.hash = section;
-    if (section === 'config') {
-        initFilterConfig();
+    if (!parsed) {
+        // Unknown path: rewrite silently to /monitoring rather than force a
+        // refresh (the SPA shell already rendered).
+        history.replaceState({}, '', '/monitoring');
+        store.currentSection = 'monitoring';
+        store.currentSensorId = null;
+        document.title = `${SECTION_TITLES.monitoring} | CitraSense`;
+        return;
+    }
+    store.currentSection = parsed.section;
+    store.currentSensorId = parsed.sensorId;
+    if (parsed.section === 'sensor') {
+        // Placeholder title: show the raw sensor id immediately so the
+        // tab is distinguishable before the WebSocket delivers sensor
+        // data.  An Alpine.effect in store-init.js upgrades this to the
+        // human-readable sensor name once ``currentSensor`` resolves.
+        document.title = `${parsed.sensorId} | CitraSense`;
+    } else {
+        document.title = `${SECTION_TITLES[parsed.section] || 'Dashboard'} | CitraSense`;
+    }
+    if (parsed.section === 'config') initFilterConfig();
+    if (parsed.section === 'analysis' && window.loadAnalysisData) {
+        window.loadAnalysisData();
     }
 }
 
 function initNavigation() {
-    window.addEventListener('hashchange', () => {
-        const hash = window.location.hash.substring(1);
-        if (hash && (hash === 'monitoring' || hash === 'config' || hash === 'analysis')) {
-            const store = Alpine.store('citrasense');
-            store.currentSection = hash;
-            if (hash === 'config') initFilterConfig();
-            if (hash === 'analysis' && window.loadAnalysisData) window.loadAnalysisData();
-        }
-    });
-
-    const hash = window.location.hash.substring(1);
-    if (hash && (hash === 'monitoring' || hash === 'config' || hash === 'analysis')) {
-        navigateToSection(hash);
-    } else {
-        navigateToSection('monitoring');
-    }
+    // Expose applyRoute so store.navigateTo can re-run routing after a
+    // pushState without re-importing this module.
+    window.__spaApplyRoute = applyRoute;
+    window.addEventListener('popstate', applyRoute);
+    applyRoute();
 }
 
 // Config module will need to update store.config when loaded - we'll handle in config.js

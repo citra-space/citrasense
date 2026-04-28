@@ -183,8 +183,32 @@ class SafetyMonitor:
     # Core evaluation
     # ------------------------------------------------------------------
 
-    def evaluate(self) -> tuple[SafetyAction, SafetyCheck | None]:
-        """Run all checks, return the most severe action and its trigger.
+    def _checks_for(self, sensor_id: str | None) -> list[SafetyCheck]:
+        """Return a snapshot of checks relevant to the given sensor.
+
+        ``sensor_id=None`` — site-wide evaluation, returns every registered
+        check (watchdog path, site-level UI).
+
+        ``sensor_id="..."`` — per-sensor evaluation, returns site-level
+        checks (``chk.sensor_id is None``) plus checks owned by that
+        sensor.  Checks owned by *other* sensors are filtered out so one
+        scope's cable unwind (or any sensor-scoped ``QUEUE_STOP``) doesn't
+        veto work on its siblings.
+        """
+        with self._checks_lock:
+            if sensor_id is None:
+                return list(self._checks)
+            return [chk for chk in self._checks if chk.sensor_id in (None, sensor_id)]
+
+    def evaluate(self, sensor_id: str | None = None) -> tuple[SafetyAction, SafetyCheck | None]:
+        """Run checks and return the most severe action and its trigger.
+
+        When ``sensor_id`` is given, only site-level checks plus that
+        sensor's own checks participate — used by the per-runtime gate in
+        :class:`citrasense.tasks.task_dispatcher.TaskDispatcher` so one
+        sensor's ``QUEUE_STOP`` doesn't freeze another sensor's scheduling.
+        The watchdog continues to call ``evaluate()`` with no argument so
+        it still sees site-wide EMERGENCY conditions.
 
         Fail-closed: a check that raises is treated as QUEUE_STOP so new work
         is blocked until the check recovers.  We don't escalate to EMERGENCY
@@ -193,9 +217,7 @@ class SafetyMonitor:
         worst_action = SafetyAction.SAFE
         worst_check: SafetyCheck | None = None
 
-        with self._checks_lock:
-            checks_snapshot = list(self._checks)
-        for chk in checks_snapshot:
+        for chk in self._checks_for(sensor_id):
             try:
                 action = chk.check()
             except Exception:
@@ -209,14 +231,18 @@ class SafetyMonitor:
                 worst_check = chk
         return worst_action, worst_check
 
-    def is_action_safe(self, action_type: str, **kwargs) -> bool:
-        """Pre-action gate: ask every check whether *action_type* is safe.
+    def is_action_safe(self, action_type: str, sensor_id: str | None = None, **kwargs) -> bool:
+        """Pre-action gate: ask the relevant checks whether *action_type* is safe.
+
+        When ``sensor_id`` is passed, only site-level checks
+        (``OperatorStopCheck``, ``DiskSpaceCheck``, ``TimeHealthCheck``,
+        ...) plus that sensor's own checks get consulted.  Without it every
+        registered check votes — matches the historical contract used by
+        tests that never cared about scoping.
 
         Fail-closed: if a registered check raises, the action is blocked.
         """
-        with self._checks_lock:
-            checks_snapshot = list(self._checks)
-        for chk in checks_snapshot:
+        for chk in self._checks_for(sensor_id):
             try:
                 if not chk.check_proposed_action(action_type, **kwargs):
                     self._logger.warning("Safety check %r blocked action %r", chk.name, action_type)

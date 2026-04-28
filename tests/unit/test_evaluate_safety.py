@@ -1,4 +1,4 @@
-"""Tests for TaskDispatcher._evaluate_safety — emergency imaging queue clear (#315)."""
+"""Tests for TaskDispatcher._evaluate_safety_for — emergency imaging queue clear (#315)."""
 
 from __future__ import annotations
 
@@ -49,7 +49,7 @@ class TestEvaluateSafetyEmergencyClear:
         td = _make_task_dispatcher(monitor)
         acq = td.get_runtime("test-scope").acquisition_queue
 
-        result = td._evaluate_safety()
+        result = td._evaluate_safety_for("test-scope")
 
         assert result is True
         acq.clear.assert_called_once()
@@ -59,10 +59,10 @@ class TestEvaluateSafetyEmergencyClear:
         td = _make_task_dispatcher(monitor)
         acq = td.get_runtime("test-scope").acquisition_queue
 
-        td._evaluate_safety()
+        td._evaluate_safety_for("test-scope")
         acq.clear.reset_mock()
 
-        td._evaluate_safety()
+        td._evaluate_safety_for("test-scope")
         acq.clear.assert_not_called()
 
     def test_safe_does_not_clear_imaging_queue(self):
@@ -70,7 +70,7 @@ class TestEvaluateSafetyEmergencyClear:
         td = _make_task_dispatcher(monitor)
         acq = td.get_runtime("test-scope").acquisition_queue
 
-        result = td._evaluate_safety()
+        result = td._evaluate_safety_for("test-scope")
 
         assert result is False
         acq.clear.assert_not_called()
@@ -80,7 +80,7 @@ class TestEvaluateSafetyEmergencyClear:
         td = _make_task_dispatcher(monitor)
         acq = td.get_runtime("test-scope").acquisition_queue
 
-        result = td._evaluate_safety()
+        result = td._evaluate_safety_for("test-scope")
 
         assert result is True
         acq.clear.assert_not_called()
@@ -91,22 +91,22 @@ class TestEvaluateSafetyEmergencyClear:
         td = _make_task_dispatcher(monitor)
         acq = td.get_runtime("test-scope").acquisition_queue
 
-        td._evaluate_safety()
+        td._evaluate_safety_for("test-scope")
         acq.clear.assert_called_once()
         acq.clear.reset_mock()
 
         check._action = SafetyAction.SAFE
-        td._evaluate_safety()
+        td._evaluate_safety_for("test-scope")
 
         check._action = SafetyAction.EMERGENCY
-        td._evaluate_safety()
+        td._evaluate_safety_for("test-scope")
         acq.clear.assert_called_once()
 
     def test_emergency_calls_abort_slew(self):
         monitor = SafetyMonitor(MagicMock(), [_StubCheck("hw", SafetyAction.EMERGENCY)])
         td = _make_task_dispatcher(monitor)
 
-        td._evaluate_safety()
+        td._evaluate_safety_for("test-scope")
 
         td.get_runtime("test-scope").hardware_adapter.abort_slew.assert_called()
 
@@ -115,7 +115,7 @@ class TestEvaluateSafetyEmergencyClear:
         td = _make_task_dispatcher(monitor)
         td.on_toast = MagicMock()
 
-        td._evaluate_safety()
+        td._evaluate_safety_for("test-scope")
 
         td.on_toast.assert_called_once()
         msg, toast_type, toast_id = td.on_toast.call_args[0]
@@ -128,17 +128,17 @@ class TestEvaluateSafetyEmergencyClear:
         td = _make_task_dispatcher(monitor)
         assert td.on_toast is None
 
-        td._evaluate_safety()
+        td._evaluate_safety_for("test-scope")
 
     def test_emergency_toast_not_fired_on_subsequent_polls(self):
         monitor = SafetyMonitor(MagicMock(), [_StubCheck("hw", SafetyAction.EMERGENCY)])
         td = _make_task_dispatcher(monitor)
         td.on_toast = MagicMock()
 
-        td._evaluate_safety()
+        td._evaluate_safety_for("test-scope")
         td.on_toast.reset_mock()
 
-        td._evaluate_safety()
+        td._evaluate_safety_for("test-scope")
         td.on_toast.assert_not_called()
 
     def test_emergency_clears_imaging_tasks_dict(self):
@@ -146,7 +146,7 @@ class TestEvaluateSafetyEmergencyClear:
         td = _make_task_dispatcher(monitor)
         td.imaging_tasks["fake-task-id"] = 1234567890.0
 
-        td._evaluate_safety()
+        td._evaluate_safety_for("test-scope")
 
         assert td.imaging_tasks == {}
 
@@ -183,7 +183,7 @@ class TestMultiRuntimeEmergency:
         monitor = SafetyMonitor(MagicMock(), [_StubCheck("hw", SafetyAction.EMERGENCY)])
         td = self._make_multi_runtime_dispatcher(monitor)
 
-        td._evaluate_safety()
+        td._evaluate_safety_for("test-scope")
 
         for rt in td._runtimes.values():
             rt.acquisition_queue.clear.assert_called_once()
@@ -192,7 +192,7 @@ class TestMultiRuntimeEmergency:
         monitor = SafetyMonitor(MagicMock(), [_StubCheck("hw", SafetyAction.EMERGENCY)])
         td = self._make_multi_runtime_dispatcher(monitor)
 
-        td._evaluate_safety()
+        td._evaluate_safety_for("test-scope")
 
         for rt in td._runtimes.values():
             rt.hardware_adapter.abort_slew.assert_called()
@@ -205,10 +205,10 @@ class TestMultiRuntimeEmergency:
         td._runtimes["scope-0"].acquisition_queue.is_idle.return_value = True
         td._runtimes["scope-1"].acquisition_queue.is_idle.return_value = False
 
-        td._evaluate_safety()
+        td._evaluate_safety_for("test-scope")
 
         check.execute_action = MagicMock()
-        td._evaluate_safety()
+        td._evaluate_safety_for("test-scope")
         check.execute_action.assert_not_called()
 
     def test_clear_pending_drains_all_runtimes(self):

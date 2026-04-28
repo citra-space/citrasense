@@ -1,0 +1,23 @@
+    <!-- Setup Wizard Modal -->
+    <div class="modal fade" id="setupWizard" tabindex="-1" aria-hidden="true">
+        <div class="modal-dialog modal-lg modal-dialog-centered">
+            <div class="modal-content bg-dark text-light border-secondary">
+                <div class="modal-header border-secondary">
+                    <h5 class="modal-title">Welcome to CitraSense Setup</h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <p class="lead">Let's configure your telescope system.</p>
+                    <p>You'll need:</p>
+                    <ul>
+                        <li>Your Citra API personal access token from <a href="" id="setupAppUrlLink" target="_blank"></a></li>
+                        <li>Your telescope ID</li>
+                        <li>Information about your hardware adapter (INDI, N.I.N.A., or KStars)</li>
+                    </ul>
+                </div>
+                <div class="modal-footer border-secondary">
+                    <button type="button" class="btn btn-primary" @click="$store.citrasense.showConfigSection()">Configure Now</button>
+                </div>
+            </div>
+        </div>
+    </div>

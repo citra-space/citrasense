@@ -126,12 +126,29 @@ def build_sensors_router(ctx: CitraSenseWebApp) -> APIRouter:
         if ctx.daemon.settings.get_sensor_config(sensor_id):
             return JSONResponse({"error": f"Sensor '{sensor_id}' already exists"}, status_code=409)
 
+        citra_sensor_id = (body.get("citra_sensor_id") or "").strip()
+        if citra_sensor_id:
+            clash = next(
+                (s.id for s in ctx.daemon.settings.sensors if s.citra_sensor_id == citra_sensor_id),
+                None,
+            )
+            if clash:
+                return JSONResponse(
+                    {
+                        "error": (
+                            f"citra_sensor_id {citra_sensor_id!r} is already used by sensor "
+                            f"{clash!r}. Each local sensor must map to a distinct Citra telescope id."
+                        )
+                    },
+                    status_code=409,
+                )
+
         new_cfg = SensorConfig(
             id=sensor_id,
             type=sensor_type,
             adapter=adapter,
             adapter_settings=body.get("adapter_settings", {}),
-            citra_sensor_id=body.get("citra_sensor_id", ""),
+            citra_sensor_id=citra_sensor_id,
         )
         ctx.daemon.settings.sensors.append(new_cfg)
         ctx.daemon.settings.save()

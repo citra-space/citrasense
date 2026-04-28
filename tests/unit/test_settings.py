@@ -200,6 +200,58 @@ def test_settings_validates_autofocus_interval():
     assert s.sensors[0].autofocus_interval_minutes == 60
 
 
+def test_find_duplicate_citra_sensor_ids_empty_list():
+    from citrasense.settings.citrasense_settings import CitraSenseSettings
+
+    assert CitraSenseSettings.find_duplicate_citra_sensor_ids([]) == {}
+
+
+def test_find_duplicate_citra_sensor_ids_no_collision_config_objects():
+    from citrasense.settings.citrasense_settings import CitraSenseSettings, SensorConfig
+
+    sensors = [
+        SensorConfig(id="a", type="telescope", citra_sensor_id="scope-a"),
+        SensorConfig(id="b", type="telescope", citra_sensor_id="scope-b"),
+    ]
+    assert CitraSenseSettings.find_duplicate_citra_sensor_ids(sensors) == {}
+
+
+def test_find_duplicate_citra_sensor_ids_detects_collision_config_objects():
+    """Two SensorConfigs sharing an api id must be surfaced so boot can refuse startup."""
+    from citrasense.settings.citrasense_settings import CitraSenseSettings, SensorConfig
+
+    sensors = [
+        SensorConfig(id="CoolScope", type="telescope", citra_sensor_id="asdf"),
+        SensorConfig(id="LilScope", type="telescope", citra_sensor_id="asdf"),
+        SensorConfig(id="KillerScope", type="telescope", citra_sensor_id="qwer"),
+    ]
+    dupes = CitraSenseSettings.find_duplicate_citra_sensor_ids(sensors)
+    assert dupes == {"asdf": ["CoolScope", "LilScope"]}
+
+
+def test_find_duplicate_citra_sensor_ids_detects_collision_dicts():
+    """Raw dicts (save-path validation) must produce the same diagnosis."""
+    from citrasense.settings.citrasense_settings import CitraSenseSettings
+
+    sensors = [
+        {"id": "CoolScope", "citra_sensor_id": "asdf"},
+        {"id": "LilScope", "citra_sensor_id": "asdf"},
+    ]
+    assert CitraSenseSettings.find_duplicate_citra_sensor_ids(sensors) == {"asdf": ["CoolScope", "LilScope"]}
+
+
+def test_find_duplicate_citra_sensor_ids_ignores_empty_ids():
+    """Empty citra_sensor_ids are 'not configured yet', not a collision."""
+    from citrasense.settings.citrasense_settings import CitraSenseSettings, SensorConfig
+
+    sensors = [
+        SensorConfig(id="a", type="telescope", citra_sensor_id=""),
+        SensorConfig(id="b", type="telescope", citra_sensor_id=""),
+        SensorConfig(id="c", type="telescope", citra_sensor_id="scope-c"),
+    ]
+    assert CitraSenseSettings.find_duplicate_citra_sensor_ids(sensors) == {}
+
+
 def test_settings_save(tmp_path):
     with patch("citrasense.settings.citrasense_settings.SettingsFileManager") as MockSFM:
         instance = MockSFM.return_value

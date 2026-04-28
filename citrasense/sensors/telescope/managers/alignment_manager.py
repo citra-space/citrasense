@@ -186,7 +186,7 @@ class AlignmentManager:
 
             from citrasense.pipelines.optical.plate_solver_processor import PlateSolverProcessor
 
-            if self.safety_monitor and not self.safety_monitor.is_action_safe("capture"):
+            if self.safety_monitor and not self.safety_monitor.is_action_safe("capture", sensor_id=self._sensor_id):
                 self.logger.warning("Alignment aborted — safety monitor blocked capture")
                 return
 
@@ -368,10 +368,10 @@ class AlignmentManager:
         site_lon = location["longitude"]
 
         if self.safety_monitor:
-            if not self.safety_monitor.is_action_safe("capture"):
+            if not self.safety_monitor.is_action_safe("capture", sensor_id=self._sensor_id):
                 self.logger.warning("Calibration aborted — safety monitor blocked capture")
                 return
-            if not self.safety_monitor.is_action_safe("slew"):
+            if not self.safety_monitor.is_action_safe("slew", sensor_id=self._sensor_id):
                 self.logger.warning("Calibration aborted — safety monitor blocked slew")
                 return
 
@@ -459,7 +459,7 @@ class AlignmentManager:
 
             # Raw slew — bypasses point_telescope() because we're building
             # the model (no correction to apply yet).  Safety is checked here.
-            if self.safety_monitor and not self.safety_monitor.is_action_safe("slew"):
+            if self.safety_monitor and not self.safety_monitor.is_action_safe("slew", sensor_id=self._sensor_id):
                 self.logger.warning("Calibration: slew blocked by safety monitor at point %d — skipping", i + 1)
                 continue
 

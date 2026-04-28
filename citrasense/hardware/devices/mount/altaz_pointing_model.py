@@ -303,9 +303,14 @@ class AltAzPointingModel:
     minus encoder).  See the module docstring for the full sign convention.
     """
 
-    def __init__(self, state_file: Path | None = None) -> None:
+    def __init__(
+        self,
+        state_file: Path | None = None,
+        logger: logging.Logger | logging.LoggerAdapter | None = None,
+    ) -> None:
         self._state_file = state_file
         self._lock = threading.Lock()
+        self._log: logging.Logger | logging.LoggerAdapter = logger if logger is not None else _logger
 
         # Calibration data: list of (az, alt, d_az, d_alt) in degrees
         self._points: list[tuple[float, float, float, float]] = []
@@ -407,7 +412,7 @@ class AltAzPointingModel:
             self._points.append((mount_az, mount_alt, d_az, d_alt))
             n_points = len(self._points)
 
-        _logger.info(
+        self._log.info(
             "Pointing model: added point #%d — az=%.1f° alt=%.1f° dAz=%.4f° dAlt=%.4f°",
             n_points,
             mount_az,
@@ -438,7 +443,7 @@ class AltAzPointingModel:
         with self._lock:
             n = len(self._points)
             if n < _MIN_POINTS_3TERM:
-                _logger.info("Pointing model: only %d points, need %d for fit", n, _MIN_POINTS_3TERM)
+                self._log.info("Pointing model: only %d points, need %d for fit", n, _MIN_POINTS_3TERM)
                 return
 
             points_snapshot = list(self._points)
@@ -447,7 +452,7 @@ class AltAzPointingModel:
         az_spread = self._azimuth_spread(az_values)
         use_5term = n >= _MIN_POINTS_5TERM and az_spread >= _MIN_AZ_SPREAD_5TERM
         if n >= _MIN_POINTS_5TERM and not use_5term:
-            _logger.info(
+            self._log.info(
                 "Azimuth spread %.0f° < %.0f° minimum — staying with 3-term fit despite %d points",
                 az_spread,
                 _MIN_AZ_SPREAD_5TERM,
@@ -464,12 +469,12 @@ class AltAzPointingModel:
 
         for clip_iter in range(_SIGMA_CLIP_MAX_ITER + 1):
             if len(active) < _MIN_POINTS_3TERM:
-                _logger.warning("Sigma clip: too few points remaining (%d) — aborting clip", len(active))
+                self._log.warning("Sigma clip: too few points remaining (%d) — aborting clip", len(active))
                 break
 
             if use_5term and len(active) < _MIN_POINTS_5TERM:
                 use_5term = False
-                _logger.info("Sigma clip reduced points below %d — downgrading to 3-term", _MIN_POINTS_5TERM)
+                self._log.info("Sigma clip reduced points below %d — downgrading to 3-term", _MIN_POINTS_5TERM)
 
             rows_az: list[list[float]] = []
             rows_alt: list[list[float]] = []
@@ -526,7 +531,7 @@ class AltAzPointingModel:
                     new_active.append(idx)
                 else:
                     az_deg, alt_deg = points_snapshot[idx][0], points_snapshot[idx][1]
-                    _logger.info(
+                    self._log.info(
                         "Sigma clip: rejected point #%d (az=%.0f° alt=%.0f°, residual=%.4f° > %.4f° threshold)",
                         idx + 1,
                         az_deg,
@@ -576,7 +581,7 @@ class AltAzPointingModel:
             tilt_mag = math.sqrt(self._AN**2 + self._AW**2)
             tilt_dir = math.degrees(math.atan2(self._AW, self._AN)) % 360.0
 
-        _logger.info(
+        self._log.info(
             "Pointing model fit (%d-term, %d used, %d clipped): "
             "AN=%.4f° AW=%.4f° IE=%.4f° CA=%.4f° NPAE=%.4f° "
             "| tilt=%.3f° toward %.0f° | RMS=%.4f°",
@@ -733,7 +738,7 @@ class AltAzPointingModel:
             above = sum(1 for r in self._recent_residuals if r > threshold)
             if above >= _HEALTH_WINDOW:
                 if self._health != "degraded":
-                    _logger.warning(
+                    self._log.warning(
                         "Pointing model health DEGRADED: last %d residuals exceeded %.4f° threshold (3x RMS)",
                         _HEALTH_WINDOW,
                         threshold,
@@ -758,7 +763,7 @@ class AltAzPointingModel:
             self._live_residuals.clear()
             self._health = "unknown"
         self._save_state()
-        _logger.info("Pointing model reset")
+        self._log.info("Pointing model reset")
 
     # ------------------------------------------------------------------
     # Status / display
@@ -851,7 +856,7 @@ class AltAzPointingModel:
 
         with self._lock:
             if index < 0 or index >= len(self._points):
-                _logger.warning(
+                self._log.warning(
                     "replace_point: index %d out of range (have %d points) — ignoring",
                     index,
                     len(self._points),
@@ -860,7 +865,7 @@ class AltAzPointingModel:
             self._points[index] = (mount_az, mount_alt, d_az, d_alt)
             n_points = len(self._points)
 
-        _logger.info(
+        self._log.info(
             "Pointing model: replaced point #%d — az=%.1f° alt=%.1f° dAz=%.4f° dAlt=%.4f°",
             index + 1,
             mount_az,
@@ -984,7 +989,7 @@ class AltAzPointingModel:
             self._recent_residuals.clear()
             self._live_residuals.clear()
         self._save_state()
-        _logger.info(
+        self._log.info(
             "Pointing model restored: %d-term, %d points, RMS=%.4f°",
             self._n_terms,
             len(self._points),
@@ -1002,7 +1007,7 @@ class AltAzPointingModel:
             self._state_file.parent.mkdir(parents=True, exist_ok=True)
             self._state_file.write_text(json.dumps(self.to_dict()), encoding="utf-8")
         except Exception:
-            _logger.debug("Failed to persist pointing model state", exc_info=True)
+            self._log.debug("Failed to persist pointing model state", exc_info=True)
 
     def _load_state(self) -> None:
         if self._state_file is None:
@@ -1012,11 +1017,11 @@ class AltAzPointingModel:
         try:
             data = json.loads(self._state_file.read_text(encoding="utf-8"))
             self._apply_dict(data)
-            _logger.info(
+            self._log.info(
                 "Loaded pointing model: %d-term, %d points, RMS=%.4f°",
                 self._n_terms,
                 len(self._points),
                 self._rms_deg,
             )
         except Exception:
-            _logger.warning("Failed to load pointing model state", exc_info=True)
+            self._log.warning("Failed to load pointing model state", exc_info=True)

@@ -385,6 +385,40 @@ def test_post_config_reload_fails(client, mock_daemon):
     assert "reload failed" in resp.json()["message"]
 
 
+def test_post_config_rejects_duplicate_citra_sensor_id(client, mock_daemon):
+    """Two local sensors pointing at the same Citra telescope record is a silent
+    task-starvation bug in production. The save endpoint must reject it."""
+    resp = client.post(
+        "/api/config",
+        json={
+            "personal_access_token": "tok",
+            "sensors": [
+                {
+                    "id": "CoolScope",
+                    "type": "telescope",
+                    "adapter": "nina",
+                    "citra_sensor_id": "asdf",
+                    "adapter_settings": {"nina_api_path": "http://localhost:1888/v2/api"},
+                },
+                {
+                    "id": "LilScope",
+                    "type": "telescope",
+                    "adapter": "nina",
+                    "citra_sensor_id": "asdf",
+                    "adapter_settings": {"nina_api_path": "http://localhost:1888/v2/api"},
+                },
+            ],
+        },
+    )
+    assert resp.status_code == 400
+    body = resp.json()
+    assert "Duplicate citra_sensor_id" in body["error"]
+    assert "'asdf'" in body["error"]
+    assert "CoolScope" in body["error"]
+    assert "LilScope" in body["error"]
+    mock_daemon.reload_configuration.assert_not_called()
+
+
 # ---------------------------------------------------------------------------
 # Hardware reconnect
 # ---------------------------------------------------------------------------
@@ -439,6 +473,64 @@ def test_get_status_no_daemon():
     c = TestClient(app.app)
     resp = c.get("/api/status")
     assert resp.status_code == 200
+
+
+# ---------------------------------------------------------------------------
+# SPA catchall / client-side routes
+# ---------------------------------------------------------------------------
+
+
+def test_spa_catchall_serves_dashboard_for_sensor_path(client):
+    """Any /sensors/<id> path must return the dashboard SPA shell.
+
+    The client-side router in ``app.js`` reads ``location.pathname`` at
+    boot and paints the matching section, so a hard-refresh on
+    ``/sensors/CoolScope`` has to come back with the shell (not a 404).
+    """
+    resp = client.get("/sensors/CoolScope")
+    assert resp.status_code == 200
+    assert "CitraSense Dashboard" in resp.text
+
+
+def test_spa_catchall_serves_dashboard_for_static_sections(client):
+    """``/monitoring``, ``/analysis``, ``/config`` also land on the shell."""
+    for path in ("/monitoring", "/analysis", "/config"):
+        resp = client.get(path)
+        assert resp.status_code == 200, path
+        assert "CitraSense Dashboard" in resp.text
+
+
+def test_spa_catchall_does_not_swallow_api_404(client):
+    """The catchall must sit *after* the API routers so unknown /api/* still 404."""
+    resp = client.get("/api/nonexistent-endpoint")
+    assert resp.status_code == 404
+
+
+def test_spa_catchall_serves_dashboard_for_paths_starting_with_ws(client):
+    """Paths whose first segment merely *starts* with ``ws`` (e.g. ``/wstools``)
+    are not the websocket endpoint and must fall through to the SPA shell.
+
+    Regression for a bare ``"ws"`` entry in the backend-prefix list that
+    used ``startswith`` without a path-segment boundary, yanking any
+    ``/ws*`` path into a backend 404.
+    """
+    for path in ("/wstools", "/wssomething"):
+        resp = client.get(path)
+        assert resp.status_code == 200, path
+        assert "CitraSense Dashboard" in resp.text
+
+
+def test_spa_catchall_still_rejects_exact_ws_path(client):
+    """``/ws`` itself is the websocket upgrade endpoint; a plain GET should
+    still surface as a non-200 (the WS handler rejects non-upgrade GETs).
+
+    We don't assert a specific status code — Starlette's WebSocket route
+    can legitimately respond with 404 or 403 to a bare GET depending on
+    version — only that we're *not* silently painting the SPA shell
+    over the websocket route.
+    """
+    resp = client.get("/ws")
+    assert resp.status_code != 200 or "CitraSense Dashboard" not in resp.text
 
 
 # ---------------------------------------------------------------------------
@@ -965,6 +1057,24 @@ def test_add_sensor_config_duplicate(client, mock_daemon):
         json={"id": "scope-0", "type": "telescope", "adapter": "nina"},
     )
     assert resp.status_code == 409
+
+
+def test_add_sensor_config_rejects_duplicate_citra_sensor_id(client, mock_daemon):
+    """Adding a new sensor with an already-claimed Citra id must 409."""
+    mock_daemon.settings.sensors[0].citra_sensor_id = "asdf"
+    resp = client.post(
+        "/api/config/sensors",
+        json={
+            "id": "scope-new",
+            "type": "telescope",
+            "adapter": "nina",
+            "citra_sensor_id": "asdf",
+        },
+    )
+    assert resp.status_code == 409
+    body = resp.json()
+    assert "asdf" in body["error"]
+    assert "scope-0" in body["error"]
 
 
 def test_add_sensor_config_missing_id(client):

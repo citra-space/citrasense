@@ -30,6 +30,11 @@ if TYPE_CHECKING:
 
 TASK_POLL_INTERVAL_SECONDS = 15
 
+# Sentinel key used in ``_last_safety_action_by_key`` to record the
+# last action reported by a site-level safety check (one with no
+# ``sensor_id``).  Per-sensor checks key off their own ``sensor_id``.
+_SITE_SAFETY_KEY = "__site__"
+
 
 class TaskDispatcher:
     """Site-level task orchestration: poll, schedule, route, track."""
@@ -68,7 +73,13 @@ class TaskDispatcher:
         self._stop_event = threading.Event()
 
         # ── Safety / last action ───────────────────────────────────────
-        self._last_safety_action: object = None
+        #
+        # Per-sensor edge detection so that a QUEUE_STOP on sensor A
+        # doesn't suppress the "first-time" log / toast / corrective-action
+        # firing for a later QUEUE_STOP on sensor B.  Keyed by sensor_id
+        # for sensor-scoped checks and the ``_SITE_SAFETY_KEY`` sentinel
+        # for site-level checks.
+        self._last_safety_action_by_key: dict[str, SafetyAction] = {}
 
         # ── Lifetime stats ─────────────────────────────────────────────
         self._task_stats_lock = threading.Lock()
@@ -517,21 +528,21 @@ class TaskDispatcher:
 
     def task_runner(self) -> None:
         while not self._stop_event.is_set():
-            if self._evaluate_safety():
-                self._stop_event.wait(1)
-                continue
-
             for rt in self._runtimes.values():
                 rt.check_maintenance()
-
-            if self._last_safety_action in (SafetyAction.EMERGENCY, SafetyAction.QUEUE_STOP):
-                self._stop_event.wait(1)
-                continue
 
             try:
                 now = int(time.time())
                 completed = 0
                 for sid, rt in self._runtimes.items():
+                    # Per-runtime safety gate.  Evaluating scope-by-scope
+                    # means one sensor's cable unwind (or any other
+                    # sensor-scoped QUEUE_STOP/EMERGENCY) only freezes
+                    # itself — siblings keep pulling from their heaps.
+                    # Site-level checks still veto every sensor because
+                    # ``_checks_for(sensor_id)`` always includes them.
+                    if self._evaluate_safety_for(sid):
+                        continue
                     if rt.paused:
                         continue
                     if rt.is_maintenance_blocking():
@@ -589,33 +600,79 @@ class TaskDispatcher:
 
     # ── Safety ─────────────────────────────────────────────────────────
 
-    def _evaluate_safety(self) -> bool:
-        """Run safety monitor evaluation; return True if the loop should yield."""
+    def _evaluate_safety_for(self, sensor_id: str) -> bool:
+        """Per-runtime safety gate.  Returns True if *sensor_id* should yield.
+
+        Only site-level checks plus the one sensor's own checks participate,
+        so a ``QUEUE_STOP`` triggered on a different sensor (e.g. a cable
+        unwind in progress on a sibling scope) doesn't freeze this runtime.
+        Site-level checks (``DiskSpaceCheck``, ``TimeHealthCheck``,
+        ``OperatorStopCheck``) still veto every sensor because they carry
+        ``sensor_id=None`` and always pass the filter.
+        """
         if not self.safety_monitor:
             return False
 
         try:
-            action, triggered_check = self.safety_monitor.evaluate()
+            action, triggered_check = self.safety_monitor.evaluate(sensor_id=sensor_id)
         except Exception:
-            self.logger.error("Safety monitor evaluation failed — yielding task loop", exc_info=True)
+            self.logger.error("Safety monitor evaluation failed for %s — yielding", sensor_id, exc_info=True)
             return True
 
+        scope_key = self._safety_scope_key(triggered_check)
         if action == SafetyAction.EMERGENCY:
-            self._handle_emergency(triggered_check)
+            self._handle_emergency(triggered_check, scope_key)
         elif action == SafetyAction.QUEUE_STOP:
-            self._handle_queue_stop(triggered_check)
+            self._handle_queue_stop(triggered_check, scope_key)
 
-        self._last_safety_action = action
+        self._last_safety_action_by_key[scope_key] = action
         return action in (SafetyAction.EMERGENCY, SafetyAction.QUEUE_STOP)
 
-    def _handle_emergency(self, triggered_check: Any) -> None:
+    def _safety_scope_key(self, triggered_check: Any) -> str:
+        """Resolve the edge-detection key for a triggered check.
+
+        Sensor-scoped checks key off their ``sensor_id``; site-level checks
+        (and the "no trigger" ``SAFE`` case) share ``_SITE_SAFETY_KEY`` so
+        per-scope edge tracking stays meaningful without leaking into the
+        site bucket.
+        """
+        if triggered_check is None:
+            return _SITE_SAFETY_KEY
+        raw = getattr(triggered_check, "sensor_id", None)
+        if isinstance(raw, str) and raw:
+            return raw
+        return _SITE_SAFETY_KEY
+
+    def _handle_emergency(self, triggered_check: Any, scope_key: str) -> None:
         """Abort in-flight imaging and fire corrective action on EMERGENCY.
 
-        The corrective action and the operator toast only fire on the edge
-        (first cycle in which EMERGENCY is reported) so repeated evaluation
-        passes don't spam logs or try to re-execute the action.
+        Sensor-scoped triggers only abort and clear the triggering sensor;
+        site-level triggers keep the historical "blast every adapter"
+        behavior.  The corrective action and the operator toast only fire
+        on the edge (first cycle in which EMERGENCY is reported for this
+        scope) so repeated evaluation passes don't spam logs or retry the
+        action.
         """
-        for rt in self._runtimes.values():
+        trigger_sid = scope_key if scope_key != _SITE_SAFETY_KEY else None
+
+        # Edge-detect *before* any side effect.  Without this guard, a
+        # persistent EMERGENCY fires ``abort_slew()`` every poll cycle —
+        # and because ``_evaluate_safety_for`` is now called once per
+        # runtime per cycle, a site-level EMERGENCY in a fleet of N
+        # sensors would rain N×N abort calls per cycle on every adapter.
+        # Everything below (abort, queue-clear, logger.critical, toast,
+        # execute_action) belongs to the "we just transitioned into
+        # EMERGENCY" bucket, so it all sits under the same guard.
+        is_new = self._last_safety_action_by_key.get(scope_key) != SafetyAction.EMERGENCY
+        if not is_new:
+            return
+
+        if trigger_sid is not None:
+            rt = self._runtimes.get(trigger_sid)
+            runtimes_to_abort = [rt] if rt is not None else []
+        else:
+            runtimes_to_abort = list(self._runtimes.values())
+        for rt in runtimes_to_abort:
             adapter = getattr(rt, "hardware_adapter", None)
             if adapter:
                 try:
@@ -623,14 +680,8 @@ class TaskDispatcher:
                 except Exception:
                     pass
 
-        is_new = self._last_safety_action != SafetyAction.EMERGENCY
-        if not is_new:
-            return
-
-        self.clear_pending_tasks()
+        self.clear_pending_tasks(sensor_id=trigger_sid)
         trigger_name = triggered_check.name if triggered_check else "unknown"
-        trigger_sid_raw = getattr(triggered_check, "sensor_id", None) if triggered_check else None
-        trigger_sid = trigger_sid_raw if isinstance(trigger_sid_raw, str) and trigger_sid_raw else None
         self.logger.critical(
             "EMERGENCY — cancelled in-flight imaging (trigger: %s, sensor: %s)",
             trigger_name,
@@ -650,22 +701,18 @@ class TaskDispatcher:
             except Exception:
                 self.logger.error("Safety corrective action failed", exc_info=True)
 
-    def _handle_queue_stop(self, triggered_check: Any) -> None:
+    def _handle_queue_stop(self, triggered_check: Any, scope_key: str) -> None:
         """Fire the triggered check's corrective action once its queue is idle.
 
         Per-sensor isolation: a sensor-scoped check only waits for *its*
         acquisition queue to go idle before running its corrective action.
-        Site-level checks (``sensor_id is None``) still gate on every
-        runtime being idle so they don't yank hardware out from under
-        another rig mid-exposure.
+        Site-level checks still gate on every runtime being idle so they
+        don't yank hardware out from under another rig mid-exposure.
         """
         if triggered_check is None:
             return
 
-        scoped_sid_raw = getattr(triggered_check, "sensor_id", None)
-        # Only treat it as per-sensor if it's an actual string; MagicMock
-        # tests (and site-level checks) leave this as None.
-        scoped_sid = scoped_sid_raw if isinstance(scoped_sid_raw, str) else None
+        scoped_sid = scope_key if scope_key != _SITE_SAFETY_KEY else None
         if scoped_sid is not None:
             rt = self._runtimes.get(scoped_sid)
             idle = rt is not None and rt.acquisition_queue.is_idle()
@@ -674,7 +721,7 @@ class TaskDispatcher:
         if not idle:
             return
 
-        is_new = self._last_safety_action != SafetyAction.QUEUE_STOP
+        is_new = self._last_safety_action_by_key.get(scope_key) != SafetyAction.QUEUE_STOP
         if is_new:
             self.logger.warning(
                 "Executing safety action from %r (queue idle, scope=%s)",
@@ -689,17 +736,35 @@ class TaskDispatcher:
 
     # ── Pending task management ────────────────────────────────────────
 
-    def clear_pending_tasks(self) -> int:
-        """Cancel in-flight imaging on all runtimes and clear stage tracking.
+    def clear_pending_tasks(self, sensor_id: str | None = None) -> int:
+        """Cancel in-flight imaging and clear stage tracking.
+
+        Without a ``sensor_id``, every runtime's acquisition queue is
+        drained and ``self.imaging_tasks`` is wiped (site-level EMERGENCY
+        path).  With one, only that sensor's queue is drained and only its
+        known in-flight / scheduled task ids are pruned from
+        ``imaging_tasks`` so sibling sensors keep running.
 
         Returns the number of queued imaging items drained.
         """
         with self._stage_lock:
             cleared = 0
-            for rt in self._runtimes.values():
+            if sensor_id is None:
+                for rt in self._runtimes.values():
+                    cleared += rt.acquisition_queue.clear()
+                self.imaging_tasks.clear()
+                return cleared
+            rt = self._runtimes.get(sensor_id)
+            if rt is not None:
                 cleared += rt.acquisition_queue.clear()
-            self.imaging_tasks.clear()
-        return cleared
+            owned_ids: set[str] = set()
+            current_tid = self._current_task_ids.get(sensor_id)
+            if current_tid:
+                owned_ids.add(current_tid)
+            owned_ids.update(self._sensor_task_dicts.get(sensor_id, {}).keys())
+            for tid in owned_ids:
+                self.imaging_tasks.pop(tid, None)
+            return cleared
 
     def pause_sensor(self, sensor_id: str | None = None) -> None:
         """Pause one sensor (by id) or all sensors."""

@@ -428,6 +428,7 @@ class AbstractBaseTelescopeTask(ABC):
                 result=result,
                 pointing_report=self.pointing_report,
                 timing_info=self.timing_info,
+                sensor_id=self.runtime.sensor_id,
             )
             self._copy_annotated_preview(task_id, result)
         except Exception as e:

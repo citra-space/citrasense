@@ -391,6 +391,59 @@ class TestSensorCheckRegistration:
         names = [c["name"] for c in status["checks"]]
         assert "cable_wrap" in names
 
+    # ── Per-sensor scoping of evaluate() / is_action_safe() ────────────
+
+    def test_evaluate_scoped_excludes_other_sensor_checks(self):
+        """A sensor-scoped QUEUE_STOP must not escalate a sibling sensor's evaluation."""
+        monitor = SafetyMonitor(MagicMock(), [])
+        monitor.register_sensor_check("tel-a", _StubCheck("cable_wrap", SafetyAction.QUEUE_STOP))
+        monitor.register_sensor_check("tel-b", _StubCheck("cable_wrap", SafetyAction.SAFE))
+
+        action_a, _ = monitor.evaluate(sensor_id="tel-a")
+        action_b, _ = monitor.evaluate(sensor_id="tel-b")
+
+        assert action_a == SafetyAction.QUEUE_STOP
+        assert action_b == SafetyAction.SAFE
+
+    def test_evaluate_scoped_still_includes_site_level_checks(self):
+        """Site-level checks (sensor_id=None) always participate in scoped evaluation."""
+        monitor = SafetyMonitor(MagicMock(), [_StubCheck("disk", SafetyAction.EMERGENCY)])
+        monitor.register_sensor_check("tel-a", _StubCheck("cable_wrap", SafetyAction.SAFE))
+
+        action, triggered = monitor.evaluate(sensor_id="tel-a")
+
+        assert action == SafetyAction.EMERGENCY
+        assert triggered is not None
+        assert triggered.name == "disk"
+
+    def test_evaluate_unscoped_includes_every_sensor_check(self):
+        """Without a sensor_id the watchdog still sees every registered check."""
+        monitor = SafetyMonitor(MagicMock(), [])
+        monitor.register_sensor_check("tel-a", _StubCheck("cable_wrap", SafetyAction.QUEUE_STOP))
+        monitor.register_sensor_check("tel-b", _StubCheck("cable_wrap", SafetyAction.SAFE))
+
+        action, _ = monitor.evaluate()
+
+        assert action == SafetyAction.QUEUE_STOP
+
+    def test_is_action_safe_scoped_ignores_other_sensor_veto(self):
+        """One sensor's blocker must not veto sibling sensors' actions."""
+        monitor = SafetyMonitor(MagicMock(), [])
+        monitor.register_sensor_check("tel-a", _BlockingCheck())
+
+        # The owning sensor is still blocked...
+        assert monitor.is_action_safe("slew", sensor_id="tel-a") is False
+        # ...but the sibling sensor is free to slew.
+        assert monitor.is_action_safe("slew", sensor_id="tel-b") is True
+
+    def test_is_action_safe_scoped_still_respects_site_blocker(self):
+        """Site-level blockers (e.g. OperatorStop) still gate every sensor."""
+        monitor = SafetyMonitor(MagicMock(), [_BlockingCheck()])
+        monitor.register_sensor_check("tel-a", _StubCheck("cable_wrap"))
+
+        assert monitor.is_action_safe("slew", sensor_id="tel-a") is False
+        assert monitor.is_action_safe("capture", sensor_id="tel-a") is True
+
 
 class TestOperatorStopCheck:
     """Isolated tests for OperatorStopCheck as a standalone SafetyCheck."""

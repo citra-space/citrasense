@@ -125,7 +125,7 @@ class PipelineRegistry:
         }
 
         processor_names = [p.name for p in self.processors]
-        self.logger.info(
+        self.logger.debug(
             f"PipelineRegistry[{modality}] initialized with {len(self.processors)} processors: {processor_names}"
         )
 

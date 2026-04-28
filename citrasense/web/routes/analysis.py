@@ -40,8 +40,13 @@ def build_analysis_router(ctx: CitraSenseWebApp) -> APIRouter:
         filter_name: str | None = None,
         match_detail: str | None = None,
         upload_status: str | None = None,
+        sensor_id: str | None = None,
     ):
-        """Paginated, filterable list of completed tasks."""
+        """Paginated, filterable list of completed tasks.
+
+        When ``sensor_id`` is set, results are limited to tasks from that
+        sensor; omit it for the site-wide "All telescopes" view.
+        """
         if not ctx.daemon or not ctx.daemon.task_index:
             return JSONResponse({"tasks": [], "total": 0})
         return ctx.daemon.task_index.query_tasks(
@@ -58,6 +63,7 @@ def build_analysis_router(ctx: CitraSenseWebApp) -> APIRouter:
             filter_name=filter_name,
             match_detail=match_detail,
             upload_status=upload_status,
+            sensor_id=sensor_id,
         )
 
     @router.get("/analysis/tasks/{task_id}")
@@ -181,14 +187,18 @@ def build_analysis_router(ctx: CitraSenseWebApp) -> APIRouter:
         )
 
     @router.get("/analysis/stats")
-    async def analysis_stats(hours: int = 24):
-        """Aggregate statistics over the given time window."""
+    async def analysis_stats(hours: int = 24, sensor_id: str | None = None):
+        """Aggregate statistics over the given time window.
+
+        When ``sensor_id`` is set, stats (and the filter-name list) cover
+        only that sensor's tasks; omit it for a site-wide rollup.
+        """
         if not ctx.daemon or not ctx.daemon.task_index:
             from citrasense.analysis.task_index import empty_stats
 
             return {**empty_stats(), "filter_names": []}
-        stats = ctx.daemon.task_index.get_stats(hours=max(1, min(hours, 8760)))
-        stats["filter_names"] = ctx.daemon.task_index.get_distinct_filter_names()
+        stats = ctx.daemon.task_index.get_stats(hours=max(1, min(hours, 8760)), sensor_id=sensor_id)
+        stats["filter_names"] = ctx.daemon.task_index.get_distinct_filter_names(sensor_id=sensor_id)
         return stats
 
     @router.post("/analysis/tasks/{task_id}/reprocess")
@@ -363,16 +373,23 @@ def build_analysis_router(ctx: CitraSenseWebApp) -> APIRouter:
             "observations_count": len(sat_obs),
         }
 
-    @router.post("/analysis/autotune")
-    async def autotune(request: Request):
-        """Run SExtractor auto-tune as a background job."""
-        if not ctx.daemon:
-            return JSONResponse({"error": "Daemon not available"}, status_code=503)
+    def _start_autotune_job(
+        task_ids: list[str] | None,
+        num_bundles: int,
+        bundle_search_root: Path,
+    ) -> JSONResponse | dict:
+        """Discover bundles (optionally scoped to ``bundle_search_root``) and
+        submit the SExtractor auto-tune sweep as a background job.
 
-        body = await request.json() if await request.body() else {}
-        task_ids: list[str] | None = body.get("task_ids")
-        num_bundles = body.get("num_bundles", 10)
+        ``bundle_search_root`` is where ``_discover_bundles`` starts looking
+        when the caller doesn't hand us an explicit ``task_ids`` list.  Pass
+        ``processing_dir`` for the site-wide sweep or ``processing_dir /
+        sensor_id`` for a single-sensor sweep.
 
+        Returns a ``JSONResponse`` on error, or a job-descriptor dict on
+        success (same shape as the pre-existing autotune response).
+        """
+        assert ctx.daemon is not None
         processing_dir = ctx.daemon.settings.directories.processing_dir
 
         if task_ids:
@@ -384,7 +401,7 @@ def build_analysis_router(ctx: CitraSenseWebApp) -> APIRouter:
         else:
             from citrasense.autotune import _discover_bundles
 
-            debug_dirs = _discover_bundles(processing_dir, max_bundles=num_bundles)
+            debug_dirs = _discover_bundles(bundle_search_root, max_bundles=num_bundles)
 
         if not debug_dirs:
             return JSONResponse({"error": "No debug bundles found"}, status_code=404)
@@ -421,6 +438,61 @@ def build_analysis_router(ctx: CitraSenseWebApp) -> APIRouter:
 
         job = ctx.job_runner.submit(_autotune_worker, total=total_evals)
         return {"job_id": job.job_id, "total": total_evals, "bundles": len(debug_dirs)}
+
+    @router.post("/analysis/autotune")
+    async def autotune(request: Request):
+        """Site-wide SExtractor auto-tune (all sensors' bundles).
+
+        Kept as a fallback for single-sensor deployments and operator-driven
+        one-offs.  Multi-sensor deployments should prefer
+        ``POST /api/sensors/{sensor_id}/autotune/run`` so the sweep only
+        considers bundles from the target telescope.
+        """
+        if not ctx.daemon:
+            return JSONResponse({"error": "Daemon not available"}, status_code=503)
+
+        body = await request.json() if await request.body() else {}
+        task_ids: list[str] | None = body.get("task_ids")
+        num_bundles = body.get("num_bundles", 10)
+
+        return _start_autotune_job(
+            task_ids=task_ids,
+            num_bundles=num_bundles,
+            bundle_search_root=ctx.daemon.settings.directories.processing_dir,
+        )
+
+    @router.post("/sensors/{sensor_id}/autotune/run")
+    async def autotune_for_sensor(sensor_id: str, request: Request):
+        """Run the SExtractor auto-tune sweep scoped to one sensor's bundles.
+
+        Body: ``{"task_ids": [...]?, "num_bundles": N?}`` (same as the
+        site-level endpoint).  When ``task_ids`` is omitted, bundle
+        discovery is limited to ``processing_dir/<sensor_id>/`` so
+        the sweep only considers that telescope's output.
+        """
+        if not ctx.daemon:
+            return JSONResponse({"error": "Daemon not available"}, status_code=503)
+
+        if ctx.daemon.settings.get_sensor_config(sensor_id) is None:
+            return JSONResponse({"error": f"Unknown sensor_id: {sensor_id}"}, status_code=404)
+
+        body = await request.json() if await request.body() else {}
+        task_ids: list[str] | None = body.get("task_ids")
+        num_bundles = body.get("num_bundles", 10)
+
+        processing_dir = ctx.daemon.settings.directories.processing_dir
+        sensor_dir = processing_dir / sensor_id
+        if not sensor_dir.is_dir():
+            return JSONResponse(
+                {"error": f"No processing bundles yet for sensor {sensor_id!r}"},
+                status_code=404,
+            )
+
+        return _start_autotune_job(
+            task_ids=task_ids,
+            num_bundles=num_bundles,
+            bundle_search_root=sensor_dir,
+        )
 
     @router.post("/sensors/{sensor_id}/autotune/apply")
     async def apply_autotune(sensor_id: str, request: Request):

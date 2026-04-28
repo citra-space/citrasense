@@ -18,9 +18,20 @@ from typing import Any
 class SensorLoggerAdapter(logging.LoggerAdapter):
     """Inject ``sensor_id`` into every record's ``extra`` dict.
 
-    The adapter also prepends ``[sensor_id]`` to the formatted message so
-    log files (which don't know about the ``extra`` attribute) still show
-    which sensor emitted the message.
+    The sensor id is carried to consumers through two independent channels:
+
+    * **Logger name** — callers wrap the adapter around a logger whose name
+      already encodes the sensor id (e.g. ``SensorRuntime[CoolScope]`` or
+      ``DummyAdapter[CoolScope]``).  With the default format string
+      ``[%(name)s] %(message)s`` the console/file output therefore shows the
+      sensor id without any help from this adapter.
+    * **``extra['sensor_id']``** — :class:`~citrasense.logging.WebLogHandler`
+      reads this attribute off the record to drive the web log panel's
+      per-sensor filter.
+
+    The adapter used to also prepend ``[sensor_id]`` to the message body,
+    which duplicated the tag already present in the logger name.  That
+    prefix has been removed; the two channels above are sufficient.
     """
 
     def __init__(self, logger: logging.Logger, sensor_id: str) -> None:
@@ -30,7 +41,7 @@ class SensorLoggerAdapter(logging.LoggerAdapter):
     def process(self, msg: Any, kwargs: dict[str, Any]) -> tuple[Any, dict[str, Any]]:  # type: ignore[override]
         extra = kwargs.setdefault("extra", {})
         extra.setdefault("sensor_id", self._sensor_id)
-        return f"[{self._sensor_id}] {msg}", kwargs
+        return msg, kwargs
 
     def getChild(self, suffix: str) -> SensorLoggerAdapter:
         """Return an adapter wrapping a child logger with the same ``sensor_id``.

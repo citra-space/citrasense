@@ -39,8 +39,22 @@ class StatusCollector:
             sm = getattr(self.daemon, "sensor_manager", None)
             td = getattr(self.daemon, "task_dispatcher", None)
 
-            # Build per-sensor skeleton for ALL sensors
+            # Build per-sensor skeleton for ALL sensors.
+            #
+            # The ``SystemStatus`` instance lives for the lifetime of the web
+            # app (see ``CitraSenseWebApp.__init__``), so entries in
+            # ``status.sensors`` would otherwise accumulate forever — each
+            # poll only writes keys for *currently* registered sensors, but
+            # never deletes keys for ones that disappeared on a config
+            # reload.  Removing a telescope from the config and hitting
+            # "Save & Reload" would tear down the runtime on the backend
+            # but leave a ghost entry in ``status.sensors`` that the
+            # monitoring UI kept rendering.  Reseed the dict against the
+            # current sensor manager before re-populating.
             if sm:
+                live_ids = {s.sensor_id for s in sm}
+                for stale_id in list(status.sensors.keys() - live_ids):
+                    del status.sensors[stale_id]
                 for s in sm:
                     status.sensors[s.sensor_id] = {
                         "type": s.sensor_type,
