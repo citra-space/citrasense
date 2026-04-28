@@ -219,15 +219,30 @@ class StatusCollector:
             if td:
                 agg_proc_stats: dict[str, dict[str, Any]] = {}
                 for rt in td.iter_runtimes():
+                    # Telescope modality: PipelineRegistry lives on
+                    # ``processor_registry``.  Radar modality: the
+                    # purpose-built :class:`RadarPipeline` lives on
+                    # ``_radar_pipeline`` and exposes the same
+                    # ``get_processor_stats()`` shape so we can treat
+                    # the two uniformly here — keeps the UI's
+                    # ``status.pipeline_stats.processors`` single-
+                    # shape regardless of modality.
+                    sources: list[Any] = []
                     reg = getattr(rt, "processor_registry", None)
-                    if not reg:
-                        continue
-                    for name, stats in reg.get_processor_stats().items():
-                        cur = agg_proc_stats.setdefault(name, {"runs": 0, "failures": 0, "last_failure_reason": None})
-                        cur["runs"] += stats.get("runs", 0)
-                        cur["failures"] += stats.get("failures", 0)
-                        if stats.get("last_failure_reason"):
-                            cur["last_failure_reason"] = stats["last_failure_reason"]
+                    if reg is not None:
+                        sources.append(reg)
+                    radar_pipeline = getattr(rt, "_radar_pipeline", None)
+                    if radar_pipeline is not None:
+                        sources.append(radar_pipeline)
+                    for src in sources:
+                        for name, stats in src.get_processor_stats().items():
+                            cur = agg_proc_stats.setdefault(
+                                name, {"runs": 0, "failures": 0, "last_failure_reason": None}
+                            )
+                            cur["runs"] += stats.get("runs", 0)
+                            cur["failures"] += stats.get("failures", 0)
+                            if stats.get("last_failure_reason"):
+                                cur["last_failure_reason"] = stats["last_failure_reason"]
                 if agg_proc_stats:
                     if status.pipeline_stats is None:
                         status.pipeline_stats = {}
@@ -293,13 +308,27 @@ class StatusCollector:
                 sd["current_task"] = None
                 sd["processing_active"] = False
 
-            # Per-runtime pipeline stats
+            # Per-runtime pipeline stats.  For radar sensors we also
+            # flatten the :class:`RadarPipeline`'s per-processor stats
+            # into the same ``processors`` slot telescope sensors use —
+            # the detail template can then render filter/formatter/
+            # writer success bars with the same component as
+            # calibration/plate_solver/photometry.
             if s_runtime:
                 sd["pipeline_stats"] = {
                     "imaging": s_runtime.acquisition_queue.get_stats(),
                     "processing": s_runtime.processing_queue.get_stats(),
                     "uploading": s_runtime.upload_queue.get_stats(),
                 }
+                sensor_proc_stats: dict[str, dict[str, Any]] = {}
+                reg = getattr(s_runtime, "processor_registry", None)
+                if reg is not None:
+                    sensor_proc_stats.update(reg.get_processor_stats())
+                radar_pipeline = getattr(s_runtime, "_radar_pipeline", None)
+                if radar_pipeline is not None:
+                    sensor_proc_stats.update(radar_pipeline.get_processor_stats())
+                if sensor_proc_stats:
+                    sd["pipeline_stats"]["processors"] = sensor_proc_stats
                 sd["acquisition_idle"] = s_runtime.acquisition_queue.is_idle()
             else:
                 sd["pipeline_stats"] = None

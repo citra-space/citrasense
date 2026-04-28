@@ -19,6 +19,8 @@
          x-effect="
             if (configTab === 'calibration' && !($store.citrasense.configSensorStatus?.supports_direct_camera_control)) configTab = 'api';
             if (configTab === 'autofocus' && !($store.citrasense.configSensorStatus?.supports_autofocus)) configTab = 'hardware';
+            if ($store.citrasense.config?.sensors?.[$store.citrasense.configSensorIndex]?.type === 'passive_radar'
+                && ['observation','processing','autofocus','calibration','selftasking'].includes(configTab)) configTab = 'hardware';
          ">
         <form @submit.prevent="window.saveConfiguration($event)"
               @invalid.capture="window.handleInvalidConfigField($event, (tab) => configTab = tab)">
@@ -99,7 +101,8 @@
                                     </a>
                                     <a class="nav-link py-1 ps-3" href="#"
                                        :class="{ active: configTab === 'selftasking' && $store.citrasense.configSensorId === sensor.id }"
-                                       @click.prevent="selectSensorTab(sensor.id, 'selftasking')">
+                                       @click.prevent="selectSensorTab(sensor.id, 'selftasking')"
+                                       x-show="sensor.type !== 'passive_radar'">
                                         <i class="bi bi-robot me-2"></i>Robotic
                                     </a>
                                 </div>

@@ -236,6 +236,194 @@
                     the hardware-status header.
                 #}
 
+                {#
+                    Processing pipeline card.  Mirrors the Active Tasks
+                    pipeline on the telescope detail page — radar
+                    doesn't have per-task tracking (detections are
+                    transient events, not API tasks), so the boxes
+                    show queue-level stats and per-processor success
+                    bars rather than per-task lists.  Reads the same
+                    ``sensor.pipeline_stats`` shape the telescope
+                    template uses; the only difference is the
+                    processor names (``radar_detection_filter`` etc.).
+                #}
+                {#
+                    Counters explained:
+                    - ``processors.radar_detection_filter.runs`` is the
+                      true "how many observations did we see" number.
+                      It increments once per ``RadarPipeline.process()``,
+                      regardless of drop decisions downstream.
+                    - ``processors.radar_detection_filter.failures``
+                      is the drop count with the most useful
+                      ``last_failure_reason`` (SNR, not-tasked, …).
+                    - ``uploading.radar_observation_uploads`` is the
+                      radar-specific success counter; the telescope
+                      ``observation_uploads`` field never moves for
+                      radar sensors and was the source of a very
+                      confusing "0 submissions" UI bug.
+                #}
+                <div class="card bg-dark text-light border-secondary mb-3"
+                     x-data="{
+                         get _filter() { return sensor?.pipeline_stats?.processors?.radar_detection_filter; },
+                         get _formatter() { return sensor?.pipeline_stats?.processors?.radar_detection_formatter; },
+                         get _writer() { return sensor?.pipeline_stats?.processors?.radar_artifact_writer; },
+                         get _upload() { return sensor?.pipeline_stats?.uploading; },
+                         get observed() { return this._filter?.runs || 0; },
+                         get dropped() {
+                             return (this._filter?.failures || 0) + (this._formatter?.failures || 0);
+                         },
+                         get readyForUpload() {
+                             // Observations that passed both filter and formatter.
+                             const f = this._filter;
+                             const fm = this._formatter;
+                             if (!f) return 0;
+                             return (f.runs - f.failures) - (fm ? fm.failures : 0);
+                         },
+                         get uploaded() { return this._upload?.radar_observation_uploads || 0; },
+                         get uploadFailed() { return this._upload?.permanent_failures || 0; },
+                         get uploadRetries() {
+                             const u = this._upload;
+                             if (!u) return 0;
+                             return Math.max(0, (u.attempts || 0) - (u.successes || 0) - (u.permanent_failures || 0));
+                         },
+                     }">
+                    <div class="card-header d-flex align-items-center justify-content-between">
+                        <span><i class="bi bi-diagram-3-fill me-2"></i>Detection Pipeline</span>
+                        <span class="d-flex flex-wrap gap-3 text-muted small"
+                              x-show="observed > 0">
+                            <span>
+                                <i class="bi bi-funnel me-1 text-warning"></i>
+                                <span x-text="readyForUpload"></span>
+                                <span class="text-muted"> ready</span>
+                            </span>
+                            <span>
+                                <i class="bi bi-x-circle me-1 text-danger"></i>
+                                <span x-text="dropped"></span>
+                                <span class="text-muted"> dropped</span>
+                            </span>
+                            <span>
+                                <i class="bi bi-cloud-check me-1 text-success"></i>
+                                <span x-text="uploaded"></span>
+                                <span class="text-muted"> uploaded</span>
+                            </span>
+                        </span>
+                    </div>
+                    <div class="card-body">
+                        <div class="row g-3 align-items-stretch">
+                            <!-- Processing stage: per-processor success rows. -->
+                            <div class="col-md">
+                                <div class="border border-secondary rounded p-3 h-100">
+                                    <div class="d-flex align-items-center gap-2 mb-2">
+                                        <i class="bi bi-gear-fill text-warning"></i>
+                                        <h6 class="mb-0">Processing</h6>
+                                        <span class="text-muted small ms-auto font-monospace"
+                                              x-show="observed > 0"
+                                              x-text="readyForUpload + ' / ' + observed"></span>
+                                    </div>
+                                    <div class="small">
+                                        <template x-for="pname in ['radar_detection_filter', 'radar_detection_formatter', 'radar_artifact_writer']" :key="pname">
+                                            <div class="mb-2"
+                                                 x-data="{
+                                                     get _s() { return sensor?.pipeline_stats?.processors?.[pname]; },
+                                                     get _label() {
+                                                         if (pname === 'radar_detection_filter') return 'Filter';
+                                                         if (pname === 'radar_detection_formatter') return 'Formatter';
+                                                         if (pname === 'radar_artifact_writer') return 'Artifact writer';
+                                                         return pname;
+                                                     },
+                                                     get _okPct() {
+                                                         const s = this._s;
+                                                         if (!s || !s.runs) return 0;
+                                                         return ((s.runs - s.failures) / s.runs) * 100;
+                                                     },
+                                                     get _failPct() {
+                                                         const s = this._s;
+                                                         if (!s || !s.runs) return 0;
+                                                         return (s.failures / s.runs) * 100;
+                                                     },
+                                                 }">
+                                                <div class="d-flex align-items-center justify-content-between">
+                                                    <span class="text-muted" x-text="_label"></span>
+                                                    <span class="font-monospace text-muted"
+                                                          x-text="_s ? ((_s.runs - _s.failures) + ' / ' + _s.runs) : '— / —'"></span>
+                                                </div>
+                                                <div class="progress" style="height: 3px;" x-show="_s && _s.runs > 0">
+                                                    <div class="progress-bar bg-success" :style="`width: ${_okPct}%`"></div>
+                                                    <div class="progress-bar bg-danger" :style="`width: ${_failPct}%`"></div>
+                                                </div>
+                                                <template x-if="_s?.last_failure_reason">
+                                                    <div class="text-muted small text-truncate" :title="_s.last_failure_reason"
+                                                         x-text="'last drop: ' + _s.last_failure_reason"></div>
+                                                </template>
+                                            </div>
+                                        </template>
+                                    </div>
+                                </div>
+                            </div>
+                            <!-- Arrow (Processing → Submission). -->
+                            <div class="col-auto d-none d-md-flex align-items-center px-2">
+                                <i class="bi bi-arrow-right text-secondary" style="font-size: 1.5rem;"></i>
+                            </div>
+                            <!-- Submission (upload) stage. -->
+                            <div class="col-md">
+                                <div class="border border-secondary rounded p-3 h-100">
+                                    <div class="d-flex align-items-center gap-2 mb-2">
+                                        <i class="bi bi-cloud-upload-fill text-success"></i>
+                                        <h6 class="mb-0">Submission</h6>
+                                        <span class="text-muted small ms-auto font-monospace"
+                                              x-show="(_upload?.attempts || 0) > 0"
+                                              x-text="uploaded + ' / ' + (_upload?.attempts || 0)"></span>
+                                    </div>
+                                    <div class="progress mb-2" style="height: 4px; cursor: default;"
+                                         x-show="(uploaded + uploadFailed) > 0"
+                                         :title="uploaded + ' uploaded · ' + uploadFailed + ' failed'">
+                                        <div class="progress-bar bg-success" role="progressbar"
+                                             :style="`width: ${(() => { const t = uploaded + uploadFailed; return t > 0 ? (uploaded / t) * 100 : 0; })()}%`"></div>
+                                        <div class="progress-bar bg-danger" role="progressbar"
+                                             :style="`width: ${(() => { const t = uploaded + uploadFailed; return t > 0 ? (uploadFailed / t) * 100 : 0; })()}%`"></div>
+                                    </div>
+                                    <div class="small text-muted">
+                                        <div class="d-flex justify-content-between">
+                                            <span>Uploaded</span>
+                                            <span class="font-monospace" x-text="uploaded"></span>
+                                        </div>
+                                        <div class="d-flex justify-content-between">
+                                            <span>Failed</span>
+                                            <span class="font-monospace"
+                                                  :class="uploadFailed > 0 ? 'text-danger' : ''"
+                                                  x-text="uploadFailed"></span>
+                                        </div>
+                                        <div class="d-flex justify-content-between"
+                                             x-show="uploadRetries > 0">
+                                            <span>Retries</span>
+                                            <span class="font-monospace text-warning"
+                                                  x-text="uploadRetries"></span>
+                                        </div>
+                                    </div>
+                                    {#
+                                        Helpful nudges for two common dead-ends.
+                                        Shown only when we've observed activity
+                                        but nothing is getting uploaded.
+                                    #}
+                                    <template x-if="observed > 0 && uploaded === 0 && uploadFailed === 0 && readyForUpload === 0">
+                                        <div class="alert alert-warning py-2 mt-2 mb-0 small">
+                                            <i class="bi bi-info-circle me-1"></i>
+                                            All observations are being dropped before upload — check the Filter / Formatter rows for the reason.
+                                        </div>
+                                    </template>
+                                    <template x-if="observed > 0 && uploaded === 0 && uploadFailed > 0">
+                                        <div class="alert alert-danger py-2 mt-2 mb-0 small">
+                                            <i class="bi bi-exclamation-triangle me-1"></i>
+                                            All upload attempts are failing. If pr_sensor is running on the mock source, the backend will reject its
+                                            synthetic <code>mock-*</code> satellite UUIDs — expected behaviour; real sources only.
+                                        </div>
+                                    </template>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
                 <!-- Range-Doppler scatter card.  The shared partial fills
                      its container — we give it an explicit height so the
                      SVG has something to stretch into.  The empty-state
