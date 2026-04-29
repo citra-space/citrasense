@@ -14,11 +14,12 @@ let onLogMessage = null;
 let onTasksUpdate = null;
 let onPreviewImage = null;
 let onToastMessage = null;
+let onRadarDetection = null;
 let onConnectionChange = null;
 
 /**
  * Initialize WebSocket connection
- * @param {object} handlers - Event handlers {onStatus, onLog, onTasks, onPreview, onToast, onConnectionChange}
+ * @param {object} handlers - Event handlers {onStatus, onLog, onTasks, onPreview, onToast, onRadarDetection, onConnectionChange}
  */
 export function connectWebSocket(handlers = {}) {
     onStatusUpdate = handlers.onStatus || null;
@@ -26,6 +27,7 @@ export function connectWebSocket(handlers = {}) {
     onTasksUpdate = handlers.onTasks || null;
     onPreviewImage = handlers.onPreview || null;
     onToastMessage = handlers.onToast || null;
+    onRadarDetection = handlers.onRadarDetection || null;
     onConnectionChange = handlers.onConnectionChange || null;
 
     connect();
@@ -105,6 +107,8 @@ function connect() {
                 onPreviewImage(message.url, message.source, message.sensor_id);
             } else if (message.type === 'toast' && onToastMessage) {
                 onToastMessage(message.data);
+            } else if (message.type === 'radar_detection' && onRadarDetection) {
+                onRadarDetection(message.sensor_id, message.data);
             }
         };
 

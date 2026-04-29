@@ -23,6 +23,7 @@ from citrasense.web.routes.focuser import build_focuser_router
 from citrasense.web.routes.hardware import build_hardware_router
 from citrasense.web.routes.jobs import build_jobs_router
 from citrasense.web.routes.mount import build_mount_router
+from citrasense.web.routes.radar import build_radar_router
 from citrasense.web.routes.safety import build_safety_router
 from citrasense.web.routes.sensors import build_sensors_router
 from citrasense.web.routes.spa_fallback import build_spa_fallback_router
@@ -52,6 +53,7 @@ def build_all_routers() -> list[Callable[[CitraSenseWebApp], APIRouter]]:
         build_alignment_router,
         build_calibration_router,
         build_mount_router,
+        build_radar_router,
         build_sensors_router,
         build_safety_router,
         build_camera_router,
@@ -75,6 +77,7 @@ __all__ = [
     "build_hardware_router",
     "build_jobs_router",
     "build_mount_router",
+    "build_radar_router",
     "build_safety_router",
     "build_sensors_router",
     "build_spa_fallback_router",

@@ -1,21 +1,22 @@
 {#
-    Shared operational-switches cluster for a single sensor: Scheduling,
-    Processing, Robotic, Self-Tasking, the self-tasking-misconfigured
-    warning badge, and the per-sensor cable-wrap alert.
+    Telescope operational-switches cluster: Scheduling, Processing,
+    Robotic, Self-Tasking, the self-tasking-misconfigured warning badge,
+    and the per-sensor cable-wrap alert.
 
-    Included from both the dashboard hero card (``_monitoring.html``,
-    inside the card-body) and the sensor detail page header
-    (``_sensor_detail.html``).  Each parent wraps this partial's children
-    in its own outer flex container — the monitoring card uses a plain
-    ``d-flex flex-wrap``, the detail header adds ``ms-md-auto`` so the
-    cluster pushes right of the status pills on desktop.
+    Included from the telescope monitoring hero
+    (``_monitoring_sensor_telescope.html``) and the telescope sensor
+    detail body (``_sensor_detail_telescope.html``).  Each parent wraps
+    this partial's children in its own outer flex container — the
+    monitoring card uses a plain ``d-flex flex-wrap``, the detail header
+    adds ``ms-md-auto`` so the cluster pushes right of the status pills
+    on desktop.
 
-    Contract: the including template provides ``sensor`` in Alpine scope
-    (monitoring via ``x-for``, detail via a getter) and bindings use
-    ``sensor?.`` throughout so null ``sensor`` during initial load is
-    safe.  ``sensor.id`` without the null-safe operator is used only
-    inside ``@change`` handlers — those only fire on user interaction,
-    by which point ``sensor`` is guaranteed populated.
+    Contract: the including template provides a telescope ``sensor`` in
+    Alpine scope (monitoring via ``x-for``, detail via a getter) and
+    bindings use ``sensor?.`` throughout so null ``sensor`` during
+    initial load is safe.  ``sensor.id`` without the null-safe operator
+    is used only inside ``@change`` handlers — those only fire on user
+    interaction, by which point ``sensor`` is guaranteed populated.
 #}
 <div class="d-flex align-items-center gap-1"
      data-bs-toggle="tooltip" data-bs-theme="dark"

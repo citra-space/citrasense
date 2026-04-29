@@ -180,3 +180,16 @@ class CitraSenseWebApp:
         await self.connection_manager.broadcast(
             {"type": "toast", "data": {"message": message, "toast_type": toast_type, "id": toast_id}}
         )
+
+    async def broadcast_radar_detection(self, sensor_id: str, slim: dict):
+        """Broadcast a single passive-radar detection to all connected web clients.
+
+        The ``slim`` dict is the projection produced by
+        :meth:`PassiveRadarSensor._project_slim_dict` — enough for the
+        range-Doppler plot and tracks table, small enough to push at
+        10+ Hz without saturating the WebSocket.  Callers run on the
+        NATS asyncio thread; the thread-safe hand-off happens in
+        :meth:`CitraSenseWebServer.send_radar_detection` via
+        :func:`asyncio.run_coroutine_threadsafe`.
+        """
+        await self.connection_manager.broadcast({"type": "radar_detection", "sensor_id": sensor_id, "data": slim})

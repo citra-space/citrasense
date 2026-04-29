@@ -19,6 +19,8 @@
          x-effect="
             if (configTab === 'calibration' && !($store.citrasense.configSensorStatus?.supports_direct_camera_control)) configTab = 'api';
             if (configTab === 'autofocus' && !($store.citrasense.configSensorStatus?.supports_autofocus)) configTab = 'hardware';
+            if ($store.citrasense.config?.sensors?.[$store.citrasense.configSensorIndex]?.type === 'passive_radar'
+                && ['observation','processing','autofocus','calibration','selftasking'].includes(configTab)) configTab = 'hardware';
          ">
         <form @submit.prevent="window.saveConfiguration($event)"
               @invalid.capture="window.handleInvalidConfigField($event, (tab) => configTab = tab)">
@@ -56,7 +58,7 @@
                                    :class="{ 'fw-bold': $store.citrasense.configSensorId === sensor.id }">
                                     <span>
                                         <i class="bi me-2" :class="navSensorOpen[sensor.id] ? 'bi-chevron-down' : 'bi-chevron-right'" style="font-size: 0.7em;"></i>
-                                        <i class="bi bi-telescope me-1"></i>
+                                        <i class="bi me-1" :class="sensor.type === 'passive_radar' ? 'bi-broadcast' : 'bi-telescope'"></i>
                                         <span x-text="sensor.id"></span>
                                     </span>
                                     <button type="button"
@@ -75,29 +77,32 @@
                                     </a>
                                     <a class="nav-link py-1 ps-3" href="#"
                                        :class="{ active: configTab === 'observation' && $store.citrasense.configSensorId === sensor.id }"
-                                       @click.prevent="selectSensorTab(sensor.id, 'observation')">
+                                       @click.prevent="selectSensorTab(sensor.id, 'observation')"
+                                       x-show="sensor.type !== 'passive_radar'">
                                         <i class="bi bi-bullseye me-2"></i>Observation
                                     </a>
                                     <a class="nav-link py-1 ps-3" href="#"
                                        :class="{ active: configTab === 'processing' && $store.citrasense.configSensorId === sensor.id }"
-                                       @click.prevent="selectSensorTab(sensor.id, 'processing')">
+                                       @click.prevent="selectSensorTab(sensor.id, 'processing')"
+                                       x-show="sensor.type !== 'passive_radar'">
                                         <i class="bi bi-cpu me-2"></i>Processing
                                     </a>
                                     <a class="nav-link py-1 ps-3" href="#"
                                        :class="{ active: configTab === 'autofocus' && $store.citrasense.configSensorId === sensor.id }"
                                        @click.prevent="selectSensorTab(sensor.id, 'autofocus')"
-                                       x-show="$store.citrasense.status?.sensors?.[sensor.id]?.supports_autofocus !== false">
+                                       x-show="sensor.type !== 'passive_radar' && $store.citrasense.status?.sensors?.[sensor.id]?.supports_autofocus !== false">
                                         <i class="bi bi-arrows-expand me-2"></i>Autofocus
                                     </a>
                                     <a class="nav-link py-1 ps-3" href="#"
                                        :class="{ active: configTab === 'calibration' && $store.citrasense.configSensorId === sensor.id }"
                                        @click.prevent="selectSensorTab(sensor.id, 'calibration')"
-                                       x-show="$store.citrasense.status?.sensors?.[sensor.id]?.supports_direct_camera_control">
+                                       x-show="sensor.type !== 'passive_radar' && $store.citrasense.status?.sensors?.[sensor.id]?.supports_direct_camera_control">
                                         <i class="bi bi-grid-3x3 me-2"></i>Calibration
                                     </a>
                                     <a class="nav-link py-1 ps-3" href="#"
                                        :class="{ active: configTab === 'selftasking' && $store.citrasense.configSensorId === sensor.id }"
-                                       @click.prevent="selectSensorTab(sensor.id, 'selftasking')">
+                                       @click.prevent="selectSensorTab(sensor.id, 'selftasking')"
+                                       x-show="sensor.type !== 'passive_radar'">
                                         <i class="bi bi-robot me-2"></i>Robotic
                                     </a>
                                 </div>
@@ -108,6 +113,7 @@
                         <div class="mt-2" x-data="{
                             showAddForm: false,
                             newId: '',
+                            newType: 'telescope',
                             newAdapter: '',
                             addError: '',
                             adding: false,
@@ -115,19 +121,28 @@
                                 this.addError = '';
                                 const id = this.newId.trim();
                                 if (!id) { this.addError = 'Sensor ID is required'; return; }
+                                // Only telescopes need a hardware adapter; streaming
+                                // sensors (passive_radar) carry all their per-sensor
+                                // config in adapter_settings.
+                                const adapter = this.newType === 'telescope' ? this.newAdapter : '';
+                                if (this.newType === 'telescope' && !adapter) {
+                                    this.addError = 'Select a hardware adapter';
+                                    return;
+                                }
                                 this.adding = true;
                                 try {
                                     const resp = await fetch('/api/config/sensors', {
                                         method: 'POST',
                                         headers: { 'Content-Type': 'application/json' },
-                                        body: JSON.stringify({ id, type: 'telescope', adapter: this.newAdapter })
+                                        body: JSON.stringify({ id, type: this.newType, adapter })
                                     });
                                     const data = await resp.json();
                                     if (!resp.ok) { this.addError = data.error || 'Failed to add sensor'; return; }
                                     $store.citrasense.config.sensors.push(data.sensor);
                                     $store.citrasense.configSensorId = id;
-                                    $store.citrasense.savedAdapters[id] = this.newAdapter;
+                                    $store.citrasense.savedAdapters[id] = adapter;
                                     this.newId = '';
+                                    this.newType = 'telescope';
                                     this.newAdapter = '';
                                     this.showAddForm = false;
                                 } catch (e) {
@@ -148,6 +163,13 @@
                                            x-model="newId">
                                 </div>
                                 <div class="mb-2">
+                                    <select class="form-select form-select-sm" x-model="newType">
+                                        <template x-for="t in ($store.citrasense.sensorTypes || [])" :key="t.value">
+                                            <option :value="t.value" x-text="t.label"></option>
+                                        </template>
+                                    </select>
+                                </div>
+                                <div class="mb-2" x-show="newType === 'telescope'">
                                     <select class="form-select form-select-sm" x-model="newAdapter">
                                         <option value="">-- adapter --</option>
                                         <template x-for="a in ($store.citrasense.hardwareAdapters || [])" :key="a.value">
@@ -224,10 +246,12 @@
                             const sid = $store.citrasense.configSensorId;
                             const idx = $store.citrasense.configSensorIndex;
                             const sc  = $store.citrasense.config?.sensors?.[idx];
-                            if (sc?.adapter) {
+                            if (sc) {
                                 import('../static/config.js').then(m => {
-                                    m.loadAdapterSchema(sc.adapter, sc.adapter_settings || {});
-                                    m.loadFilterConfig();
+                                    m.loadSensorSchema(sc);
+                                    if ((sc.type || 'telescope') === 'telescope') {
+                                        m.loadFilterConfig();
+                                    }
                                 });
                             }
                          ">

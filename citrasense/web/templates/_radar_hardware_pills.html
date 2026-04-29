@@ -1,0 +1,36 @@
+{#
+    Passive-radar hardware-status pills: single colored engine-state
+    pill driven by ``sensor.radar.state`` plus a NATS-reachability pill
+    driven by ``sensor.radar.health.nats_connected``.
+
+    Included from the radar monitoring hero
+    (``_monitoring_sensor_radar.html``) and the radar sensor detail
+    body (``_sensor_detail_radar.html``).
+
+    Contract: same as the telescope pills — the including template
+    provides an Alpine ``sensor`` in scope via ``x-for`` (monitoring)
+    or a getter (detail).  State → Bootstrap colour mapping mirrors
+    ``stateBadgeClass`` in ``_sensor_detail_radar.html``.
+#}
+<span class="badge rounded-pill"
+      :class="(() => {
+          const s = sensor?.radar?.state;
+          if (s === 'running') return 'bg-success';
+          if (s === 'idle') return 'bg-secondary';
+          if (s === 'error') return 'bg-danger';
+          if (s === 'offline') return 'bg-warning text-dark';
+          if (sensor?.radar?.is_stale) return 'bg-warning text-dark';
+          return 'bg-secondary';
+      })()"
+      data-bs-toggle="tooltip" data-bs-theme="dark"
+      :data-bs-title="(() => {
+          const s = sensor?.radar?.state || 'unknown';
+          const age = sensor?.radar?.seconds_since_status;
+          if (age == null) return 'pr_sensor state: ' + s;
+          return 'pr_sensor state: ' + s + ' (last heartbeat ' + Number(age).toFixed(1) + 's ago)';
+      })()"
+      x-text="sensor?.radar?.state || 'unknown'"></span>
+<span class="badge rounded-pill"
+      :class="sensor?.radar?.health?.nats_connected === true ? 'bg-success' : (sensor?.radar?.health?.nats_connected === false ? 'bg-danger' : 'bg-secondary')"
+      data-bs-toggle="tooltip" data-bs-theme="dark"
+      :data-bs-title="sensor?.radar?.health?.nats_connected === true ? 'pr_sensor reports NATS connected' : (sensor?.radar?.health?.nats_connected === false ? 'pr_sensor reports NATS disconnected' : 'NATS connectivity unknown')">NATS</span>

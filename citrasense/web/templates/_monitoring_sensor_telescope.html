@@ -1,0 +1,136 @@
+{#
+    Telescope variant of the monitoring-card body: operational switches
+    row + hero panel (16:9 preview + stats column).  Dispatched from
+    ``_monitoring.html`` via ``<template x-if="sensor.type === 'telescope'">``
+    inside the card-body.
+
+    Contract: the including template provides an Alpine ``sensor`` in
+    scope via ``x-for``.  ``$store.citrasense`` must be available (it
+    always is — the outer dashboard shell registers it on init).
+#}
+<div class="d-flex flex-wrap align-items-center gap-2 gap-md-3">
+    {% include "_telescope_switches.html" %}
+</div>
+
+{# ─── Hero panel: 16:9 preview + stats column ───
+   Always rendered now that every sensor is a dashboard card and the
+   deep controls live on /sensors/<id>.  Tells the operator at a glance
+   what this scope is doing right now. #}
+<div class="mt-3"
+     x-data="{
+         get _preview() { return $store.citrasense.previewDataUrls?.[sensor.id]; },
+         get _activeTask() {
+             const stages = ['imaging', 'processing', 'uploading'];
+             for (const s of stages) {
+                 const list = sensor?.tasks_by_stage?.[s];
+                 if (list?.length) return { stage: s, ...list[0] };
+             }
+             return null;
+         },
+         get _nextTask() {
+             const sid = sensor.api_id || sensor.id;
+             const upcoming = ($store.citrasense.tasks || [])
+                 .filter(t => t.sensor_id === sid)
+                 .sort((a, b) => new Date(a.start_time) - new Date(b.start_time));
+             return upcoming[0] || null;
+         },
+         get _countdown() {
+             if (!this._nextTask) return '';
+             const now = $store.citrasense.now || Date.now();
+             const diff = Math.max(0, Math.floor((new Date(this._nextTask.start_time) - now) / 1000));
+             if (diff <= 0) return 'Now';
+             if (diff < 60) return diff + 's';
+             if (diff < 3600) return Math.floor(diff / 60) + 'm ' + (diff % 60) + 's';
+             return Math.floor(diff / 3600) + 'h ' + Math.floor((diff % 3600) / 60) + 'm';
+         },
+         get _scheduledCount() {
+             const sid = sensor.api_id || sensor.id;
+             return ($store.citrasense.tasks || []).filter(t => t.sensor_id === sid).length;
+         }
+     }">
+    <div class="row g-2">
+        <!-- Hero preview -->
+        <div class="col-md-7">
+            <div class="sensor-hero-preview position-relative rounded overflow-hidden">
+                <template x-if="_preview">
+                    <img :src="_preview" alt="Latest preview"
+                         class="w-100 h-100"
+                         style="object-fit: cover; cursor: pointer;"
+                         @click.stop="$store.citrasense.activePreviewSensorId = sensor.id; $dispatch('open-preview-modal')"
+                         title="Click to enlarge">
+                </template>
+                <template x-if="!_preview">
+                    <div class="d-flex flex-column align-items-center justify-content-center text-muted h-100">
+                        <i class="bi bi-camera" style="font-size: 2rem;"></i>
+                        <small class="mt-1">No preview yet</small>
+                    </div>
+                </template>
+            </div>
+        </div>
+        <!-- Stats column -->
+        <div class="col-md-5 d-flex flex-column gap-2">
+            <!-- Active or next task -->
+            <div>
+                <template x-if="_activeTask">
+                    <div>
+                        <span class="badge rounded-pill me-1"
+                              :class="_activeTask.stage === 'imaging' ? 'bg-primary' : _activeTask.stage === 'processing' ? 'bg-warning text-dark' : 'bg-success'"
+                              x-text="_activeTask.stage.charAt(0).toUpperCase() + _activeTask.stage.slice(1)"></span>
+                        <span class="fw-semibold" x-text="_activeTask.target_name || _activeTask.task_id"></span>
+                        <div class="text-muted small text-truncate" x-show="_activeTask.status_msg" x-text="_activeTask.status_msg"></div>
+                    </div>
+                </template>
+                <template x-if="!_activeTask && _nextTask">
+                    <div class="small">
+                        <i class="bi bi-clock me-1 text-muted"></i>
+                        <span class="text-muted">Next in </span>
+                        <span class="fw-semibold" x-text="_countdown"></span>
+                        <div class="text-muted text-truncate" x-text="_nextTask.target || (_nextTask.id ? _nextTask.id.substring(0, 8) : '')"></div>
+                    </div>
+                </template>
+                <template x-if="!_activeTask && !_nextTask">
+                    <div class="text-muted small">
+                        <i class="bi bi-dash-circle me-1"></i>Idle
+                    </div>
+                </template>
+            </div>
+            <!-- Pointing RA/Dec -->
+            <template x-if="sensor.telescope_ra != null && sensor.telescope_dec != null">
+                <div class="text-muted font-monospace small">
+                    <i class="bi bi-crosshair me-1"></i>
+                    <span x-text="'RA ' + sensor.telescope_ra.toFixed(2) + '\u00b0  Dec ' + sensor.telescope_dec.toFixed(2) + '\u00b0'"></span>
+                </div>
+            </template>
+            <!-- Pointing model health (only when present) -->
+            <template x-if="sensor.pointing_model?.state">
+                <div class="small">
+                    <span class="badge rounded-pill"
+                          :class="sensor.pointing_model.health === 'degraded' ? 'bg-warning text-dark' : sensor.pointing_model.health === 'good' ? 'bg-success' : 'bg-secondary'">
+                        <i class="bi bi-compass me-1"></i>
+                        <span x-text="sensor.pointing_model.state"></span>
+                    </span>
+                </div>
+            </template>
+            <!-- Pipeline stage buckets -->
+            <div class="d-flex gap-3 small">
+                <span :class="(sensor?.tasks_by_stage?.imaging?.length || 0) > 0 ? 'text-primary' : 'text-muted'"
+                      data-bs-toggle="tooltip" data-bs-theme="dark" title="Imaging">
+                    <i class="bi bi-camera-fill me-1"></i><span x-text="sensor?.tasks_by_stage?.imaging?.length || 0"></span>
+                </span>
+                <span :class="(sensor?.tasks_by_stage?.processing?.length || 0) > 0 ? 'text-warning' : 'text-muted'"
+                      data-bs-toggle="tooltip" data-bs-theme="dark" title="Processing">
+                    <i class="bi bi-cpu-fill me-1"></i><span x-text="sensor?.tasks_by_stage?.processing?.length || 0"></span>
+                </span>
+                <span :class="(sensor?.tasks_by_stage?.uploading?.length || 0) > 0 ? 'text-success' : 'text-muted'"
+                      data-bs-toggle="tooltip" data-bs-theme="dark" title="Uploading">
+                    <i class="bi bi-cloud-arrow-up-fill me-1"></i><span x-text="sensor?.tasks_by_stage?.uploading?.length || 0"></span>
+                </span>
+            </div>
+            <!-- Scheduled queue -->
+            <div class="text-muted small">
+                <i class="bi bi-calendar-event me-1"></i>
+                <span x-text="_scheduledCount + (_scheduledCount === 1 ? ' scheduled task' : ' scheduled tasks')"></span>
+            </div>
+        </div>
+    </div>
+</div>

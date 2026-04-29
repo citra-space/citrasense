@@ -9,7 +9,17 @@ from fastapi import APIRouter
 from fastapi.responses import JSONResponse
 
 from citrasense.logging import CITRASENSE_LOGGER
+from citrasense.sensors.sensor_registry import get_sensor_class
+from citrasense.sensors.sensor_registry import list_sensors as _list_sensor_registry
 from citrasense.settings.citrasense_settings import SensorConfig
+
+#: Friendly labels for sensor-type dropdowns. Keys must match
+#: :mod:`citrasense.sensors.sensor_registry`. Unknown sensor types fall
+#: back to their registry key.
+_SENSOR_TYPE_LABELS: dict[str, str] = {
+    "telescope": "Telescope",
+    "passive_radar": "Passive radar",
+}
 
 if TYPE_CHECKING:
     from citrasense.web.app import CitraSenseWebApp
@@ -90,6 +100,69 @@ def build_sensors_router(ctx: CitraSenseWebApp) -> APIRouter:
             CITRASENSE_LOGGER.error("Sensor %s disconnect error: %s", sensor_id, e, exc_info=True)
             return JSONResponse({"error": str(e)}, status_code=500)
 
+    # ── Sensor-type discovery (registry metadata, class-level schema) ─
+
+    @router.get("/api/sensor-types")
+    async def list_sensor_types():
+        """Return all registered sensor types for the Add Sensor picker.
+
+        Shape: ``{"types": [{value, label, description}, ...]}``. ``value``
+        is the registry key that the frontend sends back in
+        ``POST /api/config/sensors``.
+        """
+        types = []
+        for key, info in _list_sensor_registry().items():
+            types.append(
+                {
+                    "value": key,
+                    "label": _SENSOR_TYPE_LABELS.get(key, key),
+                    "description": info.get("description", ""),
+                }
+            )
+        return {"types": types}
+
+    @router.get("/api/sensor-types/{sensor_type}/schema")
+    async def get_sensor_type_schema(sensor_type: str):
+        """Class-level settings schema for a sensor type.
+
+        Used by the Hardware config tab when ``sensor.type`` is
+        something other than ``telescope`` (telescope schemas are
+        adapter-specific and live behind
+        ``/api/hardware-adapters/{adapter}/schema``). The class must
+        expose a ``build_settings_schema()`` classmethod returning the
+        same :class:`SettingSchemaEntry` shape the hardware-adapter
+        schema endpoint uses, so the existing form renderer can drive
+        the returned fields unchanged.
+        """
+        try:
+            cls = get_sensor_class(sensor_type)
+        except ValueError as exc:
+            return JSONResponse({"error": str(exc)}, status_code=404)
+        except ImportError as exc:
+            CITRASENSE_LOGGER.error("Failed to import sensor type %s: %s", sensor_type, exc)
+            return JSONResponse(
+                {"error": f"Sensor type {sensor_type!r} is not installed: {exc}"},
+                status_code=500,
+            )
+
+        schema_fn = getattr(cls, "build_settings_schema", None)
+        if not callable(schema_fn):
+            return JSONResponse(
+                {
+                    "error": (
+                        f"Sensor type {sensor_type!r} does not expose a class-level schema — "
+                        "use the per-adapter schema endpoint instead."
+                    )
+                },
+                status_code=400,
+            )
+        try:
+            schema = schema_fn()
+        except Exception as exc:
+            CITRASENSE_LOGGER.error("Error building schema for %s: %s", sensor_type, exc, exc_info=True)
+            return JSONResponse({"error": str(exc)}, status_code=500)
+        return {"schema": schema}
+
     # ── Config-level sensor CRUD (persists to settings file) ──────
 
     @router.get("/api/config/sensors")
@@ -123,6 +196,18 @@ def build_sensors_router(ctx: CitraSenseWebApp) -> APIRouter:
                 {"error": "Invalid sensor id — use alphanumeric, dots, hyphens, underscores (max 63 chars)"},
                 status_code=400,
             )
+        known_types = set(_list_sensor_registry().keys())
+        if sensor_type not in known_types:
+            valid = ", ".join(sorted(known_types))
+            return JSONResponse(
+                {"error": f"Unknown sensor type {sensor_type!r}. Valid options: {valid}"},
+                status_code=400,
+            )
+        # Only telescopes use the hardware-adapter registry today —
+        # streaming sensors (passive_radar) carry all their per-sensor
+        # config in ``adapter_settings`` and keep ``adapter`` empty.
+        if sensor_type == "telescope" and not adapter:
+            return JSONResponse({"error": "Telescope sensors require an adapter"}, status_code=400)
         if ctx.daemon.settings.get_sensor_config(sensor_id):
             return JSONResponse({"error": f"Sensor '{sensor_id}' already exists"}, status_code=409)
 

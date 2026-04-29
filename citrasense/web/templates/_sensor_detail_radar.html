@@ -1,0 +1,618 @@
+{#
+    Passive-radar variant of the sensor detail page.  Dispatched from
+    ``_sensor_detail.html`` via ``<template x-if="sensor?.type === 'passive_radar'">``.
+    Owns its own page header (name + type + radar pills — no
+    operational switches, since Scheduling/Robotic/Self-Tasking don't
+    map to a streaming receiver).
+#}
+<div>
+    <div class="container my-3">
+        <div class="d-flex align-items-center flex-wrap gap-2 mb-3">
+            <h1 class="h4 mb-0" x-text="sensor?.name || 'Sensor'"></h1>
+            <span class="badge bg-secondary rounded-pill" x-text="sensor?.type"></span>
+            {% include "_radar_hardware_pills.html" %}
+        </div>
+
+            <div x-data="{
+                radar: null,
+                radarLoading: false,
+                lastError: null,
+                pingInFlight: false,
+                lastPingAt: null,
+                lastPingRttMs: null,
+                lastPingReply: null,
+                stateBadgeClass(state) {
+                    if (state === 'running') return 'bg-success';
+                    if (state === 'idle') return 'bg-secondary';
+                    if (state === 'error') return 'bg-danger';
+                    if (state === 'offline') return 'bg-warning text-dark';
+                    return 'bg-secondary';
+                },
+                formatUptime(sec) {
+                    const n = Number(sec);
+                    if (!Number.isFinite(n) || n < 0) return '—';
+                    if (n < 60) return n.toFixed(0) + 's';
+                    if (n < 3600) return Math.floor(n / 60) + 'm ' + Math.floor(n % 60) + 's';
+                    const h = Math.floor(n / 3600);
+                    const m = Math.floor((n % 3600) / 60);
+                    return h + 'h ' + m + 'm';
+                },
+                async refresh() {
+                    this.radarLoading = true;
+                    try {
+                        const url = this.$store.citrasense.sensorApiBaseFor(sensor.id) + '/radar/status';
+                        const r = await fetch(url);
+                        if (r.ok) { this.radar = await r.json(); }
+                    } catch (e) { this.lastError = String(e); }
+                    finally { this.radarLoading = false; }
+                },
+                _commandLabel(action, body) {
+                    if (action === 'start') return (body && body.mock) ? 'Start mock' : 'Start';
+                    if (action === 'stop') return 'Stop';
+                    if (action === 'ping') return 'Ping';
+                    if (action === 'config') return 'Push config';
+                    return action;
+                },
+                async radarControl(action, body) {
+                    this.lastError = null;
+                    if (action === 'ping') this.pingInFlight = true;
+                    const sentAt = performance.now();
+                    const label = this._commandLabel(action, body);
+                    const toastId = 'radar-' + sensor.id + '-' + action;
+                    try {
+                        const url = this.$store.citrasense.sensorApiBaseFor(sensor.id) + '/radar/' + action;
+                        const r = await fetch(url, { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body || {}) });
+                        const data = await r.json();
+                        if (!r.ok || data.error) {
+                            this.lastError = data.error || ('HTTP ' + r.status);
+                            window.showToast?.(label + ' failed: ' + this.lastError, 'danger', { id: toastId });
+                        } else if (data.ok === false) {
+                            this.lastError = data.error || 'pr_sensor rejected command';
+                            window.showToast?.(label + ' rejected by pr_sensor: ' + this.lastError, 'danger', { id: toastId });
+                        } else if (action === 'ping') {
+                            this.lastPingAt = Date.now();
+                            this.lastPingRttMs = performance.now() - sentAt;
+                            this.lastPingReply = data;
+                            const rtt = this.lastPingRttMs.toFixed(0);
+                            const st = data?.state ? ' · pr_sensor ' + data.state : '';
+                            window.showToast?.('Pong · ' + rtt + ' ms' + st, 'success', { id: toastId });
+                        } else {
+                            window.showToast?.(label + ' acknowledged', 'success', { id: toastId });
+                        }
+                    } catch (e) {
+                        this.lastError = String(e);
+                        window.showToast?.(label + ' failed: ' + this.lastError, 'danger', { id: toastId });
+                    } finally {
+                        if (action === 'ping') this.pingInFlight = false;
+                        this.refresh();
+                    }
+                },
+                formatPingAge(ts) {
+                    if (!ts) return '';
+                    const age = (Date.now() - ts) / 1000;
+                    if (age < 2) return 'just now';
+                    if (age < 60) return age.toFixed(0) + 's ago';
+                    return Math.floor(age / 60) + 'm ago';
+                },
+                init() {
+                    this.refresh();
+                    this._timer = setInterval(() => this.refresh(), 5000);
+                },
+                destroy() { if (this._timer) clearInterval(this._timer); },
+            }" x-init="init()">
+
+                <!-- Header row: state + controls -->
+                <div class="card bg-dark text-light border-secondary mb-3">
+                    <div class="card-header d-flex flex-wrap align-items-center gap-2">
+                        <i class="bi bi-broadcast me-1"></i>
+                        <span class="fw-semibold">Passive Radar Engine</span>
+                        <span class="badge ms-2"
+                              :class="stateBadgeClass(radar?.state)"
+                              x-text="radar ? (radar.state || 'unknown') : '…'"></span>
+                        <template x-if="radar?.is_stale">
+                            <span class="badge bg-warning text-dark" title="No status heartbeat from pr_sensor">stale</span>
+                        </template>
+                        <div class="ms-md-auto d-flex flex-wrap gap-2">
+                            <button class="btn btn-sm btn-outline-success" @click="radarControl('start', {mock: false})">
+                                <i class="bi bi-play-fill"></i> Start
+                            </button>
+                            <button class="btn btn-sm btn-outline-warning" @click="radarControl('start', {mock: true})"
+                                    title="Start with synthetic source for bench testing">
+                                <i class="bi bi-play"></i> Start mock
+                            </button>
+                            <button class="btn btn-sm btn-outline-danger" @click="radarControl('stop')">
+                                <i class="bi bi-stop-fill"></i> Stop
+                            </button>
+                            <button class="btn btn-sm btn-outline-info" @click="radarControl('config', {persist: false})">
+                                <i class="bi bi-sliders"></i> Push config
+                            </button>
+                            <button class="btn btn-sm btn-outline-secondary"
+                                    @click="radarControl('ping')"
+                                    :disabled="pingInFlight"
+                                    :title="lastPingAt ? ('Last pong ' + formatPingAge(lastPingAt) + (lastPingRttMs != null ? ' · ' + lastPingRttMs.toFixed(0) + ' ms RTT' : '')) : 'Round-trip NATS request/reply to pr_sensor'">
+                                <template x-if="!pingInFlight">
+                                    <span><i class="bi bi-hdd-network"></i> Ping</span>
+                                </template>
+                                <template x-if="pingInFlight">
+                                    <span><span class="spinner-border spinner-border-sm me-1" role="status"></span>Pinging…</span>
+                                </template>
+                            </button>
+                            <template x-if="radar?.pr_control_url">
+                                <a :href="radar.pr_control_url" target="_blank" rel="noopener" class="btn btn-sm btn-outline-light">
+                                    <i class="bi bi-box-arrow-up-right"></i> pr_control
+                                </a>
+                            </template>
+                        </div>
+                    </div>
+                    <div class="card-body">
+                        <template x-if="lastError">
+                            <div class="alert alert-danger py-2 mb-2" x-text="'Last error: ' + lastError"></div>
+                        </template>
+                        <template x-if="lastPingAt">
+                            <div class="small text-muted mb-2">
+                                <i class="bi bi-check-circle-fill text-success me-1"></i>
+                                <span>Pong received</span>
+                                <span class="text-muted" x-text="formatPingAge(lastPingAt)"></span>
+                                <template x-if="lastPingRttMs != null">
+                                    <span class="font-monospace text-muted">· <span x-text="lastPingRttMs.toFixed(0) + ' ms'"></span></span>
+                                </template>
+                                <template x-if="lastPingReply?.state">
+                                    <span class="text-muted">· pr_sensor state <span class="font-monospace" x-text="lastPingReply.state"></span></span>
+                                </template>
+                            </div>
+                        </template>
+                        <div class="row g-2">
+                            <div class="col-md-4">
+                                <div class="fw-semibold">Radar sensor id</div>
+                                <div x-text="radar?.radar_sensor_id ?? sensor.id"></div>
+                            </div>
+                            <div class="col-md-4">
+                                <div class="fw-semibold">Streaming</div>
+                                <div x-text="radar?.streaming ? 'yes' : 'no'"></div>
+                            </div>
+                            <div class="col-md-4">
+                                <div class="fw-semibold">Last status age</div>
+                                <div>
+                                    <span x-text="radar?.seconds_since_status != null ? (Number(radar.seconds_since_status).toFixed(1) + 's') : '—'"></span>
+                                </div>
+                            </div>
+                            <div class="col-md-4">
+                                <div class="fw-semibold">Detection rate</div>
+                                <div x-text="radar?.status?.detection_rate != null ? Number(radar.status.detection_rate).toFixed(2) + ' Hz' : '—'"></div>
+                            </div>
+                            <div class="col-md-4">
+                                <div class="fw-semibold">Uptime</div>
+                                <div x-text="formatUptime(radar?.status?.uptime_s)"></div>
+                            </div>
+                            <div class="col-md-4">
+                                <div class="fw-semibold">Realtime ratio</div>
+                                <div>
+                                    <span :class="(radar?.status?.realtime_ratio != null && Number(radar.status.realtime_ratio) < 0.95) ? 'text-warning' : ''"
+                                          x-text="radar?.status?.realtime_ratio != null ? Number(radar.status.realtime_ratio).toFixed(2) + '\u00d7' : '—'"></span>
+                                </div>
+                            </div>
+                            {#
+                                DSP pipeline health — the only bits of
+                                ``radar.health.*`` that aren't already
+                                covered by citrasense's own host
+                                monitoring.  Overflow rate = samples
+                                dropped by the RTL/Mirisdr frontend;
+                                buffer entries = pending work queue
+                                depth; temperature = SDR thermals.
+                                These are pr_sensor-specific so they
+                                belong with the engine status, not in
+                                a separate Health card.
+                            #}
+                            <div class="col-md-4">
+                                <div class="fw-semibold">Overflow</div>
+                                <div>
+                                    <span :class="(Number(radar?.health?.overflow_rate_pct) > 0.5) ? 'text-danger fw-semibold' : ''"
+                                          x-text="radar?.health?.overflow_rate_pct != null ? Number(radar.health.overflow_rate_pct).toFixed(2) + '%' : '—'"></span>
+                                </div>
+                            </div>
+                            <div class="col-md-4">
+                                <div class="fw-semibold">Buffer entries</div>
+                                <div x-text="radar?.health?.buffer_entries ?? '—'"></div>
+                            </div>
+                            <div class="col-md-4">
+                                <div class="fw-semibold">SDR temp</div>
+                                <div>
+                                    <span :class="(Number(radar?.health?.temperature_c) > 75) ? 'text-warning' : ''"
+                                          x-text="radar?.health?.temperature_c != null ? Number(radar.health.temperature_c).toFixed(1) + ' °C' : '—'"></span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                {#
+                    Receiver / host-resource / pr_sensor-health cards
+                    intentionally omitted — lat/lon/alt come from
+                    config (set once, not operationally interesting),
+                    CPU/RAM/disk are already on citrasense's host
+                    monitoring (pr_sensor is co-located), pr_sensor-
+                    specific DSP metrics live in the engine status
+                    card above, and NATS reachability is the pill in
+                    the hardware-status header.
+                #}
+
+                {#
+                    Processing pipeline card.  Mirrors the Active Tasks
+                    pipeline on the telescope detail page — radar
+                    doesn't have per-task tracking (detections are
+                    transient events, not API tasks), so the boxes
+                    show queue-level stats and per-processor success
+                    bars rather than per-task lists.  Reads the same
+                    ``sensor.pipeline_stats`` shape the telescope
+                    template uses; the only difference is the
+                    processor names (``radar_detection_filter`` etc.).
+                #}
+                {#
+                    Counters explained:
+                    - ``processors.radar_detection_filter.runs`` is the
+                      true "how many observations did we see" number.
+                      It increments once per ``RadarPipeline.process()``,
+                      regardless of drop decisions downstream.
+                    - ``processors.radar_detection_filter.failures``
+                      is the drop count with the most useful
+                      ``last_failure_reason`` (SNR, not-tasked, …).
+                    - ``uploading.radar_observation_uploads`` is the
+                      radar-specific success counter; the telescope
+                      ``observation_uploads`` field never moves for
+                      radar sensors and was the source of a very
+                      confusing "0 submissions" UI bug.
+                #}
+                <div class="card bg-dark text-light border-secondary mb-3"
+                     x-data="{
+                         get _filter() { return sensor?.pipeline_stats?.processors?.radar_detection_filter; },
+                         get _formatter() { return sensor?.pipeline_stats?.processors?.radar_detection_formatter; },
+                         get _writer() { return sensor?.pipeline_stats?.processors?.radar_artifact_writer; },
+                         get _upload() { return sensor?.pipeline_stats?.uploading; },
+                         get observed() { return this._filter?.runs || 0; },
+                         get dropped() {
+                             return (this._filter?.failures || 0) + (this._formatter?.failures || 0);
+                         },
+                         get readyForUpload() {
+                             // Observations that passed both filter and formatter.
+                             const f = this._filter;
+                             const fm = this._formatter;
+                             if (!f) return 0;
+                             return (f.runs - f.failures) - (fm ? fm.failures : 0);
+                         },
+                         get uploaded() { return this._upload?.radar_observation_uploads || 0; },
+                         get uploadFailed() { return this._upload?.permanent_failures || 0; },
+                         get uploadRetries() {
+                             const u = this._upload;
+                             if (!u) return 0;
+                             return Math.max(0, (u.attempts || 0) - (u.successes || 0) - (u.permanent_failures || 0));
+                         },
+                     }">
+                    <div class="card-header d-flex align-items-center justify-content-between">
+                        <span><i class="bi bi-diagram-3-fill me-2"></i>Detection Pipeline</span>
+                        <span class="d-flex flex-wrap gap-3 text-muted small"
+                              x-show="observed > 0">
+                            <span>
+                                <i class="bi bi-funnel me-1 text-warning"></i>
+                                <span x-text="readyForUpload"></span>
+                                <span class="text-muted"> ready</span>
+                            </span>
+                            <span>
+                                <i class="bi bi-x-circle me-1 text-danger"></i>
+                                <span x-text="dropped"></span>
+                                <span class="text-muted"> dropped</span>
+                            </span>
+                            <span>
+                                <i class="bi bi-cloud-check me-1 text-success"></i>
+                                <span x-text="uploaded"></span>
+                                <span class="text-muted"> uploaded</span>
+                            </span>
+                        </span>
+                    </div>
+                    <div class="card-body">
+                        <div class="row g-3 align-items-stretch">
+                            <!-- Processing stage: per-processor success rows. -->
+                            <div class="col-md">
+                                <div class="border border-secondary rounded p-3 h-100">
+                                    <div class="d-flex align-items-center gap-2 mb-2">
+                                        <i class="bi bi-gear-fill text-warning"></i>
+                                        <h6 class="mb-0">Processing</h6>
+                                        <span class="text-muted small ms-auto font-monospace"
+                                              x-show="observed > 0"
+                                              x-text="readyForUpload + ' / ' + observed"></span>
+                                    </div>
+                                    <div class="small">
+                                        <template x-for="pname in ['radar_detection_filter', 'radar_detection_formatter', 'radar_artifact_writer']" :key="pname">
+                                            <div class="mb-2"
+                                                 x-data="{
+                                                     get _s() { return sensor?.pipeline_stats?.processors?.[pname]; },
+                                                     get _label() {
+                                                         if (pname === 'radar_detection_filter') return 'Filter';
+                                                         if (pname === 'radar_detection_formatter') return 'Formatter';
+                                                         if (pname === 'radar_artifact_writer') return 'Artifact writer';
+                                                         return pname;
+                                                     },
+                                                     get _okPct() {
+                                                         const s = this._s;
+                                                         if (!s || !s.runs) return 0;
+                                                         return ((s.runs - s.failures) / s.runs) * 100;
+                                                     },
+                                                     get _failPct() {
+                                                         const s = this._s;
+                                                         if (!s || !s.runs) return 0;
+                                                         return (s.failures / s.runs) * 100;
+                                                     },
+                                                 }">
+                                                <div class="d-flex align-items-center justify-content-between">
+                                                    <span class="text-muted" x-text="_label"></span>
+                                                    <span class="font-monospace text-muted"
+                                                          x-text="_s ? ((_s.runs - _s.failures) + ' / ' + _s.runs) : '— / —'"></span>
+                                                </div>
+                                                <div class="progress" style="height: 3px;" x-show="_s && _s.runs > 0">
+                                                    <div class="progress-bar bg-success" :style="`width: ${_okPct}%`"></div>
+                                                    <div class="progress-bar bg-danger" :style="`width: ${_failPct}%`"></div>
+                                                </div>
+                                                <template x-if="_s?.last_failure_reason">
+                                                    <div class="text-muted small text-truncate" :title="_s.last_failure_reason"
+                                                         x-text="'last drop: ' + _s.last_failure_reason"></div>
+                                                </template>
+                                            </div>
+                                        </template>
+                                    </div>
+                                </div>
+                            </div>
+                            <!-- Arrow (Processing → Submission). -->
+                            <div class="col-auto d-none d-md-flex align-items-center px-2">
+                                <i class="bi bi-arrow-right text-secondary" style="font-size: 1.5rem;"></i>
+                            </div>
+                            <!-- Submission (upload) stage. -->
+                            <div class="col-md">
+                                <div class="border border-secondary rounded p-3 h-100">
+                                    <div class="d-flex align-items-center gap-2 mb-2">
+                                        <i class="bi bi-cloud-upload-fill text-success"></i>
+                                        <h6 class="mb-0">Submission</h6>
+                                        <span class="text-muted small ms-auto font-monospace"
+                                              x-show="(_upload?.attempts || 0) > 0"
+                                              x-text="uploaded + ' / ' + (_upload?.attempts || 0)"></span>
+                                    </div>
+                                    <div class="progress mb-2" style="height: 4px; cursor: default;"
+                                         x-show="(uploaded + uploadFailed) > 0"
+                                         :title="uploaded + ' uploaded · ' + uploadFailed + ' failed'">
+                                        <div class="progress-bar bg-success" role="progressbar"
+                                             :style="`width: ${(() => { const t = uploaded + uploadFailed; return t > 0 ? (uploaded / t) * 100 : 0; })()}%`"></div>
+                                        <div class="progress-bar bg-danger" role="progressbar"
+                                             :style="`width: ${(() => { const t = uploaded + uploadFailed; return t > 0 ? (uploadFailed / t) * 100 : 0; })()}%`"></div>
+                                    </div>
+                                    <div class="small text-muted">
+                                        <div class="d-flex justify-content-between">
+                                            <span>Uploaded</span>
+                                            <span class="font-monospace" x-text="uploaded"></span>
+                                        </div>
+                                        <div class="d-flex justify-content-between">
+                                            <span>Failed</span>
+                                            <span class="font-monospace"
+                                                  :class="uploadFailed > 0 ? 'text-danger' : ''"
+                                                  x-text="uploadFailed"></span>
+                                        </div>
+                                        <div class="d-flex justify-content-between"
+                                             x-show="uploadRetries > 0">
+                                            <span>Retries</span>
+                                            <span class="font-monospace text-warning"
+                                                  x-text="uploadRetries"></span>
+                                        </div>
+                                    </div>
+                                    {#
+                                        Helpful nudges for two common dead-ends.
+                                        Shown only when we've observed activity
+                                        but nothing is getting uploaded.
+                                    #}
+                                    <template x-if="observed > 0 && uploaded === 0 && uploadFailed === 0 && readyForUpload === 0">
+                                        <div class="alert alert-warning py-2 mt-2 mb-0 small">
+                                            <i class="bi bi-info-circle me-1"></i>
+                                            All observations are being dropped before upload — check the Filter / Formatter rows for the reason.
+                                        </div>
+                                    </template>
+                                    <template x-if="observed > 0 && uploaded === 0 && uploadFailed > 0">
+                                        <div class="alert alert-danger py-2 mt-2 mb-0 small">
+                                            <i class="bi bi-exclamation-triangle me-1"></i>
+                                            All upload attempts are failing. If pr_sensor is running on the mock source, the backend will reject its
+                                            synthetic <code>mock-*</code> satellite UUIDs — expected behaviour; real sources only.
+                                        </div>
+                                    </template>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Range-Doppler scatter card.  The shared partial fills
+                     its container — we give it an explicit height so the
+                     SVG has something to stretch into.  The empty-state
+                     overlay ("Waiting for first detection…") is handled
+                     inside the partial; no need to x-show this card. -->
+                <div class="card bg-dark text-light border-secondary my-3">
+                    <div class="card-header d-flex align-items-center">
+                        <i class="bi bi-radar me-1"></i>
+                        <span>Range-Doppler (last 5 min)</span>
+                        <span class="ms-auto small text-muted font-monospace"
+                              x-effect="$store.citrasense.now"
+                              x-text="(() => {
+                                  const rate = $store.citrasense.radarDetectionRate(sensor.id, 60);
+                                  const n = ($store.citrasense.radarDetections[sensor.id] || []).length;
+                                  return n + ' detections · ' + rate.toFixed(2) + ' Hz';
+                              })()"></span>
+                    </div>
+                    <div class="card-body p-2">
+                        <div style="height: 360px;">
+                            {% with size='full' %}{% include "_radar_range_doppler.html" %}{% endwith %}
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Bistatic Geometry (plan view).  Top-down local map
+                     showing the receiver at centre, FM transmitter
+                     stations at their real lat/lon offsets, and any
+                     currently-tracked satellite ground-points as
+                     colour-coded dots with short fading trails.
+                     Offline-safe: hand-rolled SVG, no tile provider. -->
+                <div class="card bg-dark text-light border-secondary my-3"
+                     x-data="{
+                         get _trackCount() {
+                             const dets = $store.citrasense.radarDetections[sensor.id] || [];
+                             const seen = new Set();
+                             for (const d of dets) {
+                                 const key = d.sat_uuid || d.sat_name;
+                                 if (key) seen.add(key);
+                             }
+                             return seen.size;
+                         },
+                         get _stationCount() {
+                             return (sensor?.radar?.stations?.stations || []).length;
+                         },
+                     }">
+                    <div class="card-header d-flex align-items-center">
+                        <i class="bi bi-geo-alt me-1"></i>
+                        <span>Bistatic Geometry (plan view)</span>
+                        <span class="ms-auto small text-muted font-monospace"
+                              x-text="_stationCount + ' tx · ' + _trackCount + ' tracks'"></span>
+                    </div>
+                    <div class="card-body p-2">
+                        <div style="height: 420px;">
+                            {% with size='full' %}{% include "_radar_bistatic_map.html" %}{% endwith %}
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Active Tracks table.  Groups recent detections by
+                     ``sat_uuid`` (falling back to ``sat_name`` or
+                     "unknown") and surfaces the most-recent values per
+                     track plus the per-60s hit count.  Sorted by last
+                     update descending so active passes are on top. -->
+                <div class="card bg-dark text-light border-secondary my-3"
+                     x-data="{
+                         get _dets() { return $store.citrasense.radarDetections[sensor.id] || []; },
+                         get tracks() {
+                             const map = new Map();
+                             const nowUnix = $store.citrasense.now / 1000;
+                             const oneMinAgo = nowUnix - 60;
+                             for (const d of this._dets) {
+                                 const key = d.sat_uuid || d.sat_name || 'unknown';
+                                 let t = map.get(key);
+                                 if (!t) {
+                                     t = {
+                                         key,
+                                         uuid: d.sat_uuid || null,
+                                         name: d.sat_name || null,
+                                         last: d,
+                                         count60: 0,
+                                     };
+                                     map.set(key, t);
+                                 }
+                                 if (Number(d.ts_unix || 0) >= Number(t.last.ts_unix || 0)) {
+                                     t.last = d;
+                                 }
+                                 if (Number(d.ts_unix || 0) >= oneMinAgo) {
+                                     t.count60++;
+                                 }
+                             }
+                             return Array.from(map.values()).sort(
+                                 (a, b) => Number(b.last.ts_unix || 0) - Number(a.last.ts_unix || 0)
+                             );
+                         },
+                         formatAge(ts_unix) {
+                             const ts = Number(ts_unix);
+                             if (!Number.isFinite(ts)) return '—';
+                             const age = Math.max(0, ($store.citrasense.now / 1000) - ts);
+                             if (age < 1) return 'just now';
+                             if (age < 60) return age.toFixed(0) + 's ago';
+                             if (age < 3600) return Math.floor(age / 60) + 'm ' + Math.floor(age % 60) + 's ago';
+                             return Math.floor(age / 3600) + 'h ago';
+                         },
+                         fmt(v, digits) {
+                             return v == null ? '—' : Number(v).toFixed(digits);
+                         },
+                     }"
+                     x-effect="$store.citrasense.now"
+                     x-show="tracks.length">
+                    <div class="card-header">
+                        <i class="bi bi-diagram-3 me-1"></i>Active tracks
+                        (<span x-text="tracks.length"></span>)
+                    </div>
+                    <div class="card-body p-0">
+                        <div class="table-responsive">
+                            <table class="table table-sm table-dark mb-0">
+                                <thead>
+                                    <tr>
+                                        <th>Target</th>
+                                        <th class="text-end">Last SNR (dB)</th>
+                                        <th class="text-end">Last range (km)</th>
+                                        <th class="text-end">Last rate (km/s)</th>
+                                        <th class="text-end">Last update</th>
+                                        <th class="text-end">Hits/60s</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <template x-for="t in tracks" :key="t.key">
+                                        <tr>
+                                            <td>
+                                                <div class="fw-semibold"
+                                                     x-text="t.name || (t.uuid ? ('UUID ' + t.uuid.substring(0, 8)) : 'unknown')"></div>
+                                                <div class="text-muted small text-truncate" style="max-width: 22em;"
+                                                     x-text="t.uuid || ''"></div>
+                                            </td>
+                                            <td class="text-end font-monospace" x-text="fmt(t.last.snr_db, 1)"></td>
+                                            <td class="text-end font-monospace" x-text="fmt(t.last.range_km, 1)"></td>
+                                            <td class="text-end font-monospace" x-text="fmt(t.last.range_rate_km_s, 3)"></td>
+                                            <td class="text-end small text-muted" x-text="formatAge(t.last.ts_unix)"></td>
+                                            <td class="text-end font-monospace" x-text="t.count60"></td>
+                                        </tr>
+                                    </template>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Stations list (collapsible) -->
+                <div class="card bg-dark text-light border-secondary my-3"
+                     x-show="radar?.stations?.stations?.length">
+                    <div class="card-header">
+                        <i class="bi bi-broadcast-pin me-1"></i>FM illuminators
+                        (<span x-text="(radar?.stations?.stations || []).length"></span>)
+                    </div>
+                    <div class="card-body p-0">
+                        <div class="table-responsive">
+                            <table class="table table-sm table-dark mb-0">
+                                <thead>
+                                    <tr>
+                                        <th>Name</th>
+                                        <th>Frequency (Hz)</th>
+                                        <th>TX lat</th>
+                                        <th>TX lon</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <template x-for="st in (radar?.stations?.stations || [])" :key="(st.name || '') + '|' + (st.freq_hz || '')">
+                                        <tr>
+                                            <td x-text="st.name ?? '—'"></td>
+                                            <td x-text="st.freq_hz ?? '—'"></td>
+                                            <td x-text="st.lat_deg ?? '—'"></td>
+                                            <td x-text="st.lon_deg ?? '—'"></td>
+                                        </tr>
+                                    </template>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Last pr_sensor error -->
+                <div class="card bg-dark text-light border-danger mb-3" x-show="radar?.error">
+                    <div class="card-header text-danger"><i class="bi bi-exclamation-octagon me-1"></i>pr_sensor error</div>
+                    <div class="card-body">
+                        <pre class="mb-0 small text-danger" x-text="JSON.stringify(radar?.error, null, 2)"></pre>
+                    </div>
+                </div>
+            </div>
+
+    </div> <!-- /container -->
+</div> <!-- /radar root -->

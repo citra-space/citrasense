@@ -1,0 +1,313 @@
+{#
+    Top-down plan-view plot for the bistatic geometry:
+
+      - Receiver at the centre (gold dot + "RX" label).
+      - FM transmitter stations at their real lat/lon offsets
+        (cyan dots + callsign labels).
+      - All currently-tracked satellites as ground-projected
+        sub-points, with a short trail per ``sat_uuid`` (oldest faded).
+
+    Data sources (from the Alpine store's enriched ``sensor``):
+
+      - ``sensor.radar.receiver`` -- ``{lat_deg, lon_deg, alt_m}``,
+        cached from the most recent observation's ``geometry.receiver``.
+      - ``sensor.radar.stations.stations`` -- the list of
+        :class:`StationInfo` dicts pr_sensor publishes on
+        ``radar.sensor.{id}.stations``.
+      - ``$store.citrasense.radarDetections[sensor.id]`` -- the same
+        ring-buffered slim dicts the Range-Doppler plot consumes.
+        Each now also carries ``az_deg`` / ``el_deg`` / ``alt_km`` /
+        ``station`` from the sensor's slim projection.
+
+    Projection (flat-earth; accurate to <<1% for the LEO ranges we
+    care about):
+
+      ground_range_km = range_km * cos(el_rad)
+      dE = ground_range_km * sin(az_rad)   (east, +x)
+      dN = ground_range_km * cos(az_rad)   (north, -y in SVG)
+
+      dN_station = (sta.lat - rx.lat) * 111.32
+      dE_station = (sta.lon - rx.lon) * 111.32 * cos(rx.lat)
+
+    Bounds auto-fit the max |dE|, |dN| across the receiver, all
+    stations, and all tracked sat points; clamped to a 300 km floor
+    so a single nearby pass doesn't over-zoom the view.
+
+    Like ``_radar_range_doppler.html``, the dynamic layer is rendered
+    as a single ``innerHTML`` write into an SVG ``<g>`` -- Alpine's
+    ``<template x-for>`` can't live inside ``<svg>``, and a single
+    parser call is faster than N keyed DOM ops.
+#}
+{% set _size = size|default('full') %}
+<div class="radar-bistatic-map w-100 h-100 position-relative"
+     x-data="{
+         _sid: sensor?.id,
+         _resizeObserver: null,
+         init() {
+             this.$store.citrasense.hydrateRadarDetections(this._sid, 300);
+             try {
+                 this._resizeObserver = new ResizeObserver(() => {});
+                 this._resizeObserver.observe(this.$el);
+             } catch (_) { /* no-op */ }
+         },
+         destroy() {
+             try { this._resizeObserver?.disconnect(); } catch (_) { /* no-op */ }
+         },
+         get detections() {
+             return this.$store.citrasense.radarDetections[this._sid] || [];
+         },
+         get receiver() {
+             return sensor?.radar?.receiver || null;
+         },
+         get stationsList() {
+             return sensor?.radar?.stations?.stations || [];
+         },
+         _htmlEscape(s) {
+             return String(s)
+                 .replace(/&/g, '&amp;')
+                 .replace(/</g, '&lt;')
+                 .replace(/>/g, '&gt;')
+                 .replace(/\x22/g, '&quot;');
+         },
+         // Group detections into per-sat trails via the store helper,
+         // then project each point into local ENU km-offsets.  Skips
+         // any detection missing az / el / range.
+         get tracks() {
+             const byKey = this.$store.citrasense.radarTracksBySat(this._sid, 20);
+             const out = {};
+             for (const key of Object.keys(byKey)) {
+                 const pts = [];
+                 for (const d of byKey[key]) {
+                     const r = Number(d?.range_km);
+                     const az = Number(d?.az_deg);
+                     const el = Number(d?.el_deg);
+                     if (!Number.isFinite(r) || !Number.isFinite(az) || !Number.isFinite(el)) continue;
+                     const azRad = az * Math.PI / 180;
+                     const elRad = el * Math.PI / 180;
+                     const ground = r * Math.cos(elRad);
+                     pts.push({
+                         dE: ground * Math.sin(azRad),
+                         dN: ground * Math.cos(azRad),
+                         ts_unix: Number(d.ts_unix) || 0,
+                         snr_db: Number(d.snr_db),
+                         name: d.sat_name || d.sat_uuid || 'target',
+                         station: d.station || null,
+                         alt_km: Number(d.alt_km),
+                         el_deg: el,
+                         az_deg: az,
+                         range_km: r,
+                     });
+                 }
+                 if (pts.length) out[key] = pts;
+             }
+             return out;
+         },
+         // Stations projected into km-offsets from the receiver.
+         get stationOffsets() {
+             const rx = this.receiver;
+             const stas = this.stationsList;
+             if (!rx || !stas.length) return [];
+             const rxLatRad = Number(rx.lat_deg) * Math.PI / 180;
+             const out = [];
+             for (const s of stas) {
+                 const lat = Number(s?.lat_deg);
+                 const lon = Number(s?.lon_deg);
+                 if (!Number.isFinite(lat) || !Number.isFinite(lon)) continue;
+                 const dN = (lat - Number(rx.lat_deg)) * 111.32;
+                 const dE = (lon - Number(rx.lon_deg)) * 111.32 * Math.cos(rxLatRad);
+                 out.push({
+                     callsign: s.callsign || '?',
+                     freq_hz: Number(s.freq_hz) || 0,
+                     dE, dN,
+                 });
+             }
+             return out;
+         },
+         // Colour a sat by its uuid hash so trails stay stable across
+         // renders without depending on render order.
+         _satColor(key) {
+             let h = 0;
+             for (let i = 0; i < key.length; i++) h = ((h << 5) - h + key.charCodeAt(i)) | 0;
+             const hue = Math.abs(h) % 360;
+             return 'hsl(' + hue + ',70%,62%)';
+         },
+         get dynamicSvgMarkup() {
+             // Grab the reactive snapshots ONCE per rebuild.  Each of
+             // ``tracks`` / ``stationOffsets`` is a getter that iterates
+             // the detection / station lists and allocates a fresh
+             // object, so calling them in a loop (or indirectly via
+             // ``halfSpanKm`` → ``_projectX`` / ``_projectY``) produced
+             // quadratic work and drove INP into the poor bucket.
+             const tks = this.tracks;
+             const stas = this.stationOffsets;
+
+             // Auto-fit half-width (km) across stations + tracked sat
+             // points; clamp to a 300 km floor so a close pass doesn't
+             // over-zoom.  Computed inline so the whole rebuild makes
+             // a single pass over the data.
+             let halfKm = 300;
+             for (const s of stas) {
+                 if (Math.abs(s.dE) > halfKm) halfKm = Math.abs(s.dE);
+                 if (Math.abs(s.dN) > halfKm) halfKm = Math.abs(s.dN);
+             }
+             for (const key of Object.keys(tks)) {
+                 const pts = tks[key];
+                 for (let i = 0; i < pts.length; i++) {
+                     const p = pts[i];
+                     if (Math.abs(p.dE) > halfKm) halfKm = Math.abs(p.dE);
+                     if (Math.abs(p.dN) > halfKm) halfKm = Math.abs(p.dN);
+                 }
+             }
+             halfKm *= 1.15; // 15% padding
+
+             // Local projection closures — the per-call ``this.halfSpanKm``
+             // lookup that used to live here was the O(N²) hot spot.
+             const projX = (dE) => 500 + (dE / halfKm) * 460;
+             const projY = (dN) => 300 - (dN / halfKm) * 260;
+
+             const parts = [];
+             // --- Range rings + labels (depend on halfSpanKm, which
+             //     is derived from the detection set, so they live in
+             //     the dynamic layer rather than as <template x-for>.
+             //     Alpine can't process <template> inside <svg> — the
+             //     SVG-namespace <template> has no .content
+             //     DocumentFragment, so importNode throws.) ---
+             const ringPx = [
+                 { r: 260 / 3, label: (halfKm / 3).toFixed(0) + ' km' },
+                 { r: 260 * 2 / 3, label: (halfKm * 2 / 3).toFixed(0) + ' km' },
+                 { r: 260, label: halfKm.toFixed(0) + ' km' },
+             ];
+             for (const ring of ringPx) {
+                 parts.push(
+                     '<circle cx=\x22500\x22 cy=\x22300\x22 r=\x22' + ring.r.toFixed(1) + '\x22 '
+                     + 'fill=\x22none\x22 stroke=\x22#2b3035\x22 stroke-width=\x220.8\x22 '
+                     + 'stroke-dasharray=\x222 3\x22/>'
+                 );
+                 const lx = 500 + ring.r * 0.707;
+                 const ly = 300 - ring.r * 0.707 - 4;
+                 parts.push(
+                     '<text x=\x22' + lx.toFixed(1) + '\x22 y=\x22' + ly.toFixed(1) + '\x22 '
+                     + 'fill=\x22#6c757d\x22 font-size=\x2210\x22 font-family=\x22monospace\x22 '
+                     + 'text-anchor=\x22middle\x22>' + this._htmlEscape(ring.label) + '</text>'
+                 );
+             }
+             // --- Per-sat trails + current dots ---
+             for (const key of Object.keys(tks)) {
+                 const pts = tks[key];
+                 if (!pts.length) continue;
+                 const color = this._satColor(key);
+                 // Trail polyline (oldest -> newest), fading alpha.
+                 if (pts.length > 1) {
+                     // Build a segmented polyline by stroke-opacity so we
+                     // don't need per-segment <line>s.  One <polyline>
+                     // with a baseline low-opacity plus a bright head dot
+                     // is a good tradeoff.
+                     const poly = pts.map(p =>
+                         projX(p.dE).toFixed(1) + ',' + projY(p.dN).toFixed(1)
+                     ).join(' ');
+                     parts.push(
+                         '<polyline points=\x22' + poly + '\x22 fill=\x22none\x22 stroke=\x22'
+                         + color + '\x22 stroke-width=\x221.5\x22 stroke-opacity=\x220.45\x22/>'
+                     );
+                 }
+                 // Current-position marker (newest point).
+                 const last = pts[pts.length - 1];
+                 const cx = projX(last.dE).toFixed(1);
+                 const cy = projY(last.dN).toFixed(1);
+                 const altTxt = Number.isFinite(last.alt_km) ? last.alt_km.toFixed(0) + ' km alt' : '';
+                 const elTxt  = Number.isFinite(last.el_deg) ? 'el ' + last.el_deg.toFixed(0) + '\u00B0' : '';
+                 const staTxt = last.station ? ' via ' + last.station : '';
+                 const snrTxt = Number.isFinite(last.snr_db) ? ' · SNR ' + last.snr_db.toFixed(1) + ' dB' : '';
+                 const title = last.name + (altTxt ? ' @ ' + altTxt : '') + (elTxt ? ' (' + elTxt + ')' : '') + staTxt + snrTxt;
+                 parts.push(
+                     '<circle cx=\x22' + cx + '\x22 cy=\x22' + cy + '\x22 r=\x225\x22 '
+                     + 'fill=\x22' + color + '\x22 stroke=\x22#1b1f24\x22 stroke-width=\x221\x22>'
+                     + '<title>' + this._htmlEscape(title) + '</title>'
+                     + '</circle>'
+                 );
+                 // Satellite label near the head of the trail.
+                 parts.push(
+                     '<text x=\x22' + (parseFloat(cx) + 8).toFixed(1)
+                     + '\x22 y=\x22' + (parseFloat(cy) - 8).toFixed(1)
+                     + '\x22 fill=\x22' + color + '\x22 font-size=\x2211\x22 '
+                     + 'font-family=\x22monospace\x22 pointer-events=\x22none\x22>'
+                     + this._htmlEscape(last.name) + '</text>'
+                 );
+             }
+             // --- TX stations ---
+             for (const s of stas) {
+                 const cx = projX(s.dE).toFixed(1);
+                 const cy = projY(s.dN).toFixed(1);
+                 const freqMHz = s.freq_hz ? (s.freq_hz / 1e6).toFixed(1) + ' MHz' : '';
+                 parts.push(
+                     '<circle cx=\x22' + cx + '\x22 cy=\x22' + cy + '\x22 r=\x224\x22 '
+                     + 'fill=\x22#00bfff\x22 stroke=\x22#1b1f24\x22 stroke-width=\x221\x22>'
+                     + '<title>' + this._htmlEscape(s.callsign + (freqMHz ? ' · ' + freqMHz : '')) + '</title>'
+                     + '</circle>'
+                 );
+                 parts.push(
+                     '<text x=\x22' + (parseFloat(cx) + 7).toFixed(1)
+                     + '\x22 y=\x22' + (parseFloat(cy) + 4).toFixed(1)
+                     + '\x22 fill=\x22#00bfff\x22 font-size=\x2211\x22 '
+                     + 'font-family=\x22monospace\x22 pointer-events=\x22none\x22>'
+                     + this._htmlEscape(s.callsign) + '</text>'
+                 );
+             }
+             return parts.join('');
+         },
+         get hasData() {
+             return this.receiver && (this.stationsList.length > 0 || this.detections.length > 0);
+         },
+     }"
+     x-init="init()">
+    <svg viewBox="0 0 1000 600" preserveAspectRatio="xMidYMid meet"
+         width="100%" height="100%"
+         style="display: block; background: #1b1f24;">
+        <!-- Plot-area panel -->
+        <rect x="20" y="20" width="960" height="560" fill="#141719" stroke="#2b3035" stroke-width="1"/>
+
+        <!-- Compass crosshair -->
+        <line x1="500" y1="40"  x2="500" y2="560" stroke="#2b3035" stroke-width="0.5"/>
+        <line x1="40"  y1="300" x2="960" y2="300" stroke="#2b3035" stroke-width="0.5"/>
+
+        <!-- N/E/S/W labels (static, fixed positions around the ring) -->
+        <g fill="#adb5bd" font-size="13" font-family="monospace" font-weight="bold" text-anchor="middle">
+            <text x="500" y="35">N</text>
+            <text x="500" y="575">S</text>
+            <text x="975" y="304" text-anchor="end">E</text>
+            <text x="25"  y="304" text-anchor="start">W</text>
+        </g>
+
+        <!-- RX gold marker (centre).  Rendered in the static layer so
+             it paints even before any stations / detections arrive. -->
+        <circle cx="500" cy="300" r="6" fill="#ffd700" stroke="#1b1f24" stroke-width="1.5"/>
+        <text x="508" y="318" fill="#ffd700" font-size="12"
+              font-family="monospace" font-weight="bold">RX</text>
+
+        <!-- Dynamic layer: TX stations + per-sat trails & markers. -->
+        <g x-ref="items" x-effect="$refs.items.innerHTML = dynamicSvgMarkup"></g>
+    </svg>
+
+    <!-- Legend (bottom-right) -->
+    <div class="position-absolute text-light small"
+         style="bottom: 6px; right: 10px; font-family: monospace;">
+        <span style="display:inline-block;width:8px;height:8px;background:#ffd700;
+                     border-radius:50%;vertical-align:middle;"></span>
+        <span class="mx-1">RX</span>
+        <span style="display:inline-block;width:8px;height:8px;background:#00bfff;
+                     border-radius:50%;vertical-align:middle;" class="ms-2"></span>
+        <span class="mx-1">TX</span>
+        <span style="display:inline-block;width:8px;height:8px;background:#a78bfa;
+                     border-radius:50%;vertical-align:middle;" class="ms-2"></span>
+        <span class="ms-1">SAT (colour = sat)</span>
+    </div>
+
+    <!-- Empty-state overlay: shown until the first observation arrives
+         (receiver comes in on the observation's geometry block, so "no
+         receiver" is the honest signal that nothing has streamed yet). -->
+    <template x-if="!hasData">
+        <div class="position-absolute top-50 start-50 translate-middle text-muted small text-center pe-none">
+            Waiting for first detection&hellip;
+        </div>
+    </template>
+</div>

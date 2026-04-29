@@ -2,7 +2,8 @@
         /* Dashboard hero preview: fixed 16:9 box so every card is the
            same height whether or not we actually have an image yet.  The
            dark background matches the Optics card preview panel on the
-           sensor detail page for visual continuity. */
+           sensor detail page for visual continuity.  The radar card uses
+           the same class for its engine-state hero so heights line up. */
         #monitoringSection .sensor-hero-preview {
             aspect-ratio: 16 / 9;
             background: #111;
@@ -39,28 +40,44 @@
                 </template>
             </div>
 
-            <!-- ═══════════════ Per-Sensor Hero Cards ═══════════════ -->
-            {# Outer row: every sensor is a half-width hero card at lg+,
+            {# ═══════════════ Per-Sensor Hero Cards ═══════════════
+               Outer row: every sensor is a half-width hero card at lg+,
                full-width on smaller screens.  A lone sensor deliberately
                sits at half-width with blank space to the right — we don't
                auto-widen singletons because the deep controls live on the
                dedicated /sensors/<id> page now.  Use the "Open" button in
                each card header (or click any empty space on the dashboard
-               nav) to navigate there. #}
+               nav) to navigate there.
+
+               The card chrome (row/col wrapper, card wrapper, card-header
+               with name/type/pills/Open, card-body) stays here; the hero
+               body below the header is dispatched per sensor.type to the
+               matching ``_monitoring_sensor_<type>.html`` partial so each
+               modality owns its own UI. #}
             <div class="row g-3">
             <template x-for="sensor in $store.citrasense.sensors" :key="sensor.id">
             <div class="col-12 col-lg-6 mb-1"
                  :data-sensor-id="sensor.id">
                 <div class="card bg-dark text-light border-secondary">
-                    {# card-header: name + type + hardware pills + Open
-                       button.  Clicking the body itself is intentionally
-                       not a link so operators don't trigger navigation by
-                       tapping near the preview on mobile. #}
+                    {# card-header: name + type + hardware pills (dispatched
+                       per modality) + Open button.  Clicking the body
+                       itself is intentionally not a link so operators
+                       don't trigger navigation by tapping near the preview
+                       on mobile. #}
                     <div class="card-header d-flex align-items-center gap-2 flex-wrap"
                          style="user-select: none;">
                         <span class="fw-semibold" x-text="sensor.name"></span>
                         <span class="badge bg-secondary rounded-pill" x-text="sensor.type"></span>
-                        {% include "_sensor_hardware_pills.html" %}
+                        <template x-if="sensor.type === 'telescope'">
+                            <span class="d-flex align-items-center gap-2 flex-wrap">
+                                {% include "_telescope_hardware_pills.html" %}
+                            </span>
+                        </template>
+                        <template x-if="sensor.type === 'passive_radar'">
+                            <span class="d-flex align-items-center gap-2 flex-wrap">
+                                {% include "_radar_hardware_pills.html" %}
+                            </span>
+                        </template>
                         {# Explicit "Open" link.  Anchor with a real href so
                            right-click-copy-link yields a clean URL and
                            Cmd/Ctrl/middle-click opens the detail page in
@@ -72,147 +89,24 @@
                            class="btn btn-sm btn-outline-light ms-auto"
                            @click="$store.citrasense.navigateOnClick($event, '/sensors/' + encodeURIComponent(sensor.id))"
                            data-bs-toggle="tooltip" data-bs-theme="dark"
-                           title="Open detail page for this telescope">
+                           title="Open detail page for this sensor">
                             Open <i class="bi bi-arrow-right"></i>
                         </a>
                     </div>
                     <div class="card-body">
-                        {# Switches row — always visible.  @click.stop on the
-                           switch controls isn't strictly required (checkboxes
-                           live in card-body, not card-header, so they can't
-                           bubble into the toggle anyway), but keep the old
-                           DOM shape so existing @change handlers + tooltips
-                           work unchanged. #}
-                        <div class="d-flex flex-wrap align-items-center gap-2 gap-md-3">
-                            {% include "_sensor_switches.html" %}
-                        </div>
-
-                        {# ─── Hero panel: 16:9 preview + stats column ───
-                           Always rendered now that every sensor is a dashboard
-                           card and the deep controls live on /sensors/<id>.
-                           Tells the operator at a glance what this scope is
-                           doing right now. #}
-                        <div class="mt-3"
-                             x-data="{
-                                 get _preview() { return $store.citrasense.previewDataUrls?.[sensor.id]; },
-                                 get _activeTask() {
-                                     const stages = ['imaging', 'processing', 'uploading'];
-                                     for (const s of stages) {
-                                         const list = sensor?.tasks_by_stage?.[s];
-                                         if (list?.length) return { stage: s, ...list[0] };
-                                     }
-                                     return null;
-                                 },
-                                 get _nextTask() {
-                                     const sid = sensor.api_id || sensor.id;
-                                     const upcoming = ($store.citrasense.tasks || [])
-                                         .filter(t => t.sensor_id === sid)
-                                         .sort((a, b) => new Date(a.start_time) - new Date(b.start_time));
-                                     return upcoming[0] || null;
-                                 },
-                                 get _countdown() {
-                                     if (!this._nextTask) return '';
-                                     // Read the store's heartbeat so this getter re-evaluates
-                                     // once a second without each card wiring its own timer.
-                                     const now = $store.citrasense.now || Date.now();
-                                     const diff = Math.max(0, Math.floor((new Date(this._nextTask.start_time) - now) / 1000));
-                                     if (diff <= 0) return 'Now';
-                                     if (diff < 60) return diff + 's';
-                                     if (diff < 3600) return Math.floor(diff / 60) + 'm ' + (diff % 60) + 's';
-                                     return Math.floor(diff / 3600) + 'h ' + Math.floor((diff % 3600) / 60) + 'm';
-                                 },
-                                 get _scheduledCount() {
-                                     const sid = sensor.api_id || sensor.id;
-                                     return ($store.citrasense.tasks || []).filter(t => t.sensor_id === sid).length;
-                                 }
-                             }">
-                            <div class="row g-2">
-                                <!-- Hero preview -->
-                                <div class="col-md-7">
-                                    <div class="sensor-hero-preview position-relative rounded overflow-hidden">
-                                        <template x-if="_preview">
-                                            <img :src="_preview" alt="Latest preview"
-                                                 class="w-100 h-100"
-                                                 style="object-fit: cover; cursor: pointer;"
-                                                 @click.stop="$store.citrasense.activePreviewSensorId = sensor.id; $dispatch('open-preview-modal')"
-                                                 title="Click to enlarge">
-                                        </template>
-                                        <template x-if="!_preview">
-                                            <div class="d-flex flex-column align-items-center justify-content-center text-muted h-100">
-                                                <i class="bi bi-camera" style="font-size: 2rem;"></i>
-                                                <small class="mt-1">No preview yet</small>
-                                            </div>
-                                        </template>
-                                    </div>
-                                </div>
-                                <!-- Stats column -->
-                                <div class="col-md-5 d-flex flex-column gap-2">
-                                    <!-- Active or next task -->
-                                    <div>
-                                        <template x-if="_activeTask">
-                                            <div>
-                                                <span class="badge rounded-pill me-1"
-                                                      :class="_activeTask.stage === 'imaging' ? 'bg-primary' : _activeTask.stage === 'processing' ? 'bg-warning text-dark' : 'bg-success'"
-                                                      x-text="_activeTask.stage.charAt(0).toUpperCase() + _activeTask.stage.slice(1)"></span>
-                                                <span class="fw-semibold" x-text="_activeTask.target_name || _activeTask.task_id"></span>
-                                                <div class="text-muted small text-truncate" x-show="_activeTask.status_msg" x-text="_activeTask.status_msg"></div>
-                                            </div>
-                                        </template>
-                                        <template x-if="!_activeTask && _nextTask">
-                                            <div class="small">
-                                                <i class="bi bi-clock me-1 text-muted"></i>
-                                                <span class="text-muted">Next in </span>
-                                                <span class="fw-semibold" x-text="_countdown"></span>
-                                                <div class="text-muted text-truncate" x-text="_nextTask.target || (_nextTask.id ? _nextTask.id.substring(0, 8) : '')"></div>
-                                            </div>
-                                        </template>
-                                        <template x-if="!_activeTask && !_nextTask">
-                                            <div class="text-muted small">
-                                                <i class="bi bi-dash-circle me-1"></i>Idle
-                                            </div>
-                                        </template>
-                                    </div>
-                                    <!-- Pointing RA/Dec -->
-                                    <template x-if="sensor.telescope_ra != null && sensor.telescope_dec != null">
-                                        <div class="text-muted font-monospace small">
-                                            <i class="bi bi-crosshair me-1"></i>
-                                            <span x-text="'RA ' + sensor.telescope_ra.toFixed(2) + '\u00b0  Dec ' + sensor.telescope_dec.toFixed(2) + '\u00b0'"></span>
-                                        </div>
-                                    </template>
-                                    <!-- Pointing model health (only when present) -->
-                                    <template x-if="sensor.pointing_model?.state">
-                                        <div class="small">
-                                            <span class="badge rounded-pill"
-                                                  :class="sensor.pointing_model.health === 'degraded' ? 'bg-warning text-dark' : sensor.pointing_model.health === 'good' ? 'bg-success' : 'bg-secondary'">
-                                                <i class="bi bi-compass me-1"></i>
-                                                <span x-text="sensor.pointing_model.state"></span>
-                                            </span>
-                                        </div>
-                                    </template>
-                                    <!-- Pipeline stage buckets -->
-                                    <div class="d-flex gap-3 small">
-                                        <span :class="(sensor?.tasks_by_stage?.imaging?.length || 0) > 0 ? 'text-primary' : 'text-muted'"
-                                              data-bs-toggle="tooltip" data-bs-theme="dark" title="Imaging">
-                                            <i class="bi bi-camera-fill me-1"></i><span x-text="sensor?.tasks_by_stage?.imaging?.length || 0"></span>
-                                        </span>
-                                        <span :class="(sensor?.tasks_by_stage?.processing?.length || 0) > 0 ? 'text-warning' : 'text-muted'"
-                                              data-bs-toggle="tooltip" data-bs-theme="dark" title="Processing">
-                                            <i class="bi bi-cpu-fill me-1"></i><span x-text="sensor?.tasks_by_stage?.processing?.length || 0"></span>
-                                        </span>
-                                        <span :class="(sensor?.tasks_by_stage?.uploading?.length || 0) > 0 ? 'text-success' : 'text-muted'"
-                                              data-bs-toggle="tooltip" data-bs-theme="dark" title="Uploading">
-                                            <i class="bi bi-cloud-arrow-up-fill me-1"></i><span x-text="sensor?.tasks_by_stage?.uploading?.length || 0"></span>
-                                        </span>
-                                    </div>
-                                    <!-- Scheduled queue -->
-                                    <div class="text-muted small">
-                                        <i class="bi bi-calendar-event me-1"></i>
-                                        <span x-text="_scheduledCount + (_scheduledCount === 1 ? ' scheduled task' : ' scheduled tasks')"></span>
-                                    </div>
-                                </div>
+                        <template x-if="sensor.type === 'telescope'">
+                            <div>{% include "_monitoring_sensor_telescope.html" %}</div>
+                        </template>
+                        <template x-if="sensor.type === 'passive_radar'">
+                            <div>{% include "_monitoring_sensor_radar.html" %}</div>
+                        </template>
+                        <template x-if="sensor.type !== 'telescope' && sensor.type !== 'passive_radar'">
+                            <div class="text-muted small py-2">
+                                <i class="bi bi-cpu me-1"></i>
+                                No dashboard view for sensor type
+                                <code x-text="sensor.type"></code> yet — open the detail page for more.
                             </div>
-                        </div>
-
+                        </template>
                     </div> <!-- /card-body -->
                 </div> <!-- /card -->
             </div> <!-- /col wrapper (responsive) -->

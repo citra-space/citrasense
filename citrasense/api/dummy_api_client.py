@@ -758,6 +758,14 @@ class DummyApiClient(AbstractCitraApiClient):
             self.logger.info(f"DummyApiClient: upload_optical_observations({len(observations)} obs, task={task_id})")
         return True
 
+    def upload_radar_observations(self, observations: list) -> bool:
+        """Stub: record count and return True (no real upload in dummy mode)."""
+        self._recorded_radar_uploads: list[list] = getattr(self, "_recorded_radar_uploads", [])
+        self._recorded_radar_uploads.append(list(observations))
+        if self.logger:
+            self.logger.info("DummyApiClient: upload_radar_observations(%d obs)", len(observations))
+        return True
+
     def get_catalog_download_url(self, catalog_name: str) -> dict | None:
         """Dummy: no catalog download in test mode."""
         if self.logger:

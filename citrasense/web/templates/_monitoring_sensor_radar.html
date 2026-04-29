@@ -1,0 +1,124 @@
+{#
+    Passive-radar variant of the monitoring-card body.  No switch row
+    (Scheduling / Robotic / Self-Tasking / Processing don't map to a
+    streaming receiver).  Two-column hero matches the telescope card
+    height so mixed-modality dashboards line up at ``col-lg-6``.
+
+    Contract: the including template provides an Alpine ``sensor`` in
+    scope via ``x-for``, and the status collector has attached
+    ``sensor.radar`` = ``PassiveRadarSensor.get_live_status()``.  Reads
+    only from ``sensor.radar.*`` so no radar-specific backend calls
+    happen from the monitoring grid.
+#}
+<div class="mt-3"
+     x-data="{
+         stateBadgeClass(state, isStale) {
+             if (state === 'running') return 'bg-success';
+             if (state === 'idle') return 'bg-secondary';
+             if (state === 'error') return 'bg-danger';
+             if (state === 'offline' || isStale) return 'bg-warning text-dark';
+             return 'bg-secondary';
+         },
+         get _heartbeatText() {
+             const age = sensor?.radar?.seconds_since_status;
+             if (age == null) return 'No heartbeat yet';
+             if (age < 1) return 'Live — last heartbeat just now';
+             if (age < 60) return 'Last heartbeat ' + age.toFixed(1) + 's ago';
+             const m = Math.floor(age / 60);
+             const s = Math.floor(age % 60);
+             return 'Last heartbeat ' + m + 'm ' + s + 's ago';
+         },
+         get _uptimeText() {
+             const sec = sensor?.radar?.status?.uptime_s;
+             if (sec == null) return null;
+             const n = Number(sec);
+             if (!Number.isFinite(n)) return null;
+             if (n < 60) return n.toFixed(0) + 's';
+             if (n < 3600) return Math.floor(n / 60) + 'm ' + Math.floor(n % 60) + 's';
+             const h = Math.floor(n / 3600);
+             const m = Math.floor((n % 3600) / 60);
+             return h + 'h ' + m + 'm';
+         },
+         get _stationsCount() {
+             return (sensor?.radar?.stations?.stations || []).length;
+         }
+     }"
+     x-effect="$store.citrasense.now">
+    <div class="row g-2">
+        <!-- Range-Doppler plot hero (the canonical passive-radar display).
+             The shared partial reads ``sensor.id`` from the Alpine scope
+             and renders ``$store.citrasense.radarDetections[sensor.id]``
+             as an SVG scatter.  No overlays — connection state lives in
+             the stats column so nothing obscures the plot. -->
+        <div class="col-md-7">
+            <div class="sensor-hero-preview position-relative rounded overflow-hidden">
+                {% include "_radar_range_doppler.html" %}
+            </div>
+        </div>
+        <!-- Stats column -->
+        <div class="col-md-5 d-flex flex-column gap-2">
+            <!-- Connection state + heartbeat age.  Lives here rather than
+                 overlaying the plot so nothing covers the scatter. -->
+            <div class="small d-flex align-items-center flex-wrap gap-2">
+                <i class="bi bi-broadcast"
+                   :class="sensor?.radar?.state === 'running' ? 'text-success' : (sensor?.radar?.state === 'error' ? 'text-danger' : 'text-muted')"></i>
+                <span class="badge"
+                      :class="stateBadgeClass(sensor?.radar?.state, sensor?.radar?.is_stale)"
+                      x-text="sensor?.radar?.state || 'unknown'"></span>
+                <span class="text-muted"
+                      x-show="!(sensor?.radar?.state === 'running' && !sensor?.radar?.is_stale)"
+                      x-text="_heartbeatText"></span>
+            </div>
+            <template x-if="sensor?.radar?.error">
+                <div class="small text-danger text-truncate">
+                    <i class="bi bi-exclamation-octagon me-1"></i>
+                    <span x-text="sensor.radar.error.error || 'pr_sensor reported an error'"></span>
+                </div>
+            </template>
+            <!-- Detection rate.  Prefer our own 60s-window computation
+                 from live WebSocket detections (reactive — updates once
+                 per second via $store.citrasense.now); fall back to the
+                 cached pr_sensor status rate until the first detection
+                 lands. -->
+            <div class="small" x-effect="$store.citrasense.now">
+                <i class="bi bi-radar me-1 text-muted"></i>
+                <span class="text-muted">Detection rate </span>
+                <span class="fw-semibold font-monospace"
+                      x-text="(() => {
+                          const live = $store.citrasense.radarDetectionRate(sensor.id, 60);
+                          if (live > 0) return live.toFixed(2) + ' Hz';
+                          const cached = sensor?.radar?.status?.detection_rate;
+                          if (cached != null) return Number(cached).toFixed(2) + ' Hz';
+                          return '\u2014';
+                      })()"></span>
+            </div>
+            <!-- Uptime -->
+            <div class="small">
+                <i class="bi bi-clock me-1 text-muted"></i>
+                <span class="text-muted">Uptime </span>
+                <span class="fw-semibold" x-text="_uptimeText || '\u2014'"></span>
+            </div>
+            <!-- Realtime ratio -->
+            <div class="small">
+                <i class="bi bi-speedometer2 me-1 text-muted"></i>
+                <span class="text-muted">Realtime </span>
+                <span class="fw-semibold font-monospace"
+                      :class="(sensor?.radar?.status?.realtime_ratio ?? 1) < 0.95 ? 'text-warning' : ''"
+                      x-text="sensor?.radar?.status?.realtime_ratio != null ? Number(sensor.radar.status.realtime_ratio).toFixed(2) + '\u00d7' : '\u2014'"></span>
+            </div>
+            <!-- FM illuminators -->
+            <div class="small">
+                <i class="bi bi-broadcast-pin me-1 text-muted"></i>
+                <span class="text-muted">Illuminators </span>
+                <span class="fw-semibold" x-text="_stationsCount"></span>
+            </div>
+            {#
+                Host CPU/RAM pills removed — redundant with citrasense's
+                own host monitoring (pr_sensor is co-located) and the
+                pr_sensor-specific DSP metrics (overflow rate, SDR
+                temperature, buffer depth) live on the sensor detail
+                page's engine status card.
+            #}
+        </div>
+    </div>
+</div>

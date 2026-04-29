@@ -14,10 +14,50 @@ from citrasense.hardware.adapter_registry import get_adapter_schema as get_schem
 from citrasense.hardware.adapter_registry import list_adapters
 from citrasense.hardware.devices.abstract_hardware_device import AbstractHardwareDevice
 from citrasense.logging import CITRASENSE_LOGGER
+from citrasense.sensors.sensor_registry import get_sensor_class
 from citrasense.settings.citrasense_settings import CitraSenseSettings
 
 if TYPE_CHECKING:
     from citrasense.web.app import CitraSenseWebApp
+
+
+def _fetch_sensor_type_schema(sensor_type: str) -> list | JSONResponse:
+    """Return the class-level settings schema for a non-telescope sensor type.
+
+    Mirrors :func:`_fetch_adapter_schema` for the hardware-adapter path —
+    runs synchronously (callers wrap in :func:`asyncio.to_thread`) and
+    converts registry misses into a ``JSONResponse`` for easy inline
+    propagation.
+    """
+    try:
+        cls = get_sensor_class(sensor_type)
+    except ValueError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=404)
+    except ImportError as exc:
+        CITRASENSE_LOGGER.error("Failed to import sensor type %s: %s", sensor_type, exc)
+        return JSONResponse(
+            {"error": f"Sensor type {sensor_type!r} is not installed: {exc}"},
+            status_code=500,
+        )
+    schema_fn = getattr(cls, "build_settings_schema", None)
+    if not callable(schema_fn):
+        return JSONResponse(
+            {"error": f"Sensor type {sensor_type!r} does not expose a class-level schema"},
+            status_code=400,
+        )
+    try:
+        schema = schema_fn()
+    except Exception as exc:
+        CITRASENSE_LOGGER.error("Error building schema for %s: %s", sensor_type, exc, exc_info=True)
+        return JSONResponse({"error": str(exc)}, status_code=500)
+    # ``schema_fn`` was fetched via ``getattr`` so pyright widens the
+    # return to ``object``; narrow it back to ``list`` for the caller.
+    if not isinstance(schema, list):
+        return JSONResponse(
+            {"error": f"Sensor type {sensor_type!r} schema must be a list (got {type(schema).__name__})"},
+            status_code=500,
+        )
+    return schema
 
 
 async def _fetch_adapter_schema(adapter_name: str, current_settings: str = "") -> Any:
@@ -188,8 +228,14 @@ def build_hardware_router(ctx: CitraSenseWebApp) -> APIRouter:
                 )
 
             for sensor_cfg in sensors:
-                adapter_name = sensor_cfg.get("adapter")
-                if not adapter_name:
+                sensor_type = sensor_cfg.get("type") or "telescope"
+                adapter_name = sensor_cfg.get("adapter") or ""
+                # ``adapter`` is required for the telescope modality (it
+                # selects the N.I.N.A./KStars/INDI/Direct backend) but
+                # intentionally empty for streaming sensors like
+                # ``passive_radar`` whose per-sensor config lives in
+                # ``adapter_settings`` instead.
+                if sensor_type == "telescope" and not adapter_name:
                     return JSONResponse(
                         {"error": f"Sensor '{sensor_cfg.get('id', '?')}' missing adapter"},
                         status_code=400,
@@ -201,11 +247,18 @@ def build_hardware_router(ctx: CitraSenseWebApp) -> APIRouter:
                     )
 
                 adapter_settings = sensor_cfg.get("adapter_settings", {})
-                schema_response = await _fetch_adapter_schema(adapter_name)
-                if isinstance(schema_response, JSONResponse):
-                    return schema_response
+                # Fetch the relevant schema: per-adapter for telescopes,
+                # class-level for modality-native streaming sensors.
+                if sensor_type == "telescope":
+                    schema_response = await _fetch_adapter_schema(adapter_name)
+                    if isinstance(schema_response, JSONResponse):
+                        return schema_response
+                    schema = schema_response.get("schema", [])
+                else:
+                    schema = await asyncio.to_thread(_fetch_sensor_type_schema, sensor_type)
+                    if isinstance(schema, JSONResponse):
+                        return schema
 
-                schema = schema_response.get("schema", [])
                 for field_schema in schema:
                     field_name = field_schema.get("name")
                     is_required = field_schema.get("required", False)

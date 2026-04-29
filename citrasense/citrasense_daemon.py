@@ -24,6 +24,7 @@ from citrasense.logging import CITRASENSE_LOGGER
 from citrasense.logging._citrasense_logger import setup_file_logging
 from citrasense.pipelines.common.pipeline_registry import PipelineRegistry
 from citrasense.preview_bus import PreviewBus
+from citrasense.sensors.abstract_sensor import AbstractSensor
 from citrasense.sensors.bus import InProcessBus
 from citrasense.sensors.sensor_manager import SensorManager
 from citrasense.sensors.sensor_runtime import SensorRuntime
@@ -181,8 +182,8 @@ class CitraSenseDaemon:
                 "Check documentation for installation instructions."
             ) from e
 
-        if not any(s.sensor_type == "telescope" for s in self.sensor_manager):
-            raise RuntimeError("No telescope sensor configured — at least one telescope is required")
+        if len(self.sensor_manager) == 0:
+            raise RuntimeError("No sensors configured — at least one sensor is required")
 
     def _initialize_components(self, reload_settings: bool = False) -> tuple[bool, str | None]:
         """Initialize or reinitialize all components.
@@ -445,6 +446,19 @@ class CitraSenseDaemon:
                 if not ok:
                     return False, err
 
+            # Init each passive-radar sensor (independent of telescope init —
+            # radar-only sites are valid and telescope failures don't block radar).
+            for radar_sensor in self.sensor_manager.iter_by_type("passive_radar"):
+                try:
+                    self._init_one_radar(radar_sensor)
+                except Exception as exc:
+                    CITRASENSE_LOGGER.error(
+                        "Failed to initialize radar sensor %s: %s",
+                        radar_sensor.sensor_id,
+                        exc,
+                        exc_info=True,
+                    )
+
             # Restore preserved task metadata
             if old_task_dict:
                 CITRASENSE_LOGGER.info(f"Restoring {len(old_task_dict)} task(s) from previous TaskDispatcher")
@@ -699,6 +713,60 @@ class CitraSenseDaemon:
         self._retention_timer = threading.Timer(3600, self._start_retention_timer)
         self._retention_timer.daemon = True
         self._retention_timer.start()
+
+    def _init_one_radar(self, radar_sensor: AbstractSensor) -> None:
+        """Initialize a single passive-radar sensor: connect, build runtime, start queues.
+
+        Unlike telescope sensors, radar doesn't talk to the Citra tasks
+        API — there's no ``citra_record`` to fetch, no ground station
+        lookup.  The sensor-side ``citra_antenna_id`` is the only
+        backend identifier, and it's already loaded from the config.
+        """
+        from citrasense.sensors.radar.passive_radar_sensor import PassiveRadarSensor
+
+        assert isinstance(radar_sensor, PassiveRadarSensor)
+        assert self.task_dispatcher is not None
+        assert self.sensor_bus is not None
+
+        CITRASENSE_LOGGER.info("Initializing radar sensor %s", radar_sensor.sensor_id)
+
+        # Wire toast callback so staleness / error / announce events
+        # reach the operator.  Best-effort — a missing web server is
+        # fine (headless testing).
+        if self.web_server:
+            radar_sensor.on_toast = self.web_server.send_toast
+            # Live-broadcast every detection to browser clients via the
+            # web loop.  ``send_radar_detection`` is a thread-safe
+            # bridge (``run_coroutine_threadsafe``); the NATS asyncio
+            # thread never awaits here.
+            radar_sensor.on_detection_broadcast = self.web_server.send_radar_detection
+
+        try:
+            ok = radar_sensor.connect()
+        except Exception as exc:
+            CITRASENSE_LOGGER.error("Radar sensor %s connect() raised: %s", radar_sensor.sensor_id, exc, exc_info=True)
+            ok = False
+
+        runtime = SensorRuntime(
+            radar_sensor,
+            logger=CITRASENSE_LOGGER,
+            settings=self.settings,
+            api_client=self.api_client,
+            hardware_adapter=None,
+            ground_station=self.ground_station,
+            task_index=self.task_index,
+            safety_monitor=self.safety_monitor,
+            sensor_bus=self.sensor_bus,
+        )
+
+        self.task_dispatcher.register_runtime(runtime)
+
+        # ``SensorRuntime.start()`` will call ``start_stream`` once the
+        # dispatcher starts runtimes.  A later reconnect from inside
+        # NatsDetectionSource will start delivering events as soon as
+        # pr_sensor comes up, even if this initial connect() failed.
+
+        CITRASENSE_LOGGER.info("Radar sensor %s registered (connected=%s)", radar_sensor.sensor_id, ok)
 
     def _initialize_safety_monitor(self) -> None:
         """Create SafetyMonitor with site-level checks and wire to hardware.

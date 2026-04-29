@@ -84,6 +84,12 @@ function handleBackendToast(data) {
     showToast(data.message, data.toast_type || 'info', { id: data.id });
 }
 
+function handleRadarDetection(sensorId, det) {
+    if (!sensorId || !det) return;
+    const store = Alpine.store('citrasense');
+    store.appendRadarDetection(sensorId, det);
+}
+
 function updateStoreFromConnection(connected, reconnectAt = 0) {
     const store = Alpine.store('citrasense');
     store.wsConnected = connected;
@@ -227,6 +233,13 @@ function initNavigation() {
 // Camera capture moved to Alpine store method
 
 // --- Initialize ---
+// Expose showToast globally so inline Alpine x-data handlers in Jinja
+// templates can fire toasts without a dynamic import per click.  The
+// established pattern inside ES modules is still to import it directly
+// from ./config.js; only template-scoped code should reach for the
+// window-level hook.
+window.showToast = showToast;
+
 document.addEventListener('DOMContentLoaded', async () => {
     initNavigation();
     await initConfig();
@@ -242,6 +255,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         onTasks: updateStoreFromTasks,
         onPreview: updatePreviewFromPush,
         onToast: handleBackendToast,
+        onRadarDetection: handleRadarDetection,
         onConnectionChange: updateStoreFromConnection
     });
 

@@ -1082,6 +1082,67 @@ def test_add_sensor_config_missing_id(client):
     assert resp.status_code == 400
 
 
+def test_list_sensor_types_includes_both_modalities(client):
+    """GET /api/sensor-types lists every registered sensor type."""
+    resp = client.get("/api/sensor-types")
+    assert resp.status_code == 200
+    types = {t["value"] for t in resp.json()["types"]}
+    assert {"telescope", "passive_radar"}.issubset(types)
+
+
+def test_get_passive_radar_schema_normalized(client):
+    """The passive_radar class-level schema uses the SettingSchemaEntry shape."""
+    resp = client.get("/api/sensor-types/passive_radar/schema")
+    assert resp.status_code == 200
+    schema = resp.json()["schema"]
+    names = {field["name"] for field in schema}
+    assert {"nats_url", "radar_sensor_id", "detection_min_snr_db"}.issubset(names)
+    # Radar sensors reuse SensorConfig.citra_sensor_id for the antenna
+    # UUID — the legacy adapter_settings key must not leak back into the
+    # UI schema.
+    assert "citra_antenna_id" not in names
+    # Every field must carry the keys the web-form renderer reads.
+    for field in schema:
+        assert "name" in field
+        assert "friendly_name" in field
+        assert field["type"] in {"str", "int", "float", "bool", "select"}
+
+
+def test_get_unknown_sensor_type_schema_404(client):
+    resp = client.get("/api/sensor-types/does_not_exist/schema")
+    assert resp.status_code == 404
+
+
+def test_add_passive_radar_sensor_without_adapter(client, mock_daemon):
+    """A passive_radar sensor may be added with an empty adapter field."""
+    resp = client.post(
+        "/api/config/sensors",
+        json={"id": "radar-0", "type": "passive_radar", "adapter": ""},
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["sensor"]["type"] == "passive_radar"
+    assert data["sensor"]["adapter"] == ""
+    assert len(mock_daemon.settings.sensors) == 2
+
+
+def test_add_telescope_without_adapter_rejected(client):
+    """Telescopes still require an adapter — guardrail against the radar relaxation."""
+    resp = client.post(
+        "/api/config/sensors",
+        json={"id": "scope-1", "type": "telescope"},
+    )
+    assert resp.status_code == 400
+
+
+def test_add_sensor_unknown_type_rejected(client):
+    resp = client.post(
+        "/api/config/sensors",
+        json={"id": "scope-1", "type": "not_a_modality"},
+    )
+    assert resp.status_code == 400
+
+
 def test_add_sensor_config_invalid_id(client):
     resp = client.post(
         "/api/config/sensors",
@@ -1252,3 +1313,101 @@ def test_get_processors_returns_per_sensor_enabled_flags(client_two, mock_daemon
     resp = client_two.get("/api/processors?sensor_id=scope-1")
     assert resp.status_code == 200
     assert captured["sensor_id"] == "scope-1"
+
+
+# ---------------------------------------------------------------------------
+# Radar detections endpoint
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def mock_daemon_radar(mock_settings):
+    """Daemon fixture with a single passive_radar sensor registered.
+
+    Keeps the plumbing minimal — the route under test only needs
+    ``daemon.sensor_manager.get_sensor`` to return a sensor whose
+    ``sensor_type`` is ``"passive_radar"`` and that exposes
+    ``get_recent_detections``.
+    """
+    d = MagicMock()
+    d.settings = mock_settings
+    del d.hardware_adapter
+
+    radar_sensor = MagicMock()
+    radar_sensor.sensor_id = "radar-0"
+    radar_sensor.sensor_type = "passive_radar"
+    radar_sensor.name = "Radar 0"
+    # Three slim-dict detections increasing in ts_unix so the cursor
+    # test can distinguish them.
+    radar_sensor.get_recent_detections.return_value = [
+        {"ts": "2025-11-11T18:38:10Z", "ts_unix": 100.0, "range_km": 100.0, "sat_uuid": "sat-a"},
+        {"ts": "2025-11-11T18:38:11Z", "ts_unix": 101.0, "range_km": 110.0, "sat_uuid": "sat-a"},
+        {"ts": "2025-11-11T18:38:12Z", "ts_unix": 102.0, "range_km": 120.0, "sat_uuid": "sat-a"},
+    ]
+
+    rt = MagicMock()
+    rt.sensor_id = "radar-0"
+    rt.sensor = radar_sensor
+
+    d.task_dispatcher = MagicMock()
+    d.task_dispatcher.get_runtime.side_effect = lambda sid: rt if sid == "radar-0" else None
+    d.task_dispatcher.iter_runtimes = lambda: [rt]
+    d.task_dispatcher.current_task_ids = {}
+    d.task_dispatcher.get_tasks_snapshot.return_value = []
+
+    sm = MagicMock()
+    sm.get_sensor.side_effect = lambda sid: radar_sensor if sid == "radar-0" else None
+    sm.get = sm.get_sensor
+    sm.__iter__ = lambda self: iter([radar_sensor])
+    sm.iter_by_type.return_value = iter([radar_sensor])
+    del sm.first_of_type
+    d.sensor_manager = sm
+    return d
+
+
+@pytest.fixture
+def client_radar(mock_daemon_radar):
+    with patch("citrasense.web.app.StaticFiles"):
+        app = CitraSenseWebApp(daemon=mock_daemon_radar)
+    return TestClient(app.app)
+
+
+def test_radar_detections_returns_full_buffer_when_since_omitted(client_radar, mock_daemon_radar):
+    """With no cursor the endpoint passes ``None`` through to
+    ``get_recent_detections`` — the ring buffer returns whatever it's got."""
+    resp = client_radar.get("/api/sensors/radar-0/radar/detections")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert "detections" in data
+    assert len(data["detections"]) == 3
+
+    # Verify the handler really passed None (not 0 or "") so the ring
+    # buffer's "return whole buffer" branch is exercised by the route.
+    radar_sensor = mock_daemon_radar.sensor_manager.get_sensor("radar-0")
+    radar_sensor.get_recent_detections.assert_called_with(None)
+
+
+def test_radar_detections_passes_since_cursor_through(client_radar, mock_daemon_radar):
+    """``?since=-300`` must hit the sensor as ``-300.0`` (float) so the
+    negative-seconds-back branch in ``DetectionRingBuffer.snapshot_since``
+    runs without extra FastAPI coercion."""
+    resp = client_radar.get("/api/sensors/radar-0/radar/detections?since=-300")
+    assert resp.status_code == 200
+    radar_sensor = mock_daemon_radar.sensor_manager.get_sensor("radar-0")
+    radar_sensor.get_recent_detections.assert_called_with(-300.0)
+
+
+def test_radar_detections_404s_for_unknown_sensor(client_radar):
+    resp = client_radar.get("/api/sensors/does-not-exist/radar/detections")
+    assert resp.status_code == 404
+
+
+def test_radar_detections_409s_when_sensor_is_not_passive_radar(mock_daemon):
+    """The route must reject telescope sensor ids with a 409 rather than
+    crashing when it calls ``get_recent_detections`` on a sensor that
+    doesn't have one."""
+    with patch("citrasense.web.app.StaticFiles"):
+        app = CitraSenseWebApp(daemon=mock_daemon)
+    client = TestClient(app.app)
+    resp = client.get("/api/sensors/scope-0/radar/detections")
+    assert resp.status_code == 409

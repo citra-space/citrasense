@@ -120,6 +120,22 @@ class AbstractCitraApiClient(ABC):
         pass
 
     @abstractmethod
+    def upload_radar_observations(self, observations: list) -> bool:
+        """POST /observations/radar — submit passive-radar observations.
+
+        Args:
+            observations: list of ``RadarObservationCreate`` dicts (camelCase
+                keys matching the API schema: ``satelliteId``, ``antennaId``,
+                ``epoch``, ``sensorLatitude``, ``sensorLongitude``,
+                ``sensorAltitude`` (km), optional ``range`` (km),
+                ``rangeRate`` (km/s), ``rightAscension``, ``declination``,
+                ``snr``, and ``secondarySensor*`` block).
+
+        Returns True on success, False otherwise.
+        """
+        pass
+
+    @abstractmethod
     def get_catalog_download_url(self, catalog_name: str) -> dict | None:
         """Get a signed download URL for a reference catalog.
 

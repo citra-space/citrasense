@@ -401,8 +401,15 @@ class TaskDispatcher:
         return ids
 
     def poll_tasks(self) -> None:
+        # Telescope sensors drive Citra's task API; streaming sensors
+        # (passive_radar today, RF tomorrow) don't participate in the
+        # poll.  On a radar-only site there are legitimately no
+        # telescope runtimes — return early instead of logging an
+        # error and letting the thread die silently.
         if not self.telescope_runtimes():
-            self.logger.error("poll_tasks called without any telescope runtimes; cannot poll for tasks")
+            self.logger.info(
+                "poll_tasks: no telescope (on-demand) runtimes — radar-only deployment, skipping poll loop"
+            )
             return
 
         while not self._stop_event.is_set():
@@ -821,11 +828,26 @@ class TaskDispatcher:
         self.runner_thread.start()
 
     def stop(self) -> None:
+        """Stop runtimes and worker threads.
+
+        Tolerant of a never-started dispatcher: ``_initialize_components``
+        constructs a ``TaskDispatcher`` *before* calling ``.start()``, so
+        if init fails in between (e.g. a sensor adapter blowup), the next
+        ``reload_configuration`` will hit this method on a dispatcher
+        whose ``poll_thread`` / ``runner_thread`` attributes were never
+        created. Silently no-op instead of raising ``AttributeError``,
+        which would otherwise mask the real init error behind an obscure
+        cleanup crash.
+        """
         self._stop_event.set()
 
         self.logger.info("Stopping sensor runtimes...")
         for rt in self._runtimes.values():
             rt.stop()
 
-        self.poll_thread.join()
-        self.runner_thread.join()
+        poll_thread = getattr(self, "poll_thread", None)
+        if poll_thread is not None:
+            poll_thread.join()
+        runner_thread = getattr(self, "runner_thread", None)
+        if runner_thread is not None:
+            runner_thread.join()

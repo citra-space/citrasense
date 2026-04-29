@@ -1,15 +1,15 @@
 {#
-    Shared hardware-status pills for a single sensor (Telescope / Camera /
-    Focuser).  Included from both the dashboard hero card
-    (`_monitoring.html`) and the sensor detail page header
-    (`_sensor_detail.html`).
+    Telescope hardware-status pills (Telescope / Camera / Focuser) for
+    a single sensor.  Included from the telescope monitoring hero
+    (``_monitoring_sensor_telescope.html``) and the telescope sensor
+    detail body (``_sensor_detail_telescope.html``).
 
-    Contract: the including template must provide an Alpine ``sensor`` in
-    scope — either via ``x-for="sensor in ..."`` (monitoring) or
+    Contract: the including template must provide an Alpine ``sensor``
+    in scope — either via ``x-for="sensor in ..."`` (monitoring) or
     ``x-data="{ get sensor() { return $store.citrasense.currentSensor; } }"``
-    (detail).  All bindings use ``sensor?.`` so the partial renders safely
-    in both contexts, even when ``sensor`` resolves to null while the
-    sensor list is still loading on a deep-link page load.
+    (detail).  All bindings use ``sensor?.`` so the partial renders
+    safely even when ``sensor`` resolves to null while the sensor list
+    is still loading on a deep-link page load.
 #}
 <span class="badge rounded-pill"
       :class="sensor?.telescope_connected ? 'bg-success' : 'bg-danger'"

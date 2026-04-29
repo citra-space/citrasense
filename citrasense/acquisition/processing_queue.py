@@ -1,18 +1,41 @@
-"""Background processing queue for image processing."""
+"""Background processing queue for image processing.
+
+Two item shapes flow through the queue, dispatched on ``item["kind"]``:
+
+- ``"optical"`` (default, legacy): a telescope task's captured FITS
+  image threaded through the optical :class:`PipelineRegistry`.
+- ``"radar"``: a single :class:`RadarProcessingContext` carrying one
+  ``pr_sensor`` observation event; the radar chain (filter → formatter
+  → artifact writer) runs and either enqueues an upload or drops the
+  observation with a logged reason.
+
+Radar work does not retry — the chain is deterministic and idempotent
+— so failures on that path are surfaced as ``_on_permanent_failure``
+immediately by the base worker loop after the (small) max-retry
+counter exhausts.  In practice the radar path either succeeds or the
+observation is dropped by a filter, neither of which raises.
+"""
+
+from __future__ import annotations
 
 import shutil
 import tempfile
 from collections.abc import Callable
 from pathlib import Path
+from typing import TYPE_CHECKING, Any
 
 from citrasense.acquisition.base_work_queue import BaseWorkQueue
 from citrasense.pipelines.optical.optical_processing_context import OpticalProcessingContext
 
+if TYPE_CHECKING:
+    from citrasense.pipelines.radar.radar_pipeline import RadarPipeline
+    from citrasense.pipelines.radar.radar_processing_context import RadarProcessingContext
+
 
 class ProcessingQueue(BaseWorkQueue):
     """
-    Background worker queue for image processing.
-    Allows multiple processing tasks to run concurrently without blocking telescope.
+    Background worker queue for image processing and radar observation
+    processing.
     """
 
     def __init__(self, num_workers: int = 1, settings=None, logger=None):
@@ -38,7 +61,43 @@ class ProcessingQueue(BaseWorkQueue):
         """
         self.logger.info(f"Queuing task {task_id} for processing")
         self.work_queue.put(
-            {"task_id": task_id, "image_path": image_path, "context": context, "on_complete": on_complete}
+            {
+                "kind": "optical",
+                "task_id": task_id,
+                "image_path": image_path,
+                "context": context,
+                "on_complete": on_complete,
+            }
+        )
+
+    def submit_radar_event(
+        self,
+        ctx: RadarProcessingContext,
+        pipeline: RadarPipeline,
+        on_complete: Callable[[RadarProcessingContext, bool], None],
+    ) -> None:
+        """Submit a single radar observation for processing.
+
+        Args:
+            ctx: Radar processing context carrying the raw observation
+                event plus per-sensor configuration (antenna UUID,
+                filter thresholds, artifact dir, ...).
+            pipeline: The sensor's cached :class:`RadarPipeline`
+                (filter → formatter → artifact writer).
+            on_complete: Callback invoked with ``(ctx, upload_ready)``
+                after processing finishes.  ``upload_ready=True``
+                means the caller should submit ``ctx.upload_payload``
+                to the upload queue.
+        """
+        task_id = f"radar:{ctx.sensor_id}:{id(ctx.event)}"
+        self.work_queue.put(
+            {
+                "kind": "radar",
+                "task_id": task_id,
+                "ctx": ctx,
+                "pipeline": pipeline,
+                "on_complete": on_complete,
+            }
         )
 
     def _get_working_dir(self, task_id: str, sensor_id: str = "") -> Path:
@@ -70,6 +129,22 @@ class ProcessingQueue(BaseWorkQueue):
             self.logger.warning(f"Failed to clean up working directory for {task_id}: {e}")
 
     def _execute_work(self, item):
+        """Execute one queued work item — optical image or radar observation."""
+        if item.get("kind") == "radar":
+            return self._execute_radar(item)
+        return self._execute_optical(item)
+
+    def _execute_radar(self, item: dict[str, Any]):
+        ctx: RadarProcessingContext = item["ctx"]
+        pipeline: RadarPipeline = item["pipeline"]
+        try:
+            upload_ready = pipeline.process(ctx)
+        except Exception as exc:
+            self.logger.error("Radar pipeline failed for sensor %s: %s", ctx.sensor_id, exc, exc_info=True)
+            return (False, None)
+        return (True, {"upload_ready": upload_ready})
+
+    def _execute_optical(self, item):
         """Execute image processing work."""
         task_id = item["task_id"]
         task_obj = item["context"].get("task")
@@ -136,6 +211,15 @@ class ProcessingQueue(BaseWorkQueue):
 
     def _on_success(self, item, result):
         """Handle successful processing completion."""
+        if item.get("kind") == "radar":
+            ctx: RadarProcessingContext = item["ctx"]
+            upload_ready = bool((result or {}).get("upload_ready"))
+            try:
+                item["on_complete"](ctx, upload_ready)
+            except Exception as exc:
+                self.logger.error("Radar on_complete raised: %s", exc, exc_info=True)
+            return
+
         task_id = item["task_id"]
         task_obj = item["context"].get("task")
         sensor_id = item["context"].get("sensor_id", "") or ""
@@ -152,6 +236,20 @@ class ProcessingQueue(BaseWorkQueue):
 
     def _on_permanent_failure(self, item):
         """Handle permanent processing failure (fail-open: upload raw image)."""
+        if item.get("kind") == "radar":
+            ctx: RadarProcessingContext = item["ctx"]
+            ctx.drop_reason = ctx.drop_reason or "radar pipeline permanently failed"
+            self.logger.error(
+                "Radar observation for sensor %s permanently failed processing: %s",
+                ctx.sensor_id,
+                ctx.drop_reason,
+            )
+            try:
+                item["on_complete"](ctx, False)
+            except Exception as exc:
+                self.logger.error("Radar on_complete raised on failure: %s", exc, exc_info=True)
+            return
+
         task_id = item["task_id"]
         task_obj = item["context"].get("task")
         sensor_id = item["context"].get("sensor_id", "") or ""
@@ -171,4 +269,6 @@ class ProcessingQueue(BaseWorkQueue):
 
     def _get_task_from_item(self, item):
         """Get Task object from work item."""
+        if item.get("kind") == "radar":
+            return None
         return item["context"].get("task")

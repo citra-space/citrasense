@@ -51,6 +51,129 @@ function compareVersions(v1, v2) {
             // each component running its own setInterval.
             now: Date.now(),
 
+            // Per-sensor slim-dict radar detections, capped to match the
+            // server-side ring buffer (500 entries / ~50s at 10 Hz).
+            // Populated by the ``radar_detection`` WebSocket message
+            // and hydrated on page entry via ``hydrateRadarDetections``.
+            //
+            // Shape: ``{ [sensor_id]: Array<{
+            //   ts, ts_unix, range_km, range_rate_km_s, doppler_hz,
+            //   snr_db, sat_uuid, sat_name, sensor_id
+            // }> }``.
+            radarDetections: {},
+            _radarDetectionsMax: 500,
+            _radarDetectionsHydrated: {},
+
+            appendRadarDetection(sensorId, det) {
+                if (!sensorId || !det) return;
+                const existing = this.radarDetections[sensorId] || [];
+                // Hot path — avoid Array.spread on every message.  Clone
+                // once, mutate, reassign so Alpine sees the change.
+                const next = existing.slice();
+                next.push(det);
+                if (next.length > this._radarDetectionsMax) {
+                    next.splice(0, next.length - this._radarDetectionsMax);
+                }
+                this.radarDetections = { ...this.radarDetections, [sensorId]: next };
+            },
+
+            /**
+             * Detection rate (Hz) over a trailing time window.
+             *
+             * Used by the monitoring card's rate readout and can be
+             * reused anywhere a simple "per-second" KPI is wanted.
+             * Reads ``ts_unix`` so it tolerates clock drift between
+             * pr_sensor and the browser — the server stamps ``ts_unix``
+             * from the payload, never from the client's clock.
+             */
+            radarDetectionRate(sensorId, windowSeconds = 60) {
+                const arr = this.radarDetections[sensorId];
+                if (!arr || !arr.length) return 0;
+                const nowUnix = Date.now() / 1000;
+                const cutoff = nowUnix - windowSeconds;
+                let count = 0;
+                for (let i = arr.length - 1; i >= 0; i--) {
+                    const ts = Number(arr[i]?.ts_unix || 0);
+                    if (ts < cutoff) break;
+                    count++;
+                }
+                return count / windowSeconds;
+            },
+
+            /**
+             * Group the radar detection buffer for ``sensorId`` by
+             * ``sat_uuid`` (falling back to ``sat_name``), returning a
+             * ``{ key: [...detections] }`` map ordered oldest→newest per
+             * key and capped to ``maxPerSat`` trailing points.  Used by
+             * the Bistatic plan-view partial to draw one trail per
+             * tracked satellite.  Returns an empty object when no data
+             * is available so callers can rely on ``Object.keys``.
+             */
+            radarTracksBySat(sensorId, maxPerSat = 20) {
+                const arr = this.radarDetections[sensorId];
+                const out = {};
+                if (!arr || !arr.length) return out;
+                for (let i = 0; i < arr.length; i++) {
+                    const d = arr[i];
+                    const key = d?.sat_uuid || d?.sat_name;
+                    if (!key) continue;
+                    if (!out[key]) out[key] = [];
+                    out[key].push(d);
+                }
+                // Trim each trail to the last ``maxPerSat`` points.
+                for (const k of Object.keys(out)) {
+                    const list = out[k];
+                    if (list.length > maxPerSat) {
+                        out[k] = list.slice(list.length - maxPerSat);
+                    }
+                }
+                return out;
+            },
+
+            /**
+             * Back-fill ``radarDetections[sensorId]`` from the
+             * server-side ring buffer on page entry.  Idempotent — the
+             * first caller sets ``_radarDetectionsHydrated[sensorId]``
+             * so repeated includes of the same partial don't refetch.
+             * Pass ``{ force: true }`` to clear the hydration flag
+             * and refetch (e.g. after a reconnect or a deliberate
+             * refresh).
+             */
+            async hydrateRadarDetections(sensorId, secondsBack = 300, options = {}) {
+                if (!sensorId) return;
+                const force = !!options.force;
+                if (force) {
+                    const next = { ...this._radarDetectionsHydrated };
+                    delete next[sensorId];
+                    this._radarDetectionsHydrated = next;
+                }
+                if (this._radarDetectionsHydrated[sensorId]) return;
+                this._radarDetectionsHydrated = {
+                    ...this._radarDetectionsHydrated,
+                    [sensorId]: true,
+                };
+                try {
+                    const url = `${this.sensorApiBaseFor(sensorId)}/radar/detections?since=${-Math.abs(secondsBack)}`;
+                    const r = await fetch(url);
+                    if (!r.ok) return;
+                    const data = await r.json();
+                    const rows = Array.isArray(data?.detections) ? data.detections : [];
+                    if (!rows.length) return;
+                    // Merge under whatever has already streamed in via
+                    // WebSocket — order by ts_unix and cap to the max.
+                    const live = this.radarDetections[sensorId] || [];
+                    const combined = rows.concat(live).sort(
+                        (a, b) => Number(a?.ts_unix || 0) - Number(b?.ts_unix || 0)
+                    );
+                    const trimmed = combined.length > this._radarDetectionsMax
+                        ? combined.slice(combined.length - this._radarDetectionsMax)
+                        : combined;
+                    this.radarDetections = { ...this.radarDetections, [sensorId]: trimmed };
+                } catch (err) {
+                    console.debug('hydrateRadarDetections failed:', err);
+                }
+            },
+
             // Multi-sensor support
             sensors: [],
             // ``currentSensorId`` is set by the client-side path router in
@@ -146,6 +269,7 @@ function compareVersions(v1, v2) {
             config: {},
             apiEndpoint: 'production',
             hardwareAdapters: [], // [{value, label}]
+            sensorTypes: [], // [{value, label, description}] — populated from /api/sensor-types
             filters: {},
             savedAdapters: {},
             enabledFilters: [],
