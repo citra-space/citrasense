@@ -680,15 +680,21 @@ class CitraSenseDaemon:
         if adapter.pointing_model:
             telescope_runtime.alignment_manager.set_pointing_model(adapter.pointing_model)
 
-        # Initialize CalibrationManager if direct camera control is available.
-        # Library ownership lives on the runtime so two telescopes keep
-        # independent masters/in-flight capture state.
-        if adapter.supports_direct_camera_control():
-            from citrasense.calibration.calibration_library import CalibrationLibrary
+        # Every telescope runtime gets a CalibrationLibrary so the
+        # CalibrationProcessor can apply masters regardless of how they
+        # were captured.  Library ownership lives on the runtime so two
+        # telescopes keep independent masters.  The CalibrationManager
+        # is only created when the adapter actually exposes an
+        # AbstractCamera we can drive for shutter-closed captures —
+        # orchestrator adapters (NINA) rely on upload ingest instead.
+        from citrasense.calibration.calibration_library import CalibrationLibrary
+
+        library = CalibrationLibrary()
+        telescope_runtime.attach_calibration_library(library)
+
+        if adapter.supports_direct_camera_control() and adapter.camera is not None:
             from citrasense.sensors.telescope.managers.calibration_manager import CalibrationManager
 
-            library = CalibrationLibrary()
-            telescope_runtime.attach_calibration_library(library)
             telescope_runtime.calibration_manager = CalibrationManager(
                 rt_logger,
                 adapter,

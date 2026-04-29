@@ -1602,6 +1602,29 @@ class DummyAdapter(AbstractAstroHardwareAdapter):
         """Dummy adapter supports direct camera control."""
         return True
 
+    def get_calibration_profile_summary(self) -> dict | None:
+        """Return an upload-only calibration profile for the dummy sensor.
+
+        The dummy adapter has no real :class:`AbstractCamera`, so the
+        calibration stack treats it like an orchestrator adapter
+        (NINA): the web UI exposes an upload panel and masters are
+        matched to lights via the ``INSTRUME`` FITS header that
+        :meth:`take_image` writes (``"DummyCamera"``).  This makes it
+        possible to exercise the full calibration apply path against
+        synthetic FITS without any physical hardware.
+        """
+        return {
+            "camera_id": "DummyCamera",
+            "model": "DummyCamera",
+            "current_gain": 0,
+            "current_binning": 1,
+            "current_temperature": 20.0,
+            "target_temperature": None,
+            "read_mode": "",
+            "has_mechanical_shutter": False,
+            "has_cooling": False,
+        }
+
     def capture_preview(self, exposure_time: float, flip_horizontal: bool = False) -> str:
         """Return a synthetic preview image as a JPEG data URL."""
         import time

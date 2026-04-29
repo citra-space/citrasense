@@ -725,7 +725,71 @@ class NinaAdvancedHttpAdapter(AbstractAstroHardwareAdapter):
         return True
 
     def supports_direct_camera_control(self) -> bool:
+        # NINA owns capture — it does not expose an ``AbstractCamera`` we
+        # can drive for shutter-closed bias/dark captures, so the
+        # CalibrationManager cannot be instantiated for NINA sensors.
+        # However, ``capture_preview()`` *is* implemented (it calls
+        # NINA's streaming capture endpoint), and several UI affordances
+        # (Snap, Save, live filter selector) key off this flag to decide
+        # whether a camera is directly addressable.  Returning
+        # ``is_camera_connected()`` keeps those UI paths working; the
+        # calibration stack gates separately on ``adapter.camera``.
         return self.is_camera_connected()
+
+    def get_calibration_profile_summary(self) -> dict | None:
+        """Return an upload-only calibration profile for NINA sensors.
+
+        Mirrors the subset of :class:`CalibrationProfile` fields that the
+        web UI needs to display the library status for a sensor whose
+        camera is not directly addressable.  The ``camera_id`` is
+        derived from NINA's camera ``Name`` so that it matches the
+        ``INSTRUME`` header NINA writes into science FITS — that is how
+        :func:`resolve_camera_id` keys masters to lights at reduction
+        time.  Returns ``None`` if the camera is not connected.
+        """
+        try:
+            resp = requests.get(
+                f"{self.nina_api_path}{self.CAM_URL}info",
+                timeout=self.HEALTH_CHECK_TIMEOUT,
+            ).json()
+        except Exception:
+            return None
+
+        if not resp.get("Success"):
+            return None
+        r = resp.get("Response", {}) or {}
+        if not r.get("Connected"):
+            return None
+
+        name = str(r.get("Name") or "").strip()
+        if not name:
+            return None
+
+        def _as_int(v, default: int = 0) -> int:
+            try:
+                return int(v) if v is not None else default
+            except (TypeError, ValueError):
+                return default
+
+        def _as_float_or_none(v) -> float | None:
+            try:
+                return float(v) if v is not None else None
+            except (TypeError, ValueError):
+                return None
+
+        bx, _by = self.get_current_binning()
+
+        return {
+            "camera_id": name,
+            "model": name,
+            "current_gain": _as_int(r.get("Gain")),
+            "current_binning": max(1, bx),
+            "current_temperature": _as_float_or_none(r.get("Temperature")),
+            "target_temperature": _as_float_or_none(r.get("TemperatureSetPoint")),
+            "read_mode": "",  # NINA /camera/info does not expose a stable read-mode string
+            "has_mechanical_shutter": bool(r.get("HasShutter", False)),
+            "has_cooling": bool(r.get("CanSetTemperature", False)),
+        }
 
     def capture_preview(self, exposure_time: float, flip_horizontal: bool = False) -> str:
         """Take a preview exposure via NINA and return a JPEG or PNG data URL.
