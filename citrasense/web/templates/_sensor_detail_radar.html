@@ -99,7 +99,7 @@
                     this._timer = setInterval(() => this.refresh(), 5000);
                 },
                 destroy() { if (this._timer) clearInterval(this._timer); },
-            }" x-init="init(); $cleanup(() => destroy())">
+            }" x-init="init()">
 
                 <!-- Header row: state + controls -->
                 <div class="card bg-dark text-light border-secondary mb-3">
@@ -444,6 +444,40 @@
                     <div class="card-body p-2">
                         <div style="height: 360px;">
                             {% with size='full' %}{% include "_radar_range_doppler.html" %}{% endwith %}
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Bistatic Geometry (plan view).  Top-down local map
+                     showing the receiver at centre, FM transmitter
+                     stations at their real lat/lon offsets, and any
+                     currently-tracked satellite ground-points as
+                     colour-coded dots with short fading trails.
+                     Offline-safe: hand-rolled SVG, no tile provider. -->
+                <div class="card bg-dark text-light border-secondary my-3"
+                     x-data="{
+                         get _trackCount() {
+                             const dets = $store.citrasense.radarDetections[sensor.id] || [];
+                             const seen = new Set();
+                             for (const d of dets) {
+                                 const key = d.sat_uuid || d.sat_name;
+                                 if (key) seen.add(key);
+                             }
+                             return seen.size;
+                         },
+                         get _stationCount() {
+                             return (sensor?.radar?.stations?.stations || []).length;
+                         },
+                     }">
+                    <div class="card-header d-flex align-items-center">
+                        <i class="bi bi-geo-alt me-1"></i>
+                        <span>Bistatic Geometry (plan view)</span>
+                        <span class="ms-auto small text-muted font-monospace"
+                              x-text="_stationCount + ' tx · ' + _trackCount + ' tracks'"></span>
+                    </div>
+                    <div class="card-body p-2">
+                        <div style="height: 420px;">
+                            {% with size='full' %}{% include "_radar_bistatic_map.html" %}{% endwith %}
                         </div>
                     </div>
                 </div>

@@ -101,6 +101,36 @@ function compareVersions(v1, v2) {
             },
 
             /**
+             * Group the radar detection buffer for ``sensorId`` by
+             * ``sat_uuid`` (falling back to ``sat_name``), returning a
+             * ``{ key: [...detections] }`` map ordered oldest→newest per
+             * key and capped to ``maxPerSat`` trailing points.  Used by
+             * the Bistatic plan-view partial to draw one trail per
+             * tracked satellite.  Returns an empty object when no data
+             * is available so callers can rely on ``Object.keys``.
+             */
+            radarTracksBySat(sensorId, maxPerSat = 20) {
+                const arr = this.radarDetections[sensorId];
+                const out = {};
+                if (!arr || !arr.length) return out;
+                for (let i = 0; i < arr.length; i++) {
+                    const d = arr[i];
+                    const key = d?.sat_uuid || d?.sat_name;
+                    if (!key) continue;
+                    if (!out[key]) out[key] = [];
+                    out[key].push(d);
+                }
+                // Trim each trail to the last ``maxPerSat`` points.
+                for (const k of Object.keys(out)) {
+                    const list = out[k];
+                    if (list.length > maxPerSat) {
+                        out[k] = list.slice(list.length - maxPerSat);
+                    }
+                }
+                return out;
+            },
+
+            /**
              * Back-fill ``radarDetections[sensorId]`` from the
              * server-side ring buffer on page entry.  Idempotent — the
              * first caller sets ``_radarDetectionsHydrated[sensorId]``

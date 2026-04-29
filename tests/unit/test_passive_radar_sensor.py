@@ -461,6 +461,66 @@ class TestSlimDictProjection:
         assert slim["range_rate_km_s"] is not None
         assert abs(slim["range_rate_km_s"] + 50.0 * 299_792_458.0 / 99.9e6 / 1000.0) < 1e-9
 
+    def test_projection_includes_plan_view_fields(self):
+        """The plan-view bistatic map needs ``az_deg`` / ``el_deg`` /
+        ``alt_km`` / ``station`` on every slim dict so it can project
+        ground-points without round-tripping to the full observation."""
+        sensor = _make_sensor(_StubDetectionSource(), radar_config={"center_freq_hz": 100e6})
+        payload = {
+            "timestamp": "2025-11-11T18:38:11Z",
+            "target": {"citra_uuid": "sat-abc", "name": "ALPHA-1"},
+            "bistatic": {"bistatic_range_km": 512.5, "doppler_hz": 100.0},
+            "quality": {"snr_db": 18.4},
+            "geometry": {
+                "az_deg": 42.5,
+                "el_deg": 63.1,
+                "alt_km": 445.0,
+                "receiver": {"lat_deg": 38.9, "lon_deg": -104.85, "alt_m": 1942.0},
+                "transmitter": {"callsign": "KVUU", "freq_hz": 99.9e6},
+            },
+        }
+        slim = sensor._project_slim_dict(payload)
+        assert slim is not None
+        assert slim["az_deg"] == 42.5
+        assert slim["el_deg"] == 63.1
+        assert slim["alt_km"] == 445.0
+        assert slim["station"] == "KVUU"
+
+    def test_projection_tolerates_missing_geometry_block(self):
+        """Observations without a geometry block still project cleanly;
+        the plan-view fields are just ``None`` so the UI can skip them."""
+        sensor = _make_sensor(_StubDetectionSource())
+        payload = {
+            "timestamp": "2025-11-11T18:38:11Z",
+            "target": {"citra_uuid": "sat-abc"},
+            "bistatic": {"bistatic_range_km": 100.0, "doppler_hz": 50.0},
+        }
+        slim = sensor._project_slim_dict(payload)
+        assert slim is not None
+        assert slim["az_deg"] is None
+        assert slim["el_deg"] is None
+        assert slim["alt_km"] is None
+        assert slim["station"] is None
+
+    def test_projection_caches_receiver_for_live_status(self):
+        """The sensor caches the receiver location from each observation
+        so :meth:`get_live_status` can surface it to the plan-view UI
+        without needing a dedicated NATS subject."""
+        sensor = _make_sensor(_StubDetectionSource())
+        # Before any observation arrives the receiver is absent.
+        assert sensor.get_live_status()["receiver"] is None
+        payload = {
+            "timestamp": "2025-11-11T18:38:11Z",
+            "target": {"citra_uuid": "sat-abc"},
+            "bistatic": {"bistatic_range_km": 100.0, "doppler_hz": 50.0},
+            "geometry": {
+                "receiver": {"lat_deg": 38.901518, "lon_deg": -104.850960, "alt_m": 1942.0},
+            },
+        }
+        assert sensor._project_slim_dict(payload) is not None
+        rx = sensor.get_live_status()["receiver"]
+        assert rx == {"lat_deg": 38.901518, "lon_deg": -104.850960, "alt_m": 1942.0}
+
 
 class TestDetectionRingBuffer:
     """Cursor-semantics and bounding tests for :class:`DetectionRingBuffer`."""

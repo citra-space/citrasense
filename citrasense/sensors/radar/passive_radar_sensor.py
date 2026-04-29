@@ -238,6 +238,7 @@ class PassiveRadarSensor(AbstractSensor):
         self._last_status: dict[str, Any] | None = None
         self._last_health: dict[str, Any] | None = None
         self._last_stations: dict[str, Any] | None = None
+        self._last_receiver: dict[str, Any] | None = None
         self._last_error: dict[str, Any] | None = None
         self._last_announce: dict[str, Any] | None = None
         self._announce_event = threading.Event()
@@ -558,6 +559,7 @@ class PassiveRadarSensor(AbstractSensor):
             status = dict(self._last_status) if self._last_status else None
             health = dict(self._last_health) if self._last_health else None
             stations = dict(self._last_stations) if self._last_stations else None
+            receiver = dict(self._last_receiver) if self._last_receiver else None
             err = dict(self._last_error) if self._last_error else None
             announce = dict(self._last_announce) if self._last_announce else None
 
@@ -588,6 +590,7 @@ class PassiveRadarSensor(AbstractSensor):
             "status": status,
             "health": health,
             "stations": stations,
+            "receiver": receiver,
             "error": err,
             "announce": announce,
             "streaming": self._streaming,
@@ -736,6 +739,8 @@ class PassiveRadarSensor(AbstractSensor):
         bistatic = payload.get("bistatic") or {}
         quality = payload.get("quality") or {}
         target = payload.get("target") or {}
+        geometry = payload.get("geometry") or {}
+        transmitter = geometry.get("transmitter") or {}
 
         bistatic_range = _as_float(bistatic.get("bistatic_range_km"))
         if bistatic_range is None:
@@ -759,6 +764,23 @@ class PassiveRadarSensor(AbstractSensor):
         ts_parsed = _parse_iso8601(timestamp_iso)
         ts_unix = ts_parsed.timestamp()
 
+        # Receiver location comes in on every observation's geometry
+        # block — cache the latest one so the web UI can anchor a plan
+        # view at the receiver without needing a dedicated subject.
+        receiver = geometry.get("receiver") or {}
+        rx_lat = _as_float(receiver.get("lat_deg"))
+        rx_lon = _as_float(receiver.get("lon_deg"))
+        if rx_lat is not None and rx_lon is not None:
+            rx_alt = _as_float(receiver.get("alt_m"))
+            with self._state_lock:
+                self._last_receiver = {
+                    "lat_deg": rx_lat,
+                    "lon_deg": rx_lon,
+                    "alt_m": rx_alt,
+                }
+
+        station_name = transmitter.get("callsign") or payload.get("station_name") or None
+
         slim: dict[str, Any] = {
             "ts": timestamp_iso if isinstance(timestamp_iso, str) else ts_parsed.isoformat(),
             "ts_unix": ts_unix,
@@ -769,6 +791,12 @@ class PassiveRadarSensor(AbstractSensor):
             "snr_db": _as_float(quality.get("snr_db")) or _as_float(payload.get("snr_db")),
             "sat_uuid": target.get("citra_uuid") or None,
             "sat_name": target.get("name") or None,
+            # Plan-view fields — pointing from the receiver plus target
+            # altitude; lets the UI project the sub-satellite point.
+            "az_deg": _as_float(geometry.get("az_deg")),
+            "el_deg": _as_float(geometry.get("el_deg")),
+            "alt_km": _as_float(geometry.get("alt_km")),
+            "station": station_name,
         }
         return slim
 

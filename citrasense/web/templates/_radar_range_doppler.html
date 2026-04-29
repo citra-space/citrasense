@@ -16,9 +16,10 @@
       - ``'full'``  -- labelled axes, SNR legend, larger dot hit targets
                        intended for the detail page card body.
 
-    The SVG uses a 0..1000 x-axis and 0..500 y-axis internally and
-    stretches via ``preserveAspectRatio="none"`` so the plot fills
-    whatever box the caller sizes.  Colour = SNR (viridis-ish ramp),
+    The SVG uses a 0..1000 x-axis and 0..500 y-axis internally with
+    ``preserveAspectRatio="xMidYMid meet"`` so the plot keeps its
+    2:1 shape regardless of container size — wider containers pillarbox
+    against the plot background.  Colour = SNR (viridis-ish ramp),
     opacity = age (1.0 now → 0.2 at 5 min old).
 #}
 {% set _size = size|default('mini') %}
@@ -165,8 +166,8 @@
          },
          get _doppZeroY() { return this.yCoord(0); },
      }"
-     x-init="init(); $cleanup(() => destroy())">
-    <svg viewBox="0 0 1000 500" preserveAspectRatio="none"
+     x-init="init()">
+    <svg viewBox="0 0 1000 500" preserveAspectRatio="xMidYMid meet"
          width="100%" height="100%"
          style="display: block; background: #1b1f24;">
         <!-- Plot area bounds -->
