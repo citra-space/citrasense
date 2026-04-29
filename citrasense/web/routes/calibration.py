@@ -417,7 +417,7 @@ def build_calibration_router(ctx: CitraSenseWebApp) -> APIRouter:
         elif frame_type == "flat":
             if not hdr_items["filter_name"]:
                 return JSONResponse(
-                    {"error": "Flat frame requires a FILTER header or override_filter form field"},
+                    {"error": "Flat frame requires a FILTER header or override_filter query parameter"},
                     status_code=400,
                 )
 

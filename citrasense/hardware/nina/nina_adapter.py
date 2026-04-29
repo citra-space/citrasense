@@ -727,15 +727,15 @@ class NinaAdvancedHttpAdapter(AbstractAstroHardwareAdapter):
         return True
 
     def supports_direct_camera_control(self) -> bool:
-        # NINA owns capture — it does not expose an ``AbstractCamera`` we
-        # can drive for shutter-closed bias/dark captures, so the
-        # CalibrationManager cannot be instantiated for NINA sensors.
-        # However, ``capture_preview()`` *is* implemented (it calls
-        # NINA's streaming capture endpoint), and several UI affordances
-        # (Snap, Save, live filter selector) key off this flag to decide
-        # whether a camera is directly addressable.  Returning
+        # NINA does not expose an ``AbstractCamera`` — bias/dark capture
+        # requires shutter control we don't have.  Flat capture is handled
+        # separately via ``FlatCaptureBackend`` (NINA trained-flat wizard).
+        #
+        # However, ``capture_preview()`` IS implemented (it calls NINA's
+        # streaming capture endpoint), and UI affordances (Snap, Save,
+        # live filter selector) key off this flag.  Returning
         # ``is_camera_connected()`` keeps those UI paths working; the
-        # calibration stack gates separately on ``adapter.camera``.
+        # calibration stack gates on ``adapter.camera`` (which is None).
         return self.is_camera_connected()
 
     def get_calibration_profile_summary(self) -> dict | None:

@@ -190,7 +190,11 @@ class CalibrationManager:
             already_running = self._running
             already_requested = self._requested
         if not already_running and not already_requested:
-            self._maybe_auto_capture_flats()
+            # Re-check under lock to close the race where a concurrent web
+            # request sets _requested between the snapshot and this call.
+            with self._lock:
+                if not self._running and not self._requested:
+                    self._maybe_auto_capture_flats()
 
         with self._lock:
             should_run = self._requested
@@ -212,8 +216,11 @@ class CalibrationManager:
             self._execute_batch()
             # Scheduled suites: persist completion timestamp so the next
             # tick does not re-fire for the same dusk/dawn window.
+            # Only persist if an auto-scheduled window is active — prevents
+            # manual operator suites from incorrectly updating the timestamp.
             if self._last_served_window_start is not None and not self._cancel_event.is_set():
                 self.mark_flats_capture_complete()
+                self._last_served_window_start = None
         else:
             self._execute(params)
         return True
@@ -432,10 +439,15 @@ class CalibrationManager:
                     fdata = self.hardware_adapter.filter_map.get(filter_position, {})
                     filter_name = fdata.get("name", f"Filter {filter_position}")
 
-                # Direct-camera flats need the wheel moved before capture.
-                # NINA trained flats pass filterId into /flats/trained-flat
-                # and NINA drives the wheel itself — handled in the backend branch.
-                if self._flat_backend is None:
+                # Move the filter wheel unless the backend manages filters
+                # internally (e.g. NINA's trained-flat API accepts filterId
+                # and drives the wheel itself).
+                from citrasense.calibration.flat_capture_backend import DirectCameraFlatBackend
+
+                backend_moves_filter = self._flat_backend is not None and not isinstance(
+                    self._flat_backend, DirectCameraFlatBackend
+                )
+                if not backend_moves_filter:
                     with self._lock:
                         self._progress = {"running": True, "status": f"Moving filter wheel to {filter_name}..."}
                     if not self.hardware_adapter.set_filter(filter_position):

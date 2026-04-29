@@ -106,8 +106,8 @@ class NinaTrainedFlatBackend:
         images_ready = threading.Event()
 
         def _on_image_saved(stats: dict[str, Any]) -> None:
-            image_type = str(stats.get("ImageType", "")).upper()
-            if image_type and image_type != "FLAT":
+            image_type = str(stats.get("ImageType") or "").strip().upper()
+            if image_type != "FLAT":
                 return
             matched_count[0] += 1
             filename = stats.get("Filename", "")
