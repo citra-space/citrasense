@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import math
+from typing import cast
 from unittest.mock import MagicMock, patch
 
 import numpy as np
@@ -229,7 +230,7 @@ class TestCalibrationSlewSafety:
                 return (180.0, 45.0)
             return (180.0 + solve_count[0], 45.0)
 
-        mount = mgr.hardware_adapter.mount
+        mount = cast(MagicMock, mgr.hardware_adapter.mount)
 
         with patch.object(mgr, "_plate_solve_at_current_position", side_effect=_solve):
             with patch.object(mgr, "_unwind_before_calibration"):

@@ -4,7 +4,7 @@ import logging
 import time
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import cast
+from typing import Any, cast
 
 import numpy as np
 
@@ -186,6 +186,11 @@ class XimeaHyperspectralCamera(AbstractCamera):
         # Camera info cache
         self._camera_info = {}
 
+    @property
+    def _cam(self) -> Any:
+        """Typed-as-Any accessor for SDK calls that lack stubs."""
+        return self._camera
+
     def connect(self) -> bool:
         """Connect to the Ximea camera.
 
@@ -311,19 +316,19 @@ class XimeaHyperspectralCamera(AbstractCamera):
 
         exposure_us = duration * 1000000.0
         self._camera.set_exposure(int(exposure_us))
-        self._last_exposure_us = self._camera.get_exposure()
+        self._last_exposure_us = float(self._cam.get_exposure())
 
         gain_to_use = gain if gain is not None else self.default_gain
         try:
-            min_gain = self._camera.get_gain_minimum()
-            max_gain = self._camera.get_gain_maximum()
+            min_gain = float(self._cam.get_gain_minimum())
+            max_gain = float(self._cam.get_gain_maximum())
             if gain_to_use < min_gain or gain_to_use > max_gain:
                 self.logger.warning(
                     f"Requested gain {gain_to_use} dB outside valid range " f"[{min_gain}, {max_gain}] dB. Clamping."
                 )
                 gain_to_use = max(min_gain, min(gain_to_use, max_gain))
             self._camera.set_gain(float(gain_to_use))
-            self._last_gain_db = self._camera.get_gain()
+            self._last_gain_db = float(self._cam.get_gain())
         except Exception as e:
             self.logger.warning(f"Could not set gain: {e}. Continuing with current setting.")
 
@@ -384,9 +389,7 @@ class XimeaHyperspectralCamera(AbstractCamera):
         assert self._camera is not None
 
         try:
-            # Ximea cameras report temperature in Celsius
-            temp = self._camera.get_temp()
-            return float(temp)
+            return float(self._cam.get_temp())
         except Exception as e:
             self.logger.warning(f"Could not read camera temperature: {e}")
             return None
@@ -462,8 +465,8 @@ class XimeaHyperspectralCamera(AbstractCamera):
 
             # Set default gain
             try:
-                min_gain = self._camera.get_gain_minimum()
-                max_gain = self._camera.get_gain_maximum()
+                min_gain = float(self._cam.get_gain_minimum())
+                max_gain = float(self._cam.get_gain_maximum())
                 gain_to_set = max(min_gain, min(self.default_gain, max_gain))
                 self._camera.set_gain(gain_to_set)
                 self.logger.debug(f"Gain set to {gain_to_set} dB (range: {min_gain}-{max_gain} dB)")
@@ -500,16 +503,10 @@ class XimeaHyperspectralCamera(AbstractCamera):
             return info
 
         try:
-            info["model"] = (
-                self._camera.get_device_name().decode()
-                if hasattr(self._camera.get_device_name(), "decode")
-                else str(self._camera.get_device_name())
-            )
-            info["serial_number"] = (
-                self._camera.get_device_sn().decode()
-                if hasattr(self._camera.get_device_sn(), "decode")
-                else str(self._camera.get_device_sn())
-            )
+            device_name = self._cam.get_device_name()
+            info["model"] = device_name.decode() if isinstance(device_name, bytes) else str(device_name)
+            device_sn = self._cam.get_device_sn()
+            info["serial_number"] = device_sn.decode() if isinstance(device_sn, bytes) else str(device_sn)
             info["width"] = self._camera.get_width()
             info["height"] = self._camera.get_height()
             info["pixel_size_um"] = 3.45  # MQ series typically 3.45µm

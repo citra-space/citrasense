@@ -89,13 +89,13 @@ def _first_three_elsets_from_file(tle_path: Path) -> list:
 
 
 def _make_mock_settings(**overrides) -> Mock:
-    """Create a Mock settings with plate solving defaults from CitraSenseSettings."""
-    from citrasense.settings.citrasense_settings import CitraSenseSettings
+    """Create a Mock settings with plate solving defaults from SensorConfig."""
+    from citrasense.settings.citrasense_settings import SensorConfig
 
     attrs = {
         name: field.default
-        for name, field in CitraSenseSettings.model_fields.items()
-        if name.startswith(("plate_solve_", "astrometry_"))
+        for name, field in SensorConfig.model_fields.items()
+        if name.startswith(("plate_solve_", "astrometry_", "sextractor_"))
     }
     attrs.update(overrides)
     return Mock(**attrs)
@@ -404,6 +404,7 @@ class TestFullPipelineDemoFits:
             satelliteId="00005",
             assigned_filter_name="Clear",
             most_recent_elset=most_recent_elset,
+            sensor_type="telescope",
         )
 
         settings = _make_mock_settings(enabled_processors={})

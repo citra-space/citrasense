@@ -1,8 +1,11 @@
 """Tests for AbstractBaseTelescopeTask and SiderealTelescopeTask."""
 
+from __future__ import annotations
+
 import math
 import platform
 from datetime import datetime, timezone
+from typing import cast
 from unittest.mock import MagicMock, create_autospec, patch
 
 import pytest
@@ -13,6 +16,11 @@ from citrasense.hardware.abstract_astro_hardware_adapter import (
     SlewRateTracker,
 )
 from citrasense.tasks.task import Task
+
+
+def _adapter_mock(task) -> MagicMock:
+    """Return the task's hardware_adapter typed as MagicMock for mock attr access."""
+    return cast(MagicMock, task.hardware_adapter)
 
 
 def _make_task_dict(**overrides):
@@ -42,7 +50,15 @@ def _make_hardware_adapter(initial_slew_samples=None, **overrides):
     adapter.observed_fov_short_deg = None
     adapter.telescope_record = None
     adapter.scope_slew_rate_degrees_per_second = 5.0
-    adapter.select_elset_types.return_value = None
+    adapter.select_elset_types = MagicMock(return_value=None)
+
+    # Replace autospec'd methods with MagicMock so tests can freely assign
+    # .return_value / .side_effect without pyright MethodType complaints.
+    adapter.angular_distance = MagicMock()
+    adapter.get_telescope_direction = MagicMock()
+    adapter.telescope_is_moving = MagicMock()
+    adapter.point_telescope = MagicMock()
+    adapter.update_from_plate_solve = MagicMock()
 
     tracker = SlewRateTracker()
     for sample in initial_slew_samples or []:
@@ -256,6 +272,7 @@ class TestGetMostRecentElset:
             ]
         }
         result = ct._get_most_recent_elset(sat_data)
+        assert result is not None
         assert result["tle"] == ["new1", "new2"]
 
     def test_empty_elsets_returns_none(self):
@@ -283,6 +300,7 @@ class TestGetMostRecentElset:
             ]
         }
         result = ct._get_most_recent_elset(sat_data)
+        assert result is not None
         assert result["tle"] == ["c", "d"]
 
     def test_types_filter_excludes_non_matching(self):
@@ -467,7 +485,7 @@ class TestOnProcessingComplete:
         }
         with patch.object(ct, "_queue_for_upload"):
             ct._on_processing_complete("/img.fits", "task-1", result)
-        ct.hardware_adapter.update_from_plate_solve.assert_called_once_with(
+        _adapter_mock(ct).update_from_plate_solve.assert_called_once_with(
             180.0,
             45.0,
             expected_ra_deg=179.5,
@@ -570,10 +588,11 @@ class TestCancellation:
                 ct.cancel()
             return True
 
-        ct.hardware_adapter.get_telescope_direction.return_value = (0.0, 0.0)
-        ct.hardware_adapter.telescope_is_moving.side_effect = moving_then_cancel
-        ct.hardware_adapter.point_telescope = MagicMock()
-        ct.hardware_adapter.angular_distance.return_value = 0.5
+        adapter = _adapter_mock(ct)
+        adapter.get_telescope_direction.return_value = (0.0, 0.0)
+        adapter.telescope_is_moving.side_effect = moving_then_cancel
+        adapter.point_telescope = MagicMock()
+        adapter.angular_distance.return_value = 0.5
 
         with patch.object(ct, "estimate_lead_position", return_value=(10.0, 20.0, 1.0)):
             with pytest.raises(RuntimeError, match=r"(?i)cancelled"):
@@ -669,15 +688,16 @@ class TestPredictSlewTime:
 
     def test_uses_angular_distance_not_axis_max(self):
         ct = self._make_concrete()
+        adapter = _adapter_mock(ct)
         # Scope at (0, 0), target at (1, 1) — angular distance ≈ 1.414°, not max(1,1) = 1°
-        ct.hardware_adapter.get_telescope_direction.return_value = (0.0, 0.0)
+        adapter.get_telescope_direction.return_value = (0.0, 0.0)
         with patch.object(ct, "get_target_radec_and_rates", return_value=(1.0, 1.0, 0.0, 0.0)):
             ct.predict_slew_time_seconds({})
-        ct.hardware_adapter.angular_distance.assert_called_once()
+        adapter.angular_distance.assert_called_once()
 
     def test_max_rate_override(self):
         ct = self._make_concrete()
-        ct.hardware_adapter.get_telescope_direction.return_value = (0.0, 0.0)
+        _adapter_mock(ct).get_telescope_direction.return_value = (0.0, 0.0)
         with patch.object(ct, "get_target_radec_and_rates", return_value=(30.0, 0.0, 0.0, 0.0)):
             t_default = ct.predict_slew_time_seconds({})
             t_fast = ct.predict_slew_time_seconds({}, max_rate=10.0)
@@ -890,7 +910,7 @@ class TestComputeSatelliteTiming:
     def test_approaching_satellite(self):
         """Satellite is 5° away and closing at 1°/s — should report ~4s to FOV entry."""
         ct = self._make_concrete(fov_short_deg=2.0)
-        ct.hardware_adapter.angular_distance.side_effect = [5.0, 4.0]  # now=5°, 1s later=4°
+        _adapter_mock(ct).angular_distance.side_effect = [5.0, 4.0]  # now=5°, 1s later=4°
 
         sat_now = (185.0, 45.0, 0.0, 0.0)
         sat_1s = (184.0, 45.0, 0.0, 0.0)
@@ -905,7 +925,7 @@ class TestComputeSatelliteTiming:
     def test_receding_satellite(self):
         """Satellite is moving away — closure rate <= 0, time_to_fov_entry = 0."""
         ct = self._make_concrete(fov_short_deg=2.0)
-        ct.hardware_adapter.angular_distance.side_effect = [3.0, 4.0]  # getting further away
+        _adapter_mock(ct).angular_distance.side_effect = [3.0, 4.0]  # getting further away
 
         sat_now = (183.0, 45.0, 0.0, 0.0)
         sat_1s = (184.0, 45.0, 0.0, 0.0)
@@ -919,7 +939,7 @@ class TestComputeSatelliteTiming:
     def test_tangential_satellite(self):
         """Satellite at constant distance — closure rate ~0, no waiting."""
         ct = self._make_concrete(fov_short_deg=2.0)
-        ct.hardware_adapter.angular_distance.side_effect = [3.0, 3.0]
+        _adapter_mock(ct).angular_distance.side_effect = [3.0, 3.0]
 
         sat_now = (183.0, 45.0, 0.0, 0.0)
         sat_1s = (183.0, 46.0, 0.0, 0.0)
@@ -932,7 +952,7 @@ class TestComputeSatelliteTiming:
     def test_already_in_fov(self):
         """Satellite is already within the FOV — time_to_fov_entry = 0."""
         ct = self._make_concrete(fov_short_deg=2.0)
-        ct.hardware_adapter.angular_distance.side_effect = [0.5, 0.3]  # within 1° radius, approaching
+        _adapter_mock(ct).angular_distance.side_effect = [0.5, 0.3]  # within 1° radius, approaching
 
         sat_now = (180.5, 45.0, 0.0, 0.0)
         sat_1s = (180.3, 45.0, 0.0, 0.0)
@@ -1082,9 +1102,10 @@ class TestAdaptiveSlewRate:
 
         sat_pos = (10.0, 20.0, 0.0, 0.0)
 
-        ct.hardware_adapter.get_telescope_direction.return_value = (0.0, 0.0)
-        ct.hardware_adapter.telescope_is_moving.return_value = False
-        ct.hardware_adapter.angular_distance.side_effect = [0.5, 0.01, 0.01]
+        adapter = _adapter_mock(ct)
+        adapter.get_telescope_direction.return_value = (0.0, 0.0)
+        adapter.telescope_is_moving.return_value = False
+        adapter.angular_distance.side_effect = [0.5, 0.01, 0.01]
 
         with patch.object(ct, "estimate_lead_position") as mock_est:
             mock_est.return_value = (10.0, 20.0, 1.0)
@@ -1114,9 +1135,10 @@ class TestAdaptiveSlewRate:
 
         sat_pos = (10.0, 20.0, 0.0, 0.0)
 
-        ct.hardware_adapter.get_telescope_direction.return_value = (0.0, 0.0)
-        ct.hardware_adapter.telescope_is_moving.return_value = False
-        ct.hardware_adapter.angular_distance.side_effect = [0.01, 0.01, 0.01]
+        adapter = _adapter_mock(ct)
+        adapter.get_telescope_direction.return_value = (0.0, 0.0)
+        adapter.telescope_is_moving.return_value = False
+        adapter.angular_distance.side_effect = [0.01, 0.01, 0.01]
 
         with patch.object(ct, "estimate_lead_position", return_value=(10.0, 20.0, 1.0)):
             with patch.object(ct, "get_target_radec_and_rates", return_value=sat_pos):
