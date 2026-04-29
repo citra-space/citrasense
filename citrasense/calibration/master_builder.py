@@ -17,6 +17,11 @@ from astropy.io import fits  # type: ignore[attr-defined]
 
 from citrasense.calibration import FilterSlot
 from citrasense.calibration.calibration_library import CalibrationLibrary
+from citrasense.calibration.flat_capture_backend import (
+    DirectCameraFlatBackend,
+    FlatCaptureBackend,
+    auto_expose_flat,
+)
 from citrasense.hardware.devices.camera.abstract_camera import AbstractCamera, CalibrationProfile
 
 logger = logging.getLogger("citrasense.MasterBuilder")
@@ -29,7 +34,7 @@ class MasterBuilder:
 
     def __init__(
         self,
-        camera: AbstractCamera,
+        camera: AbstractCamera | None,
         library: CalibrationLibrary,
         profile: CalibrationProfile,
     ) -> None:
@@ -158,41 +163,46 @@ class MasterBuilder:
         count: int,
         exposure_time: float,
         filter_name: str = "",
+        filter_position: int | None = None,
         gain: int | None = None,
         binning: int = 1,
         cancel_event: threading.Event | None = None,
         on_progress: ProgressCallback | None = None,
+        flat_backend: FlatCaptureBackend | None = None,
     ) -> Path | None:
         """Capture and build a master flat (bias-subtracted, normalised to median=1.0).
 
-        Runs auto-exposure before the main capture to find an exposure time
-        that places the median ADU at ~50% of the sensor's dynamic range.
+        The raw flat frames are produced by ``flat_backend``; when not
+        supplied we fall back to a :class:`DirectCameraFlatBackend`
+        driving this builder's camera directly, which preserves the
+        pre-refactor behaviour for every existing caller.
 
         Returns the saved master path, or ``None`` if quality validation
         rejected the flat.
         """
         gain_val = gain if gain is not None else (self._profile.current_gain or 0)
 
-        exposure_time = self._auto_expose_flat(
-            initial_exposure=exposure_time,
-            gain=gain_val,
-            binning=binning,
-            on_progress=on_progress,
-            cancel_event=cancel_event,
-        )
+        backend: FlatCaptureBackend
+        if flat_backend is not None:
+            backend = flat_backend
+        else:
+            if self._camera is None:
+                raise RuntimeError("MasterBuilder.build_flat requires a camera or an explicit flat_backend")
+            backend = DirectCameraFlatBackend(self._camera)
 
-        label = f"flat g{gain_val} bin{binning} {exposure_time:.3f}s"
-        if filter_name:
-            label += f" {filter_name}"
+        slot: FilterSlot | None = None
+        if filter_position is not None:
+            slot = FilterSlot(position=int(filter_position), name=filter_name or "")
+        elif filter_name:
+            slot = FilterSlot(position=0, name=filter_name)
 
-        raw_paths = self._capture_frames(
+        raw_paths = backend.capture_flat_frames(
+            filter_slot=slot,
             count=count,
-            duration=exposure_time,
             gain=gain_val,
             binning=binning,
-            shutter_closed=False,
-            frame_type="flat",
-            label=label,
+            initial_exposure=exposure_time,
+            library=self._library,
             cancel_event=cancel_event,
             on_progress=on_progress,
         )
@@ -215,11 +225,25 @@ class MasterBuilder:
 
         self._library.cleanup_tmp()
 
-        max_adu = float(self._camera.get_max_pixel_value(binning))
-        ok, reason = self._validate_flat_quality(master, max_adu, filter_name)
-        if not ok:
-            logger.warning("Flat quality check failed for %s: %s — master NOT saved", filter_name or "nofilter", reason)
-            return None
+        if self._camera is not None:
+            max_adu = float(self._camera.get_max_pixel_value(binning))
+            ok, reason = self._validate_flat_quality(master, max_adu, filter_name)
+            if not ok:
+                logger.warning(
+                    "Flat quality check failed for %s: %s — master NOT saved",
+                    filter_name or "nofilter",
+                    reason,
+                )
+                return None
+        else:
+            # NINA trained flats already converge on a target histogram;
+            # we do not have a deterministic max_adu without a direct
+            # camera handle, so we trust the orchestrator and skip the
+            # peak/median ratio check here.
+            logger.info(
+                "Skipping flat quality validation for %s — no direct camera (backend path)",
+                filter_name or "nofilter",
+            )
 
         # Normalise to median = 1.0
         med = float(np.median(master))
@@ -275,6 +299,7 @@ class MasterBuilder:
             List of saved master flat paths (one per filter that passed
             quality validation).
         """
+        assert self._camera is not None
         gain_val = gain if gain is not None else (self._profile.current_gain or 0)
         max_adu = float(self._camera.get_max_pixel_value(binning))
         target_adu = max_adu * self.TARGET_ADU_FRACTION
@@ -469,98 +494,21 @@ class MasterBuilder:
         on_progress: ProgressCallback | None,
         cancel_event: threading.Event | None,
     ) -> float:
-        """Find an exposure time that puts the flat at ~50% of the sensor's dynamic range.
+        """Thin wrapper around the module-level :func:`auto_expose_flat`.
 
-        Takes test frames, measures median ADU, and scales exposure linearly
-        (sensor response to uniform illumination is approximately linear).
-        Each step is clamped to at most 4x change to avoid jarring jumps.
-        Bails early if already at max exposure and still far below target.
-        Returns the tuned exposure time.
+        Kept for internal callers (:meth:`build_interleaved_flats`,
+        :meth:`_reexpose_check`) so they do not have to plumb the
+        camera explicitly.
         """
-        max_adu = float(self._camera.get_max_pixel_value(binning))
-        logger.info("Auto-expose using max_adu=%d for binning=%d", int(max_adu), binning)
-        target_adu = max_adu * self.TARGET_ADU_FRACTION
-        lo = max_adu * (self.TARGET_ADU_FRACTION - self.ADU_TOLERANCE)
-        hi = max_adu * (self.TARGET_ADU_FRACTION + self.ADU_TOLERANCE)
-
-        exposure = max(self.AUTO_EXPOSE_MIN_S, min(initial_exposure, self.AUTO_EXPOSE_MAX_S))
-
-        for attempt in range(self.AUTO_EXPOSE_MAX_ITERATIONS):
-            if cancel_event and cancel_event.is_set():
-                break
-
-            self._report(
-                on_progress,
-                0,
-                0,
-                "flat",
-                f"Auto-expose: testing {exposure:.3f}s (attempt {attempt + 1})",
-            )
-
-            data = self._camera.capture_array(
-                duration=exposure,
-                gain=gain,
-                binning=binning,
-                shutter_closed=False,
-            )
-            median_adu = float(np.median(data))
-            pct = (median_adu / max_adu) * 100
-
-            logger.info(
-                "Flat auto-expose attempt %d: %.3fs → median %.0f ADU (%.0f%% of max)",
-                attempt + 1,
-                exposure,
-                median_adu,
-                pct,
-            )
-            self._report(
-                on_progress,
-                0,
-                0,
-                "flat",
-                f"Auto-expose: {median_adu:.0f} ADU ({pct:.0f}%) at {exposure:.3f}s",
-            )
-
-            if lo <= median_adu <= hi:
-                logger.info("Flat auto-expose converged: %.3fs → %.0f ADU (%.0f%%)", exposure, median_adu, pct)
-                return exposure
-
-            if median_adu < 1.0:
-                new_exposure = exposure * self.AUTO_EXPOSE_MAX_STEP
-            else:
-                ratio = target_adu / median_adu
-                ratio = max(1.0 / self.AUTO_EXPOSE_MAX_STEP, min(ratio, self.AUTO_EXPOSE_MAX_STEP))
-                new_exposure = exposure * ratio
-
-            new_exposure = max(self.AUTO_EXPOSE_MIN_S, min(new_exposure, self.AUTO_EXPOSE_MAX_S))
-
-            if new_exposure == exposure and median_adu < lo:
-                logger.warning(
-                    "Flat auto-expose: at max exposure (%.1fs) but only %.0f ADU (%.0f%%). "
-                    "Light source may be too dim.",
-                    exposure,
-                    median_adu,
-                    pct,
-                )
-                break
-            if new_exposure == exposure and median_adu > hi:
-                logger.warning(
-                    "Flat auto-expose: at min exposure (%.4fs) but still %.0f ADU (%.0f%%). "
-                    "Light source may be too bright.",
-                    exposure,
-                    median_adu,
-                    pct,
-                )
-                break
-
-            exposure = new_exposure
-
-        logger.warning(
-            "Flat auto-expose did not converge after %d attempts, using %.3fs",
-            attempt + 1,
-            exposure,
+        assert self._camera is not None
+        return auto_expose_flat(
+            self._camera,
+            initial_exposure=initial_exposure,
+            gain=gain,
+            binning=binning,
+            on_progress=on_progress,
+            cancel_event=cancel_event,
         )
-        return exposure
 
     def _resolve_dark_temperature(self) -> float | None:
         """Determine the temperature to record for a dark master.
@@ -573,6 +521,7 @@ class MasterBuilder:
         """
         if self._profile.target_temperature is not None:
             return float(self._profile.target_temperature)
+        assert self._camera is not None
         live = self._camera.get_temperature()
         if live is not None:
             return live
@@ -591,6 +540,7 @@ class MasterBuilder:
         on_progress: ProgressCallback | None,
     ) -> list[Path]:
         """Capture *count* raw frames, writing each to a temp FITS on disk."""
+        assert self._camera is not None
         paths: list[Path] = []
         for i in range(count):
             if cancel_event and cancel_event.is_set():

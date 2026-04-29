@@ -886,6 +886,19 @@ class AbstractAstroHardwareAdapter(ABC):
         """
         return False
 
+    def supports_flat_automation(self) -> bool:
+        """Indicates whether this adapter can drive automated flat capture.
+
+        Orchestrator adapters (NINA) override this to signal that they
+        can run their own Flat Wizard / trained-flat sequences against
+        a connected flat panel; CitraSense wires a matching
+        :class:`FlatCaptureBackend` when this returns ``True`` so the
+        calibration manager can trigger flats without direct camera
+        access.  Direct-hardware adapters use the
+        :class:`DirectCameraFlatBackend` instead.
+        """
+        return False
+
     def capture_preview(self, exposure_time: float, flip_horizontal: bool = False) -> str:
         """Take an ephemeral preview exposure and return a JPEG data URL.
 

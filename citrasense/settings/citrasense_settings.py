@@ -157,6 +157,16 @@ class SensorConfig(BaseModel):
     calibration_frame_count: int = 30
     flat_frame_count: int = 15
 
+    # Automated flat capture during twilight flat windows.  When
+    # ``auto_capture_flats_enabled`` is True and the adapter has a wired
+    # :class:`FlatCaptureBackend`, the :class:`CalibrationManager`
+    # schedules a full filter suite at the start of the next open flat
+    # window.  ``last_flats_capture_iso`` records the UTC ISO timestamp
+    # at which the most recent auto-capture completed so we do not
+    # re-fire within the same window after a daemon restart.
+    auto_capture_flats_enabled: bool = False
+    last_flats_capture_iso: str | None = None
+
     @field_validator("observing_session_sun_altitude_threshold", mode="before")
     @classmethod
     def _validate_sun_altitude_threshold(cls, v: Any) -> float:

@@ -38,10 +38,12 @@ class NinaAdvancedHttpAdapter(AbstractAstroHardwareAdapter):
     # API endpoint paths
     CAM_URL = "/equipment/camera/"
     FILTERWHEEL_URL = "/equipment/filterwheel/"
+    FLATDEVICE_URL = "/equipment/flatdevice/"
     FOCUSER_URL = "/equipment/focuser/"
     MOUNT_URL = "/equipment/mount/"
     SAFETYMON_URL = "/equipment/safetymonitor/"
     SEQUENCE_URL = "/sequence/"
+    FLATS_URL = "/flats/"
 
     # HTTP request timeouts (seconds) — tiered by expected response latency
     HEALTH_CHECK_TIMEOUT = 2
@@ -790,6 +792,160 @@ class NinaAdvancedHttpAdapter(AbstractAstroHardwareAdapter):
             "has_mechanical_shutter": bool(r.get("HasShutter", False)),
             "has_cooling": bool(r.get("CanSetTemperature", False)),
         }
+
+    # ------------------------------------------------------------------
+    # Trained-flat automation (NINA Flat Wizard driven over REST)
+    # ------------------------------------------------------------------
+
+    @property
+    def event_listener(self) -> NinaEventListener | None:
+        """Expose the NINA WebSocket event listener for reactive callers.
+
+        Read-only — lifetime stays owned by :meth:`connect` /
+        :meth:`disconnect`.  The trained-flat backend subscribes to
+        ``IMAGE-SAVE`` events through this to know when each FLAT frame
+        has been flushed to NINA's image folder.
+        """
+        return self._event_listener
+
+    def supports_flat_automation(self) -> bool:
+        """Whether NINA can run trained flats against a connected flat panel.
+
+        Requires both a connected camera (to actually shoot) and a
+        connected flat device (to illuminate).  Failures on either
+        endpoint return ``False`` — we never want to attempt a trained
+        flat against a disconnected panel because the operator will
+        come back to a pile of useless exposures of whatever is in the
+        tube at the time.
+        """
+        if not self.is_camera_connected():
+            return False
+        try:
+            resp = requests.get(
+                f"{self.nina_api_path}{self.FLATDEVICE_URL}info",
+                timeout=self.HEALTH_CHECK_TIMEOUT,
+            ).json()
+        except Exception:
+            return False
+        if not resp.get("Success"):
+            return False
+        info = resp.get("Response", {}) or {}
+        return bool(info.get("Connected"))
+
+    def run_trained_flat(
+        self,
+        filter_id: int,
+        count: int,
+        gain: int | None = None,
+        binning: int | None = None,
+    ) -> None:
+        """Start NINA's trained-flat capture for a single filter.
+
+        Delegates to ``GET /flats/trained-flat`` with NINA's query
+        parameters.  NINA uses the operator's previously trained
+        exposure time and panel brightness for this filter/binning/gain
+        combo — there is no override here by design.  Raises
+        :class:`RuntimeError` on non-200 or ``Success: false`` so the
+        caller (``NinaTrainedFlatBackend``) can abort the job instead
+        of silently hanging waiting for frames that will never arrive.
+        """
+        params: dict[str, str | int] = {
+            "count": int(count),
+            "filterId": int(filter_id),
+            "minExposure": 0,
+            "maxExposure": 30,
+            "histogramMean": 50,
+            "meanTolerance": 10,
+            "keepClosed": "false",
+            "getExpected": "false",
+        }
+        if gain is not None:
+            params["gain"] = int(gain)
+        if binning is not None:
+            params["binning"] = f"{int(binning)}x{int(binning)}"
+
+        try:
+            resp = requests.get(
+                f"{self.nina_api_path}{self.FLATS_URL}trained-flat",
+                params=params,
+                timeout=self.COMMAND_TIMEOUT,
+            )
+            resp.raise_for_status()
+            body = resp.json()
+        except requests.RequestException as e:
+            raise RuntimeError(f"NINA trained-flat request failed: {e}") from e
+
+        if not body.get("Success"):
+            raise RuntimeError(f"NINA trained-flat rejected: {body.get('Error', 'unknown')}")
+
+    def poll_flat_status(self) -> dict:
+        """Return NINA's current flats ``Response`` payload.
+
+        Returns an empty dict on HTTP/JSON errors rather than raising —
+        polling is a liveness check, not a command.  Callers read
+        ``State`` (``Running`` / ``Finished`` / ``Idle``) and
+        ``TotalImageCount`` to know when NINA is done.
+        """
+        try:
+            resp = requests.get(
+                f"{self.nina_api_path}{self.FLATS_URL}status",
+                timeout=self.INFO_QUERY_TIMEOUT,
+            ).json()
+        except Exception:
+            return {}
+        if not resp.get("Success"):
+            return {}
+        return resp.get("Response", {}) or {}
+
+    def stop_flats(self) -> bool:
+        """Ask NINA to abort the running flats job.  Returns ``True`` on 200 + Success."""
+        try:
+            resp = requests.get(
+                f"{self.nina_api_path}{self.FLATS_URL}stop",
+                timeout=self.COMMAND_TIMEOUT,
+            ).json()
+        except Exception as e:
+            self.logger.warning(f"Failed to stop NINA flats: {e}")
+            return False
+        if not resp.get("Success"):
+            self.logger.warning(f"NINA flat stop rejected: {resp.get('Error')}")
+            return False
+        return True
+
+    def list_recent_flat_images(self, since_iso: str | None = None) -> list[dict]:
+        """Return ``/image-history`` rows filtered to FLAT frames on or after *since_iso*.
+
+        NINA records ``Date`` as an ISO-8601 timestamp.  Naive string
+        comparison works because NINA emits a fixed format (no timezone
+        drift) — we only need to distinguish frames captured during
+        this job from anything older that was still sitting in the
+        history ring.
+        """
+        try:
+            resp = requests.get(
+                f"{self.nina_api_path}/image-history?all=true",
+                timeout=self.INFO_QUERY_TIMEOUT,
+            ).json()
+        except Exception as e:
+            self.logger.error(f"Failed to fetch NINA image-history: {e}")
+            return []
+        if not resp.get("Success"):
+            self.logger.error(f"NINA image-history rejected: {resp.get('Error')}")
+            return []
+        rows = resp.get("Response", []) or []
+
+        out: list[dict] = []
+        for idx, row in enumerate(rows):
+            image_type = str(row.get("ImageType", "")).upper()
+            if image_type != "FLAT":
+                continue
+            date = str(row.get("Date", ""))
+            if since_iso and date < since_iso:
+                continue
+            row_with_idx = dict(row)
+            row_with_idx["_index"] = idx
+            out.append(row_with_idx)
+        return out
 
     def capture_preview(self, exposure_time: float, flip_horizontal: bool = False) -> str:
         """Take a preview exposure via NINA and return a JPEG or PNG data URL.

@@ -69,6 +69,25 @@ def build_calibration_router(ctx: CitraSenseWebApp) -> APIRouter:
                 if f.get("enabled", True) and f.get("name")
             ]
 
+        # ``flat_automation_available`` is true when something other
+        # than the direct camera is wired to capture flats — today that
+        # means NINA's trained-flat wizard.  The frontend uses it to
+        # swap the per-frame exposure/count controls for a single "Run
+        # Flat Wizard" button, because NINA's trained exposure table is
+        # the source of truth for those parameters.
+        cal_mgr = runtime.calibration_manager
+        flat_automation_available = False
+        if cal_mgr is not None:
+            backend = cal_mgr.flat_backend
+            if backend is not None:
+                from citrasense.calibration.flat_capture_backend import DirectCameraFlatBackend
+
+                flat_automation_available = not isinstance(backend, DirectCameraFlatBackend)
+
+        sensor_cfg = ctx.daemon.settings.get_sensor_config(sensor_id) if ctx.daemon.settings else None
+        auto_capture_flats_enabled = bool(getattr(sensor_cfg, "auto_capture_flats_enabled", False))
+        last_flats_capture_iso = getattr(sensor_cfg, "last_flats_capture_iso", None)
+
         # Prefer the direct-camera profile when available.  Adapters
         # that return ``None`` here fall through to the upload-only path.
         camera = adapter.camera
@@ -77,7 +96,6 @@ def build_calibration_router(ctx: CitraSenseWebApp) -> APIRouter:
             if not profile.calibration_applicable:
                 return {"available": False}
 
-            cal_mgr = runtime.calibration_manager
             return {
                 "available": True,
                 "capture_mode": "direct",
@@ -100,6 +118,9 @@ def build_calibration_router(ctx: CitraSenseWebApp) -> APIRouter:
                 "capture_progress": cal_mgr.get_progress() if cal_mgr else {},
                 "frame_count_setting": _sensor_calibration_count(ctx, sensor_id, "calibration_frame_count", 30),
                 "flat_frame_count_setting": _sensor_calibration_count(ctx, sensor_id, "flat_frame_count", 15),
+                "flat_automation_available": flat_automation_available,
+                "auto_capture_flats_enabled": auto_capture_flats_enabled,
+                "last_flats_capture_iso": last_flats_capture_iso,
             }
 
         summary_fn = getattr(adapter, "get_calibration_profile_summary", None)
@@ -125,11 +146,14 @@ def build_calibration_router(ctx: CitraSenseWebApp) -> APIRouter:
             "filters": filters,
             "library": lib.get_library_status(summary["camera_id"]),
             "masters_dir": str(lib.masters_dir),
-            "capture_running": False,
-            "capture_requested": False,
-            "capture_progress": {},
+            "capture_running": cal_mgr.is_running() if cal_mgr else False,
+            "capture_requested": cal_mgr.is_requested() if cal_mgr else False,
+            "capture_progress": cal_mgr.get_progress() if cal_mgr else {},
             "frame_count_setting": _sensor_calibration_count(ctx, sensor_id, "calibration_frame_count", 30),
             "flat_frame_count_setting": _sensor_calibration_count(ctx, sensor_id, "flat_frame_count", 15),
+            "flat_automation_available": flat_automation_available,
+            "auto_capture_flats_enabled": auto_capture_flats_enabled,
+            "last_flats_capture_iso": last_flats_capture_iso,
         }
 
     @router.post("/calibration/capture")
@@ -173,33 +197,66 @@ def build_calibration_router(ctx: CitraSenseWebApp) -> APIRouter:
 
     @router.post("/calibration/capture-suite")
     async def trigger_calibration_suite(sensor_id: str, request: dict[str, Any]):
-        """Queue a calibration suite (bias_and_dark or all_flats)."""
+        """Queue a calibration suite (``bias_and_dark`` or ``all_flats``).
+
+        ``all_flats`` works for both direct hardware and any adapter
+        with a wired :class:`FlatCaptureBackend` (e.g. NINA trained
+        flats).  ``bias_and_dark`` still requires a direct camera
+        because shutter-closed captures have no orchestrator path.
+        """
         if not ctx.daemon:
             return JSONResponse({"error": "Daemon not available"}, status_code=503)
-        sensor, _runtime = get_sensor_context(ctx, sensor_id)
+        sensor, runtime = get_sensor_context(ctx, sensor_id)
         adapter = sensor.adapter
         try:
             from citrasense.calibration import FilterSlot
             from citrasense.calibration.calibration_suites import all_flats_suite, bias_and_dark_suite
+            from citrasense.hardware.devices.camera.abstract_camera import CalibrationProfile
 
             suite_name = request.get("suite", "")
-            if not adapter.supports_direct_camera_control():
-                return JSONResponse({"error": "No direct camera control"}, status_code=400)
-
-            camera = adapter.camera
-            if not camera:
-                return JSONResponse({"error": "Camera not connected"}, status_code=400)
-
-            profile = camera.get_calibration_profile()
-            if not profile.calibration_applicable:
-                return JSONResponse({"error": "Camera does not support calibration"}, status_code=400)
-
             frame_count = _sensor_calibration_count(ctx, sensor_id, "calibration_frame_count", 30)
             flat_count = _sensor_calibration_count(ctx, sensor_id, "flat_frame_count", 15)
 
             if suite_name == "bias_and_dark":
+                if not adapter.supports_direct_camera_control():
+                    return JSONResponse({"error": "No direct camera control"}, status_code=400)
+                camera = adapter.camera
+                if not camera:
+                    return JSONResponse({"error": "Camera not connected"}, status_code=400)
+                profile = camera.get_calibration_profile()
+                if not profile.calibration_applicable:
+                    return JSONResponse({"error": "Camera does not support calibration"}, status_code=400)
                 jobs = bias_and_dark_suite(profile, frame_count)
             elif suite_name == "all_flats":
+                cal_mgr = runtime.calibration_manager
+                if cal_mgr is None or not cal_mgr.supports_frame_type("flat"):
+                    return JSONResponse({"error": "Flat capture not available on this sensor"}, status_code=400)
+
+                camera = adapter.camera
+                if camera is not None:
+                    profile = camera.get_calibration_profile()
+                    if not profile.calibration_applicable:
+                        return JSONResponse({"error": "Camera does not support calibration"}, status_code=400)
+                else:
+                    # Synthesise a profile from the adapter summary so
+                    # all_flats_suite has a consistent input shape.
+                    summary_fn = getattr(adapter, "get_calibration_profile_summary", None)
+                    raw = summary_fn() if callable(summary_fn) else None
+                    if not isinstance(raw, dict) or not raw.get("camera_id"):
+                        return JSONResponse({"error": "No calibration profile available"}, status_code=400)
+                    profile = CalibrationProfile(
+                        calibration_applicable=True,
+                        camera_id=str(raw["camera_id"]),
+                        model=str(raw.get("model") or raw["camera_id"]),
+                        has_mechanical_shutter=bool(raw.get("has_mechanical_shutter", False)),
+                        has_cooling=bool(raw.get("has_cooling", False)),
+                        current_gain=raw.get("current_gain"),
+                        current_binning=int(raw.get("current_binning") or 1),
+                        current_temperature=raw.get("current_temperature"),
+                        target_temperature=raw.get("target_temperature"),
+                        read_mode=str(raw.get("read_mode") or ""),
+                    )
+
                 filters: list[FilterSlot] = []
                 if adapter.supports_filter_management():
                     filters = [
@@ -209,7 +266,24 @@ def build_calibration_router(ctx: CitraSenseWebApp) -> APIRouter:
                     ]
                 if not filters:
                     return JSONResponse({"error": "No filters configured"}, status_code=400)
-                jobs = all_flats_suite(profile, filters, flat_count)
+                if camera is not None:
+                    jobs = all_flats_suite(profile, filters, flat_count)
+                else:
+                    # NINA trained flats are fundamentally per-filter — there
+                    # is no interleaved capture primitive on the REST API — so
+                    # we generate N separate flat jobs that the manager runs
+                    # sequentially through the backend.
+                    jobs = [
+                        {
+                            "frame_type": "flat",
+                            "count": flat_count,
+                            "gain": profile.current_gain or 0,
+                            "binning": profile.current_binning,
+                            "filter_position": slot.position,
+                            "filter_name": slot.name,
+                        }
+                        for slot in filters
+                    ]
             else:
                 return JSONResponse({"error": f"Unknown suite: {suite_name}"}, status_code=400)
 

@@ -684,22 +684,59 @@ class CitraSenseDaemon:
         # CalibrationProcessor can apply masters regardless of how they
         # were captured.  Library ownership lives on the runtime so two
         # telescopes keep independent masters.  The CalibrationManager
-        # is only created when the adapter actually exposes an
-        # AbstractCamera we can drive for shutter-closed captures —
-        # orchestrator adapters (NINA) rely on upload ingest instead.
+        # is wired with a :class:`FlatCaptureBackend` matching the
+        # adapter's capability so operators can still trigger flats on
+        # orchestrator adapters (NINA trained-flat wizard); bias/dark
+        # capture continues to require a direct camera.
         from citrasense.calibration.calibration_library import CalibrationLibrary
+        from citrasense.calibration.flat_capture_backend import (
+            DirectCameraFlatBackend,
+            FlatCaptureBackend,
+        )
 
         library = CalibrationLibrary()
         telescope_runtime.attach_calibration_library(library)
 
+        flat_backend: FlatCaptureBackend | None = None
         if adapter.supports_direct_camera_control() and adapter.camera is not None:
+            flat_backend = DirectCameraFlatBackend(adapter.camera)
+        elif adapter.supports_flat_automation():
+            try:
+                from citrasense.calibration.nina_trained_flat_backend import NinaTrainedFlatBackend
+
+                flat_backend = NinaTrainedFlatBackend(adapter)  # type: ignore[arg-type]
+            except Exception as e:
+                CITRASENSE_LOGGER.warning(
+                    "Could not wire NinaTrainedFlatBackend for %s: %s",
+                    telescope_sensor.sensor_id,
+                    e,
+                )
+
+        needs_manager = (
+            adapter.supports_direct_camera_control() and adapter.camera is not None
+        ) or flat_backend is not None
+        if needs_manager:
             from citrasense.sensors.telescope.managers.calibration_manager import CalibrationManager
+
+            loc_svc = getattr(self, "location_service", None)
+
+            def _loc_provider() -> dict[str, float] | None:
+                if loc_svc is None:
+                    return None
+                try:
+                    return loc_svc.get_current_location()
+                except Exception:
+                    return None
 
             telescope_runtime.calibration_manager = CalibrationManager(
                 rt_logger,
                 adapter,
                 library,
                 imaging_queue=telescope_runtime.acquisition_queue,
+                flat_backend=flat_backend,
+                settings=self.settings,
+                sensor_id=telescope_sensor.sensor_id,
+                location_provider=_loc_provider,
             )
 
         CITRASENSE_LOGGER.info(f"Telescope sensor {telescope_sensor.sensor_id} initialized successfully!")
