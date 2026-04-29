@@ -2,6 +2,7 @@
 
 import { getConfig, saveConfig, getConfigStatus, getHardwareAdapters, getProcessors } from './api.js';
 import { getFilterColor } from './filters.js';
+import { showToast } from './toast.js';
 
 function updateStoreEnabledFilters(filters) {
     if (typeof Alpine !== 'undefined' && Alpine.store) {
@@ -166,9 +167,8 @@ async function checkConfigStatus() {
         const status = await getConfigStatus();
 
         if (!status.configured) {
-            // Show setup wizard if not configured
-            const wizardModal = new bootstrap.Modal(document.getElementById('setupWizard'));
-            wizardModal.show();
+            const { showModal } = await import('./toast.js');
+            showModal('setupWizard');
         } else if (status.error) {
             // Only show error toast if configured but there's an error (e.g., connection issue)
             // Don't show toast for "not configured" since modal already handles that
@@ -237,20 +237,6 @@ async function loadConfiguration() {
         if (typeof Alpine !== 'undefined' && Alpine.store) {
             const store = Alpine.store('citrasense');
 
-            // Normalize boolean fields that may come as null from backend
-            if (config.file_logging_enabled === null || config.file_logging_enabled === undefined) {
-                config.file_logging_enabled = true; // Default to true
-            }
-            if (config.keep_images === null || config.keep_images === undefined) {
-                config.keep_images = false; // Default to false
-            }
-            if (config.processing_output_retention_hours === null || config.processing_output_retention_hours === undefined) {
-                config.processing_output_retention_hours = 0;
-            }
-            if (config.use_dummy_api === null || config.use_dummy_api === undefined) {
-                config.use_dummy_api = false; // Default to false
-            }
-
             // Prefer the last-selected sensor (persisted in localStorage)
             // so reopening the Config tab lands back on the rig the
             // operator was editing.  Fall back to the first configured
@@ -265,9 +251,9 @@ async function loadConfiguration() {
 
             // Load autofocus presets before setting config so the select renders with options
             try {
-                const presetsResp = await fetch(`${store.sensorApiBaseFor(store.configSensorId)}/autofocus/presets`);
-                const presetsData = await presetsResp.json();
-                store.autofocusPresets = presetsData.presets || [];
+                const { getAutofocusPresets } = await import('./api.js');
+                const presetsResult = await getAutofocusPresets(store.configSensorId);
+                store.autofocusPresets = presetsResult.ok ? (presetsResult.data?.presets || []) : [];
             } catch (e) {
                 console.warn('Failed to load autofocus presets:', e);
                 store.autofocusPresets = [];
@@ -539,76 +525,9 @@ function handleInvalidConfigField(event, setTab) {
     showToast(message, 'warning');
 }
 
-const TOAST_ICONS = {
-    success: 'bi-check-circle-fill',
-    danger:  'bi-x-circle-fill',
-    warning: 'bi-exclamation-triangle-fill',
-    info:    'bi-info-circle-fill',
-};
-
-const TOAST_MAX_VISIBLE = 5;
-
-/**
- * Show a toast notification.
- *
- * @param {string}  message          - Text to display.
- * @param {'success'|'danger'|'warning'|'info'} type - Bootstrap colour key.
- * @param {object}  [options]
- * @param {boolean} [options.autohide] - Override auto-hide (defaults: true for success/info, false for danger/warning).
- * @param {number}  [options.delay=5000] - Auto-hide delay in ms.
- * @param {string}  [options.id]       - Dedup key; skips if a toast with this id is already visible.
- */
-export function showToast(message, type = 'info', { autohide, delay = 5000, id } = {}) {
-    const toastContainer = document.getElementById('toastContainer');
-    if (!toastContainer) {
-        console.log(`Toast (${type}): ${message}`);
-        return;
-    }
-
-    if (id && toastContainer.querySelector(`[data-toast-id="${id}"]`)) return;
-
-    const shouldAutohide = autohide !== undefined ? autohide : (type === 'success' || type === 'info');
-    const icon = TOAST_ICONS[type] || TOAST_ICONS.info;
-    const toastElId = `toast-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
-    const countdownBar = shouldAutohide
-        ? `<div class="toast-countdown" style="animation-duration:${delay}ms"></div>`
-        : '';
-
-    const html = `
-        <div id="${toastElId}" class="toast align-items-center text-bg-${type} border-0"
-             role="alert" aria-live="assertive" aria-atomic="true"
-             ${id ? `data-toast-id="${id}"` : ''}>
-            <div class="d-flex">
-                <div class="toast-body d-flex align-items-center gap-2">
-                    <i class="bi ${icon}"></i>
-                    <span>${message}</span>
-                </div>
-                <button type="button" class="btn-close btn-close-white me-2 m-auto"
-                        data-bs-dismiss="toast" aria-label="Close"></button>
-            </div>
-            ${countdownBar}
-        </div>
-    `;
-
-    toastContainer.insertAdjacentHTML('beforeend', html);
-
-    const toastElement = document.getElementById(toastElId);
-    const toast = new bootstrap.Toast(toastElement, {
-        autohide: shouldAutohide,
-        delay,
-    });
-
-    toastElement.addEventListener('hidden.bs.toast', () => toastElement.remove());
-    toast.show();
-
-    // Enforce max-visible cap: dismiss oldest when over limit
-    const visible = toastContainer.querySelectorAll('.toast.show');
-    if (visible.length > TOAST_MAX_VISIBLE) {
-        const oldest = visible[0];
-        const oldToast = bootstrap.Toast.getInstance(oldest);
-        if (oldToast) oldToast.hide();
-    }
-}
+// showToast is now in toast.js — re-exported here for backward compat with
+// any callers that still import { showToast } from './config.js'.
+export { showToast } from './toast.js';
 
 function showConfigError(message) {
     showToast(message, 'danger');
@@ -1195,7 +1114,7 @@ async function removeSensor(sid) {
     try {
         const resp = await fetch('/api/config/sensors/' + encodeURIComponent(sid), { method: 'DELETE' });
         const data = await resp.json();
-        if (!resp.ok) { alert(data.error || 'Failed to remove sensor'); return; }
+        if (!resp.ok) { showToast(data.error || 'Failed to remove sensor', 'danger'); return; }
         const store = Alpine.store('citrasense');
         const sensors = store.config.sensors;
         const idx = sensors.findIndex(s => s.id === sid);
@@ -1205,7 +1124,7 @@ async function removeSensor(sid) {
             store.configSensorId = sensors[0]?.id || null;
         }
     } catch (e) {
-        alert(e.message);
+        showToast(e.message, 'danger');
     }
 }
 

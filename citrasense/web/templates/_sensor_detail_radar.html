@@ -40,9 +40,8 @@
                 async refresh() {
                     this.radarLoading = true;
                     try {
-                        const url = this.$store.citrasense.sensorApiBaseFor(sensor.id) + '/radar/status';
-                        const r = await fetch(url);
-                        if (r.ok) { this.radar = await r.json(); }
+                        const result = await window.citrasenseApi.fetchJSON(this.$store.citrasense.sensorApiBaseFor(sensor.id) + '/radar/status');
+                        if (result.ok) { this.radar = result.data; }
                     } catch (e) { this.lastError = String(e); }
                     finally { this.radarLoading = false; }
                 },
@@ -61,12 +60,12 @@
                     const toastId = 'radar-' + sensor.id + '-' + action;
                     try {
                         const url = this.$store.citrasense.sensorApiBaseFor(sensor.id) + '/radar/' + action;
-                        const r = await fetch(url, { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body || {}) });
-                        const data = await r.json();
-                        if (!r.ok || data.error) {
-                            this.lastError = data.error || ('HTTP ' + r.status);
+                        const result = await window.citrasenseApi.fetchJSON(url, { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body || {}) });
+                        const data = result.data;
+                        if (!result.ok || data?.error) {
+                            this.lastError = data?.error || ('HTTP ' + result.status);
                             window.showToast?.(label + ' failed: ' + this.lastError, 'danger', { id: toastId });
-                        } else if (data.ok === false) {
+                        } else if (data?.ok === false) {
                             this.lastError = data.error || 'pr_sensor rejected command';
                             window.showToast?.(label + ' rejected by pr_sensor: ' + this.lastError, 'danger', { id: toastId });
                         } else if (action === 'ping') {

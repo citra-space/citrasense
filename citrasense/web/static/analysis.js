@@ -1,6 +1,7 @@
 /**
  * Analysis tab — fetches pipeline metrics and renders the task table / stats.
  */
+import { showToast } from './toast.js';
 
 const PROCESSOR_COLORS = {
     calibration_s:        '#00b894',
@@ -651,7 +652,7 @@ document.addEventListener('alpine:init', () => {
                 });
                 const data = await resp.json();
                 if (!resp.ok || !data.job_id) {
-                    const { showToast } = await import('./config.js');
+
                     showToast(data.error || 'Batch reprocess failed', 'danger');
                     return;
                 }
@@ -755,7 +756,7 @@ document.addEventListener('alpine:init', () => {
                         this.autotuneJobId = null;
                         this.autotuneRunning = false;
                         this.autotuneOpen = true;
-                        const { showToast } = await import('./config.js');
+
                         if (job.state === 'completed') {
                             const n = (job.result && job.result.configs) ? job.result.configs.length : 0;
                             showToast(`Auto-tune complete — ${n} configurations ranked`, 'success');
@@ -780,7 +781,6 @@ document.addEventListener('alpine:init', () => {
             // single-sensor deployment.  If somehow neither is available
             // (no telescopes registered), surface an error toast so the
             // operator isn't left guessing.
-            const { showToast } = await import('./config.js');
             let sensorId = this.selectedSensorId;
             if (!sensorId && this.telescopeSensors.length === 1) {
                 sensorId = this.telescopeSensors[0].id;

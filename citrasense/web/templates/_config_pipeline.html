@@ -1,0 +1,54 @@
+                    <div x-show="configTab === 'pipeline'">
+                        <h5 class="mb-3 pb-2 border-bottom border-secondary d-flex align-items-center gap-2">
+                            <i class="bi bi-diagram-3"></i>Pipeline
+                        </h5>
+                        <div class="row g-3">
+                            <div class="col-md-6">
+                                <div class="mb-3">
+                                    <label class="form-label" for="processing_output_retention_hours">
+                                        Processing output retention
+                                    </label>
+                                    <select class="form-select form-select-sm" id="processing_output_retention_hours"
+                                            x-model.number="$store.citrasense.config.processing_output_retention_hours">
+                                        <option value="0">Delete immediately (default)</option>
+                                        <option value="6">Keep 6 hours</option>
+                                        <option value="24">Keep 24 hours</option>
+                                        <option value="72">Keep 3 days</option>
+                                        <option value="168">Keep 7 days</option>
+                                        <option value="-1">Keep forever</option>
+                                    </select>
+                                    <small class="text-muted d-block mt-2">
+                                        Retain intermediate files (source catalogs, plate solve artifacts) for inspection.
+                                        Analysis metrics are always kept regardless of this setting.
+                                    </small>
+                                </div>
+                                <div class="form-check mt-3">
+                                    <input class="form-check-input" type="checkbox" id="use_local_apass_catalog"
+                                           x-model="$store.citrasense.config.use_local_apass_catalog">
+                                    <label class="form-check-label" for="use_local_apass_catalog">
+                                        Use local APASS catalog
+                                    </label>
+                                </div>
+                                <small class="text-muted d-block mt-2">Downloads a ~6.4 GB compressed (~16 GB on disk) catalog for faster offline photometry. Uses AAVSO HTTP API when disabled.</small>
+                            </div>
+                            <div class="col-md-6">
+                                <div class="mb-3">
+                                    <label class="form-label small text-muted mb-1" for="custom_data_dir">
+                                        <i class="bi bi-folder me-1"></i>Data directory
+                                    </label>
+                                    <input type="text" class="form-control form-control-sm bg-dark text-light border-secondary"
+                                           id="custom_data_dir"
+                                           placeholder="{{ default_data_dir }}"
+                                           x-model="$store.citrasense.config.custom_data_dir">
+                                    <small class="text-muted d-block mt-1">
+                                        Images and processing output. Leave blank for default.
+                                    </small>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+
+                    <!-- ============================================ -->
+                    <!-- Time & Location Settings                     -->
+                    <!-- ============================================ -->

@@ -16,6 +16,26 @@
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.8/dist/js/bootstrap.bundle.min.js"
         integrity="sha384-FKyoEForCGlyvwx9Hj09JcYn3nv7wiPVlz7YYwJrWVcXK/BmnVDxM+D2scQbITxI"
         crossorigin="anonymous"></script>
+    <script type="importmap">
+    {
+      "imports": {
+        "./toast.js": "/static/toast.js?v={{ cache_bust }}",
+        "./api.js": "/static/api.js?v={{ cache_bust }}",
+        "./config.js": "/static/config.js?v={{ cache_bust }}",
+        "./formatters.js": "/static/formatters.js?v={{ cache_bust }}",
+        "./components.js": "/static/components.js?v={{ cache_bust }}",
+        "./websocket.js": "/static/websocket.js?v={{ cache_bust }}",
+        "./filters.js": "/static/filters.js?v={{ cache_bust }}",
+        "./store/camera.js": "/static/store/camera.js?v={{ cache_bust }}",
+        "./store/toggles.js": "/static/store/toggles.js?v={{ cache_bust }}",
+        "./store/version-check.js": "/static/store/version-check.js?v={{ cache_bust }}",
+        "./store/clipboard.js": "/static/store/clipboard.js?v={{ cache_bust }}",
+        "./store/radar.js": "/static/store/radar.js?v={{ cache_bust }}",
+        "../toast.js": "/static/toast.js?v={{ cache_bust }}",
+        "../api.js": "/static/api.js?v={{ cache_bust }}"
+      }
+    }
+    </script>
     <script type="module" src="/static/store-init.js?v={{ cache_bust }}"></script>
     <script type="module" src="/static/analysis.js?v={{ cache_bust }}"></script>
     <script defer src="https://cdn.jsdelivr.net/npm/@alpinejs/persist@3.x.x/dist/cdn.min.js"></script>

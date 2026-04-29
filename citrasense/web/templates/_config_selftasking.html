@@ -1,0 +1,122 @@
+                    <div x-show="configTab === 'selftasking'">
+                        <!-- Robotic Session -->
+                        <h5 class="mb-3 pb-2 border-bottom border-secondary d-flex align-items-center gap-2">
+                            <i class="bi bi-moon-stars"></i>Robotic Session
+                        </h5>
+
+                        <div class="row g-3 mb-4">
+                            <div class="col-md-6">
+                                <label class="form-label" for="sessionSunThreshold">Darkness Threshold</label>
+                                <select id="sessionSunThreshold" class="form-select"
+                                        x-model.number="$store.citrasense.config.sensors[$store.citrasense.configSensorIndex].observing_session_sun_altitude_threshold">
+                                    <option value="-6">Civil Twilight (-6&deg;)</option>
+                                    <option value="-12">Nautical Twilight (-12&deg;)</option>
+                                    <option value="-18">Astronomical Twilight (-18&deg;)</option>
+                                </select>
+                                <small class="text-muted d-block mt-1">When the sun drops below this altitude, the observing session begins.</small>
+                            </div>
+
+                            <div class="col-md-6">
+                                <label class="form-label">Startup / Shutdown</label>
+                                <div class="form-check mb-2">
+                                    <input class="form-check-input" type="checkbox" id="sessionDoPointingCal"
+                                           x-model="$store.citrasense.config.sensors[$store.citrasense.configSensorIndex].observing_session_do_pointing_calibration">
+                                    <label class="form-check-label" for="sessionDoPointingCal">
+                                        Calibrate pointing model at start of night
+                                    </label>
+                                </div>
+                                <div class="form-check mb-2">
+                                    <input class="form-check-input" type="checkbox" id="sessionDoAutofocus"
+                                           x-model="$store.citrasense.config.sensors[$store.citrasense.configSensorIndex].observing_session_do_autofocus">
+                                    <label class="form-check-label" for="sessionDoAutofocus">
+                                        Autofocus at start of night
+                                    </label>
+                                </div>
+                                <div class="form-check mb-2">
+                                    <input class="form-check-input" type="checkbox" id="sessionDoAlignment" disabled>
+                                    <label class="form-check-label text-muted" for="sessionDoAlignment">
+                                        Alignment at start of night <span class="badge bg-secondary ms-1">coming soon</span>
+                                    </label>
+                                </div>
+                                <div class="form-check mb-2">
+                                    <input class="form-check-input" type="checkbox" id="sessionDoPark"
+                                           x-model="$store.citrasense.config.sensors[$store.citrasense.configSensorIndex].observing_session_do_park">
+                                    <label class="form-check-label" for="sessionDoPark">
+                                        Unpark at dusk / Park at dawn
+                                    </label>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Self-Tasking -->
+                        <h5 class="mb-3 pb-2 border-bottom border-secondary d-flex align-items-center gap-2">
+                            <i class="bi bi-robot"></i>Self-Tasking
+                        </h5>
+
+                        <h6 class="text-muted mb-3"><i class="bi bi-crosshair me-2"></i>Targeting</h6>
+                        <div class="row g-3 mb-4">
+                            <div class="col-md-6"
+                                 x-data="{
+                                     get types() { return $store.citrasense.config.sensors[$store.citrasense.configSensorIndex].self_tasking_exclude_object_types || []; },
+                                     toggleType(t) {
+                                         let arr = [...(this.types)];
+                                         let idx = arr.indexOf(t);
+                                         if (idx >= 0) arr.splice(idx, 1); else arr.push(t);
+                                         $store.citrasense.config.sensors[$store.citrasense.configSensorIndex].self_tasking_exclude_object_types = arr;
+                                     }
+                                 }">
+                                <label class="form-label">Exclude Object Types</label>
+                                <div class="d-flex flex-wrap gap-2">
+                                    <template x-for="t in ['Payload', 'Rocket Body', 'Debris', 'Unknown']" :key="t">
+                                        <button type="button" class="btn btn-sm"
+                                                :class="types.includes(t) ? 'btn-danger' : 'btn-outline-secondary'"
+                                                @click="toggleType(t)" x-text="t"></button>
+                                    </template>
+                                </div>
+                                <small class="text-muted d-block mt-1">Selected types will be excluded from batch requests.</small>
+                            </div>
+                            <div class="col-md-6"
+                                 x-data="{
+                                     get regimes() { return $store.citrasense.config.sensors[$store.citrasense.configSensorIndex].self_tasking_include_orbit_regimes || []; },
+                                     toggleRegime(r) {
+                                         let arr = [...(this.regimes)];
+                                         let idx = arr.indexOf(r);
+                                         if (idx >= 0) arr.splice(idx, 1); else arr.push(r);
+                                         $store.citrasense.config.sensors[$store.citrasense.configSensorIndex].self_tasking_include_orbit_regimes = arr;
+                                     }
+                                 }">
+                                <label class="form-label">Include Orbit Regimes</label>
+                                <div class="d-flex flex-wrap gap-2">
+                                    <template x-for="r in ['LEO', 'MEO', 'GEO', 'HEO']" :key="r">
+                                        <button type="button" class="btn btn-sm"
+                                                :class="regimes.includes(r) ? 'btn-primary' : 'btn-outline-secondary'"
+                                                @click="toggleRegime(r)" x-text="r"></button>
+                                    </template>
+                                </div>
+                                <small class="text-muted d-block mt-1">Leave empty for all regimes. Selected regimes filter batch requests.</small>
+                            </div>
+                        </div>
+                        <div class="row g-3">
+                            <div class="col-md-6">
+                                <label class="form-label" for="selfTaskingGroupIds">Satellite Group IDs</label>
+                                <input type="text" class="form-control" id="selfTaskingGroupIds"
+                                       placeholder="Leave empty for auto-discovery"
+                                       :value="($store.citrasense.config.sensors[$store.citrasense.configSensorIndex].self_tasking_satellite_group_ids || []).join(', ')"
+                                       @change="$store.citrasense.config.sensors[$store.citrasense.configSensorIndex].self_tasking_satellite_group_ids = $event.target.value ? $event.target.value.split(',').map(s => s.trim()).filter(Boolean) : []">
+                                <small class="text-muted d-block mt-1">Comma-separated group UUIDs. Empty = server discovers visible satellites automatically.</small>
+                            </div>
+                            <div class="col-md-6">
+                                <label class="form-label" for="selfTaskingCollectionType">Collection Type</label>
+                                <select id="selfTaskingCollectionType" class="form-select"
+                                        x-model="$store.citrasense.config.sensors[$store.citrasense.configSensorIndex].self_tasking_collection_type">
+                                    <option value="Track">Track (single filter)</option>
+                                    <option value="Characterization">Characterization (multi-filter)</option>
+                                </select>
+                                <small class="text-muted d-block mt-1">Track collects in one filter. Characterization cycles through multiple filters per target.</small>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- ============================================ -->
+                    <!-- Advanced Settings                            -->
+                    <!-- ============================================ -->

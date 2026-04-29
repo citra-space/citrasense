@@ -36,14 +36,9 @@
             }
             this.adding = true;
             try {
-                const resp = await fetch('/api/config/sensors', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ id, type: this.newType, adapter })
-                });
-                const data = await resp.json();
-                if (!resp.ok) { this.addError = data.error || 'Failed to add sensor'; return; }
-                $store.citrasense.config.sensors.push(data.sensor);
+                const result = await window.citrasenseApi.addSensor({ id, type: this.newType, adapter });
+                if (!result.ok) { this.addError = result.error || 'Failed to add sensor'; return; }
+                $store.citrasense.config.sensors.push(result.data.sensor);
                 $store.citrasense.configSensorId = id;
                 $store.citrasense.savedAdapters[id] = adapter;
                 this.newId = '';
@@ -61,9 +56,8 @@
             if (!confirm('Remove sensor \'' + sid + '\'? You will need to Save & Reload to finalize.')) return;
             this.removing = true;
             try {
-                const resp = await fetch('/api/config/sensors/' + encodeURIComponent(sid), { method: 'DELETE' });
-                const data = await resp.json();
-                if (!resp.ok) { alert(data.error || 'Failed to remove sensor'); return; }
+                const result = await window.citrasenseApi.deleteSensor(sid);
+                if (!result.ok) { window.showToast(result.error || 'Failed to remove sensor', 'danger'); return; }
                 const sensors = $store.citrasense.config.sensors;
                 const idx = sensors.findIndex(s => s.id === sid);
                 if (idx >= 0) sensors.splice(idx, 1);
@@ -72,7 +66,7 @@
                     $store.citrasense.configSensorId = sensors[0]?.id || null;
                 }
             } catch (e) {
-                alert(e.message);
+                window.showToast(e.message, 'danger');
             } finally {
                 this.removing = false;
             }

@@ -1,3 +1,5 @@
+import { showToast } from './toast.js';
+
 /**
  * Alpine.js Component Definitions for CitraSense Dashboard
  *
@@ -103,7 +105,7 @@ export function taskRow(task) {
                 const resp = await fetch('/api/tasks/' + encodeURIComponent(this.task.id) + '/cancel', {
                     method: 'POST',
                 });
-                const { showToast } = await import('./config.js');
+
                 if (resp.ok) {
                     showToast('Cancelled ' + label, 'success');
                     // No need to mutate local state — the server will broadcast
@@ -117,7 +119,7 @@ export function taskRow(task) {
                     showToast(msg, 'danger');
                 }
             } catch (e) {
-                const { showToast } = await import('./config.js');
+
                 showToast('Cancel failed: ' + (e?.message || 'network error'), 'danger');
             } finally {
                 this.cancelling = false;

@@ -1,7 +1,10 @@
 // CitraSense Dashboard - Main Application (Alpine.js)
 import { connectWebSocket } from './websocket.js';
-import { initConfig, initFilterConfig, setupAutofocusButton, showToast } from './config.js';
-import { getTasks, getLogs } from './api.js';
+import { initConfig, initFilterConfig, setupAutofocusButton } from './config.js';
+import { showToast } from './toast.js';
+import * as api from './api.js';
+
+const { getTasks, getLogs } = api;
 
 // Store and components are registered in store-init.js (loaded before Alpine)
 
@@ -239,6 +242,7 @@ function initNavigation() {
 // from ./config.js; only template-scoped code should reach for the
 // window-level hook.
 window.showToast = showToast;
+window.citrasenseApi = api;
 
 document.addEventListener('DOMContentLoaded', async () => {
     initNavigation();

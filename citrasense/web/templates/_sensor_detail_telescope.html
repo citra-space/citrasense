@@ -1227,15 +1227,11 @@
                                      this.batchLoading = true;
                                      this.batchResult = null;
                                      try {
-                                         const resp = await fetch(`/api/sensors/${encodeURIComponent(sensor.id)}/self-tasking/request-now`, {
-                                             method: 'POST',
-                                             headers: {'Content-Type': 'application/json'}
-                                         });
-                                         const data = await resp.json();
-                                         if (resp.ok) {
-                                             this.batchResult = { ok: true, msg: (data.created ?? 0) + ' created' };
+                                         const result = await window.citrasenseApi.requestSelfTaskNow(sensor.id);
+                                         if (result.ok) {
+                                             this.batchResult = { ok: true, msg: (result.data?.created ?? 0) + ' created' };
                                          } else {
-                                             this.batchResult = { ok: false, msg: data.error || 'Request failed' };
+                                             this.batchResult = { ok: false, msg: result.error || 'Request failed' };
                                          }
                                      } catch (e) {
                                          this.batchResult = { ok: false, msg: 'Network error' };

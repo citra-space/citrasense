@@ -1,0 +1,42 @@
+                    <div x-show="configTab === 'api'">
+                        <h5 class="mb-3 pb-2 border-bottom border-secondary d-flex align-items-center gap-2">
+                            <i class="bi bi-cloud-arrow-up"></i>API Configuration
+                        </h5>
+                        <div x-show="$store.citrasense.config.use_dummy_api"
+                             class="alert alert-warning mb-3 py-2" role="alert">
+                            <i class="bi bi-exclamation-triangle-fill me-2"></i>Dummy API is active — these settings are ignored. You can change this in <a href="#" @click.prevent="configTab = 'advanced'" class="alert-link">Advanced Settings</a>.
+                        </div>
+                        <div class="row g-3" :class="$store.citrasense.config.use_dummy_api ? 'opacity-50' : ''">
+                            <div class="col-12">
+                                <label for="apiEndpoint" class="form-label">API Endpoint</label>
+                                <select id="apiEndpoint" class="form-select" x-model="$store.citrasense.apiEndpoint">
+                                    <option value="production">Production (api.citra.space)</option>
+                                    <option value="development">Development (dev.api.citra.space)</option>
+                                    <option value="custom">Custom</option>
+                                </select>
+                            </div>
+                            <div class="col-12" id="customHostContainer" x-show="$store.citrasense.apiEndpoint === 'custom'">
+                                <label for="customHost" class="form-label">Custom API Host</label>
+                                <input type="text" id="customHost" class="form-control" placeholder="api.example.com" x-model="$store.citrasense.config.host">
+                                <div class="row g-2 mt-2">
+                                    <div class="col-6">
+                                        <label for="customPort" class="form-label small">Port</label>
+                                        <input type="number" id="customPort" class="form-control" placeholder="443" x-model.number="$store.citrasense.config.port">
+                                    </div>
+                                    <div class="col-6 d-flex align-items-end">
+                                        <div class="form-check">
+                                            <input class="form-check-input" type="checkbox" id="customUseSsl" x-model="$store.citrasense.config.use_ssl">
+                                            <label class="form-check-label" for="customUseSsl">
+                                                Use SSL
+                                            </label>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="col-12">
+                                <label for="personal_access_token" class="form-label">Personal Access Token <span class="text-danger">*</span></label>
+                                <input type="password" id="personal_access_token" class="form-control" placeholder="Enter your Citra API token" required x-model="$store.citrasense.config.personal_access_token">
+                                <small class="text-muted">Get your token from <a :href="$store.citrasense.config.app_url || ''" target="_blank" rel="noopener noreferrer" x-text="($store.citrasense.config.app_url || '').replace('https://', '')"></a></small>
+                            </div>
+                        </div>
+                    </div>
