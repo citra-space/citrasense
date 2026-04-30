@@ -93,6 +93,100 @@ def build_core_router(ctx: CitraSenseWebApp) -> APIRouter:
 
         return get_version_info()
 
+    _update_check_cache: dict = {"result": None, "fetched_at": 0.0}
+
+    @router.get("/api/version/check-updates")
+    async def check_for_updates():
+        """Server-side GitHub version check with 1-hour TTL cache.
+
+        Replaces the client-side GitHub API calls that were rate-limited
+        (60 req/hr/IP unauthenticated) and failed when the telescope
+        could reach the daemon but not the internet.
+        """
+        import time
+
+        import requests
+
+        from citrasense.version import get_version_info
+
+        TTL_SECONDS = 3600
+        now = time.time()
+
+        if _update_check_cache["result"] and (now - _update_check_cache["fetched_at"]) < TTL_SECONDS:
+            return _update_check_cache["result"]
+
+        info = get_version_info()
+        current_version = info["version"]
+        install_type = info["install_type"]
+        git_hash = info.get("git_hash")
+        git_branch = info.get("git_branch")
+        git_dirty = info.get("git_dirty", False)
+        base = {
+            "current_version": current_version,
+            "install_type": install_type,
+            "git_hash": git_hash,
+            "git_branch": git_branch,
+            "git_dirty": git_dirty,
+        }
+
+        if current_version in ("development", "unknown"):
+            result = {"status": "up-to-date", **base}
+            _update_check_cache.update(result=result, fetched_at=now)
+            return result
+
+        try:
+            if install_type != "pypi" and git_hash:
+                resp = await asyncio.to_thread(
+                    requests.get,
+                    f"https://api.github.com/repos/citra-space/citrasense/compare/{git_hash}...main",
+                    timeout=10,
+                )
+                if resp.status_code != 200:
+                    result = {"status": "error", **base}
+                    _update_check_cache.update(result=result, fetched_at=now)
+                    return result
+                behind_by = resp.json().get("ahead_by", 0)
+                if behind_by > 0:
+                    result = {"status": "update-available", "behind_by": behind_by, **base}
+                else:
+                    result = {"status": "up-to-date", **base}
+                _update_check_cache.update(result=result, fetched_at=now)
+                return result
+
+            resp = await asyncio.to_thread(
+                requests.get,
+                "https://api.github.com/repos/citra-space/citrasense/releases/latest",
+                timeout=10,
+            )
+            if resp.status_code != 200:
+                result = {"status": "error", **base}
+                _update_check_cache.update(result=result, fetched_at=now)
+                return result
+
+            release_data = resp.json()
+            latest_version = release_data.get("tag_name", "").lstrip("v")
+            release_url = release_data.get("html_url", "")
+
+            def _version_tuple(v: str) -> tuple:
+                return tuple(int(x) for x in v.split(".") if x.isdigit())
+
+            if _version_tuple(latest_version) > _version_tuple(current_version):
+                result = {
+                    "status": "update-available",
+                    "latest_version": latest_version,
+                    "release_url": release_url,
+                    **base,
+                }
+            else:
+                result = {"status": "up-to-date", **base}
+            _update_check_cache.update(result=result, fetched_at=now)
+            return result
+        except Exception as e:
+            CITRASENSE_LOGGER.debug("Update check failed: %s", e)
+            result = {"status": "error", "error": str(e), **base}
+            _update_check_cache.update(result=result, fetched_at=now)
+            return result
+
     @router.get("/api/processors")
     async def get_processors(sensor_id: str):
         """Get list of all available processors with metadata.

@@ -1,0 +1,166 @@
+                    <div x-show="configTab === 'advanced'">
+                        <h5 class="mb-3 pb-2 border-bottom border-secondary d-flex align-items-center gap-2">
+                            <i class="bi bi-sliders"></i>Advanced Settings
+                        </h5>
+                        <div class="row g-3">
+                            <!-- Left Column: Logging -->
+                            <div class="col-md-6">
+                                <h6 class="text-muted mb-3"><i class="bi bi-file-earmark-text me-2"></i>Logging</h6>
+                                <div class="mb-3">
+                                    <label for="logLevel" class="form-label">Log Level</label>
+                                    <select id="logLevel" class="form-select" x-model="$store.citrasense.config.log_level">
+                                        <option value="DEBUG">DEBUG</option>
+                                        <option value="INFO">INFO</option>
+                                        <option value="WARNING">WARNING</option>
+                                        <option value="ERROR">ERROR</option>
+                                    </select>
+                                </div>
+                                <div class="mb-3">
+                                    <div class="form-check">
+                                        <input class="form-check-input" type="checkbox" id="file_logging_enabled" x-model="$store.citrasense.config.file_logging_enabled">
+                                        <label class="form-check-label" for="file_logging_enabled">
+                                            Enable file logging
+                                        </label>
+                                    </div>
+                                </div>
+                                <div class="mt-3">
+                                    <label class="form-label small text-muted mb-1" for="custom_log_dir">
+                                        <i class="bi bi-journal-text me-1"></i>Log directory
+                                    </label>
+                                    <input type="text" class="form-control form-control-sm bg-dark text-light border-secondary"
+                                           id="custom_log_dir"
+                                           placeholder="{{ default_log_dir }}"
+                                           x-model="$store.citrasense.config.custom_log_dir">
+                                    <small class="text-muted d-block mt-1">
+                                        Leave blank for default.
+                                    </small>
+                                </div>
+                            </div>
+
+                            <!-- Right Column: Image Storage -->
+                            <div class="col-md-6">
+                                <h6 class="text-muted mb-3"><i class="bi bi-image me-2"></i>Image Storage</h6>
+                                <div class="mb-3">
+                                    <div class="form-check">
+                                        <input class="form-check-input" type="checkbox" id="keep_images" x-model="$store.citrasense.config.keep_images">
+                                        <label class="form-check-label" for="keep_images">
+                                            Keep captured images
+                                        </label>
+                                    </div>
+                                    <small class="text-muted d-block mt-2">By default, images are deleted after upload unless this is enabled</small>
+                                </div>
+                            </div>
+
+                            <!-- Development -->
+                            <div class="col-12">
+                                <hr class="border-secondary">
+                                <h6 class="text-muted mb-3"><i class="bi bi-code-slash me-2"></i>Development</h6>
+                                <div class="form-check">
+                                    <input class="form-check-input" type="checkbox" id="use_dummy_api"
+                                           x-model="$store.citrasense.config.use_dummy_api">
+                                    <label class="form-check-label" for="use_dummy_api">
+                                        Use Dummy API (Local Testing)
+                                    </label>
+                                </div>
+                                <small class="text-muted ms-4">Use a mock API server for testing, overrides api settings above</small>
+                            </div>
+
+                            <!-- Paths & Files -->
+                            <div class="col-12">
+                                <hr class="border-secondary">
+                                <h6 class="text-muted mb-3"><i class="bi bi-folder2-open me-2"></i>Paths & Files</h6>
+                                <div class="table-responsive">
+                                    <table class="table table-sm table-dark mb-0">
+                                        <tbody>
+                                            <tr>
+                                                <td class="text-muted" style="width: 160px;">Config file</td>
+                                                <td>
+                                                    <div class="d-flex align-items-center gap-2">
+                                                        <code class="text-break" x-text="$store.citrasense.config.config_file_path || '—'"></code>
+                                                        <button type="button" class="btn btn-sm btn-outline-secondary py-0 px-1 flex-shrink-0"
+                                                                x-show="$store.citrasense.config.config_file_path"
+                                                                @click="$store.citrasense.copyPath($store.citrasense.config.config_file_path, $event)"
+                                                                title="Copy path">
+                                                            <i class="bi bi-clipboard" style="font-size: 0.75rem;"></i>
+                                                        </button>
+                                                    </div>
+                                                </td>
+                                            </tr>
+                                            <tr>
+                                                <td class="text-muted">Log file</td>
+                                                <td>
+                                                    <div class="d-flex align-items-center gap-2">
+                                                        <template x-if="$store.citrasense.config.log_file_path">
+                                                            <code class="text-break" x-text="$store.citrasense.config.log_file_path"></code>
+                                                        </template>
+                                                        <template x-if="!$store.citrasense.config.log_file_path">
+                                                            <span class="text-secondary fst-italic">File logging disabled</span>
+                                                        </template>
+                                                        <button type="button" class="btn btn-sm btn-outline-secondary py-0 px-1 flex-shrink-0"
+                                                                x-show="$store.citrasense.config.log_file_path"
+                                                                @click="$store.citrasense.copyPath($store.citrasense.config.log_file_path, $event)"
+                                                                title="Copy path">
+                                                            <i class="bi bi-clipboard" style="font-size: 0.75rem;"></i>
+                                                        </button>
+                                                        <a class="btn btn-sm btn-outline-secondary py-0 px-1 flex-shrink-0"
+                                                           x-show="$store.citrasense.config.log_file_path"
+                                                           href="/api/logs/download"
+                                                           title="Download log file">
+                                                            <i class="bi bi-download" style="font-size: 0.75rem;"></i>
+                                                        </a>
+                                                    </div>
+                                                </td>
+                                            </tr>
+                                            <tr>
+                                                <td class="text-muted">Images directory</td>
+                                                <td>
+                                                    <div class="d-flex align-items-center gap-2">
+                                                        <code class="text-break" x-text="$store.citrasense.config.images_dir_path || '—'"></code>
+                                                        <button type="button" class="btn btn-sm btn-outline-secondary py-0 px-1 flex-shrink-0"
+                                                                x-show="$store.citrasense.config.images_dir_path"
+                                                                @click="$store.citrasense.copyPath($store.citrasense.config.images_dir_path, $event)"
+                                                                title="Copy path">
+                                                            <i class="bi bi-clipboard" style="font-size: 0.75rem;"></i>
+                                                        </button>
+                                                    </div>
+                                                </td>
+                                            </tr>
+                                            <tr>
+                                                <td class="text-muted">Processing directory</td>
+                                                <td>
+                                                    <div class="d-flex align-items-center gap-2">
+                                                        <code class="text-break" x-text="$store.citrasense.config.processing_dir_path || '—'"></code>
+                                                        <button type="button" class="btn btn-sm btn-outline-secondary py-0 px-1 flex-shrink-0"
+                                                                x-show="$store.citrasense.config.processing_dir_path"
+                                                                @click="$store.citrasense.copyPath($store.citrasense.config.processing_dir_path, $event)"
+                                                                title="Copy path">
+                                                            <i class="bi bi-clipboard" style="font-size: 0.75rem;"></i>
+                                                        </button>
+                                                    </div>
+                                                </td>
+                                            </tr>
+                                            <tr>
+                                                <td class="text-muted">Astrometry indexes</td>
+                                                <td>
+                                                    <div class="d-flex align-items-center gap-2">
+                                                        <template x-if="$store.citrasense.config.astrometry_index_path">
+                                                            <code class="text-break" x-text="$store.citrasense.config.astrometry_index_path"></code>
+                                                        </template>
+                                                        <template x-if="!$store.citrasense.config.astrometry_index_path">
+                                                            <span class="text-secondary fst-italic">Not configured</span>
+                                                        </template>
+                                                        <button type="button" class="btn btn-sm btn-outline-secondary py-0 px-1 flex-shrink-0"
+                                                                x-show="$store.citrasense.config.astrometry_index_path"
+                                                                @click="$store.citrasense.copyPath($store.citrasense.config.astrometry_index_path, $event)"
+                                                                title="Copy path">
+                                                            <i class="bi bi-clipboard" style="font-size: 0.75rem;"></i>
+                                                        </button>
+                                                    </div>
+                                                </td>
+                                            </tr>
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+                        </div>
+                    </div>

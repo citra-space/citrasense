@@ -1,7 +1,10 @@
 // Configuration management for CitraSense
 
-import { getConfig, saveConfig, getConfigStatus, getHardwareAdapters, getProcessors } from './api.js';
+import * as api from './api.js';
 import { getFilterColor } from './filters.js';
+import { showToast, showModal } from './toast.js';
+
+const { getConfig, saveConfig, getConfigStatus, getHardwareAdapters, getProcessors } = api;
 
 function updateStoreEnabledFilters(filters) {
     if (typeof Alpine !== 'undefined' && Alpine.store) {
@@ -94,11 +97,7 @@ async function loadSensorTypes() {
         { value: 'telescope', label: 'Telescope', description: '' },
     ];
     try {
-        const resp = await fetch('/api/sensor-types');
-        if (!resp.ok) {
-            throw new Error(`sensor-types HTTP ${resp.status} ${resp.statusText}`);
-        }
-        const data = await resp.json();
+        const data = await api.getSensorTypes();
         if (!Array.isArray(data?.types)) {
             throw new Error('sensor-types response missing types[] array');
         }
@@ -142,15 +141,8 @@ export async function loadSensorSchema(sensor) {
         return;
     }
     try {
-        const resp = await fetch(`/api/sensor-types/${encodeURIComponent(sensorType)}/schema`);
-        const data = await resp.json();
-        if (!resp.ok) {
-            console.error(`Failed to load ${sensorType} schema:`, data.error);
-            showConfigError(`Failed to load settings for ${sensorType}: ${data.error || 'unknown error'}`);
-            store.adapterFields = [];
-            return;
-        }
-        store.adapterFields = buildAdapterFields(data.schema || [], currentSettings);
+        const data = await api.getSensorTypeSchema(sensorType);
+        store.adapterFields = buildAdapterFields(data?.schema || [], currentSettings);
     } catch (error) {
         console.error(`Failed to load ${sensorType} schema:`, error);
         showConfigError(`Failed to load settings for ${sensorType}`);
@@ -166,9 +158,7 @@ async function checkConfigStatus() {
         const status = await getConfigStatus();
 
         if (!status.configured) {
-            // Show setup wizard if not configured
-            const wizardModal = new bootstrap.Modal(document.getElementById('setupWizard'));
-            wizardModal.show();
+            showModal('setupWizard');
         } else if (status.error) {
             // Only show error toast if configured but there's an error (e.g., connection issue)
             // Don't show toast for "not configured" since modal already handles that
@@ -237,20 +227,6 @@ async function loadConfiguration() {
         if (typeof Alpine !== 'undefined' && Alpine.store) {
             const store = Alpine.store('citrasense');
 
-            // Normalize boolean fields that may come as null from backend
-            if (config.file_logging_enabled === null || config.file_logging_enabled === undefined) {
-                config.file_logging_enabled = true; // Default to true
-            }
-            if (config.keep_images === null || config.keep_images === undefined) {
-                config.keep_images = false; // Default to false
-            }
-            if (config.processing_output_retention_hours === null || config.processing_output_retention_hours === undefined) {
-                config.processing_output_retention_hours = 0;
-            }
-            if (config.use_dummy_api === null || config.use_dummy_api === undefined) {
-                config.use_dummy_api = false; // Default to false
-            }
-
             // Prefer the last-selected sensor (persisted in localStorage)
             // so reopening the Config tab lands back on the rig the
             // operator was editing.  Fall back to the first configured
@@ -265,9 +241,8 @@ async function loadConfiguration() {
 
             // Load autofocus presets before setting config so the select renders with options
             try {
-                const presetsResp = await fetch(`${store.sensorApiBaseFor(store.configSensorId)}/autofocus/presets`);
-                const presetsData = await presetsResp.json();
-                store.autofocusPresets = presetsData.presets || [];
+                const presetsResult = await api.getAutofocusPresets(store.configSensorId);
+                store.autofocusPresets = presetsResult.ok ? (presetsResult.data?.presets || []) : [];
             } catch (e) {
                 console.warn('Failed to load autofocus presets:', e);
                 store.autofocusPresets = [];
@@ -329,12 +304,11 @@ export async function loadAdapterSchema(adapterName, currentSettings = {}) {
 
         console.log(`Loading schema for ${adapterName} with settings:`, currentSettings);
 
-        const response = await fetch(`/api/hardware-adapters/${adapterName}/schema${settingsParam}`);
-        const data = await response.json();
+        const data = await api.getAdapterSchema(adapterName, settingsParam);
 
         console.log(`Schema API response:`, data);
 
-        const enrichedFields = buildAdapterFields(data.schema || [], currentSettings);
+        const enrichedFields = buildAdapterFields(data?.schema || [], currentSettings);
         console.log('Loaded adapter fields:', enrichedFields.map(f => `${f.name}=${f.value} (${f.type})`));
 
         if (typeof Alpine !== 'undefined' && Alpine.store) {
@@ -539,76 +513,6 @@ function handleInvalidConfigField(event, setTab) {
     showToast(message, 'warning');
 }
 
-const TOAST_ICONS = {
-    success: 'bi-check-circle-fill',
-    danger:  'bi-x-circle-fill',
-    warning: 'bi-exclamation-triangle-fill',
-    info:    'bi-info-circle-fill',
-};
-
-const TOAST_MAX_VISIBLE = 5;
-
-/**
- * Show a toast notification.
- *
- * @param {string}  message          - Text to display.
- * @param {'success'|'danger'|'warning'|'info'} type - Bootstrap colour key.
- * @param {object}  [options]
- * @param {boolean} [options.autohide] - Override auto-hide (defaults: true for success/info, false for danger/warning).
- * @param {number}  [options.delay=5000] - Auto-hide delay in ms.
- * @param {string}  [options.id]       - Dedup key; skips if a toast with this id is already visible.
- */
-export function showToast(message, type = 'info', { autohide, delay = 5000, id } = {}) {
-    const toastContainer = document.getElementById('toastContainer');
-    if (!toastContainer) {
-        console.log(`Toast (${type}): ${message}`);
-        return;
-    }
-
-    if (id && toastContainer.querySelector(`[data-toast-id="${id}"]`)) return;
-
-    const shouldAutohide = autohide !== undefined ? autohide : (type === 'success' || type === 'info');
-    const icon = TOAST_ICONS[type] || TOAST_ICONS.info;
-    const toastElId = `toast-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
-    const countdownBar = shouldAutohide
-        ? `<div class="toast-countdown" style="animation-duration:${delay}ms"></div>`
-        : '';
-
-    const html = `
-        <div id="${toastElId}" class="toast align-items-center text-bg-${type} border-0"
-             role="alert" aria-live="assertive" aria-atomic="true"
-             ${id ? `data-toast-id="${id}"` : ''}>
-            <div class="d-flex">
-                <div class="toast-body d-flex align-items-center gap-2">
-                    <i class="bi ${icon}"></i>
-                    <span>${message}</span>
-                </div>
-                <button type="button" class="btn-close btn-close-white me-2 m-auto"
-                        data-bs-dismiss="toast" aria-label="Close"></button>
-            </div>
-            ${countdownBar}
-        </div>
-    `;
-
-    toastContainer.insertAdjacentHTML('beforeend', html);
-
-    const toastElement = document.getElementById(toastElId);
-    const toast = new bootstrap.Toast(toastElement, {
-        autohide: shouldAutohide,
-        delay,
-    });
-
-    toastElement.addEventListener('hidden.bs.toast', () => toastElement.remove());
-    toast.show();
-
-    // Enforce max-visible cap: dismiss oldest when over limit
-    const visible = toastContainer.querySelectorAll('.toast.show');
-    if (visible.length > TOAST_MAX_VISIBLE) {
-        const oldest = visible[0];
-        const oldToast = bootstrap.Toast.getInstance(oldest);
-        if (oldToast) oldToast.hide();
-    }
-}
 
 function showConfigError(message) {
     showToast(message, 'danger');
@@ -668,26 +572,22 @@ export async function loadFilterConfig() {
     store.filterAdapterChangeMessageVisible = false;
 
     try {
-        const response = await fetch(`${store.sensorApiBaseFor(sensorId)}/filters`);
+        const result = await api.getFilters(sensorId);
 
-        if (response.status === 404 || response.status === 503) {
+        if (result.status === 404 || result.status === 503) {
             store.filterConfigVisible = false;
             return;
         }
 
-        const data = await response.json();
-
-        if (response.ok && data.filters) {
+        if (result.ok && result.data?.filters) {
             store.filterConfigVisible = true;
-            store.filterNamesEditable = data.names_editable || false;
-            store.filterNameOptions = data.filter_name_options || [];
+            store.filterNamesEditable = result.data.names_editable || false;
+            store.filterNameOptions = result.data.filter_name_options || [];
 
-            // Update enabled filters display on dashboard (Alpine store)
-            updateStoreEnabledFilters(data.filters);
+            updateStoreEnabledFilters(result.data.filters);
 
-            // Add color to each filter and update store
             const filtersWithColor = {};
-            Object.entries(data.filters).forEach(([id, filter]) => {
+            Object.entries(result.data.filters).forEach(([id, filter]) => {
                 filtersWithColor[id] = {
                     ...filter,
                     color: getFilterColor(filter.name),
@@ -741,26 +641,15 @@ async function saveModifiedFilters() {
 
     if (filterUpdates.length === 0) return { success: 0, failed: 0 };
 
-    // Send single batch update
     try {
-        const response = await fetch(`${store.sensorApiBaseFor(store.configSensorId)}/filters/batch`, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify(filterUpdates)
-        });
+        const result = await api.updateFiltersBatch(store.configSensorId, filterUpdates);
 
-        if (response.ok) {
-            const data = await response.json();
-            const successCount = data.updated_count || 0;
+        if (result.ok) {
+            const successCount = result.data?.updated_count || 0;
 
-            // After batch update, sync to backend
             try {
-                const syncResponse = await fetch(`${store.sensorApiBaseFor(store.configSensorId)}/filters/sync`, {
-                    method: 'POST'
-                });
-                if (!syncResponse.ok) {
+                const syncResult = await api.syncFilters(store.configSensorId);
+                if (!syncResult.ok) {
                     console.error('Failed to sync filters to backend');
                 }
             } catch (error) {
@@ -769,12 +658,10 @@ async function saveModifiedFilters() {
 
             return { success: successCount, failed: 0 };
         } else {
-            const data = await response.json();
-            const errorMsg = data.error || 'Unknown error';
+            const errorMsg = result.error || 'Unknown error';
             console.error(`Failed to save filters: ${errorMsg}`);
 
-            // Show error to user
-            if (response.status === 400 && errorMsg.includes('last enabled filter')) {
+            if (result.status === 400 && errorMsg.includes('last enabled filter')) {
                 showConfigMessage(errorMsg, 'danger');
             }
 
@@ -787,448 +674,10 @@ async function saveModifiedFilters() {
 }
 
 /**
- * Trigger or cancel autofocus routine
- */
-async function triggerAutofocus(sensorId) {
-    const store = Alpine.store('citrasense');
-    const ss = store.status?.sensors?.[sensorId] || {};
-    const shouldCancel = ss?.autofocus_requested || ss?.autofocus_running;
-
-    if (shouldCancel) {
-        try {
-            const response = await fetch(`${store.sensorApiBaseFor(sensorId)}/autofocus/cancel`, {
-                method: 'POST'
-            });
-            const data = await response.json();
-
-            if (response.ok && data.success) {
-                showToast('Autofocus cancelled', 'info');
-            } else {
-                showToast('Nothing to cancel', 'warning');
-            }
-        } catch (error) {
-            console.error('Error cancelling autofocus:', error);
-            showToast('Failed to cancel autofocus', 'danger');
-        }
-        return;
-    }
-
-    store._setAutofocusing(sensorId, true);
-
-    try {
-        const response = await fetch(`${store.sensorApiBaseFor(sensorId)}/autofocus`, {
-            method: 'POST'
-        });
-
-        const data = await response.json();
-
-        if (response.ok) {
-            showToast('Autofocus queued', 'success');
-        } else {
-            showToast(data.error || 'Autofocus request failed', 'danger');
-        }
-    } catch (error) {
-        console.error('Error triggering autofocus:', error);
-        showToast('Failed to trigger autofocus', 'danger');
-    } finally {
-        store._setAutofocusing(sensorId, false);
-    }
-}
-
-// Old private showToast removed — all callers now use the exported showToast above.
-
-/**
  * Initialize filter configuration on page load
  */
 export async function initFilterConfig() {
-    // Load filter config when config section is visible
     await loadFilterConfig();
-}
-
-async function triggerAlignment(sensorId) {
-    const store = Alpine.store('citrasense');
-    const ss = store.status?.sensors?.[sensorId] || {};
-    const isCancel = ss?.alignment_requested;
-
-    if (isCancel) {
-        try {
-            const response = await fetch(`${store.sensorApiBaseFor(sensorId)}/alignment/cancel`, { method: 'POST' });
-            const data = await response.json();
-            if (response.ok && data.success) {
-                showToast('Alignment cancelled', 'info');
-            } else {
-                showToast('Nothing to cancel', 'warning');
-            }
-        } catch (error) {
-            console.error('Error cancelling alignment:', error);
-            showToast('Failed to cancel alignment', 'danger');
-        }
-        return;
-    }
-
-    try {
-        const response = await fetch(`${store.sensorApiBaseFor(sensorId)}/alignment`, { method: 'POST' });
-        const data = await response.json();
-        if (response.ok) {
-            showToast('Alignment queued', 'success');
-        } else {
-            showToast(data.error || 'Alignment request failed', 'danger');
-        }
-    } catch (error) {
-        console.error('Error triggering alignment:', error);
-        showToast('Failed to trigger alignment', 'danger');
-    }
-}
-
-async function manualSync(sensorId, ra, dec) {
-    if (ra === '' || ra == null || dec === '' || dec == null) {
-        showToast('Enter RA and Dec values before syncing', 'warning');
-        return;
-    }
-
-    try {
-        const response = await fetch(`${store.sensorApiBaseFor(sensorId)}/sync`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ ra: parseFloat(ra), dec: parseFloat(dec) }),
-        });
-        const data = await response.json();
-        if (response.ok && data.success) {
-            showToast(data.message || 'Mount synced', 'success');
-        } else {
-            showToast(data.error || 'Sync failed', 'danger');
-        }
-    } catch (error) {
-        console.error('Error syncing mount:', error);
-        showToast('Failed to sync mount', 'danger');
-    }
-}
-
-/**
- * Initiate mount homing routine.
- */
-async function homeMount(sensorId) {
-    const store = Alpine.store('citrasense');
-    try {
-        const response = await fetch(`${store.sensorApiBaseFor(sensorId)}/mount/home`, { method: 'POST' });
-        const data = await response.json();
-        if (response.ok) {
-            showToast('Mount homing initiated', 'success');
-        } else {
-            showToast(data.error || 'Failed to home mount', 'danger');
-        }
-    } catch (error) {
-        console.error('Error homing mount:', error);
-        showToast('Failed to home mount', 'danger');
-    }
-}
-
-/**
- * Trigger cable unwind to resolve cable wrap buildup.
- */
-async function triggerCableUnwind(sensorId) {
-    const store = Alpine.store('citrasense');
-    try {
-        const response = await fetch(`${store.sensorApiBaseFor(sensorId)}/mount/unwind`, { method: 'POST' });
-        const data = await response.json();
-        if (response.ok) {
-            showToast('Cable unwind started — monitor progress in the Telescope card', 'success');
-        } else {
-            showToast(data.error || 'Cable unwind failed', 'danger');
-        }
-    } catch (error) {
-        console.error('Error triggering cable unwind:', error);
-        showToast('Failed to trigger cable unwind', 'danger');
-    }
-}
-
-/**
- * Reset cable wrap counter to zero after operator verifies cables are straight.
- */
-async function resetCableWrap(sensorId) {
-    const store = Alpine.store('citrasense');
-    try {
-        const response = await fetch(`${store.sensorApiBaseFor(sensorId)}/safety/cable-wrap/reset`, { method: 'POST' });
-        const data = await response.json();
-        if (response.ok) {
-            showToast('Cable wrap counter reset to 0°', 'success');
-        } else {
-            showToast(data.error || 'Reset failed', 'danger');
-        }
-    } catch (error) {
-        console.error('Error resetting cable wrap:', error);
-        showToast('Failed to reset cable wrap', 'danger');
-    }
-}
-
-/**
- * Emergency stop — halt mount, pause tasks, cancel in-flight imaging.
- */
-async function emergencyStop() {
-    try {
-        const response = await fetch('/api/emergency-stop', { method: 'POST' });
-        const data = await response.json();
-        if (response.ok) {
-            showToast(data.message || 'Emergency stop executed', 'warning');
-        } else {
-            showToast(data.error || 'Emergency stop failed', 'danger');
-        }
-    } catch (error) {
-        console.error('Emergency stop error:', error);
-        showToast('Failed to execute emergency stop', 'danger');
-    }
-}
-
-/**
- * Clear the operator stop — allows motion to resume.
- */
-async function clearOperatorStop() {
-    try {
-        const response = await fetch('/api/safety/operator-stop/clear', { method: 'POST' });
-        const data = await response.json();
-        if (response.ok) {
-            showToast(data.message || 'Operator stop cleared', 'success');
-        } else {
-            showToast(data.error || 'Failed to clear operator stop', 'danger');
-        }
-    } catch (error) {
-        console.error('Clear operator stop error:', error);
-        showToast('Failed to clear operator stop', 'danger');
-    }
-}
-
-/**
- * Setup autofocus/alignment button event listeners (call once during init)
- */
-async function changeFilterPosition(sensorId, position) {
-    const store = Alpine.store('citrasense');
-    const wasLooping = store.isLoopingFor(sensorId);
-    if (wasLooping) store.stopFocusLoop();
-
-    try {
-        const response = await fetch(`${store.sensorApiBaseFor(sensorId)}/filter/set`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ position: parseInt(position) })
-        });
-        const data = await response.json();
-        if (response.ok) {
-            showToast(`Filter changed to ${data.name}`, 'success');
-        } else {
-            showToast(data.error || 'Filter change failed', 'danger');
-        }
-    } catch (error) {
-        console.error('Filter change error:', error);
-        showToast('Failed to change filter', 'danger');
-    }
-
-    if (wasLooping) store.startFocusLoop(sensorId);
-}
-
-async function moveFocuserRelative(sensorId, steps) {
-    const store = Alpine.store('citrasense');
-    try {
-        const response = await fetch(`${store.sensorApiBaseFor(sensorId)}/focuser/move`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ relative: parseInt(steps) })
-        });
-        const data = await response.json();
-        if (!response.ok) {
-            showToast(data.error || 'Focuser move failed', 'danger');
-        }
-    } catch (error) {
-        console.error('Focuser move error:', error);
-        showToast('Failed to move focuser', 'danger');
-    }
-}
-
-async function moveFocuserAbsolute(sensorId, position) {
-    const store = Alpine.store('citrasense');
-    try {
-        const response = await fetch(`${store.sensorApiBaseFor(sensorId)}/focuser/move`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ position: parseInt(position) })
-        });
-        const data = await response.json();
-        if (response.ok) {
-            showToast(`Focuser moved to ${data.position}`, 'success');
-        } else {
-            showToast(data.error || 'Focuser move failed', 'danger');
-        }
-    } catch (error) {
-        console.error('Focuser move error:', error);
-        showToast('Failed to move focuser', 'danger');
-    }
-}
-
-async function abortFocuser(sensorId) {
-    const store = Alpine.store('citrasense');
-    try {
-        const response = await fetch(`${store.sensorApiBaseFor(sensorId)}/focuser/abort`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' }
-        });
-        const data = await response.json();
-        if (response.ok) {
-            showToast('Focuser stopped', 'warning');
-        } else {
-            showToast(data.error || 'Failed to stop focuser', 'danger');
-        }
-    } catch (error) {
-        console.error('Focuser abort error:', error);
-        showToast('Failed to stop focuser', 'danger');
-    }
-}
-
-async function mountMove(sensorId, action, direction) {
-    const store = Alpine.store('citrasense');
-    try {
-        const response = await fetch(`${store.sensorApiBaseFor(sensorId)}/mount/move`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ action, direction })
-        });
-        if (!response.ok) {
-            const data = await response.json();
-            console.error('Mount move error:', data.error);
-        }
-    } catch (error) {
-        console.error('Mount move error:', error);
-    }
-}
-
-async function mountGoto(sensorId, ra, dec) {
-    const store = Alpine.store('citrasense');
-    try {
-        const response = await fetch(`${store.sensorApiBaseFor(sensorId)}/mount/goto`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ ra: parseFloat(ra), dec: parseFloat(dec) })
-        });
-        const data = await response.json();
-        if (response.ok) {
-            showToast(`Slewing to RA=${parseFloat(ra).toFixed(2)}°, Dec=${parseFloat(dec).toFixed(2)}°`, 'info');
-        } else {
-            showToast(data.error || 'Goto failed', 'danger');
-        }
-    } catch (error) {
-        console.error('Mount goto error:', error);
-        showToast('Failed to send goto command', 'danger');
-    }
-}
-
-async function mountSetTracking(sensorId, enabled) {
-    const store = Alpine.store('citrasense');
-    try {
-        const response = await fetch(`${store.sensorApiBaseFor(sensorId)}/mount/tracking`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ enabled })
-        });
-        const data = await response.json();
-        if (response.ok) {
-            const store = Alpine.store('citrasense');
-            const sd = store.status?.sensors?.[sensorId];
-            if (sd) sd.mount_tracking = enabled;
-            showToast(enabled ? 'Sidereal tracking started' : 'Tracking stopped', 'info');
-        } else {
-            showToast(data.error || 'Tracking command failed', 'danger');
-        }
-    } catch (error) {
-        console.error('Mount tracking error:', error);
-        showToast('Failed to change tracking', 'danger');
-    }
-}
-
-async function calibratePointingModel(sensorId) {
-    const store = Alpine.store('citrasense');
-    try {
-        const response = await fetch(`${store.sensorApiBaseFor(sensorId)}/pointing-model/calibrate`, { method: 'POST' });
-        const data = await response.json();
-        if (response.ok && data.success) {
-            showToast('Pointing calibration started', 'success');
-        } else {
-            showToast(data.error || 'Failed to start calibration', 'danger');
-        }
-    } catch (error) {
-        console.error('Error starting pointing calibration:', error);
-        showToast('Failed to start pointing calibration', 'danger');
-    }
-}
-
-async function resetPointingModel(sensorId) {
-    const store = Alpine.store('citrasense');
-    try {
-        const response = await fetch(`${store.sensorApiBaseFor(sensorId)}/pointing-model/reset`, { method: 'POST' });
-        const data = await response.json();
-        if (response.ok && data.success) {
-            showToast('Pointing model reset', 'success');
-        } else {
-            showToast(data.error || 'Failed to reset pointing model', 'danger');
-        }
-    } catch (error) {
-        console.error('Error resetting pointing model:', error);
-        showToast('Failed to reset pointing model', 'danger');
-    }
-}
-
-async function cancelPointingCalibration(sensorId) {
-    const store = Alpine.store('citrasense');
-    try {
-        const response = await fetch(`${store.sensorApiBaseFor(sensorId)}/pointing-model/calibrate/cancel`, { method: 'POST' });
-        const data = await response.json();
-        if (response.ok && data.success) {
-            showToast('Pointing calibration cancelled', 'success');
-        } else {
-            showToast(data.error || 'Failed to cancel calibration', 'danger');
-        }
-    } catch (error) {
-        console.error('Error cancelling pointing calibration:', error);
-        showToast('Failed to cancel pointing calibration', 'danger');
-    }
-}
-
-async function removeSensor(sid) {
-    if (!confirm("Remove sensor '" + sid + "'? You will need to Save & Reload to finalize.")) return;
-    try {
-        const resp = await fetch('/api/config/sensors/' + encodeURIComponent(sid), { method: 'DELETE' });
-        const data = await resp.json();
-        if (!resp.ok) { alert(data.error || 'Failed to remove sensor'); return; }
-        const store = Alpine.store('citrasense');
-        const sensors = store.config.sensors;
-        const idx = sensors.findIndex(s => s.id === sid);
-        if (idx >= 0) sensors.splice(idx, 1);
-        delete store.savedAdapters[sid];
-        if (store.configSensorId === sid) {
-            store.configSensorId = sensors[0]?.id || null;
-        }
-    } catch (e) {
-        alert(e.message);
-    }
-}
-
-export function setupAutofocusButton() {
-    window.triggerAutofocus = triggerAutofocus;
-    window.triggerAlignment = triggerAlignment;
-    window.manualSync = manualSync;
-    window.homeMount = homeMount;
-    window.triggerCableUnwind = triggerCableUnwind;
-    window.resetCableWrap = resetCableWrap;
-    window.calibratePointingModel = calibratePointingModel;
-    window.resetPointingModel = resetPointingModel;
-    window.cancelPointingCalibration = cancelPointingCalibration;
-    window.emergencyStop = emergencyStop;
-    window.clearOperatorStop = clearOperatorStop;
-    window._configRemoveSensor = removeSensor;
-    window.changeFilterPosition = changeFilterPosition;
-    window.moveFocuserRelative = moveFocuserRelative;
-    window.moveFocuserAbsolute = moveFocuserAbsolute;
-    window.abortFocuser = abortFocuser;
-    window.mountMove = mountMove;
-    window.mountGoto = mountGoto;
-    window.mountSetTracking = mountSetTracking;
 }
 
 /**
@@ -1264,19 +713,14 @@ async function scanHardware() {
             currentSettings[field.name] = field.value;
         });
 
-        const response = await fetch('/api/hardware/scan', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ adapter_name: adapter, current_settings: currentSettings }),
-        });
-        const data = await response.json();
+        const result = await api.scanHardware(adapter, currentSettings);
 
-        if (!response.ok) {
-            showConfigError(data.error || 'Hardware scan failed');
+        if (!result.ok) {
+            showConfigError(result.error || 'Hardware scan failed');
             return;
         }
 
-        store.adapterFields = buildAdapterFields(data.schema || [], currentSettings);
+        store.adapterFields = buildAdapterFields(result.data?.schema || [], currentSettings);
     } catch (error) {
         console.error('Hardware scan failed:', error);
         showConfigError('Hardware scan failed — check connection');

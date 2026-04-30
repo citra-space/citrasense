@@ -1,6 +1,8 @@
 /**
  * Analysis tab — fetches pipeline metrics and renders the task table / stats.
  */
+import { showToast } from './toast.js';
+import * as api from './api.js';
 
 const PROCESSOR_COLORS = {
     calibration_s:        '#00b894',
@@ -161,8 +163,8 @@ document.addEventListener('alpine:init', () => {
             try {
                 const params = new URLSearchParams({ hours: 24 });
                 if (this.selectedSensorId) params.set('sensor_id', this.selectedSensorId);
-                const resp = await fetch('/api/analysis/stats?' + params.toString());
-                this.stats = await resp.json();
+                const result = await api.getAnalysisStats(params);
+                if (result.ok) this.stats = result.data;
             } catch (e) {
                 console.error('Failed to load analysis stats', e);
             }
@@ -191,10 +193,11 @@ document.addEventListener('alpine:init', () => {
                 if (this.filterUploadStatus) params.set('upload_status', this.filterUploadStatus);
                 if (this.selectedSensorId) params.set('sensor_id', this.selectedSensorId);
 
-                const resp = await fetch('/api/analysis/tasks?' + params.toString());
-                const data = await resp.json();
-                this.tasks = data.tasks || [];
-                this.total = data.total || 0;
+                const result = await api.getAnalysisTasks(params);
+                if (result.ok) {
+                    this.tasks = result.data?.tasks || [];
+                    this.total = result.data?.total || 0;
+                }
             } catch (e) {
                 console.error('Failed to load analysis tasks', e);
             }
@@ -270,11 +273,11 @@ document.addEventListener('alpine:init', () => {
             const token = ++this._detailFetchToken;
 
             try {
-                const resp = await fetch('/api/analysis/tasks/' + taskId);
-                const data = await resp.json();
+                const result = await api.getAnalysisTask(taskId);
                 if (token !== this._detailFetchToken) return;
+                if (!result.ok) { console.error('Failed to load task detail', result.error); return; }
 
-                this.detail = data;
+                this.detail = result.data;
                 try {
                     this._extractedData = JSON.parse(this.detail.extracted_data_json || '{}');
                 } catch { this._extractedData = {}; }
@@ -530,27 +533,22 @@ document.addEventListener('alpine:init', () => {
             this.reprocessResult = null;
             this.reprocessError = null;
             try {
-                const resp = await fetch('/api/analysis/tasks/' + taskId + '/reprocess', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        settings_overrides: {
-                            sextractor_detect_thresh: this.reprocessThresh,
-                            sextractor_detect_minarea: this.reprocessMinarea,
-                            sextractor_filter_name: this.reprocessFilter,
-                        },
-                    }),
+                const result = await api.reprocessTask(taskId, {
+                    settings_overrides: {
+                        sextractor_detect_thresh: this.reprocessThresh,
+                        sextractor_detect_minarea: this.reprocessMinarea,
+                        sextractor_filter_name: this.reprocessFilter,
+                    },
                 });
-                if (!resp.ok) {
-                    const err = await resp.json();
-                    this.reprocessError = err.error || 'Reprocess failed';
+                if (!result.ok) {
+                    this.reprocessError = result.error || 'Reprocess failed';
                     return;
                 }
-                const result = await resp.json();
-                result._usedThresh = this.reprocessThresh;
-                result._usedMinarea = this.reprocessMinarea;
-                result._usedFilter = this.reprocessFilter;
-                this.reprocessResult = result;
+                const data = result.data;
+                data._usedThresh = this.reprocessThresh;
+                data._usedMinarea = this.reprocessMinarea;
+                data._usedFilter = this.reprocessFilter;
+                this.reprocessResult = data;
             } catch (e) {
                 this.reprocessError = 'Request failed: ' + e.message;
             } finally {
@@ -563,12 +561,9 @@ document.addEventListener('alpine:init', () => {
             this.uploadReprocessedOk = false;
             this.uploadReprocessedError = null;
             try {
-                const resp = await fetch('/api/analysis/tasks/' + taskId + '/reprocess/upload', {
-                    method: 'POST',
-                });
-                if (!resp.ok) {
-                    const err = await resp.json();
-                    this.uploadReprocessedError = err.error || 'Upload failed';
+                const result = await api.reprocessTaskUpload(taskId);
+                if (!result.ok) {
+                    this.uploadReprocessedError = result.error || 'Upload failed';
                     return;
                 }
                 this.uploadReprocessedOk = true;
@@ -628,34 +623,25 @@ document.addEventListener('alpine:init', () => {
         },
 
         async doBatchReprocess() {
-            // The :disabled binding on the button only kicks in once batchJobId
-            // is set, which happens *after* the POST returns. _batchStarting
-            // closes that gap so a fast double-click can't fire two jobs.
             if (this.batchJobId || this._batchStarting) return;
             const ids = Object.entries(this.selectedTasks).filter(([, v]) => v).map(([k]) => k);
             if (!ids.length) return;
             this._batchStarting = true;
             this.batchResult = null;
             try {
-                const resp = await fetch('/api/analysis/reprocess-batch', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        task_ids: ids,
-                        settings_overrides: {
-                            sextractor_detect_thresh: this.batchThresh,
-                            sextractor_detect_minarea: this.batchMinarea,
-                            sextractor_filter_name: this.batchFilter,
-                        },
-                    }),
+                const result = await api.reprocessBatch({
+                    task_ids: ids,
+                    settings_overrides: {
+                        sextractor_detect_thresh: this.batchThresh,
+                        sextractor_detect_minarea: this.batchMinarea,
+                        sextractor_filter_name: this.batchFilter,
+                    },
                 });
-                const data = await resp.json();
-                if (!resp.ok || !data.job_id) {
-                    const { showToast } = await import('./config.js');
-                    showToast(data.error || 'Batch reprocess failed', 'danger');
+                if (!result.ok || !result.data?.job_id) {
+                    showToast(result.error || 'Batch reprocess failed', 'danger');
                     return;
                 }
-                this.batchJobId = data.job_id;
+                this.batchJobId = result.data.job_id;
                 this.batchProgress = 0;
                 this.batchTotal = ids.length;
                 this._pollBatchJob();
@@ -671,8 +657,9 @@ document.addEventListener('alpine:init', () => {
             this._batchPollTimer = setTimeout(async () => {
                 if (!this.batchJobId) return;
                 try {
-                    const resp = await fetch('/api/jobs/' + this.batchJobId);
-                    const job = await resp.json();
+                    const result = await api.getJob(this.batchJobId);
+                    if (!result.ok) { this._pollBatchJob(); return; }
+                    const job = result.data;
                     this.batchProgress = job.progress || 0;
                     this.batchTotal = job.total || this.batchTotal;
                     if (job.state === 'completed' || job.state === 'failed') {
@@ -692,8 +679,6 @@ document.addEventListener('alpine:init', () => {
         // ── Auto-tune ───────────────────────────────────────────────
 
         async doAutotune() {
-            // Same in-flight guard as doBatchReprocess — autotuneRunning is also
-            // user-visible via :disabled, so set it synchronously here too.
             if (this.autotuneRunning || this._autotuneStarting) return;
             if (!this.canAutotune) return;
 
@@ -702,27 +687,19 @@ document.addEventListener('alpine:init', () => {
             this.autotuneResult = null;
             this.autotuneRunning = true;
 
-            // Prefer the sensor-scoped endpoint when a telescope is selected;
-            // fall back to the site-wide sweep for single-sensor deployments
-            // (selectedSensorId stays null when only one telescope exists).
             const url = this.selectedSensorId
                 ? `/api/sensors/${this.selectedSensorId}/autotune/run`
                 : '/api/analysis/autotune';
             try {
-                const resp = await fetch(url, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ task_ids: ids.length ? ids : undefined }),
-                });
-                const data = await resp.json();
-                if (data.error) {
-                    this.autotuneResult = { error: data.error };
+                const result = await api.runAutotune(this.selectedSensorId, url, { task_ids: ids.length ? ids : undefined });
+                if (result.error || result.data?.error) {
+                    this.autotuneResult = { error: result.error || result.data?.error };
                     this.autotuneRunning = false;
                     return;
                 }
-                this.autotuneJobId = data.job_id;
+                this.autotuneJobId = result.data?.job_id;
                 this.autotuneProgress = 0;
-                this.autotuneTotal = data.total || 0;
+                this.autotuneTotal = result.data?.total || 0;
                 this._pollAutotuneJob();
             } catch (e) {
                 console.error('Auto-tune failed', e);
@@ -735,7 +712,7 @@ document.addEventListener('alpine:init', () => {
         async cancelAutotune() {
             if (!this.autotuneJobId) return;
             try {
-                await fetch('/api/jobs/' + this.autotuneJobId + '/cancel', { method: 'POST' });
+                await api.cancelJob(this.autotuneJobId);
             } catch (e) {
                 console.error('Cancel autotune failed', e);
             }
@@ -746,8 +723,9 @@ document.addEventListener('alpine:init', () => {
             this._autotunePollTimer = setTimeout(async () => {
                 if (!this.autotuneJobId) return;
                 try {
-                    const resp = await fetch('/api/jobs/' + this.autotuneJobId);
-                    const job = await resp.json();
+                    const result = await api.getJob(this.autotuneJobId);
+                    if (!result.ok) { this._pollAutotuneJob(); return; }
+                    const job = result.data;
                     this.autotuneProgress = job.progress || 0;
                     this.autotuneTotal = job.total || this.autotuneTotal;
                     if (job.state === 'completed' || job.state === 'failed' || job.state === 'cancelled') {
@@ -755,7 +733,7 @@ document.addEventListener('alpine:init', () => {
                         this.autotuneJobId = null;
                         this.autotuneRunning = false;
                         this.autotuneOpen = true;
-                        const { showToast } = await import('./config.js');
+
                         if (job.state === 'completed') {
                             const n = (job.result && job.result.configs) ? job.result.configs.length : 0;
                             showToast(`Auto-tune complete — ${n} configurations ranked`, 'success');
@@ -775,12 +753,6 @@ document.addEventListener('alpine:init', () => {
         },
 
         async applyAutotuneSettings(config) {
-            // Resolve the sensor to apply against: the selector's choice
-            // takes priority; fall back to the lone telescope sensor in a
-            // single-sensor deployment.  If somehow neither is available
-            // (no telescopes registered), surface an error toast so the
-            // operator isn't left guessing.
-            const { showToast } = await import('./config.js');
             let sensorId = this.selectedSensorId;
             if (!sensorId && this.telescopeSensors.length === 1) {
                 sensorId = this.telescopeSensors[0].id;
@@ -791,23 +763,18 @@ document.addEventListener('alpine:init', () => {
             }
 
             try {
-                const resp = await fetch(`/api/sensors/${sensorId}/autotune/apply`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        detect_thresh: config.detect_thresh,
-                        detect_minarea: config.detect_minarea,
-                        filter_name: config.filter_name,
-                    }),
+                const result = await api.applyAutotune(sensorId, {
+                    detect_thresh: config.detect_thresh,
+                    detect_minarea: config.detect_minarea,
+                    filter_name: config.filter_name,
                 });
-                const data = await resp.json();
-                if (!resp.ok || data.error) {
-                    showToast('Apply failed: ' + (data.error || resp.statusText), 'danger');
+                if (!result.ok || result.data?.error) {
+                    showToast('Apply failed: ' + (result.error || result.data?.error), 'danger');
                     return;
                 }
                 const name = this.telescopeName(sensorId);
                 showToast(
-                    `Applied to ${name}: thresh=${data.detect_thresh}, minarea=${data.detect_minarea}, filter=${data.filter_name}`,
+                    `Applied to ${name}: thresh=${result.data.detect_thresh}, minarea=${result.data.detect_minarea}, filter=${result.data.filter_name}`,
                     'success',
                 );
             } catch (e) {

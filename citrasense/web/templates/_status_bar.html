@@ -155,7 +155,7 @@
             <!-- E-Stop (right side of pills row) -->
             <button class="btn btn-sm btn-danger ms-auto"
                     x-show="$store.citrasense.wsConnected"
-                    @click="emergencyStop()"
+                    @click="$store.citrasense.emergencyStop()"
                     data-bs-toggle="tooltip" data-bs-theme="dark" data-bs-placement="bottom"
                     title="Stop mount, pause tasks, cancel imaging">
                 <i class="bi bi-stop-circle-fill"></i> Abort
@@ -180,7 +180,7 @@
                                 <template x-if="alert.name === 'operator_stop'">
                                     <span>Operator stop active &mdash; all motion blocked.
                                         <button class="btn btn-sm btn-outline-light ms-2"
-                                                @click="clearOperatorStop()">Clear Stop</button>
+                                                @click="$store.citrasense.clearOperatorStop()">Clear Stop</button>
                                     </span>
                                 </template>
                                 <template x-if="alert.name === 'disk_space'">

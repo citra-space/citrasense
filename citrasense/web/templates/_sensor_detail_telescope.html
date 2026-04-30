@@ -336,7 +336,7 @@
                                     </span>
                                     <button class="btn btn-sm btn-outline-light ms-auto"
                                             x-show="sensor?.telescope_connected && !sensor?.mount_homing"
-                                            @click="homeMount(sensor.id)"
+                                            @click="$store.citrasense.homeMount(sensor.id)"
                                             data-bs-toggle="tooltip" data-bs-theme="dark" data-bs-placement="top"
                                             title="Send mount to home position">
                                         <i class="bi bi-house-door"></i>
@@ -369,14 +369,14 @@
                                     <div class="d-flex gap-1">
                                         <button class="btn btn-sm btn-outline-warning text-nowrap"
                                                 x-show="cw && !cw.unwinding && Math.abs(cw.cumulative_deg) > 5"
-                                                @click="triggerCableUnwind(sensor.id)"
+                                                @click="$store.citrasense.triggerCableUnwind(sensor.id)"
                                                 data-bs-toggle="tooltip" data-bs-theme="dark" data-bs-placement="top"
                                                 title="Unwind cable by reversing mount rotation">
                                             <i class="bi bi-arrow-counterclockwise"></i> Unwind
                                         </button>
                                         <button class="btn btn-sm btn-outline-secondary text-nowrap"
                                                 x-show="cw && !cw.unwinding && Math.abs(cw.cumulative_deg) > 0"
-                                                @click="resetCableWrap(sensor.id)"
+                                                @click="$store.citrasense.resetCableWrap(sensor.id)"
                                                 data-bs-toggle="tooltip" data-bs-theme="dark" data-bs-placement="top"
                                                 title="Reset counter to 0° — use after manually straightening cables">
                                             <i class="bi bi-0-circle"></i> Reset
@@ -544,13 +544,13 @@
                                 <template x-if="!sensor?.pointing_calibration_running">
                                     <div class="d-flex gap-2 mt-2">
                                         <button class="btn btn-sm btn-outline-light"
-                                                @click="calibratePointingModel(sensor.id)">
+                                                @click="$store.citrasense.calibratePointingModel(sensor.id)">
                                             Calibrate
                                         </button>
                                         <button class="btn btn-sm btn-outline-danger"
                                                 x-show="pm.state !== 'untrained'"
                                                 :disabled="$store.citrasense.isImagingTaskActive(sensor.id)"
-                                                @click="if (confirm('Reset the pointing model? This clears all calibration data.')) resetPointingModel(sensor.id)">
+                                                @click="if (confirm('Reset the pointing model? This clears all calibration data.')) $store.citrasense.resetPointingModel(sensor.id)">
                                             Reset
                                         </button>
                                     </div>
@@ -568,7 +568,7 @@
                                             </div>
                                         </div>
                                         <button class="btn btn-sm btn-outline-warning flex-shrink-0"
-                                                @click="cancelPointingCalibration(sensor.id)">
+                                                @click="$store.citrasense.cancelPointingCalibration(sensor.id)">
                                             Cancel
                                         </button>
                                     </div>
@@ -578,8 +578,8 @@
                             <!-- Mount Controls (direct hardware adapters only) -->
                             <div x-show="sensor?.supports_direct_mount_control"
                                  x-data="{ gotoRa: '', gotoDec: '', jogActive: null,
-                                            jogStart(dir) { if ($store.citrasense.isImagingTaskActive(sensor.id)) return; this.jogActive = dir; mountMove(sensor.id, 'start', dir); },
-                                            jogStop(dir)  { if (this.jogActive === dir) { this.jogActive = null; mountMove(sensor.id, 'stop', dir); } } }"
+                                            jogStart(dir) { if ($store.citrasense.isImagingTaskActive(sensor.id)) return; this.jogActive = dir; $store.citrasense.mountMove(sensor.id, 'start', dir); },
+                                            jogStop(dir)  { if (this.jogActive === dir) { this.jogActive = null; $store.citrasense.mountMove(sensor.id, 'stop', dir); } } }"
                                  class="mt-3 pt-3 border-top border-secondary">
 
                                 <div x-show="$store.citrasense.isImagingTaskActive(sensor.id)"
@@ -621,7 +621,7 @@
                                             <button class="btn btn-sm btn-outline-danger d-flex align-items-center justify-content-center p-0"
                                                     style="width:36px;height:36px;"
                                                     :disabled="$store.citrasense.isImagingTaskActive(sensor.id)"
-                                                    @click="jogActive = null; mountMove(sensor.id,'stop','north'); mountMove(sensor.id,'stop','south'); mountMove(sensor.id,'stop','east'); mountMove(sensor.id,'stop','west')"
+                                                    @click="jogActive = null; $store.citrasense.mountMove(sensor.id,'stop','north'); $store.citrasense.mountMove(sensor.id,'stop','south'); $store.citrasense.mountMove(sensor.id,'stop','east'); $store.citrasense.mountMove(sensor.id,'stop','west')"
                                                     title="Stop all motion">
                                                 <i class="bi bi-stop-fill"></i>
                                             </button>
@@ -670,7 +670,7 @@
                                                 </div>
                                                 <button class="btn btn-sm btn-outline-primary text-nowrap"
                                                         :disabled="gotoRa === '' || gotoDec === '' || sensor?.mount_slewing || $store.citrasense.isImagingTaskActive(sensor.id)"
-                                                        @click="mountGoto(sensor.id, gotoRa, gotoDec)">
+                                                        @click="$store.citrasense.mountGoto(sensor.id, gotoRa, gotoDec)">
                                                     <i class="bi bi-cursor"></i> Go
                                                 </button>
                                             </div>
@@ -682,7 +682,7 @@
                                                     x-show="sensor?.supports_alignment"
                                                     :class="sensor?.alignment_running ? 'btn-outline-info' : (sensor?.alignment_requested ? 'btn-outline-warning' : 'btn-outline-primary')"
                                                     :disabled="sensor?.alignment_running"
-                                                    @click="window.triggerAlignment(sensor.id)">
+                                                    @click="$store.citrasense.triggerAlignment(sensor.id)">
                                                 <template x-if="sensor?.alignment_running">
                                                     <span>
                                                         <span class="spinner-border spinner-border-sm me-1" role="status"></span>
@@ -696,7 +696,7 @@
                                             <button class="btn btn-sm"
                                                     :class="sensor?.mount_tracking ? 'btn-success' : 'btn-outline-secondary'"
                                                     :disabled="$store.citrasense.isImagingTaskActive(sensor.id)"
-                                                    @click="mountSetTracking(sensor.id, !sensor?.mount_tracking)">
+                                                    @click="$store.citrasense.mountSetTracking(sensor.id, !sensor?.mount_tracking)">
                                                 <i class="bi bi-broadcast me-1"></i>Sidereal Tracking
                                             </button>
                                             <span class="badge rounded-pill bg-info"
@@ -876,7 +876,7 @@
                                             <select class="form-select form-select-sm"
                                                     :disabled="$store.citrasense.isImagingTaskActive(sensor.id)"
                                                     :value="String(sensor?.current_filter_position ?? '')"
-                                                    @change="window.changeFilterPosition(sensor.id, $event.target.value)">
+                                                    @change="$store.citrasense.changeFilterPosition(sensor.id, $event.target.value)">
                                                 <template x-for="[fid, fdata] in Object.entries($store.citrasense.filters || {}).filter(([_, f]) => f.enabled !== false)" :key="fid">
                                                     <option :value="fid" x-text="fdata.name"></option>
                                                 </template>
@@ -908,12 +908,12 @@
                                         <div class="d-flex align-items-center gap-1">
                                             <button type="button" class="btn btn-sm btn-outline-secondary"
                                                     :disabled="sensor?.focuser_moving || $store.citrasense.isImagingTaskActive(sensor.id)"
-                                                    @click="window.moveFocuserRelative(sensor.id, -stepSize * 10)" title="In (coarse)">
+                                                    @click="$store.citrasense.moveFocuserRelative(sensor.id, -stepSize * 10)" title="In (coarse)">
                                                 <i class="bi bi-chevron-double-left"></i>
                                             </button>
                                             <button type="button" class="btn btn-sm btn-outline-secondary"
                                                     :disabled="sensor?.focuser_moving || $store.citrasense.isImagingTaskActive(sensor.id)"
-                                                    @click="window.moveFocuserRelative(sensor.id, -stepSize)" title="In (fine)">
+                                                    @click="$store.citrasense.moveFocuserRelative(sensor.id, -stepSize)" title="In (fine)">
                                                 <i class="bi bi-chevron-left"></i>
                                             </button>
                                             <div class="input-group input-group-sm" style="width: 120px;">
@@ -923,17 +923,17 @@
                                             </div>
                                             <button type="button" class="btn btn-sm btn-outline-secondary"
                                                     :disabled="sensor?.focuser_moving || $store.citrasense.isImagingTaskActive(sensor.id)"
-                                                    @click="window.moveFocuserRelative(sensor.id, stepSize)" title="Out (fine)">
+                                                    @click="$store.citrasense.moveFocuserRelative(sensor.id, stepSize)" title="Out (fine)">
                                                 <i class="bi bi-chevron-right"></i>
                                             </button>
                                             <button type="button" class="btn btn-sm btn-outline-secondary"
                                                     :disabled="sensor?.focuser_moving || $store.citrasense.isImagingTaskActive(sensor.id)"
-                                                    @click="window.moveFocuserRelative(sensor.id, stepSize * 10)" title="Out (coarse)">
+                                                    @click="$store.citrasense.moveFocuserRelative(sensor.id, stepSize * 10)" title="Out (coarse)">
                                                 <i class="bi bi-chevron-double-right"></i>
                                             </button>
                                             <button type="button" class="btn btn-sm btn-outline-danger"
                                                     x-show="sensor?.focuser_moving"
-                                                    @click="window.abortFocuser(sensor.id)" title="Stop">
+                                                    @click="$store.citrasense.abortFocuser(sensor.id)" title="Stop">
                                                 <i class="bi bi-stop-fill"></i>
                                             </button>
                                         </div>
@@ -958,7 +958,7 @@
                                                    :max="sensor?.focuser_max_position || 999999">
                                             <button type="button" class="btn btn-sm btn-outline-primary"
                                                     :disabled="sensor?.focuser_moving || $store.citrasense.isImagingTaskActive(sensor.id)"
-                                                    @click="window.moveFocuserAbsolute(sensor.id, targetPos)">
+                                                    @click="$store.citrasense.moveFocuserAbsolute(sensor.id, targetPos)">
                                                 Go
                                             </button>
                                         </div>
@@ -1003,7 +1003,7 @@
                                         <div class="d-flex align-items-center gap-2 flex-wrap mb-2">
                                             <button type="button" class="btn btn-sm"
                                                     :class="sensor?.autofocus_running ? 'btn-outline-danger' : (sensor?.autofocus_requested ? 'btn-outline-warning' : 'btn-outline-primary')"
-                                                    @click="window.triggerAutofocus(sensor.id)">
+                                                    @click="$store.citrasense.triggerAutofocus(sensor.id)">
                                                 <template x-if="sensor?.autofocus_running">
                                                     <span><i class="bi bi-stop-fill me-1"></i>Cancel AF</span>
                                                 </template>
@@ -1227,15 +1227,11 @@
                                      this.batchLoading = true;
                                      this.batchResult = null;
                                      try {
-                                         const resp = await fetch(`/api/sensors/${encodeURIComponent(sensor.id)}/self-tasking/request-now`, {
-                                             method: 'POST',
-                                             headers: {'Content-Type': 'application/json'}
-                                         });
-                                         const data = await resp.json();
-                                         if (resp.ok) {
-                                             this.batchResult = { ok: true, msg: (data.created ?? 0) + ' created' };
+                                         const result = await window.citrasenseApi.requestSelfTaskNow(sensor.id);
+                                         if (result.ok) {
+                                             this.batchResult = { ok: true, msg: (result.data?.created ?? 0) + ' created' };
                                          } else {
-                                             this.batchResult = { ok: false, msg: data.error || 'Request failed' };
+                                             this.batchResult = { ok: false, msg: result.error || 'Request failed' };
                                          }
                                      } catch (e) {
                                          this.batchResult = { ok: false, msg: 'Network error' };

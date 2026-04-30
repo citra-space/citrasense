@@ -1,0 +1,148 @@
+                    <div x-show="configTab === 'processing'"
+                         x-data="{ get sc() { return $store.citrasense.config?.sensors?.[$store.citrasense.configSensorIndex] || {}; } }">
+                        <h5 class="mb-3 pb-2 border-bottom border-secondary d-flex align-items-center gap-2">
+                            <i class="bi bi-cpu"></i>Processing
+                        </h5>
+                        <div class="row g-3">
+                            <!-- Left Column: Pipeline Toggle + Skip Upload -->
+                            <div class="col-md-6">
+                                <h6 class="text-muted mb-3"><i class="bi bi-toggle-on me-2"></i>Pipeline Control</h6>
+                                <div class="form-check">
+                                    <input class="form-check-input" type="checkbox" id="processors_enabled"
+                                           x-model="sc.processors_enabled">
+                                    <label class="form-check-label" for="processors_enabled">
+                                        Enable image processing pipeline
+                                    </label>
+                                </div>
+                                <small class="text-muted d-block mt-2">
+                                    Process images before upload to extract readings and filter bad images
+                                </small>
+                                <div class="form-check mt-3">
+                                    <input class="form-check-input" type="checkbox" id="skip_upload"
+                                           x-model="sc.skip_upload">
+                                    <label class="form-check-label" for="skip_upload">
+                                        Skip upload after processing
+                                    </label>
+                                </div>
+                                <small class="text-muted d-block mt-2">
+                                    Run the full processing pipeline but skip uploading results and marking the task complete on the API
+                                </small>
+                            </div>
+
+                            <!-- Right Column: Available Processors -->
+                            <div class="col-md-6" x-show="$store.citrasense.processors?.length > 0">
+                                <h6 class="text-muted mb-3"><i class="bi bi-gear-fill me-2"></i>Available Processors</h6>
+                                <div>
+                                    <template x-for="processor in $store.citrasense.processors" :key="processor.name">
+                                        <div class="mb-2">
+                                            <div class="form-check">
+                                                <input
+                                                    class="form-check-input"
+                                                    type="checkbox"
+                                                    :id="'processor-' + processor.name"
+                                                    :checked="sc.enabled_processors?.[processor.name] ?? processor.enabled"
+                                                    @change="sc.enabled_processors[processor.name] = $event.target.checked"
+                                                >
+                                                <label class="form-check-label" :for="'processor-' + processor.name">
+                                                    <strong x-text="processor.friendly_name"></strong>
+                                                </label>
+                                            </div>
+                                            <small class="text-muted ms-4 d-block" x-text="processor.description"></small>
+                                            <div class="ms-4 mt-1"
+                                                 x-show="$store.citrasense.status?.pipeline_stats?.processors?.[processor.name]?.runs > 0">
+                                                <div class="progress" style="height: 3px; cursor: default;"
+                                                     x-init="new bootstrap.Tooltip($el, {
+                                                         placement: 'top',
+                                                         trigger: 'hover',
+                                                         title() {
+                                                             const s = $store.citrasense.status?.pipeline_stats?.processors?.[processor.name];
+                                                             if (!s) return '';
+                                                            const ok = s.runs - s.failures;
+                                                            return `${ok} ok · ${s.failures} failed`;
+                                                         }
+                                                     })">
+                                                    <div class="progress-bar bg-success" role="progressbar"
+                                                         :style="`width: ${(() => { const s = $store.citrasense.status?.pipeline_stats?.processors?.[processor.name]; return s ? ((s.runs - s.failures) / s.runs) * 100 : 0; })()}%`"></div>
+                                                    <div class="progress-bar bg-danger" role="progressbar"
+                                                         :style="`width: ${(() => { const s = $store.citrasense.status?.pipeline_stats?.processors?.[processor.name]; return s ? (s.failures / s.runs) * 100 : 0; })()}%`"></div>
+                                                </div>
+                                                <small class="text-muted d-block mt-1"
+                                                       x-show="$store.citrasense.status?.pipeline_stats?.processors?.[processor.name]?.last_failure_reason"
+                                                       x-text="'Last failure: ' + $store.citrasense.status?.pipeline_stats?.processors?.[processor.name]?.last_failure_reason">
+                                                </small>
+                                            </div>
+                                        </div>
+                                    </template>
+                                </div>
+                            </div>
+
+                            <!-- Plate Solving Settings -->
+                            <hr class="border-secondary" />
+                            <div class="col-12">
+                                <h6 class="text-muted mb-2"><i class="bi bi-stars me-2"></i>Plate Solving</h6>
+                                <small class="text-muted d-block mb-3">
+                                    <a href="https://astrometry.net" target="_blank" rel="noopener noreferrer" class="text-muted">Astrometry.net</a> plate solving settings. The solver uses telescope pointing and plate scale hints from the task context for fast solves.
+                                </small>
+                                <div class="row g-2">
+                                    <div class="col-6 col-md-4">
+                                        <label class="form-label small text-muted mb-1" for="plate_solve_timeout">Solve timeout (seconds)</label>
+                                        <input type="number" class="form-control form-control-sm bg-dark text-light border-secondary"
+                                               id="plate_solve_timeout" step="5" min="10" max="300"
+                                               x-model.number="sc.plate_solve_timeout">
+                                        <small class="text-muted">CPU time limit for solve-field (10&ndash;300s)</small>
+                                    </div>
+                                    <div class="col-12 col-md-8">
+                                        <label class="form-label small text-muted mb-1" for="astrometry_index_path">Index files directory</label>
+                                        <input type="text" class="form-control form-control-sm bg-dark text-light border-secondary"
+                                               id="astrometry_index_path" placeholder="(default system path)"
+                                               x-model="sc.astrometry_index_path">
+                                        <small class="text-muted">Optional path to astrometry.net index files (leave blank for system default)</small>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- Source Extraction Settings -->
+                            <hr class="border-secondary" />
+                            <div class="col-12">
+                                <h6 class="text-muted mb-2"><i class="bi bi-search me-2"></i>Source Extraction</h6>
+                                <small class="text-muted d-block mb-3">
+                                    <a href="https://sextractor.readthedocs.io" target="_blank" rel="noopener noreferrer" class="text-muted">SExtractor</a>
+                                    detection parameters. Lower thresholds find fainter objects but increase false positives from noise and hot pixels.
+                                </small>
+                                <div class="row g-2">
+                                    <div class="col-6 col-md-3">
+                                        <label class="form-label small text-muted mb-1" for="sextractor_detect_thresh">Detection threshold (&sigma;)</label>
+                                        <input type="number" class="form-control form-control-sm bg-dark text-light border-secondary"
+                                               id="sextractor_detect_thresh" step="0.5" min="1" max="20"
+                                               x-model.number="sc.sextractor_detect_thresh">
+                                        <small class="text-muted">Sigmas above background (1&ndash;20)</small>
+                                    </div>
+                                    <div class="col-6 col-md-3">
+                                        <label class="form-label small text-muted mb-1" for="sextractor_detect_minarea">Min pixel area</label>
+                                        <input type="number" class="form-control form-control-sm bg-dark text-light border-secondary"
+                                               id="sextractor_detect_minarea" step="1" min="1" max="50"
+                                               x-model.number="sc.sextractor_detect_minarea">
+                                        <small class="text-muted">Connected pixels required (1&ndash;50)</small>
+                                    </div>
+                                    <div class="col-12 col-md-6">
+                                        <label class="form-label small text-muted mb-1" for="sextractor_filter_name">Convolution kernel</label>
+                                        <select class="form-select form-select-sm bg-dark text-light border-secondary"
+                                                id="sextractor_filter_name"
+                                                x-model="sc.sextractor_filter_name">
+                                            <option value="gauss_1.5_3x3">Gaussian 3&times;3 (FWHM 1.5px)</option>
+                                            <option value="gauss_2.5_5x5">Gaussian 5&times;5 (FWHM 2.5px)</option>
+                                            <option value="default">Gaussian 9&times;9 (FWHM 5.0px)</option>
+                                            <option value="tophat_3.0_3x3">Top-hat 3&times;3</option>
+                                            <option value="tophat_5.0_5x5">Top-hat 5&times;5</option>
+                                        </select>
+                                        <small class="text-muted">Smaller kernels suit sharp PSFs; top-hat suppresses hot-pixel triggers</small>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+
+                    <!-- ============================================ -->
+                    <!-- Global Pipeline Settings                     -->
+                    <!-- ============================================ -->

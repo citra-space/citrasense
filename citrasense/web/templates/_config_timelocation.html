@@ -1,0 +1,202 @@
+                    <div x-show="configTab === 'timelocation'">
+                        <h5 class="mb-3 pb-2 border-bottom border-secondary d-flex align-items-center gap-2">
+                            <i class="bi bi-globe"></i>Time &amp; Location
+                        </h5>
+                        <div class="row g-3">
+                            <!-- Left Column: Time Synchronization -->
+                            <div class="col-md-6">
+                                <h6 class="text-muted mb-3"><i class="bi bi-clock-history me-2"></i>Time Synchronization</h6>
+                                <div class="mb-3">
+                                    <label for="time_offset_pause_ms" class="form-label">Pause Threshold (ms)</label>
+                                    <input type="number" class="form-control form-control-sm" id="time_offset_pause_ms" min="1" max="10000" step="1" x-model.number="$store.citrasense.config.time_offset_pause_ms">
+                                    <small class="text-muted">Clock drift that triggers task pause</small>
+                                </div>
+                                <div class="mb-3">
+                                    <label for="time_check_interval_minutes" class="form-label">Check Interval (minutes)</label>
+                                    <input type="number" class="form-control form-control-sm" id="time_check_interval_minutes" min="1" max="60" step="1" x-model.number="$store.citrasense.config.time_check_interval_minutes">
+                                    <small class="text-muted">How often to check time synchronization</small>
+                                </div>
+                            </div>
+
+                            <!-- Right Column: GPS & Location -->
+                            <div class="col-md-6">
+                                <h6 class="text-muted mb-3"><i class="bi bi-geo-alt me-2"></i>GPS & Location</h6>
+
+                                <!-- Computer GPS (gpsd) toggle -->
+                                <div class="mb-3">
+                                    <div class="form-check">
+                                        <input class="form-check-input" type="checkbox" id="gps_monitoring_enabled"
+                                               x-model="$store.citrasense.config.gps_monitoring_enabled">
+                                        <label class="form-check-label" for="gps_monitoring_enabled">
+                                            Enable computer GPS receiver
+                                        </label>
+                                    </div>
+                                    <small class="text-muted d-block mt-2">
+                                        Monitor for a GPS receiver connected to this computer via gpsd.
+                                        Equipment GPS (e.g. camera built-in) works independently.
+                                    </small>
+                                </div>
+
+                                <!-- Server location updates -->
+                                <div class="mb-3" x-show="$store.citrasense.config.gps_monitoring_enabled !== false || $store.citrasense.status?.adapter_gps">
+                                    <div class="form-check">
+                                        <input class="form-check-input" type="checkbox" id="gps_location_updates_enabled" x-model="$store.citrasense.config.gps_location_updates_enabled">
+                                        <label class="form-check-label" for="gps_location_updates_enabled">
+                                            Use GPS for ground station location
+                                        </label>
+                                    </div>
+                                    <small class="text-muted d-block mt-2">
+                                        When enabled, ground station location will be updated from GPS (if available).
+                                        When disabled, server-provided location will be used for all operations.
+                                    </small>
+                                </div>
+                                <div class="mb-3" x-show="$store.citrasense.config.gps_location_updates_enabled !== false && ($store.citrasense.config.gps_monitoring_enabled !== false || $store.citrasense.status?.adapter_gps)">
+                                    <label for="gps_update_interval_minutes" class="form-label">GPS Update Interval (minutes)</label>
+                                    <input type="number" class="form-control" id="gps_update_interval_minutes"
+                                        x-model.number="$store.citrasense.config.gps_update_interval_minutes"
+                                        min="1" max="1440" step="1">
+                                    <small class="text-muted d-block mt-2">
+                                        How often to push GPS location updates to the server (default: 5 minutes).
+                                    </small>
+                                </div>
+
+                                <!-- GPS Hardware Diagnostics -->
+                                <div class="pt-3 border-top border-secondary"
+                                     x-show="$store.citrasense.config.gps_monitoring_enabled !== false || $store.citrasense.status?.adapter_gps">
+                                    <h6 class="text-muted mb-3">GPS Sources</h6>
+
+                                    <!-- Computer GPS (gpsd) -->
+                                    <template x-if="$store.citrasense.config.gps_monitoring_enabled !== false">
+                                        <div class="mb-3">
+                                            <div class="d-flex align-items-center mb-1">
+                                                <i class="bi bi-broadcast me-2 text-muted"></i>
+                                                <span class="small fw-bold">Computer GPS (gpsd)</span>
+                                                <span class="ms-auto badge"
+                                                      :class="$store.citrasense.status?.gpsd_fix?.is_strong ? 'bg-success' : ($store.citrasense.status?.gpsd_fix ? 'bg-warning text-dark' : 'bg-secondary')"
+                                                      x-text="$store.citrasense.status?.gpsd_fix?.is_strong ? 'Fix' : ($store.citrasense.status?.gpsd_fix ? 'Acquiring' : 'No signal')"></span>
+                                            </div>
+                                            <div class="ps-4 small">
+                                                <template x-if="$store.citrasense.status?.gpsd_fix">
+                                                    <div>
+                                                        <span class="text-muted" x-text="(() => {
+                                                            const g = $store.citrasense.status.gpsd_fix;
+                                                            let src = '';
+                                                            if (g.gpsd_version) src += 'gpsd v' + g.gpsd_version;
+                                                            if (g.device_path) src += (src ? ' · ' : '') + g.device_path;
+                                                            return src || 'Connected';
+                                                        })()"></span>
+                                                        <span class="ms-2 font-monospace" x-text="($store.citrasense.status.gpsd_fix.satellites || 0) + ' sats'"></span>
+                                                        <template x-if="$store.citrasense.status.gpsd_fix.latitude != null">
+                                                            <div class="font-monospace mt-1" x-text="$store.citrasense.status.gpsd_fix.latitude.toFixed(6) + '\u00b0, ' + $store.citrasense.status.gpsd_fix.longitude.toFixed(6) + '\u00b0' + ($store.citrasense.status.gpsd_fix.altitude != null ? ' · ' + Math.round($store.citrasense.status.gpsd_fix.altitude) + 'm' : '')"></div>
+                                                        </template>
+                                                    </div>
+                                                </template>
+                                                <template x-if="!$store.citrasense.status?.gpsd_fix">
+                                                    <span class="text-muted">Waiting for gpsd&hellip;</span>
+                                                </template>
+                                            </div>
+                                        </div>
+                                    </template>
+
+                                    <!-- Equipment GPS -->
+                                    <template x-if="$store.citrasense.status?.adapter_gps">
+                                        <div class="mb-3">
+                                            <div class="d-flex align-items-center mb-1">
+                                                <i class="bi bi-pin-map me-2 text-muted"></i>
+                                                <span class="small fw-bold">Equipment GPS</span>
+                                                <span class="ms-auto badge"
+                                                      :class="$store.citrasense.status?.adapter_gps?.is_strong ? 'bg-success' : 'bg-warning text-dark'"
+                                                      x-text="$store.citrasense.status?.adapter_gps?.is_strong ? 'Fix' : 'Acquiring'"></span>
+                                            </div>
+                                            <div class="ps-4 small">
+                                                <span class="text-muted" x-text="(() => {
+                                                    const g = $store.citrasense.status.adapter_gps;
+                                                    if (g.device_driver && g.device_path) return g.device_driver + ' (' + g.device_path + ')';
+                                                    if (g.device_driver) return g.device_driver;
+                                                    return 'Equipment GPS';
+                                                })()"></span>
+                                                <span class="ms-2 font-monospace" x-text="($store.citrasense.status.adapter_gps.satellites || 0) + ' sats'"></span>
+                                                <template x-if="$store.citrasense.status.adapter_gps.latitude != null">
+                                                    <div class="font-monospace mt-1" x-text="$store.citrasense.status.adapter_gps.latitude.toFixed(6) + '\u00b0, ' + $store.citrasense.status.adapter_gps.longitude.toFixed(6) + '\u00b0' + ($store.citrasense.status.adapter_gps.altitude != null ? ' · ' + Math.round($store.citrasense.status.adapter_gps.altitude) + 'm' : '')"></div>
+                                                </template>
+                                            </div>
+                                        </div>
+                                    </template>
+
+                                    <!-- No GPS sources -->
+                                    <div x-show="$store.citrasense.config.gps_monitoring_enabled === false && !$store.citrasense.status?.adapter_gps">
+                                        <span class="text-muted small">No GPS hardware detected</span>
+                                    </div>
+                                </div>
+
+                                <!-- Current Operating Location -->
+                                <div class="pt-3 mt-3 border-top border-secondary"
+                                     x-data="{
+                                         get bestGps() {
+                                             const s = $store.citrasense.status;
+                                             if (s?.gpsd_fix?.is_strong) return s.gpsd_fix;
+                                             if (s?.adapter_gps?.is_strong) return s.adapter_gps;
+                                             return s?.gpsd_fix || s?.adapter_gps;
+                                         },
+                                         get divergenceKm() {
+                                             const s = $store.citrasense.status;
+                                             const gps = this.bestGps;
+                                             if (gps?.latitude == null || gps?.longitude == null
+                                                 || s?.ground_station_latitude == null || s?.ground_station_longitude == null) return 0;
+                                             const dLat = (gps.latitude - s.ground_station_latitude) * 111.32;
+                                             const dLon = (gps.longitude - s.ground_station_longitude) * 111.32 * Math.cos(s.ground_station_latitude * Math.PI / 180);
+                                             return Math.sqrt(dLat * dLat + dLon * dLon);
+                                         }
+                                     }">
+                                    <h6 class="text-muted mb-3">Current Operating Location</h6>
+
+                                    <div class="mb-2">
+                                        <template x-if="$store.citrasense.status?.location_source === 'gps'">
+                                            <span class="badge bg-success">
+                                                <i class="bi bi-broadcast me-1"></i>GPS
+                                                <span x-text="(() => {
+                                                    const gps = bestGps;
+                                                    return gps ? '(' + (gps.satellites || 0) + ' sats)' : '';
+                                                })()"></span>
+                                            </span>
+                                        </template>
+                                        <template x-if="$store.citrasense.status?.location_source === 'ground_station'">
+                                            <span class="badge bg-info">
+                                                <i class="bi bi-building me-1"></i>Server: <span x-text="$store.citrasense.status?.ground_station_name || 'Ground Station'"></span>
+                                            </span>
+                                        </template>
+                                        <template x-if="!$store.citrasense.status?.location_source">
+                                            <span class="badge bg-danger">
+                                                <i class="bi bi-exclamation-triangle me-1"></i>No location available
+                                            </span>
+                                        </template>
+                                    </div>
+
+                                    <template x-if="$store.citrasense.status?.location_latitude != null">
+                                        <div class="mb-2">
+                                            <div class="font-monospace small" x-text="$store.citrasense.formatCompactLocation($store.citrasense.status)"></div>
+                                        </div>
+                                    </template>
+
+                                    <template x-if="$store.citrasense.status?.location_source === 'gps' && $store.citrasense.status?.ground_station_latitude != null">
+                                        <div>
+                                            <div class="small text-muted mb-1">
+                                                Server record: <span class="font-monospace" x-text="$store.citrasense.status.ground_station_latitude?.toFixed(4) + '\u00b0, ' + $store.citrasense.status.ground_station_longitude?.toFixed(4) + '\u00b0'"></span>
+                                                <span x-show="divergenceKm > 0.1" class="ms-1" x-text="'(' + divergenceKm.toFixed(1) + ' km away)'"></span>
+                                            </div>
+                                            <div class="alert alert-warning small py-1 px-2 mb-2" x-show="divergenceKm > 1">
+                                                <i class="bi bi-exclamation-triangle me-1"></i>GPS position differs from server by <span x-text="divergenceKm.toFixed(1)"></span> km
+                                            </div>
+                                        </div>
+                                    </template>
+
+
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+
+                    <!-- ============================================ -->
+                    <!-- Robotic Operations Configuration              -->
+                    <!-- ============================================ -->

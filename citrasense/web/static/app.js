@@ -1,7 +1,10 @@
 // CitraSense Dashboard - Main Application (Alpine.js)
 import { connectWebSocket } from './websocket.js';
-import { initConfig, initFilterConfig, setupAutofocusButton, showToast } from './config.js';
-import { getTasks, getLogs } from './api.js';
+import { initConfig, initFilterConfig } from './config.js';
+import { showToast } from './toast.js';
+import * as api from './api.js';
+
+const { getTasks, getLogs } = api;
 
 // Store and components are registered in store-init.js (loaded before Alpine)
 
@@ -122,8 +125,9 @@ function startCountdownUpdater() {
 // --- Version checking ---
 async function fetchVersion() {
     try {
-        const response = await fetch('/api/version');
-        const data = await response.json();
+        const result = await api.getVersion();
+        if (!result.ok) return;
+        const data = result.data;
         const store = Alpine.store('citrasense');
         store.versionData = data;
         if (data.version) {
@@ -239,12 +243,12 @@ function initNavigation() {
 // from ./config.js; only template-scoped code should reach for the
 // window-level hook.
 window.showToast = showToast;
+window.citrasenseApi = api;
 
 document.addEventListener('DOMContentLoaded', async () => {
     initNavigation();
     await initConfig();
     await initFilterConfig();
-    setupAutofocusButton();
     fetchVersion();
     Alpine.store('citrasense').checkForUpdates();
     setInterval(() => Alpine.store('citrasense').checkForUpdates(), 3600000);
