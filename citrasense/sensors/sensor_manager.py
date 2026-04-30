@@ -37,6 +37,8 @@ class SensorManager:
         *,
         logger: Logger,
         images_dir: Path,
+        data_dir: Path | None = None,
+        cache_dir: Path | None = None,
     ) -> SensorManager:
         """Build a ``SensorManager`` from a list of :class:`SensorConfig`.
 
@@ -49,7 +51,9 @@ class SensorManager:
         mgr = cls(logger=logger)
         for cfg in configs:
             sensor_cls = get_sensor_class(cfg.type)
-            sensor = sensor_cls.from_config(cfg, logger=logger, images_dir=images_dir)  # type: ignore[attr-defined]
+            sensor = sensor_cls.from_config(  # type: ignore[attr-defined]
+                cfg, logger=logger, images_dir=images_dir, data_dir=data_dir, cache_dir=cache_dir
+            )
             mgr.register(sensor)
         return mgr
 

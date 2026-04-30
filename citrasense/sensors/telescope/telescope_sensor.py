@@ -92,6 +92,8 @@ class TelescopeSensor(AbstractSensor):
         *,
         logger: Logger,
         images_dir: Path,
+        data_dir: Path | None = None,
+        cache_dir: Path | None = None,
     ) -> TelescopeSensor:
         """Build a :class:`TelescopeSensor` from a :class:`SensorConfig`.
 
@@ -113,7 +115,12 @@ class TelescopeSensor(AbstractSensor):
             logger.getChild(f"{adapter_class.__name__}[{cfg.id}]"),
             cfg.id,
         )
-        adapter = adapter_class(logger=adapter_logger, images_dir=images_dir, **cfg.adapter_settings)
+        extra_kwargs: dict = {}
+        if data_dir is not None:
+            extra_kwargs["data_dir"] = data_dir
+        if cache_dir is not None:
+            extra_kwargs["cache_dir"] = cache_dir
+        adapter = adapter_class(logger=adapter_logger, images_dir=images_dir, **extra_kwargs, **cfg.adapter_settings)
         return cls(sensor_id=cfg.id, adapter=adapter, adapter_key=cfg.adapter)
 
     # ── AbstractSensor surface ────────────────────────────────────────

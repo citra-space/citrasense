@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import click
 
 from citrasense.citrasense_daemon import CitraSenseDaemon
@@ -18,9 +20,15 @@ def _version_string() -> str:
     type=int,
     help=f"Web server port (default: {DEFAULT_WEB_PORT})",
 )
-def cli(web_port):
+@click.option(
+    "--base-dir",
+    type=click.Path(path_type=Path),
+    default=None,
+    help="Root all state (config, data, logs, cache) under this directory.",
+)
+def cli(web_port, base_dir):
     """CitraSense daemon - configure via web UI at http://localhost:24872"""
-    settings = CitraSenseSettings.load(web_port=web_port)
+    settings = CitraSenseSettings.load(web_port=web_port, base_dir=base_dir)
     daemon = CitraSenseDaemon(settings)
     daemon.run()
 

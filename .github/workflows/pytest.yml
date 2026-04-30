@@ -73,10 +73,28 @@ jobs:
           fi
       - name: Run pytest with coverage
         run: |
-          uv run pytest -m "not integration" --import-mode=importlib --override-ini="addopts=" --cov=citrasense --cov-report=term-missing --cov-report=xml --cov-branch
+          uv run pytest -m "not integration and not e2e" --import-mode=importlib --override-ini="addopts=" --cov=citrasense --cov-report=term-missing --cov-report=xml --cov-branch
       - name: Upload coverage report
         uses: actions/upload-artifact@v7
         if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.12'
         with:
           name: coverage-xml
           path: coverage.xml
+
+  e2e:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          python-version: '3.12'
+      - name: Install project prerequisites
+        run: sudo apt-get update && sudo apt-get install -y libglib2.0-dev libdbus-1-dev libjpeg-dev zlib1g-dev
+      - name: Install dependencies
+        run: uv sync --extra dev --extra test
+      - name: Install Playwright browsers
+        run: uv run playwright install --with-deps chromium
+      - name: Run E2E tests
+        run: uv run pytest -m "e2e" --override-ini="addopts="

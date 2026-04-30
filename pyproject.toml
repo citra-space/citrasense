@@ -102,7 +102,7 @@ dev = [
   "bump-my-version",
   "citrasense[test]",
 ]
-test = ["pytest", "pytest-cov", "mockito"]
+test = ["pytest", "pytest-cov", "mockito", "pytest-playwright"]
 build = ["build"]
 deploy = ["twine"]
 
@@ -155,11 +155,12 @@ addopts = [
   "--cov-report=xml",
   "--cov-branch",
   "--import-mode=importlib",
-  "-m", "not slow",
+  "-m", "not slow and not e2e",
 ]
 markers = [
   "slow: expensive tests (plate solving, real FITS processing, etc.) — skipped locally, run in CI",
   "integration: requires live hardware or services",
+  "e2e: end-to-end browser tests (Playwright) — skipped locally, run in CI",
 ]
 
 [tool.coverage.run]

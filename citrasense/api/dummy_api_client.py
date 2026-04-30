@@ -78,8 +78,16 @@ def _parse_3le_text(text: str) -> list[dict[str, str]]:
     return results
 
 
-def _get_cache_path() -> Path:
+def _default_cache_path() -> Path:
     return Path(platformdirs.user_data_dir(_APP_NAME, appauthor=_APP_AUTHOR)) / _CACHE_FILE
+
+
+# Module-level override set by DummyApiClient when a custom path is provided.
+_cache_path_override: Path | None = None
+
+
+def _get_cache_path() -> Path:
+    return _cache_path_override or _default_cache_path()
 
 
 def _fetch_tles_from_celestrak() -> dict[str, dict[str, str]]:
@@ -200,8 +208,18 @@ class DummyApiClient(AbstractCitraApiClient):
     def cache_source_key(self) -> str:
         return "DummyApiClient"
 
-    def __init__(self, logger=None):
-        """Initialize dummy API client with in-memory data."""
+    def __init__(self, logger=None, cache_path: Path | None = None):
+        """Initialize dummy API client with in-memory data.
+
+        Args:
+            logger: Parent logger (a child logger is derived).
+            cache_path: Override for the TLE disk cache location. When None,
+                uses the platformdirs default.
+        """
+        global _cache_path_override
+        if cache_path is not None:
+            _cache_path_override = cache_path
+
         self.logger = logger.getChild(type(self).__name__) if logger else None
 
         self._data_lock = threading.Lock()

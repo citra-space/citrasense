@@ -5,7 +5,6 @@ import time
 from pathlib import Path
 
 import dbus  # type: ignore[reportMissingImports]
-from platformdirs import user_cache_dir, user_data_dir
 
 from citrasense.hardware.abstract_astro_hardware_adapter import (
     AbstractAstroHardwareAdapter,
@@ -283,7 +282,7 @@ class KStarsDBusAdapter(AbstractAstroHardwareAdapter):
         sequence_content = sequence_content.replace("{{OPTICAL_TRAIN}}", self.optical_train_name)
 
         # Write to temporary file
-        temp_dir = Path(user_cache_dir("citrasense")) / "kstars"
+        temp_dir = self.cache_dir / "kstars"
         temp_dir.mkdir(exist_ok=True, parents=True)
         sequence_file = temp_dir / f"{task_id}_sequence.esq"
         sequence_file.write_text(sequence_content)
@@ -414,7 +413,7 @@ class KStarsDBusAdapter(AbstractAstroHardwareAdapter):
         scheduler_content = scheduler_content.replace("{{MIN_ALTITUDE}}", "0")  # 0° minimum altitude for satellites
 
         # Write to temporary file
-        temp_dir = Path(user_cache_dir("citrasense")) / "kstars"
+        temp_dir = self.cache_dir / "kstars"
         temp_dir.mkdir(exist_ok=True, parents=True)
         job_file = temp_dir / f"{task_id}_job.esl"
         job_file.write_text(scheduler_content)
@@ -573,7 +572,7 @@ class KStarsDBusAdapter(AbstractAstroHardwareAdapter):
 
         try:
             # Setup output directory
-            output_dir = Path(user_data_dir("citrasense")) / "kstars_captures"
+            output_dir = self.data_dir / "kstars_captures"
             output_dir.mkdir(exist_ok=True, parents=True)
 
             # Clear task-specific directory to prevent Ekos from thinking job is already done

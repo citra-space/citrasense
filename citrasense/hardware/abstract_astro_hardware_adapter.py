@@ -151,9 +151,11 @@ class AbstractAstroHardwareAdapter(ABC):
 
         Args:
             images_dir: Path to the images directory
-            **kwargs: Additional configuration including 'filters' dict
+            **kwargs: Additional configuration including 'filters' dict and 'data_dir'
         """
         self.images_dir = images_dir
+        self.data_dir: Path = kwargs.pop("data_dir", images_dir.parent)
+        self.cache_dir: Path = kwargs.pop("cache_dir", self.data_dir)
         self.filter_map = {}
         self._safety_monitor: SafetyMonitor | None = None
         self.location_service: Any | None = None
@@ -294,14 +296,9 @@ class AbstractAstroHardwareAdapter(ABC):
         """
         import platformdirs
 
-        from citrasense.constants import APP_AUTHOR, APP_NAME
         from citrasense.hardware.devices.mount.altaz_pointing_model import AltAzPointingModel
 
-        # Use the canonical APP_NAME / APP_AUTHOR constants — older code
-        # here hard-coded ``appauthor="citrasense"`` which diverged from
-        # the APASS / elset caches that use ``"citra-space"``; migration
-        # below handles the legacy path.
-        data_dir = Path(platformdirs.user_data_dir(APP_NAME, appauthor=APP_AUTHOR))
+        data_dir = self.data_dir
         legacy_data_dir = Path(platformdirs.user_data_dir("citrasense", appauthor="citrasense"))
         key = self.sensor_id or adapter_name
         state_file = data_dir / f"pointing_model_{key}.json"

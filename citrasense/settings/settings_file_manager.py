@@ -18,9 +18,14 @@ from citrasense.logging import CITRASENSE_LOGGER
 class SettingsFileManager:
     """Manages settings file storage and retrieval."""
 
-    def __init__(self):
-        """Initialize the config file manager with the standard config directory."""
-        self.config_dir = Path(platformdirs.user_config_dir(APP_NAME, appauthor=APP_AUTHOR))
+    def __init__(self, config_dir: Path | None = None):
+        """Initialize the config file manager.
+
+        Args:
+            config_dir: Override for the config directory. When None, uses
+                the platform-standard location via platformdirs.
+        """
+        self.config_dir = config_dir or Path(platformdirs.user_config_dir(APP_NAME, appauthor=APP_AUTHOR))
         self.config_file = self.config_dir / "config.json"
 
     def ensure_config_directory(self) -> None:

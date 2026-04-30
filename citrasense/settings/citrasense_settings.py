@@ -392,6 +392,7 @@ class CitraSenseSettings(BaseModel):
     # Custom directory overrides (empty = use platformdirs defaults)
     custom_data_dir: str = ""
     custom_log_dir: str = ""
+    custom_cache_dir: str = ""
 
     # Time synchronization
     time_check_interval_minutes: int = 5
@@ -414,6 +415,7 @@ class CitraSenseSettings(BaseModel):
     # ── Private infrastructure ────────────────────────────────────────
     _config_manager: SettingsFileManager = PrivateAttr()
     _dir_manager: DirectoryManager = PrivateAttr()
+    _base_dir: Path | None = PrivateAttr(default=None)
     # Serializes concurrent ``save()`` / ``update_and_save()`` calls so
     # per-sensor managers (autofocus, alignment, …) finishing near
     # simultaneously don't race on the config file. Module-level import so
@@ -439,7 +441,7 @@ class CitraSenseSettings(BaseModel):
             return -1
         return v
 
-    @field_validator("custom_data_dir", "custom_log_dir", mode="before")
+    @field_validator("custom_data_dir", "custom_log_dir", "custom_cache_dir", mode="before")
     @classmethod
     def _validate_custom_dir(cls, v: Any) -> str:
         if not v:
@@ -454,7 +456,7 @@ class CitraSenseSettings(BaseModel):
     # ── Factory ───────────────────────────────────────────────────────
 
     @classmethod
-    def load(cls, web_port: int = DEFAULT_WEB_PORT) -> CitraSenseSettings:
+    def load(cls, web_port: int = DEFAULT_WEB_PORT, base_dir: Path | None = None) -> CitraSenseSettings:
         """Load settings from the JSON config file on disk.
 
         Handles transparent migration from v1/v2 config files:
@@ -468,9 +470,21 @@ class CitraSenseSettings(BaseModel):
 
         Args:
             web_port: Port for web interface (CLI bootstrap option only).
+            base_dir: When set, roots all state (config, data, logs, cache)
+                under this directory. Overrides platformdirs for every
+                subsystem. Useful for testing, containers, and running
+                multiple instances.
         """
-        mgr = SettingsFileManager()
+        config_dir = (base_dir / "config") if base_dir else None
+        mgr = SettingsFileManager(config_dir=config_dir)
         config = mgr.load_config()
+
+        # When base_dir is provided, force directory overrides unless the
+        # config file already specifies custom paths.
+        if base_dir:
+            config.setdefault("custom_data_dir", str(base_dir / "data"))
+            config.setdefault("custom_log_dir", str(base_dir / "logs"))
+            config.setdefault("custom_cache_dir", str(base_dir / "cache"))
 
         # Pop the legacy nested adapter_settings archive (keyed by adapter name).
         all_adapter_settings: dict[str, dict[str, Any]] = config.pop("adapter_settings", {})
@@ -596,7 +610,10 @@ class CitraSenseSettings(BaseModel):
 
         instance = cls.model_validate(config)
         instance._config_manager = mgr
-        instance._dir_manager = DirectoryManager(instance.custom_data_dir, instance.custom_log_dir)
+        instance._dir_manager = DirectoryManager(
+            instance.custom_data_dir, instance.custom_log_dir, instance.custom_cache_dir
+        )
+        instance._base_dir = base_dir
         return instance
 
     # ── Public helpers ────────────────────────────────────────────────
