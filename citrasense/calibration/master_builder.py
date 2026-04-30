@@ -59,7 +59,11 @@ class MasterBuilder:
         Returns the saved master path, or ``None`` if no frames were
         captured (e.g. immediate cancellation).
         """
-        gain_val = gain if gain is not None else (self._profile.current_gain or 0)
+        # ``CalibrationProfile.current_gain`` is widened to ``int | float | None``
+        # to honestly describe fractional-gain adapters (RPi HQ, Ximea), but
+        # the calibration pipeline is fundamentally integer-register (FITS
+        # ``GAIN`` header, library indexing) — coerce at the boundary.
+        gain_val = gain if gain is not None else int(self._profile.current_gain or 0)
         label = f"bias g{gain_val} bin{binning}"
 
         raw_paths = self._capture_frames(
@@ -107,7 +111,7 @@ class MasterBuilder:
         Returns the saved master path, or ``None`` if no frames were
         captured (e.g. immediate cancellation).
         """
-        gain_val = gain if gain is not None else (self._profile.current_gain or 0)
+        gain_val = gain if gain is not None else int(self._profile.current_gain or 0)
         label = f"dark g{gain_val} bin{binning} {exposure_time}s"
 
         raw_paths = self._capture_frames(
@@ -180,7 +184,7 @@ class MasterBuilder:
         Returns the saved master path, or ``None`` if quality validation
         rejected the flat.
         """
-        gain_val = gain if gain is not None else (self._profile.current_gain or 0)
+        gain_val = gain if gain is not None else int(self._profile.current_gain or 0)
 
         backend: FlatCaptureBackend
         if flat_backend is not None:
@@ -300,7 +304,7 @@ class MasterBuilder:
             quality validation).
         """
         assert self._camera is not None
-        gain_val = gain if gain is not None else (self._profile.current_gain or 0)
+        gain_val = gain if gain is not None else int(self._profile.current_gain or 0)
         max_adu = float(self._camera.get_max_pixel_value(binning))
         target_adu = max_adu * self.TARGET_ADU_FRACTION
         lo = max_adu * (self.TARGET_ADU_FRACTION - self.ADU_TOLERANCE)

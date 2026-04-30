@@ -696,7 +696,10 @@ class StatusCollector:
             return None
 
         cam_id = profile.camera_id
-        gain = profile.current_gain or 0
+        # Coerce to int at the boundary: ``CalibrationLibrary`` indexes
+        # masters by integer gain register, but ``CalibrationProfile.current_gain``
+        # is widened to ``int | float | None`` for fractional-gain adapters.
+        gain = int(profile.current_gain or 0)
         binning = profile.current_binning
         temperature = profile.current_temperature
         read_mode = profile.read_mode

@@ -19,21 +19,40 @@ import logging
 from unittest.mock import MagicMock
 
 import numpy as np
-import pytest
 
-cv2 = pytest.importorskip("cv2")
+from citrasense.hardware.devices.camera.usb_camera import UsbCamera
 
-from citrasense.hardware.devices.camera.usb_camera import UsbCamera  # noqa: E402
+
+class _StubCv2:
+    """Minimal cv2 surface used by :meth:`UsbCamera.capture_array`.
+
+    The real BGR→RGB swap touches exactly two cv2 names: ``COLOR_BGR2RGB``
+    (a sentinel constant) and ``cvtColor`` (the conversion function).
+    Stubbing them here lets these regression tests run in CI without the
+    optional ``opencv-python`` dependency installed — the previous
+    ``pytest.importorskip("cv2")`` silently skipped the whole file under
+    the default CI extras and left the BGR→RGB contract untested.
+    """
+
+    COLOR_BGR2RGB = object()
+
+    @staticmethod
+    def cvtColor(frame: np.ndarray, code: object) -> np.ndarray:
+        if code is not _StubCv2.COLOR_BGR2RGB:
+            raise AssertionError(f"unexpected conversion code: {code!r}")
+        # Reverse the channel axis to mimic BGR→RGB. ``.copy()`` keeps the
+        # output owned (matches how cv2 returns a fresh ndarray).
+        return frame[..., ::-1].copy()
 
 
 def _make_connected_camera_with_bgr_frame(bgr_frame: np.ndarray) -> UsbCamera:
     """Build a UsbCamera whose ``VideoCapture.read`` returns *bgr_frame*.
 
     Bypasses the real ``connect()`` so the test stays unit-level: we
-    inject the cv2 module and a stub VideoCapture directly.
+    inject a stub cv2 module and a stub VideoCapture directly.
     """
     cam = UsbCamera(logger=logging.getLogger("test.usb_camera"))
-    cam._cv2_module = cv2
+    cam._cv2_module = _StubCv2  # type: ignore[assignment]
     fake_capture = MagicMock()
     fake_capture.isOpened.return_value = True
     fake_capture.read.return_value = (True, bgr_frame)

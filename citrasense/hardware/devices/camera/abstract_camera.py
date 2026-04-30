@@ -29,13 +29,17 @@ class CalibrationProfile:
     model: str
     has_mechanical_shutter: bool
     has_cooling: bool
-    current_gain: int | None
+    # ``int | float`` reflects the reality across adapters: Moravian
+    # exposes integer gain registers while picamera2 (RPi HQ) and Ximea
+    # use fractional analog gain / dB.  Keeping the type narrow to ``int``
+    # silently dropped fractional values at the allsky boundary.
+    current_gain: int | float | None
     current_binning: int
     current_temperature: float | None
     target_temperature: float | None = None
     bit_depth: int = 16
     read_mode: str = ""
-    gain_range: tuple[int, int] | None = None
+    gain_range: tuple[int | float, int | float] | None = None
     supported_binning: list[int] = field(default_factory=lambda: [1])
 
 
@@ -50,7 +54,7 @@ class AbstractCamera(AbstractHardwareDevice):
     def capture_array(
         self,
         duration: float,
-        gain: int | None = None,
+        gain: int | float | None = None,
         offset: int | None = None,
         binning: int = 1,
         shutter_closed: bool = False,
@@ -62,7 +66,11 @@ class AbstractCamera(AbstractHardwareDevice):
 
         Args:
             duration: Exposure duration in seconds
-            gain: Camera gain setting (device-specific units)
+            gain: Camera gain setting in device-specific units.  May be a
+                float for adapters that drive fractional analog gain
+                (picamera2 ``AnalogueGain``, Ximea dB) or an int for
+                register-based cameras (Moravian).  Adapters coerce to
+                their native representation internally.
             offset: Camera offset/black level setting
             binning: Pixel binning factor (1=no binning, 2=2x2, etc.)
             shutter_closed: If True, request a dark frame (firmware closes shutter
@@ -77,7 +85,7 @@ class AbstractCamera(AbstractHardwareDevice):
     def take_exposure(
         self,
         duration: float,
-        gain: int | None = None,
+        gain: int | float | None = None,
         offset: int | None = None,
         binning: int = 1,
         save_path: Path | None = None,
@@ -87,7 +95,8 @@ class AbstractCamera(AbstractHardwareDevice):
 
         Args:
             duration: Exposure duration in seconds
-            gain: Camera gain setting (device-specific units)
+            gain: Camera gain setting (device-specific units; ``int`` or
+                ``float`` depending on adapter — see :meth:`capture_array`)
             offset: Camera offset/black level setting
             binning: Pixel binning factor (1=no binning, 2=2x2, etc.)
             save_path: Optional path to save the image (if None, use default)

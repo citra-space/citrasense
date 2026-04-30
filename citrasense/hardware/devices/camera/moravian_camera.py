@@ -424,7 +424,7 @@ class MoravianCamera(AbstractCamera):
     def capture_array(
         self,
         duration: float,
-        gain: int | None = None,
+        gain: int | float | None = None,
         offset: int | None = None,
         binning: int = 1,
         shutter_closed: bool = False,
@@ -437,7 +437,12 @@ class MoravianCamera(AbstractCamera):
         w = self._camera_info["width"]
         h = self._camera_info["height"]
 
-        gain_val = gain if gain is not None else self._default_gain
+        # The widened ``int | float | None`` public type lets shared callers
+        # (allsky, RPi HQ paths) pass fractional gain through cleanly, but
+        # gxccd's ``set_gain`` is an integer-register API — coerce at the
+        # boundary, matching the historical Moravian contract.
+        raw_gain = gain if gain is not None else self._default_gain
+        gain_val = int(raw_gain)
         cam.set_gain(gain_val)
         cam.set_binning(binning, binning)
 
@@ -534,7 +539,7 @@ class MoravianCamera(AbstractCamera):
     def take_exposure(
         self,
         duration: float,
-        gain: int | None = None,
+        gain: int | float | None = None,
         offset: int | None = None,
         binning: int = 1,
         save_path: Path | None = None,
@@ -568,7 +573,7 @@ class MoravianCamera(AbstractCamera):
         width: int,
         height: int,
         exp_time: float,
-        gain: int,
+        gain: int | float,
         binning: int,
         save_path: Path,
         exposure_start: datetime | None = None,

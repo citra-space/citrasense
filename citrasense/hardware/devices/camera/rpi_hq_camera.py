@@ -179,7 +179,7 @@ class RaspberryPiHQCamera(AbstractCamera):
     def capture_array(
         self,
         duration: float,
-        gain: int | None = None,
+        gain: int | float | None = None,
         offset: int | None = None,
         binning: int = 1,
         shutter_closed: bool = False,
@@ -213,7 +213,7 @@ class RaspberryPiHQCamera(AbstractCamera):
     def take_exposure(
         self,
         duration: float,
-        gain: int | None = None,
+        gain: int | float | None = None,
         offset: int | None = None,
         binning: int = 1,
         save_path: Path | None = None,

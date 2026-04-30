@@ -39,7 +39,10 @@ def bias_and_dark_suite(
     Only the current binning is calibrated; re-run the suite after
     switching binning modes.
     """
-    gain = profile.current_gain or 0
+    # The calibration pipeline (FITS GAIN header, library indexing) is
+    # integer-only; coerce here so the wider ``int | float | None`` profile
+    # type lands as int in the suite payload.
+    gain = int(profile.current_gain or 0)
     binning = profile.current_binning
     return [
         {"frame_type": "bias", "count": frame_count, "gain": gain, "binning": binning},
@@ -67,7 +70,7 @@ def all_flats_suite(
     cycles through filters in rounds, so each filter samples across the
     brightness gradient and the median stack averages out drift.
     """
-    gain = profile.current_gain or 0
+    gain = int(profile.current_gain or 0)
     binning = profile.current_binning
     return [
         {

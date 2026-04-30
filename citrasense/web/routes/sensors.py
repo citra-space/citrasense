@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import inspect
 import json
 import re
 from typing import TYPE_CHECKING, Any
@@ -178,13 +179,26 @@ def build_sensors_router(ctx: CitraSenseWebApp) -> APIRouter:
                 # falls back to a plain (no-kwarg) schema rather than 400ing.
                 pass
 
+        # Inspect the signature once and dispatch deterministically: only
+        # forward ``**settings_kwargs`` when the callable advertises
+        # ``**kwargs``. The previous ``except TypeError`` fallback would
+        # silently swallow real bugs raised inside ``build_settings_schema``
+        # (e.g. an int/str mismatch deep in conditional schema logic) and
+        # serve a stale static schema instead of 500ing.
         try:
-            schema = schema_fn(**settings_kwargs)
-        except TypeError:
-            # Older sensor-type schemas don't accept **kwargs; degrade
-            # cleanly so adding a new conditional schema doesn't break
-            # the static-schema callers.
-            schema = schema_fn()
+            sig = inspect.signature(schema_fn)
+        except (TypeError, ValueError):
+            # Builtin or C-implemented callables can refuse introspection.
+            # Fall back to no-kwarg dispatch — same effective behavior the
+            # narrow ``except TypeError`` used to provide here.
+            sig = None
+        accepts_kwargs = (
+            bool(settings_kwargs)
+            and sig is not None
+            and any(p.kind is inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values())
+        )
+        try:
+            schema = schema_fn(**settings_kwargs) if accepts_kwargs else schema_fn()
         except Exception as exc:
             CITRASENSE_LOGGER.error("Error building schema for %s: %s", sensor_type, exc, exc_info=True)
             return JSONResponse({"error": str(exc)}, status_code=500)

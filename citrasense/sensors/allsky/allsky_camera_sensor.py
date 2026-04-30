@@ -605,7 +605,7 @@ class AllskyCameraSensor(AbstractSensor):
             try:
                 frame = self._camera.capture_array(
                     duration=self._exposure_s,
-                    gain=int(self._gain) if self._gain == int(self._gain) else None,
+                    gain=self._gain,
                     binning=self._camera.get_default_binning(),
                 )
             except Exception as exc:
