@@ -158,6 +158,20 @@ class TelescopeSensor(AbstractSensor):
         adapter_cls = type(self.adapter)
         return [dict(entry) for entry in adapter_cls.get_settings_schema()]
 
+    def get_missing_dependencies(self) -> list[dict[str, str]]:
+        """Forward to the wrapped adapter's dep check.
+
+        The adapter is the one that owns concrete device classes
+        (camera/mount/filter wheel/focuser) and knows whether their
+        optional packages are installed; the sensor just exposes that
+        information through the abstract sensor surface so the status
+        collector doesn't have to reach into ``sensor.adapter``.
+        """
+        try:
+            return list(self.adapter.get_missing_dependencies())
+        except Exception:
+            return []
+
     # ── Acquisition verbs ─────────────────────────────────────────────
 
     def acquire(self, task: Task, ctx: AcquisitionContext) -> AcquisitionResult:

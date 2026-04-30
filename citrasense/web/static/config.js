@@ -115,7 +115,11 @@ export async function loadSensorSchema(sensor) {
         return;
     }
     try {
-        const data = await api.getSensorTypeSchema(sensorType);
+        // Forward the existing per-sensor adapter_settings so sensor types
+        // that build a conditional schema (e.g. allsky reloading when the
+        // user picks a different camera) get the right fields on first
+        // render — same trick the telescope adapter path uses.
+        const data = await api.getSensorTypeSchema(sensorType, currentSettings);
         store.adapterFields = buildAdapterFields(data?.schema || [], currentSettings);
     } catch (error) {
         console.error(`Failed to load ${sensorType} schema:`, error);

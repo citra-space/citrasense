@@ -77,15 +77,15 @@ usb-camera = [
 rpi = [
   "picamera2>=0.3.12; sys_platform == 'linux'",
 ]
+allsky = [
+  "citrasense[usb-camera,rpi]",
+]
 ximea = []
 zwo-mount = [
   "pyserial>=3.5",
 ]
 all-hardware = [
-  "citrasense[indi,zwo-mount]",
-  "opencv-python>=4.8.0",
-  "cv2-enumerate-cameras>=1.0.0",
-  "picamera2>=0.3.12; sys_platform == 'linux'",
+  "citrasense[indi,zwo-mount,allsky]",
 ]
 kstars = [
   "dbus-python",

@@ -1113,6 +1113,49 @@ def test_get_unknown_sensor_type_schema_404(client):
     assert resp.status_code == 404
 
 
+def test_get_allsky_schema_first_render_includes_default_camera_fields(client):
+    """Without a ``camera_type`` query param the schema falls back to the
+    default camera (USB) so the form's visible state and rendered fields
+    stay consistent — operators see the device picker on first render."""
+    resp = client.get("/api/sensor-types/allsky/schema")
+    assert resp.status_code == 200
+    schema = resp.json()["schema"]
+    names = {field["name"] for field in schema}
+    assert "camera_type" in names
+    assert "capture_interval_s" in names
+    # USB is the default — its prefixed fields should be present.
+    assert "camera_camera_index" in names
+    assert "camera_output_format" in names
+
+
+def test_get_allsky_schema_with_current_settings_merges_camera_fields(client):
+    """``?current_settings=...`` reloads the schema with the chosen camera's
+    own fields prefixed with ``camera_`` (matches DirectHardwareAdapter)."""
+    import json as _json
+    import urllib.parse as _urllib
+
+    qs = _urllib.quote(_json.dumps({"camera_type": "rpi_hq"}))
+    resp = client.get(f"/api/sensor-types/allsky/schema?current_settings={qs}")
+    assert resp.status_code == 200
+    names = {field["name"] for field in resp.json()["schema"]}
+    # Picking RPi switches the prefixed fields away from USB's.
+    assert "camera_default_gain" in names
+    assert "camera_default_exposure_ms" in names
+    assert "camera_camera_index" not in names
+
+
+def test_get_allsky_schema_with_invalid_json_falls_back_to_default_camera(client):
+    """Malformed ``current_settings`` JSON degrades to the same first-render
+    behaviour (default camera) rather than 400ing — same tolerance the
+    hardware-adapter route uses."""
+    resp = client.get("/api/sensor-types/allsky/schema?current_settings=not-json")
+    assert resp.status_code == 200
+    names = {field["name"] for field in resp.json()["schema"]}
+    assert "camera_type" in names
+    # Same default-camera behaviour as the no-query-param path.
+    assert "camera_camera_index" in names
+
+
 def test_add_passive_radar_sensor_without_adapter(client, mock_daemon):
     """A passive_radar sensor may be added with an empty adapter field."""
     resp = client.post(
@@ -1410,4 +1453,137 @@ def test_radar_detections_409s_when_sensor_is_not_passive_radar(mock_daemon):
         app = CitraSenseWebApp(daemon=mock_daemon)
     client = TestClient(app.app)
     resp = client.get("/api/sensors/scope-0/radar/detections")
+    assert resp.status_code == 409
+
+
+# ---------------------------------------------------------------------------
+# Allsky endpoints
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def mock_daemon_allsky(mock_settings):
+    """Daemon fixture with a single allsky sensor registered.
+
+    Mirrors ``mock_daemon_radar`` — the routes under test only need
+    ``daemon.sensor_manager.get_sensor`` to return a sensor whose
+    ``sensor_type`` is ``"allsky"`` and that exposes ``get_live_status``,
+    ``capture_now``, and ``latest_jpeg_bytes``.
+    """
+    d = MagicMock()
+    d.settings = mock_settings
+    del d.hardware_adapter
+
+    allsky_sensor = MagicMock()
+    allsky_sensor.sensor_id = "allsky-0"
+    allsky_sensor.sensor_type = "allsky"
+    allsky_sensor.name = "Allsky 0"
+    allsky_sensor.get_live_status.return_value = {
+        "sensor_id": "allsky-0",
+        "camera_type": "usb_camera",
+        "connected": True,
+        "streaming": True,
+        "capture_interval_s": 30.0,
+        "exposure_s": 1.0,
+        "gain": 1.0,
+        "jpeg_quality": 85,
+        "flip_horizontal": False,
+        "last_capture_at": "2026-04-30T12:00:00+00:00",
+        "last_capture_age_s": 5.0,
+        "last_capture_duration_s": 0.4,
+        "frame_size": [1280, 960],
+        "capture_count": 12,
+        "last_error": None,
+    }
+    allsky_sensor.capture_now.return_value = {
+        "ok": True,
+        "captured_at": "2026-04-30T12:00:05+00:00",
+        "error": None,
+    }
+    # JPEG SOI bytes so the latest.jpg test can validate the body.
+    allsky_sensor.latest_jpeg_bytes = b"\xff\xd8\xff\xe0fake-jpeg"
+
+    rt = MagicMock()
+    rt.sensor_id = "allsky-0"
+    rt.sensor = allsky_sensor
+
+    d.task_dispatcher = MagicMock()
+    d.task_dispatcher.get_runtime.side_effect = lambda sid: rt if sid == "allsky-0" else None
+    d.task_dispatcher.iter_runtimes = lambda: [rt]
+    d.task_dispatcher.current_task_ids = {}
+    d.task_dispatcher.get_tasks_snapshot.return_value = []
+
+    sm = MagicMock()
+    sm.get_sensor.side_effect = lambda sid: allsky_sensor if sid == "allsky-0" else None
+    sm.get = sm.get_sensor
+    sm.__iter__ = lambda self: iter([allsky_sensor])
+    sm.iter_by_type.return_value = iter([allsky_sensor])
+    del sm.first_of_type
+    d.sensor_manager = sm
+    return d
+
+
+@pytest.fixture
+def client_allsky(mock_daemon_allsky):
+    with patch("citrasense.web.app.StaticFiles"):
+        app = CitraSenseWebApp(daemon=mock_daemon_allsky)
+    return TestClient(app.app)
+
+
+def test_allsky_status_returns_live_status(client_allsky):
+    resp = client_allsky.get("/api/sensors/allsky-0/allsky/status")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["sensor_id"] == "allsky-0"
+    assert body["camera_type"] == "usb_camera"
+    assert body["streaming"] is True
+
+
+def test_allsky_capture_returns_ok(client_allsky, mock_daemon_allsky):
+    resp = client_allsky.post("/api/sensors/allsky-0/allsky/capture")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["ok"] is True
+    assert body["captured_at"] is not None
+    sensor = mock_daemon_allsky.sensor_manager.get_sensor("allsky-0")
+    sensor.capture_now.assert_called_once()
+
+
+def test_allsky_capture_409s_when_camera_disconnected(client_allsky, mock_daemon_allsky):
+    sensor = mock_daemon_allsky.sensor_manager.get_sensor("allsky-0")
+    sensor.capture_now.side_effect = RuntimeError("Allsky sensor 'allsky-0' is not connected")
+    resp = client_allsky.post("/api/sensors/allsky-0/allsky/capture")
+    assert resp.status_code == 409
+    assert "not connected" in resp.json()["error"]
+
+
+def test_allsky_latest_jpg_serves_bytes_when_present(client_allsky):
+    resp = client_allsky.get("/api/sensors/allsky-0/allsky/latest.jpg")
+    assert resp.status_code == 200
+    assert resp.headers["content-type"] == "image/jpeg"
+    # Cache-Control: no-store keeps proxies from holding stale frames.
+    assert "no-store" in resp.headers.get("cache-control", "")
+    assert resp.content[:2] == b"\xff\xd8"
+
+
+def test_allsky_latest_jpg_404s_before_first_capture(client_allsky, mock_daemon_allsky):
+    sensor = mock_daemon_allsky.sensor_manager.get_sensor("allsky-0")
+    # MagicMock returns another MagicMock for arbitrary attributes; explicitly
+    # set this to None to simulate "no frame captured yet".
+    sensor.latest_jpeg_bytes = None
+    resp = client_allsky.get("/api/sensors/allsky-0/allsky/latest.jpg")
+    assert resp.status_code == 404
+
+
+def test_allsky_status_404s_for_unknown_sensor(client_allsky):
+    resp = client_allsky.get("/api/sensors/does-not-exist/allsky/status")
+    assert resp.status_code == 404
+
+
+def test_allsky_status_409s_when_sensor_is_not_allsky(mock_daemon):
+    """Wrong sensor type returns 409, not a 500."""
+    with patch("citrasense.web.app.StaticFiles"):
+        app = CitraSenseWebApp(daemon=mock_daemon)
+    client = TestClient(app.app)
+    resp = client.get("/api/sensors/scope-0/allsky/status")
     assert resp.status_code == 409

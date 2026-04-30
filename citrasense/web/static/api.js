@@ -123,8 +123,12 @@ export async function getSensorTypes() {
     return r.data;
 }
 
-export async function getSensorTypeSchema(sensorType) {
-    const r = await fetchJSON(`/api/sensor-types/${encodeURIComponent(sensorType)}/schema`);
+export async function getSensorTypeSchema(sensorType, currentSettings = null) {
+    let url = `/api/sensor-types/${encodeURIComponent(sensorType)}/schema`;
+    if (currentSettings && Object.keys(currentSettings).length > 0) {
+        url += `?current_settings=${encodeURIComponent(JSON.stringify(currentSettings))}`;
+    }
+    const r = await fetchJSON(url);
     return r.data;
 }
 

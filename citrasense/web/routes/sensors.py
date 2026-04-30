@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import re
 from typing import TYPE_CHECKING, Any
 
@@ -19,6 +20,7 @@ from citrasense.settings.citrasense_settings import SensorConfig
 _SENSOR_TYPE_LABELS: dict[str, str] = {
     "telescope": "Telescope",
     "passive_radar": "Passive radar",
+    "allsky": "Allsky camera",
 }
 
 if TYPE_CHECKING:
@@ -122,7 +124,7 @@ def build_sensors_router(ctx: CitraSenseWebApp) -> APIRouter:
         return {"types": types}
 
     @router.get("/api/sensor-types/{sensor_type}/schema")
-    async def get_sensor_type_schema(sensor_type: str):
+    async def get_sensor_type_schema(sensor_type: str, current_settings: str = ""):
         """Class-level settings schema for a sensor type.
 
         Used by the Hardware config tab when ``sensor.type`` is
@@ -133,6 +135,14 @@ def build_sensors_router(ctx: CitraSenseWebApp) -> APIRouter:
         same :class:`SettingSchemaEntry` shape the hardware-adapter
         schema endpoint uses, so the existing form renderer can drive
         the returned fields unchanged.
+
+        ``current_settings`` is an optional JSON-encoded query param —
+        the same shape :func:`_fetch_adapter_schema` accepts on the
+        telescope-adapter route — so sensor types that build a
+        conditional schema (e.g. allsky reloading the form when the user
+        picks a different camera) can react to live form state.  Unknown
+        keys are passed through verbatim; invalid JSON is silently
+        ignored to mirror the hardware-adapter route's tolerance.
         """
         try:
             cls = get_sensor_class(sensor_type)
@@ -156,7 +166,24 @@ def build_sensors_router(ctx: CitraSenseWebApp) -> APIRouter:
                 },
                 status_code=400,
             )
+
+        settings_kwargs: dict[str, Any] = {}
+        if current_settings:
+            try:
+                parsed = json.loads(current_settings)
+                if isinstance(parsed, dict):
+                    settings_kwargs = parsed
+            except json.JSONDecodeError:
+                # Match the hardware-adapter route's tolerance — bad JSON
+                # falls back to a plain (no-kwarg) schema rather than 400ing.
+                pass
+
         try:
+            schema = schema_fn(**settings_kwargs)
+        except TypeError:
+            # Older sensor-type schemas don't accept **kwargs; degrade
+            # cleanly so adding a new conditional schema doesn't break
+            # the static-schema callers.
             schema = schema_fn()
         except Exception as exc:
             CITRASENSE_LOGGER.error("Error building schema for %s: %s", sensor_type, exc, exc_info=True)

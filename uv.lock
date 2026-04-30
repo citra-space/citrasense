@@ -553,6 +553,11 @@ all-hardware = [
     { name = "pyindi-client" },
     { name = "pyserial" },
 ]
+allsky = [
+    { name = "cv2-enumerate-cameras" },
+    { name = "opencv-python" },
+    { name = "picamera2", marker = "sys_platform == 'linux'" },
+]
 build = [
     { name = "build" },
 ]
@@ -603,10 +608,10 @@ requires-dist = [
     { name = "build", marker = "extra == 'build'" },
     { name = "bump-my-version", marker = "extra == 'dev'" },
     { name = "citrasense", extras = ["indi", "kstars"], marker = "extra == 'all'" },
-    { name = "citrasense", extras = ["indi", "zwo-mount"], marker = "extra == 'all-hardware'" },
+    { name = "citrasense", extras = ["indi", "zwo-mount", "allsky"], marker = "extra == 'all-hardware'" },
     { name = "citrasense", extras = ["test"], marker = "extra == 'dev'" },
+    { name = "citrasense", extras = ["usb-camera", "rpi"], marker = "extra == 'allsky'" },
     { name = "click" },
-    { name = "cv2-enumerate-cameras", marker = "extra == 'all-hardware'", specifier = ">=1.0.0" },
     { name = "cv2-enumerate-cameras", marker = "extra == 'usb-camera'", specifier = ">=1.0.0" },
     { name = "dbus-python", marker = "extra == 'kstars'" },
     { name = "fastapi", specifier = ">=0.115.0" },
@@ -617,10 +622,8 @@ requires-dist = [
     { name = "nats-py", specifier = ">=2.7" },
     { name = "ntplib", specifier = ">=0.4.0" },
     { name = "numpy", specifier = ">=2.0.0" },
-    { name = "opencv-python", marker = "extra == 'all-hardware'", specifier = ">=4.8.0" },
     { name = "opencv-python", marker = "extra == 'usb-camera'", specifier = ">=4.8.0" },
     { name = "pandas", specifier = ">=2.0.0" },
-    { name = "picamera2", marker = "sys_platform == 'linux' and extra == 'all-hardware'", specifier = ">=0.3.12" },
     { name = "picamera2", marker = "sys_platform == 'linux' and extra == 'rpi'", specifier = ">=0.3.12" },
     { name = "pillow", specifier = ">=10.0.0" },
     { name = "platformdirs", specifier = ">=4.0.0" },
@@ -642,7 +645,7 @@ requires-dist = [
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.30.0" },
     { name = "websockets", specifier = ">=13.0" },
 ]
-provides-extras = ["indi", "usb-camera", "rpi", "ximea", "zwo-mount", "all-hardware", "kstars", "all", "dev", "test", "build", "deploy"]
+provides-extras = ["indi", "usb-camera", "rpi", "allsky", "ximea", "zwo-mount", "all-hardware", "kstars", "all", "dev", "test", "build", "deploy"]
 
 [[package]]
 name = "click"

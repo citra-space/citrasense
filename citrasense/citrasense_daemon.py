@@ -467,6 +467,21 @@ class CitraSenseDaemon:
                         exc_info=True,
                     )
 
+            # Init each allsky sensor.  Like radar, allsky doesn't go through
+            # the Citra tasks API — its only output today is the live preview
+            # stream.  Register a SensorRuntime regardless so SensorRuntime.start()
+            # invokes start_stream() and the capture loop kicks off.
+            for allsky_sensor in self.sensor_manager.iter_by_type("allsky"):
+                try:
+                    self._init_one_allsky(allsky_sensor)
+                except Exception as exc:
+                    CITRASENSE_LOGGER.error(
+                        "Failed to initialize allsky sensor %s: %s",
+                        allsky_sensor.sensor_id,
+                        exc,
+                        exc_info=True,
+                    )
+
             # Restore preserved task metadata
             if old_task_dict:
                 CITRASENSE_LOGGER.info(f"Restoring {len(old_task_dict)} task(s) from previous TaskDispatcher")
@@ -818,6 +833,48 @@ class CitraSenseDaemon:
         # pr_sensor comes up, even if this initial connect() failed.
 
         CITRASENSE_LOGGER.info("Radar sensor %s registered (connected=%s)", radar_sensor.sensor_id, ok)
+
+    def _init_one_allsky(self, allsky_sensor: AbstractSensor) -> None:
+        """Initialize a single allsky sensor: wire preview bus, connect, register runtime.
+
+        The capture loop starts inside ``SensorRuntime.start()`` →
+        ``start_stream()`` once the dispatcher boots all runtimes, matching
+        the radar lifecycle.  No Citra API record, no ground-station lookup.
+        """
+        from citrasense.sensors.allsky.allsky_camera_sensor import AllskyCameraSensor
+
+        assert isinstance(allsky_sensor, AllskyCameraSensor)
+        assert self.task_dispatcher is not None
+        assert self.sensor_bus is not None
+
+        CITRASENSE_LOGGER.info("Initializing allsky sensor %s", allsky_sensor.sensor_id)
+
+        allsky_sensor.preview_bus = self.preview_bus
+
+        try:
+            ok = allsky_sensor.connect()
+        except Exception as exc:
+            CITRASENSE_LOGGER.error(
+                "Allsky sensor %s connect() raised: %s", allsky_sensor.sensor_id, exc, exc_info=True
+            )
+            ok = False
+
+        runtime = SensorRuntime(
+            allsky_sensor,
+            logger=CITRASENSE_LOGGER,
+            settings=self.settings,
+            api_client=self.api_client,
+            hardware_adapter=None,
+            ground_station=self.ground_station,
+            preview_bus=self.preview_bus,
+            task_index=self.task_index,
+            safety_monitor=self.safety_monitor,
+            sensor_bus=self.sensor_bus,
+        )
+
+        self.task_dispatcher.register_runtime(runtime)
+
+        CITRASENSE_LOGGER.info("Allsky sensor %s registered (connected=%s)", allsky_sensor.sensor_id, ok)
 
     def _initialize_safety_monitor(self) -> None:
         """Create SafetyMonitor with site-level checks and wire to hardware.

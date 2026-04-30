@@ -1,0 +1,21 @@
+{#
+    Allsky-camera hardware-status pills: a connection pill (driven by
+    ``sensor.allsky.connected``) and a camera-type pill so operators can
+    tell at a glance which camera the loop is driving.
+
+    Included from the allsky monitoring hero
+    (``_monitoring_sensor_allsky.html``) and the allsky sensor detail
+    body (``_sensor_detail_allsky.html``).
+
+    Contract: the including template provides an Alpine ``sensor`` in
+    scope via ``x-for`` (monitoring) or a getter (detail).
+#}
+<span class="badge rounded-pill"
+      :class="sensor?.allsky?.connected ? (sensor?.allsky?.streaming ? 'bg-success' : 'bg-warning text-dark') : 'bg-danger'"
+      data-bs-toggle="tooltip" data-bs-theme="dark"
+      :data-bs-title="sensor?.allsky?.connected ? (sensor?.allsky?.streaming ? 'Camera connected; capture loop running' : 'Camera connected; capture loop stopped') : 'Camera disconnected'"
+      x-text="sensor?.allsky?.connected ? (sensor?.allsky?.streaming ? 'Live' : 'Idle') : 'Off'"></span>
+<span class="badge rounded-pill bg-secondary"
+      data-bs-toggle="tooltip" data-bs-theme="dark"
+      :data-bs-title="'Camera type: ' + (sensor?.allsky?.camera_type || 'unknown')"
+      x-text="sensor?.allsky?.camera_type || 'unknown'"></span>
