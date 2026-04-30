@@ -33,7 +33,7 @@ class TestParse3le:
 
 
 @pytest.fixture
-def client():
+def client(tmp_path):
     """Create a DummyApiClient with a small mock catalog (no network)."""
     catalog = _parse_3le_text(_SAMPLE_3LE)
     mock_catalog = {}
@@ -41,8 +41,8 @@ def client():
         norad_id = entry["tle_line1"].split()[1].rstrip("U")
         mock_catalog[f"sat-{norad_id}"] = entry
 
-    with patch("citrasense.api.dummy_api_client.load_satellite_catalog", return_value=mock_catalog):
-        return DummyApiClient()
+    with patch("citrasense.api.dummy_api_client._fetch_tles_from_celestrak", return_value=mock_catalog):
+        return DummyApiClient(cache_path=tmp_path / "test_tle_cache.json")
 
 
 class TestDummyPassScheduling:

@@ -22,7 +22,7 @@ def _version_string() -> str:
 )
 @click.option(
     "--base-dir",
-    type=click.Path(path_type=Path),
+    type=click.Path(path_type=Path, file_okay=False, dir_okay=True),
     default=None,
     help="Root all state (config, data, logs, cache) under this directory.",
 )

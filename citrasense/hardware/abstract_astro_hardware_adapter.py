@@ -151,7 +151,8 @@ class AbstractAstroHardwareAdapter(ABC):
 
         Args:
             images_dir: Path to the images directory
-            **kwargs: Additional configuration including 'filters' dict and 'data_dir'
+            **kwargs: Additional configuration including 'filters' dict,
+                'data_dir', and 'cache_dir'
         """
         self.images_dir = images_dir
         self.data_dir: Path = kwargs.pop("data_dir", images_dir.parent)

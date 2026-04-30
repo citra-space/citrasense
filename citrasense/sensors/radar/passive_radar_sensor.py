@@ -278,6 +278,7 @@ class PassiveRadarSensor(AbstractSensor):
         *,
         logger: Logger,
         images_dir: Path,  # unused; radar has no filesystem capture
+        **_kwargs: object,
     ) -> PassiveRadarSensor:
         """Build from a :class:`SensorConfig` entry.
 

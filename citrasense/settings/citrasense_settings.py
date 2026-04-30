@@ -480,11 +480,16 @@ class CitraSenseSettings(BaseModel):
         config = mgr.load_config()
 
         # When base_dir is provided, force directory overrides unless the
-        # config file already specifies custom paths.
+        # config file already specifies a non-empty custom path.  Persisted
+        # configs serialize these fields as empty strings, so setdefault()
+        # would not overwrite them — check for falsy values instead.
         if base_dir:
-            config.setdefault("custom_data_dir", str(base_dir / "data"))
-            config.setdefault("custom_log_dir", str(base_dir / "logs"))
-            config.setdefault("custom_cache_dir", str(base_dir / "cache"))
+            if not config.get("custom_data_dir"):
+                config["custom_data_dir"] = str(base_dir / "data")
+            if not config.get("custom_log_dir"):
+                config["custom_log_dir"] = str(base_dir / "logs")
+            if not config.get("custom_cache_dir"):
+                config["custom_cache_dir"] = str(base_dir / "cache")
 
         # Pop the legacy nested adapter_settings archive (keyed by adapter name).
         all_adapter_settings: dict[str, dict[str, Any]] = config.pop("adapter_settings", {})
@@ -622,6 +627,11 @@ class CitraSenseSettings(BaseModel):
     def config_manager(self) -> SettingsFileManager:
         """Access the underlying file manager (for path queries, etc.)."""
         return self._config_manager
+
+    @property
+    def base_dir(self) -> Path | None:
+        """The ``--base-dir`` root, or None when using platformdirs defaults."""
+        return self._base_dir
 
     @property
     def directories(self) -> DirectoryManager:

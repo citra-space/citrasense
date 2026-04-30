@@ -205,9 +205,7 @@ class CitraSenseDaemon:
                 CITRASENSE_LOGGER.info("Configuration reload requested")
                 CITRASENSE_LOGGER.info("\u2500" * 60)
                 # Reload settings from file (preserving web_port and base_dir)
-                new_settings = CitraSenseSettings.load(
-                    web_port=self.settings.web_port, base_dir=self.settings._base_dir
-                )
+                new_settings = CitraSenseSettings.load(web_port=self.settings.web_port, base_dir=self.settings.base_dir)
                 self.settings = new_settings
                 CITRASENSE_LOGGER.setLevel(self.settings.log_level)
 
@@ -269,7 +267,7 @@ class CitraSenseDaemon:
                 CITRASENSE_LOGGER.info("Using DummyApiClient for local testing")
                 self.api_client = DummyApiClient(
                     logger=CITRASENSE_LOGGER,
-                    cache_path=self.settings.directories.data_dir / "dummy_tle_cache.json",
+                    cache_path=self.settings.directories.cache_dir / "dummy_tle_cache.json",
                 )
             else:
                 self.api_client = CitraApiClient(
@@ -980,6 +978,20 @@ class CitraSenseDaemon:
         if rt is None or not rt.calibration_manager:
             return False
         return rt.calibration_manager.cancel()
+
+    def start_headless(self) -> None:
+        """Start the web server and initialize components without signal handling.
+
+        Intended for E2E tests and embedded usage where the caller manages
+        the lifecycle (e.g. running in a background thread).
+        """
+        assert self.web_server is not None
+        self.web_server.start()
+        self._initialize_components()
+
+    def request_stop(self) -> None:
+        """Request a graceful shutdown of the daemon loop."""
+        self._stop_requested = True
 
     def run(self):
         assert self.web_server is not None

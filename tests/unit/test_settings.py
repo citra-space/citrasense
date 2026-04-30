@@ -740,3 +740,60 @@ def test_adaptive_exposure_min_lt_max_accepted():
     )
     assert sc.adaptive_exposure_min_seconds == 0.5
     assert sc.adaptive_exposure_max_seconds == 30.0
+
+
+# ---------------------------------------------------------------------------
+# base_dir loading behaviour
+# ---------------------------------------------------------------------------
+
+
+def test_base_dir_routes_all_paths(tmp_path):
+    """base_dir roots config, data, logs, and cache under the given directory."""
+    from citrasense.settings.citrasense_settings import CitraSenseSettings
+
+    settings = CitraSenseSettings.load(base_dir=tmp_path)
+
+    assert settings.base_dir == tmp_path
+    assert settings.config_manager.config_dir == tmp_path / "config"
+    assert settings.directories.data_dir == tmp_path / "data"
+    assert settings.directories.log_dir == tmp_path / "logs"
+    assert settings.directories.cache_dir == tmp_path / "cache"
+
+
+def test_base_dir_overrides_empty_string_custom_dirs(tmp_path):
+    """base_dir overrides persisted empty-string custom_*_dir values."""
+    import json
+
+    from citrasense.settings.citrasense_settings import CitraSenseSettings
+
+    config_dir = tmp_path / "config"
+    config_dir.mkdir()
+    (config_dir / "config.json").write_text(
+        json.dumps({"custom_data_dir": "", "custom_log_dir": "", "custom_cache_dir": ""})
+    )
+
+    settings = CitraSenseSettings.load(base_dir=tmp_path)
+
+    assert settings.directories.data_dir == tmp_path / "data"
+    assert settings.directories.log_dir == tmp_path / "logs"
+    assert settings.directories.cache_dir == tmp_path / "cache"
+
+
+def test_base_dir_preserves_explicit_custom_dirs(tmp_path):
+    """base_dir does not clobber non-empty custom_*_dir values in the config file."""
+    import json
+
+    from citrasense.settings.citrasense_settings import CitraSenseSettings
+
+    explicit_data = tmp_path / "my_data"
+    explicit_data.mkdir()
+
+    config_dir = tmp_path / "config"
+    config_dir.mkdir()
+    (config_dir / "config.json").write_text(json.dumps({"custom_data_dir": str(explicit_data)}))
+
+    settings = CitraSenseSettings.load(base_dir=tmp_path)
+
+    assert settings.directories.data_dir == explicit_data
+    assert settings.directories.log_dir == tmp_path / "logs"
+    assert settings.directories.cache_dir == tmp_path / "cache"

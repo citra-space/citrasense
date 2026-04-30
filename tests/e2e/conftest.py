@@ -37,12 +37,8 @@ def citrasense_server(tmp_path_factory: pytest.TempPathFactory) -> Generator[str
     daemon = CitraSenseDaemon(settings)
     base_url = f"http://127.0.0.1:{port}"
 
-    # Run the daemon's web server + init in a background thread.
-    # We replicate the relevant parts of daemon.run() without signal handling.
     def _run_daemon():
-        assert daemon.web_server is not None
-        daemon.web_server.start()
-        daemon._initialize_components()
+        daemon.start_headless()
         while not daemon._stop_requested:
             time.sleep(0.5)
 
@@ -65,7 +61,7 @@ def citrasense_server(tmp_path_factory: pytest.TempPathFactory) -> Generator[str
 
     yield base_url
 
-    daemon._stop_requested = True
+    daemon.request_stop()
     thread.join(timeout=5)
 
 

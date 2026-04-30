@@ -82,14 +82,6 @@ def _default_cache_path() -> Path:
     return Path(platformdirs.user_data_dir(_APP_NAME, appauthor=_APP_AUTHOR)) / _CACHE_FILE
 
 
-# Module-level override set by DummyApiClient when a custom path is provided.
-_cache_path_override: Path | None = None
-
-
-def _get_cache_path() -> Path:
-    return _cache_path_override or _default_cache_path()
-
-
 def _fetch_tles_from_celestrak() -> dict[str, dict[str, str]]:
     """Fetch TLEs from CelesTrak, returning a sat_id -> {name, tle_line1, tle_line2} dict."""
     catalog: dict[str, dict[str, str]] = {}
@@ -109,65 +101,6 @@ def _fetch_tles_from_celestrak() -> dict[str, dict[str, str]]:
         except Exception as exc:
             logger.warning("CelesTrak fetch failed for %s: %s", source["label"], exc)
     return catalog
-
-
-def _load_cached_tles() -> dict[str, dict[str, str]] | None:
-    """Load TLEs from disk cache. Returns None if stale or missing."""
-    cache_path = _get_cache_path()
-    if not cache_path.exists():
-        return None
-    try:
-        data = json.loads(cache_path.read_text())
-        cached_at = datetime.fromisoformat(data["cached_at"])
-        if (datetime.now(timezone.utc) - cached_at).total_seconds() > _CACHE_MAX_AGE_HOURS * 3600:
-            logger.info("TLE cache is stale (older than %dh), will re-fetch", _CACHE_MAX_AGE_HOURS)
-            return None
-        return data["satellites"]
-    except Exception as exc:
-        logger.warning("Failed to load TLE cache: %s", exc)
-        return None
-
-
-def _save_cached_tles(catalog: dict[str, dict[str, str]]) -> None:
-    cache_path = _get_cache_path()
-    cache_path.parent.mkdir(parents=True, exist_ok=True)
-    cache_path.write_text(
-        json.dumps({"cached_at": datetime.now(timezone.utc).isoformat(), "satellites": catalog}, indent=2)
-    )
-    logger.info("Cached %d TLEs to %s", len(catalog), cache_path)
-
-
-def _load_forced_cache() -> dict[str, dict[str, str]] | None:
-    """Last-resort: load cache ignoring staleness."""
-    cache_path = _get_cache_path()
-    if not cache_path.exists():
-        return None
-    try:
-        data = json.loads(cache_path.read_text())
-        logger.info("Using stale TLE cache as fallback (%d sats)", len(data["satellites"]))
-        return data["satellites"]
-    except Exception:
-        return None
-
-
-def load_satellite_catalog() -> dict[str, dict[str, str]]:
-    """Load satellite catalog: fresh from CelesTrak > disk cache > empty."""
-    cached = _load_cached_tles()
-    if cached:
-        logger.info("Loaded %d TLEs from cache", len(cached))
-        return cached
-
-    fetched = _fetch_tles_from_celestrak()
-    if fetched:
-        _save_cached_tles(fetched)
-        return fetched
-
-    stale = _load_forced_cache()
-    if stale:
-        return stale
-
-    logger.warning("No TLE data available (network down, no cache). DummyApiClient will have no satellites.")
-    return {}
 
 
 class DummyApiClient(AbstractCitraApiClient):
@@ -216,10 +149,7 @@ class DummyApiClient(AbstractCitraApiClient):
             cache_path: Override for the TLE disk cache location. When None,
                 uses the platformdirs default.
         """
-        global _cache_path_override
-        if cache_path is not None:
-            _cache_path_override = cache_path
-
+        self._cache_path = cache_path or _default_cache_path()
         self.logger = logger.getChild(type(self).__name__) if logger else None
 
         self._data_lock = threading.Lock()
@@ -229,11 +159,65 @@ class DummyApiClient(AbstractCitraApiClient):
         if self.logger:
             self.logger.info("DummyApiClient initialized (in-memory mode)")
 
+    # ── TLE cache (instance-scoped) ────────────────────────────────────
+
+    def _load_cached_tles(self) -> dict[str, dict[str, str]] | None:
+        """Load TLEs from disk cache. Returns None if stale or missing."""
+        if not self._cache_path.exists():
+            return None
+        try:
+            data = json.loads(self._cache_path.read_text())
+            cached_at = datetime.fromisoformat(data["cached_at"])
+            if (datetime.now(timezone.utc) - cached_at).total_seconds() > _CACHE_MAX_AGE_HOURS * 3600:
+                logger.info("TLE cache is stale (older than %dh), will re-fetch", _CACHE_MAX_AGE_HOURS)
+                return None
+            return data["satellites"]
+        except Exception as exc:
+            logger.warning("Failed to load TLE cache: %s", exc)
+            return None
+
+    def _save_cached_tles(self, catalog: dict[str, dict[str, str]]) -> None:
+        self._cache_path.parent.mkdir(parents=True, exist_ok=True)
+        self._cache_path.write_text(
+            json.dumps({"cached_at": datetime.now(timezone.utc).isoformat(), "satellites": catalog}, indent=2)
+        )
+        logger.info("Cached %d TLEs to %s", len(catalog), self._cache_path)
+
+    def _load_forced_cache(self) -> dict[str, dict[str, str]] | None:
+        """Last-resort: load cache ignoring staleness."""
+        if not self._cache_path.exists():
+            return None
+        try:
+            data = json.loads(self._cache_path.read_text())
+            logger.info("Using stale TLE cache as fallback (%d sats)", len(data["satellites"]))
+            return data["satellites"]
+        except Exception:
+            return None
+
+    def _load_satellite_catalog(self) -> dict[str, dict[str, str]]:
+        """Load satellite catalog: fresh from CelesTrak > disk cache > empty."""
+        cached = self._load_cached_tles()
+        if cached:
+            logger.info("Loaded %d TLEs from cache", len(cached))
+            return cached
+
+        fetched = _fetch_tles_from_celestrak()
+        if fetched:
+            self._save_cached_tles(fetched)
+            return fetched
+
+        stale = self._load_forced_cache()
+        if stale:
+            return stale
+
+        logger.warning("No TLE data available (network down, no cache). DummyApiClient will have no satellites.")
+        return {}
+
     # ── Data initialisation ────────────────────────────────────────────
 
     def _initialize_data(self):
         """Initialize in-memory data structures with fresh TLEs from CelesTrak."""
-        self._satellite_catalog = load_satellite_catalog()
+        self._satellite_catalog = self._load_satellite_catalog()
         now_iso = datetime.now(timezone.utc).isoformat()
 
         self._satellites: dict[str, dict] = {}
