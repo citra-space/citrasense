@@ -1,0 +1,171 @@
+{#
+    Allsky variant of the sensor detail page.  Dispatched from
+    ``_sensor_detail.html`` via ``<template x-if="sensor?.type === 'allsky'">``.
+    Owns its own page header (name + type pill + allsky hardware pills)
+    plus a full-resolution preview, manual capture trigger, and a status
+    table.  No operational switches — the only knob today is the capture
+    interval (which lives in the config screen, not here).
+
+    Live data sources:
+      - ``sensor.allsky.*``                 — populated by StatusCollector,
+        refreshed once per status tick.
+      - ``$store.citrasense.previewDataUrls[sensor.id]`` — pushed live by
+        the WebSocket preview-bus path (same wiring telescopes use).
+      - ``GET /api/sensors/{id}/allsky/latest.jpg`` — fallback for browsers
+        that arrive deep-linked before the first WebSocket frame.
+#}
+<div x-data="{
+        capturing: false,
+        captureError: null,
+        captureSuccessAt: null,
+        get _liveDataUrl() { return $store.citrasense.previewDataUrls?.[sensor.id]; },
+        get _fallbackJpegUrl() {
+            const ts = sensor?.allsky?.last_capture_at;
+            const cb = ts ? encodeURIComponent(ts) : Date.now();
+            return '/api/sensors/' + encodeURIComponent(sensor.id) + '/allsky/latest.jpg?t=' + cb;
+        },
+        get _previewSrc() { return this._liveDataUrl || this._fallbackJpegUrl; },
+        get _captureAgeText() {
+            const age = sensor?.allsky?.last_capture_age_s;
+            if (age == null) return 'No frame yet';
+            if (age < 1) return 'Captured just now';
+            if (age < 60) return 'Captured ' + age.toFixed(0) + 's ago';
+            const m = Math.floor(age / 60);
+            const s = Math.floor(age % 60);
+            return 'Captured ' + m + 'm ' + s + 's ago';
+        },
+        get _frameSizeText() {
+            const sz = sensor?.allsky?.frame_size;
+            if (!sz || sz.length !== 2) return null;
+            return sz[0] + ' x ' + sz[1];
+        },
+        async triggerCapture() {
+            this.capturing = true;
+            this.captureError = null;
+            try {
+                const resp = await fetch('/api/sensors/' + encodeURIComponent(sensor.id) + '/allsky/capture', {
+                    method: 'POST',
+                });
+                const body = await resp.json().catch(() => ({}));
+                if (!resp.ok || body.error) {
+                    this.captureError = body.error || ('HTTP ' + resp.status);
+                } else {
+                    this.captureSuccessAt = body.captured_at || new Date().toISOString();
+                }
+            } catch (e) {
+                this.captureError = e?.message || String(e);
+            } finally {
+                this.capturing = false;
+            }
+        }
+     }">
+    <div class="container my-3">
+        <div class="d-flex align-items-center flex-wrap gap-2 mb-3">
+            <h1 class="h4 mb-0" x-text="sensor?.name || 'Sensor'"></h1>
+            <span class="badge bg-secondary rounded-pill" x-text="sensor?.type"></span>
+            {% include "_allsky_hardware_pills.html" %}
+        </div>
+
+        <!-- Hero preview: full-width, auto-refreshing.  We bind ``:src`` to a
+             reactive getter that prefers the live WebSocket data URL, falling
+             back to the HTTP latest.jpg endpoint with a cache-buster keyed on
+             ``last_capture_at`` so deep-linked browsers see the most recent
+             frame even before the first WS message arrives. -->
+        <div class="card bg-dark text-light border-secondary mb-3">
+            <div class="card-header d-flex flex-wrap align-items-center gap-2">
+                <i class="bi bi-camera me-1"></i>
+                <span class="fw-semibold">Live sky view</span>
+                <span class="text-muted small ms-2" x-text="_captureAgeText"></span>
+                <div class="ms-md-auto d-flex flex-wrap gap-2">
+                    <button class="btn btn-sm btn-outline-light"
+                            :disabled="capturing || !sensor?.allsky?.connected"
+                            @click="triggerCapture()">
+                        <template x-if="!capturing">
+                            <span><i class="bi bi-camera-fill"></i> Capture now</span>
+                        </template>
+                        <template x-if="capturing">
+                            <span><span class="spinner-border spinner-border-sm me-1" role="status"></span>Capturing…</span>
+                        </template>
+                    </button>
+                </div>
+            </div>
+            <div class="card-body">
+                <template x-if="captureError">
+                    <div class="alert alert-danger py-2 mb-2" x-text="'Capture failed: ' + captureError"></div>
+                </template>
+                <div class="ratio ratio-16x9 bg-black rounded overflow-hidden">
+                    <template x-if="sensor?.allsky?.last_capture_at">
+                        <img :src="_previewSrc"
+                             alt="Latest allsky frame"
+                             style="object-fit: contain; background: #000;"
+                             class="w-100 h-100">
+                    </template>
+                    <template x-if="!sensor?.allsky?.last_capture_at">
+                        <div class="d-flex flex-column align-items-center justify-content-center text-muted">
+                            <i class="bi bi-camera" style="font-size: 3rem;"></i>
+                            <small class="mt-2"
+                                   x-text="sensor?.allsky?.connected ? 'Waiting for first capture…' : 'Camera disconnected'"></small>
+                        </div>
+                    </template>
+                </div>
+            </div>
+        </div>
+
+        <!-- Status table -->
+        <div class="card bg-dark text-light border-secondary mb-3">
+            <div class="card-header"><i class="bi bi-info-circle me-1"></i>Camera status</div>
+            <div class="card-body">
+                <div class="row g-2">
+                    <div class="col-md-4">
+                        <div class="fw-semibold">Camera type</div>
+                        <div class="font-monospace" x-text="sensor?.allsky?.camera_type || '—'"></div>
+                    </div>
+                    <div class="col-md-4">
+                        <div class="fw-semibold">Connection</div>
+                        <div>
+                            <span :class="sensor?.allsky?.connected ? 'text-success' : 'text-danger'"
+                                  x-text="sensor?.allsky?.connected ? 'Connected' : 'Disconnected'"></span>
+                        </div>
+                    </div>
+                    <div class="col-md-4">
+                        <div class="fw-semibold">Loop state</div>
+                        <div>
+                            <span :class="sensor?.allsky?.streaming ? 'text-success' : 'text-muted'"
+                                  x-text="sensor?.allsky?.streaming ? 'Running' : 'Stopped'"></span>
+                        </div>
+                    </div>
+                    <div class="col-md-4">
+                        <div class="fw-semibold">Capture interval</div>
+                        <div class="font-monospace"
+                             x-text="sensor?.allsky?.capture_interval_s != null ? Number(sensor.allsky.capture_interval_s).toFixed(0) + ' s' : '—'"></div>
+                    </div>
+                    <div class="col-md-4">
+                        <div class="fw-semibold">Exposure</div>
+                        <div class="font-monospace"
+                             x-text="sensor?.allsky?.exposure_s != null ? Number(sensor.allsky.exposure_s).toFixed(3) + ' s' : '—'"></div>
+                    </div>
+                    <div class="col-md-4">
+                        <div class="fw-semibold">Gain</div>
+                        <div class="font-monospace" x-text="sensor?.allsky?.gain ?? '—'"></div>
+                    </div>
+                    <div class="col-md-4">
+                        <div class="fw-semibold">Frame size</div>
+                        <div class="font-monospace" x-text="_frameSizeText || '—'"></div>
+                    </div>
+                    <div class="col-md-4">
+                        <div class="fw-semibold">Last duration</div>
+                        <div class="font-monospace"
+                             x-text="sensor?.allsky?.last_capture_duration_s != null ? Number(sensor.allsky.last_capture_duration_s).toFixed(2) + ' s' : '—'"></div>
+                    </div>
+                    <div class="col-md-4">
+                        <div class="fw-semibold">Total captures</div>
+                        <div class="font-monospace" x-text="sensor?.allsky?.capture_count ?? 0"></div>
+                    </div>
+                </div>
+                <template x-if="sensor?.allsky?.last_error">
+                    <div class="alert alert-danger py-2 mt-3 mb-0" x-text="'Last error: ' + sensor.allsky.last_error"></div>
+                </template>
+            </div>
+        </div>
+    </div>
+</div>

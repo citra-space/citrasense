@@ -535,7 +535,10 @@ class CalibrationManager:
 
         count = int(params.get("count", 15))
         gain_param = params.get("gain")
-        gain = int(gain_param) if gain_param is not None else (profile.current_gain or 0)
+        # ``CalibrationProfile.current_gain`` is ``int | float | None``;
+        # the calibration pipeline expects integer gain — coerce at the
+        # boundary so ``build_flat`` keeps its narrower contract.
+        gain = int(gain_param) if gain_param is not None else int(profile.current_gain or 0)
         binning = int(params.get("binning", profile.current_binning))
         exposure_time = float(params.get("exposure_time", 1.0))
 

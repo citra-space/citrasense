@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING
 from fastapi import APIRouter
 
 from citrasense.web.routes.alignment import build_alignment_router
+from citrasense.web.routes.allsky import build_allsky_router
 from citrasense.web.routes.analysis import build_analysis_router
 from citrasense.web.routes.autofocus import build_autofocus_router
 from citrasense.web.routes.calibration import build_calibration_router
@@ -54,6 +55,7 @@ def build_all_routers() -> list[Callable[[CitraSenseWebApp], APIRouter]]:
         build_calibration_router,
         build_mount_router,
         build_radar_router,
+        build_allsky_router,
         build_sensors_router,
         build_safety_router,
         build_camera_router,
@@ -67,6 +69,7 @@ def build_all_routers() -> list[Callable[[CitraSenseWebApp], APIRouter]]:
 __all__ = [
     "build_alignment_router",
     "build_all_routers",
+    "build_allsky_router",
     "build_analysis_router",
     "build_autofocus_router",
     "build_calibration_router",

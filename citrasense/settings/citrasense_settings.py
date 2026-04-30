@@ -649,10 +649,12 @@ class CitraSenseSettings(BaseModel):
         * ``telescope`` sensors need both ``citra_sensor_id`` (backend
           telescope record) and ``adapter`` (which N.I.N.A./KStars/INDI/
           Direct adapter to drive).
-        * Streaming sensors like ``passive_radar`` don't use the
-          hardware-adapter registry — their transport config lives in
-          ``adapter_settings`` — so ``adapter`` is legitimately empty.
-          They still require ``citra_sensor_id`` (the antenna UUID).
+        * Streaming sensors like ``passive_radar`` and ``allsky`` don't
+          use the hardware-adapter registry — they own their hardware
+          directly (camera / SDR transport in ``adapter_settings``) — so
+          ``adapter`` is legitimately empty.  They still require
+          ``citra_sensor_id`` so observations they produce can be
+          uploaded to the right backend record.
 
         That matches the setup-wizard's mental model: the UI should
         surface configuration gaps for every rig, not only the first.

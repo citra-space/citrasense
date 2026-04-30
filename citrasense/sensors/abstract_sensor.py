@@ -156,6 +156,22 @@ class AbstractSensor(ABC):
     def get_settings_schema(self) -> list[dict[str, Any]]:
         """Return the settings schema exposed to the web UI."""
 
+    def get_missing_dependencies(self) -> list[dict[str, str]]:
+        """Return banner-shape dicts for any optional packages this sensor needs.
+
+        Each entry is the same shape the Missing Dependencies banner
+        consumes (``device_type``, ``device_name``, ``missing_packages``,
+        ``install_cmd`` — all strings).  Surfacing missing deps at the
+        sensor level lets non-telescope modalities (allsky, passive_radar,
+        future RF) participate in the startup-time gap warnings instead
+        of failing silently at ``connect()`` time.
+
+        Default returns ``[]``.  Subclasses that depend on optional
+        packages (e.g. ``opencv-python`` for the USB allsky camera)
+        should override.
+        """
+        return []
+
     # ── On-demand acquisition ─────────────────────────────────────────────
     def acquire(self, task: Task, ctx: AcquisitionContext) -> AcquisitionResult:
         """Perform a one-shot acquisition for the given task.

@@ -27,6 +27,11 @@ REGISTERED_SENSORS: dict[str, dict[str, str]] = {
         "class_name": "PassiveRadarSensor",
         "description": "Passive bistatic radar (NATS subscriber to pr_sensor)",
     },
+    "allsky": {
+        "module": "citrasense.sensors.allsky.allsky_camera_sensor",
+        "class_name": "AllskyCameraSensor",
+        "description": "Allsky camera (periodic full-sky capture pushed to the live preview)",
+    },
 }
 
 

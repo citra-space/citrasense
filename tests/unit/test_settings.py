@@ -240,6 +240,52 @@ def test_settings_is_configured_telescope_still_requires_adapter(tmp_path):
     assert s.is_configured() is False
 
 
+def test_settings_is_configured_allsky_needs_no_adapter(tmp_path):
+    """Allsky owns its camera directly — empty ``adapter`` is legit."""
+    with patch("citrasense.settings.citrasense_settings.SettingsFileManager") as MockSFM:
+        instance = MockSFM.return_value
+        instance.load_config.return_value = {
+            "personal_access_token": "tok",
+            "sensors": [
+                {
+                    "id": "allsky-0",
+                    "type": "allsky",
+                    "adapter": "",
+                    "citra_sensor_id": "allsky-uuid",
+                    "adapter_settings": {"camera_type": "usb"},
+                }
+            ],
+        }
+        from citrasense.settings.citrasense_settings import CitraSenseSettings
+
+        s = CitraSenseSettings.load()
+
+    assert s.is_configured() is True
+
+
+def test_settings_is_configured_allsky_still_needs_citra_id(tmp_path):
+    """Allsky sensors will upload observations — they need a backend record."""
+    with patch("citrasense.settings.citrasense_settings.SettingsFileManager") as MockSFM:
+        instance = MockSFM.return_value
+        instance.load_config.return_value = {
+            "personal_access_token": "tok",
+            "sensors": [
+                {
+                    "id": "allsky-0",
+                    "type": "allsky",
+                    "adapter": "",
+                    "citra_sensor_id": "",
+                    "adapter_settings": {"camera_type": "usb"},
+                }
+            ],
+        }
+        from citrasense.settings.citrasense_settings import CitraSenseSettings
+
+        s = CitraSenseSettings.load()
+
+    assert s.is_configured() is False
+
+
 def test_settings_validates_custom_ra_out_of_range():
     with patch("citrasense.settings.citrasense_settings.SettingsFileManager") as MockSFM:
         instance = MockSFM.return_value

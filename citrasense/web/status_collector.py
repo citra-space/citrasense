@@ -178,16 +178,23 @@ class StatusCollector:
 
             _mark("time_gps_location")
 
-            # Aggregate missing dependencies from all telescope adapters
+            # Aggregate missing dependencies from every sensor.  Each sensor
+            # exposes its own optional-package gaps through the abstract
+            # ``get_missing_dependencies`` surface (telescope forwards to
+            # its adapter; allsky reports its camera SDK; future modalities
+            # plug in the same way) so non-telescope rigs surface their gaps
+            # in the banner instead of failing silently at connect time.
             status.missing_dependencies = []
             if sm:
-                for s in sm.iter_by_type("telescope"):
-                    adapter = getattr(s, "adapter", None)
-                    if adapter:
-                        try:
-                            status.missing_dependencies.extend(adapter.get_missing_dependencies())
-                        except Exception as e:
-                            CITRASENSE_LOGGER.debug(f"Could not read hardware missing dependencies: {e}")
+                for s in sm:
+                    try:
+                        status.missing_dependencies.extend(s.get_missing_dependencies())
+                    except Exception as e:
+                        CITRASENSE_LOGGER.debug(
+                            "Could not read missing dependencies from sensor %s: %s",
+                            getattr(s, "sensor_id", "?"),
+                            e,
+                        )
             status.missing_dependencies.extend(getattr(self.daemon, "_processor_dep_issues", []) or [])
 
             # Active processors (site-level)
@@ -352,6 +359,18 @@ class StatusCollector:
                             sd["radar"] = sensor.get_live_status()
                         except Exception:
                             sd["radar"] = None
+                continue
+
+            if sd.get("type") == "allsky":
+                try:
+                    sensor = sm.get(sensor_id) if sm else None
+                except KeyError:
+                    sensor = None
+                if sensor is not None and hasattr(sensor, "get_live_status"):
+                    try:
+                        sd["allsky"] = sensor.get_live_status()
+                    except Exception:
+                        sd["allsky"] = None
                 continue
 
             if sd.get("type") != "telescope":
@@ -677,7 +696,10 @@ class StatusCollector:
             return None
 
         cam_id = profile.camera_id
-        gain = profile.current_gain or 0
+        # Coerce to int at the boundary: ``CalibrationLibrary`` indexes
+        # masters by integer gain register, but ``CalibrationProfile.current_gain``
+        # is widened to ``int | float | None`` for fractional-gain adapters.
+        gain = int(profile.current_gain or 0)
         binning = profile.current_binning
         temperature = profile.current_temperature
         read_mode = profile.read_mode

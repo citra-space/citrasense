@@ -236,11 +236,25 @@ class UsbCamera(AbstractCamera):
     def capture_array(
         self,
         duration: float,
-        gain: int | None = None,
+        gain: int | float | None = None,
         offset: int | None = None,
         binning: int = 1,
         shutter_closed: bool = False,
     ) -> np.ndarray:
+        """Capture one frame and return it as an ``H x W x 3`` RGB array.
+
+        OpenCV's :meth:`VideoCapture.read` returns frames in **BGR** order;
+        we convert to **RGB** before returning so the array follows the
+        same convention every other camera (Moravian, ZWO, Ximea, RPi HQ)
+        and downstream tool (Pillow, matplotlib, the allsky preview bus,
+        FITS pipelines) already use.  Without this swap, the JPEG encoder
+        in :func:`citrasense.sensors.preview_bus.array_to_jpeg_data_url`
+        renders skies and skin tones with red and blue exchanged.
+
+        Internal cv2 consumers (``cv2.imwrite``, ``cvtColor(..., BGR2*)``)
+        must therefore swap back to BGR or use the ``RGB2*`` variants —
+        see :meth:`take_exposure` and :meth:`_save_as_fits`.
+        """
         if not self.is_connected():
             raise RuntimeError("Camera not connected")
         assert self._camera is not None
@@ -258,6 +272,9 @@ class UsbCamera(AbstractCamera):
                 new_size = (width // binning, height // binning)
                 frame = self._cv2_module.resize(frame, new_size, interpolation=self._cv2_module.INTER_AREA)
 
+            if frame.ndim == 3 and frame.shape[2] == 3:
+                frame = self._cv2_module.cvtColor(frame, self._cv2_module.COLOR_BGR2RGB)
+
             return np.asarray(frame)
 
         except RuntimeError:
@@ -269,7 +286,7 @@ class UsbCamera(AbstractCamera):
     def take_exposure(
         self,
         duration: float,
-        gain: int | None = None,
+        gain: int | float | None = None,
         offset: int | None = None,
         binning: int = 1,
         save_path: Path | None = None,
@@ -287,10 +304,19 @@ class UsbCamera(AbstractCamera):
 
         if format_to_use == "fits":
             self._save_as_fits(frame, save_path)
-        elif format_to_use == "png":
-            self._cv2_module.imwrite(str(save_path), frame)
-        elif format_to_use in ["jpg", "jpeg"]:
-            self._cv2_module.imwrite(str(save_path), frame, [self._cv2_module.IMWRITE_JPEG_QUALITY, 95])
+        elif format_to_use in ("png", "jpg", "jpeg"):
+            # ``capture_array`` now returns RGB, but ``cv2.imwrite`` expects
+            # BGR — swap once before writing so PNG/JPG files on disk
+            # stay correctly colored.
+            bgr = (
+                self._cv2_module.cvtColor(frame, self._cv2_module.COLOR_RGB2BGR)
+                if frame.ndim == 3 and frame.shape[2] == 3
+                else frame
+            )
+            if format_to_use == "png":
+                self._cv2_module.imwrite(str(save_path), bgr)
+            else:
+                self._cv2_module.imwrite(str(save_path), bgr, [self._cv2_module.IMWRITE_JPEG_QUALITY, 95])
 
         self.logger.info(f"Image saved to {save_path}")
         return save_path
@@ -366,7 +392,7 @@ class UsbCamera(AbstractCamera):
         """Save frame as FITS format.
 
         Args:
-            frame: OpenCV BGR frame
+            frame: RGB frame (the convention :meth:`capture_array` returns).
             save_path: Path to save FITS file
         """
         assert self._cv2_module is not None
@@ -375,7 +401,15 @@ class UsbCamera(AbstractCamera):
             import numpy as np
             from astropy.io import fits
 
-            gray = self._cv2_module.cvtColor(frame, self._cv2_module.COLOR_BGR2GRAY)
+            # ``capture_array`` returns RGB; use the RGB→GRAY luminance
+            # conversion so the per-channel weights match the actual
+            # channel ordering (cv2 applies 0.299/0.587/0.114 to channels
+            # 0/1/2 in order — the wrong ordering produces a luminance
+            # image with miscolored intensity).
+            if frame.ndim == 3 and frame.shape[2] == 3:
+                gray = self._cv2_module.cvtColor(frame, self._cv2_module.COLOR_RGB2GRAY)
+            else:
+                gray = frame
 
             hdu = fits.PrimaryHDU(gray.astype(np.uint16))
             hdu.header["INSTRUME"] = "USB Camera"

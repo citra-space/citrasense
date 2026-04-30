@@ -19,7 +19,8 @@
          x-effect="
             if (configTab === 'calibration' && !($store.citrasense.configSensorStatus?.supports_direct_camera_control)) configTab = 'api';
             if (configTab === 'autofocus' && !($store.citrasense.configSensorStatus?.supports_autofocus)) configTab = 'hardware';
-            if ($store.citrasense.config?.sensors?.[$store.citrasense.configSensorIndex]?.type === 'passive_radar'
+            const _activeType = ($store.citrasense.config?.sensors?.[$store.citrasense.configSensorIndex]?.type) || 'telescope';
+            if (_activeType !== 'telescope'
                 && ['observation','processing','autofocus','calibration','selftasking'].includes(configTab)) configTab = 'hardware';
          ">
         <form @submit.prevent="window.saveConfiguration($event)"
@@ -58,7 +59,8 @@
                                    :class="{ 'fw-bold': $store.citrasense.configSensorId === sensor.id }">
                                     <span>
                                         <i class="bi me-2" :class="navSensorOpen[sensor.id] ? 'bi-chevron-down' : 'bi-chevron-right'" style="font-size: 0.7em;"></i>
-                                        <i class="bi me-1" :class="sensor.type === 'passive_radar' ? 'bi-broadcast' : 'bi-telescope'"></i>
+                                        <i class="bi me-1"
+                                           :class="sensor.type === 'passive_radar' ? 'bi-broadcast' : (sensor.type === 'allsky' ? 'bi-camera' : 'bi-telescope')"></i>
                                         <span x-text="sensor.id"></span>
                                     </span>
                                     <button type="button"
@@ -78,31 +80,31 @@
                                     <a class="nav-link py-1 ps-3" href="#"
                                        :class="{ active: configTab === 'observation' && $store.citrasense.configSensorId === sensor.id }"
                                        @click.prevent="selectSensorTab(sensor.id, 'observation')"
-                                       x-show="sensor.type !== 'passive_radar'">
+                                       x-show="(sensor.type || 'telescope') === 'telescope'">
                                         <i class="bi bi-bullseye me-2"></i>Observation
                                     </a>
                                     <a class="nav-link py-1 ps-3" href="#"
                                        :class="{ active: configTab === 'processing' && $store.citrasense.configSensorId === sensor.id }"
                                        @click.prevent="selectSensorTab(sensor.id, 'processing')"
-                                       x-show="sensor.type !== 'passive_radar'">
+                                       x-show="(sensor.type || 'telescope') === 'telescope'">
                                         <i class="bi bi-cpu me-2"></i>Processing
                                     </a>
                                     <a class="nav-link py-1 ps-3" href="#"
                                        :class="{ active: configTab === 'autofocus' && $store.citrasense.configSensorId === sensor.id }"
                                        @click.prevent="selectSensorTab(sensor.id, 'autofocus')"
-                                       x-show="sensor.type !== 'passive_radar' && $store.citrasense.status?.sensors?.[sensor.id]?.supports_autofocus !== false">
+                                       x-show="(sensor.type || 'telescope') === 'telescope' && $store.citrasense.status?.sensors?.[sensor.id]?.supports_autofocus !== false">
                                         <i class="bi bi-arrows-expand me-2"></i>Autofocus
                                     </a>
                                     <a class="nav-link py-1 ps-3" href="#"
                                        :class="{ active: configTab === 'calibration' && $store.citrasense.configSensorId === sensor.id }"
                                        @click.prevent="selectSensorTab(sensor.id, 'calibration')"
-                                       x-show="sensor.type !== 'passive_radar' && $store.citrasense.status?.sensors?.[sensor.id]?.supports_direct_camera_control">
+                                       x-show="(sensor.type || 'telescope') === 'telescope' && $store.citrasense.status?.sensors?.[sensor.id]?.supports_direct_camera_control">
                                         <i class="bi bi-grid-3x3 me-2"></i>Calibration
                                     </a>
                                     <a class="nav-link py-1 ps-3" href="#"
                                        :class="{ active: configTab === 'selftasking' && $store.citrasense.configSensorId === sensor.id }"
                                        @click.prevent="selectSensorTab(sensor.id, 'selftasking')"
-                                       x-show="sensor.type !== 'passive_radar'">
+                                       x-show="(sensor.type || 'telescope') === 'telescope'">
                                         <i class="bi bi-robot me-2"></i>Robotic
                                     </a>
                                 </div>

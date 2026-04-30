@@ -138,7 +138,28 @@ class TaskDispatcher:
         tid = getattr(task, "id", "?")
         if sid:
             if sid in self._runtimes:
-                return self._runtimes[sid]
+                rt = self._runtimes[sid]
+                # Defensive: if the local sensor_id happens to collide with
+                # a Citra-side id of a different modality, refuse the route
+                # rather than handing a telescope task to a streaming sensor
+                # whose ``submit_task`` raises NotImplementedError.  Today
+                # only telescope tasks flow through here; future modalities
+                # will widen this comparison.
+                if rt.sensor_type == task.sensor_type:
+                    return rt
+                self.logger.warning(
+                    "Task %s claims sensor_id=%r but that runtime is type %r, not %r; dropping",
+                    tid,
+                    sid,
+                    rt.sensor_type,
+                    task.sensor_type,
+                )
+                self._notify_dropped_task(
+                    f"Task dropped — sensor_id {sid!r} resolves to a "
+                    f"{rt.sensor_type} runtime but the task is for {task.sensor_type}",
+                    toast_id=f"task-drop:type-mismatch:{sid}",
+                )
+                return None
             for rt in self._runtimes.values():
                 rec = getattr(rt.sensor, "citra_record", None)
                 if rec and rec.get("id") == sid:

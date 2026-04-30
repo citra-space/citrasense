@@ -1,0 +1,92 @@
+{#
+    Allsky variant of the monitoring-card body.  Two-column hero matches
+    the telescope card height (16:9 sensor-hero-preview at col-md-7) so
+    mixed-modality dashboards line up at ``col-lg-6``.
+
+    Contract: the including template provides an Alpine ``sensor`` in
+    scope via ``x-for``, and the status collector has attached
+    ``sensor.allsky`` = ``AllskyCameraSensor.get_live_status()``.  Reads
+    ``sensor.allsky.*`` for stats and
+    ``$store.citrasense.previewDataUrls[sensor.id]`` for the live frame
+    (same path the telescope card uses).
+#}
+<div class="mt-3"
+     x-data="{
+         get _preview() { return $store.citrasense.previewDataUrls?.[sensor.id]; },
+         get _captureAgeText() {
+             const age = sensor?.allsky?.last_capture_age_s;
+             if (age == null) return 'No frame yet';
+             if (age < 1) return 'Captured just now';
+             if (age < 60) return 'Captured ' + age.toFixed(0) + 's ago';
+             const m = Math.floor(age / 60);
+             const s = Math.floor(age % 60);
+             return 'Captured ' + m + 'm ' + s + 's ago';
+         },
+         get _frameSizeText() {
+             const sz = sensor?.allsky?.frame_size;
+             if (!sz || sz.length !== 2) return null;
+             return sz[0] + ' x ' + sz[1];
+         }
+     }"
+     x-effect="$store.citrasense.now">
+    <div class="row g-2">
+        <!-- Hero preview -->
+        <div class="col-md-7">
+            <div class="sensor-hero-preview position-relative rounded overflow-hidden">
+                <template x-if="_preview">
+                    <img :src="_preview" alt="Latest allsky frame"
+                         class="w-100 h-100"
+                         style="object-fit: cover; cursor: pointer;"
+                         @click.stop="$store.citrasense.activePreviewSensorId = sensor.id; $dispatch('open-preview-modal')"
+                         title="Click to enlarge">
+                </template>
+                <template x-if="!_preview">
+                    <div class="d-flex flex-column align-items-center justify-content-center text-muted h-100">
+                        <i class="bi bi-camera" style="font-size: 2rem;"></i>
+                        <small class="mt-1">No frame yet</small>
+                    </div>
+                </template>
+            </div>
+        </div>
+        <!-- Stats column -->
+        <div class="col-md-5 d-flex flex-column gap-2">
+            <div class="small d-flex align-items-center flex-wrap gap-2">
+                <i class="bi bi-camera-video"
+                   :class="sensor?.allsky?.streaming ? 'text-success' : 'text-muted'"></i>
+                <span class="badge rounded-pill"
+                      :class="sensor?.allsky?.connected ? (sensor?.allsky?.streaming ? 'bg-success' : 'bg-warning text-dark') : 'bg-danger'"
+                      x-text="sensor?.allsky?.connected ? (sensor?.allsky?.streaming ? 'streaming' : 'idle') : 'offline'"></span>
+                <span class="text-muted" x-text="_captureAgeText"></span>
+            </div>
+            <template x-if="sensor?.allsky?.last_error">
+                <div class="small text-danger text-truncate"
+                     :title="sensor.allsky.last_error">
+                    <i class="bi bi-exclamation-octagon me-1"></i>
+                    <span x-text="sensor.allsky.last_error"></span>
+                </div>
+            </template>
+            <div class="small">
+                <i class="bi bi-stopwatch me-1 text-muted"></i>
+                <span class="text-muted">Interval </span>
+                <span class="fw-semibold font-monospace"
+                      x-text="sensor?.allsky?.capture_interval_s != null ? Number(sensor.allsky.capture_interval_s).toFixed(0) + 's' : '—'"></span>
+            </div>
+            <div class="small">
+                <i class="bi bi-brightness-high me-1 text-muted"></i>
+                <span class="text-muted">Exposure </span>
+                <span class="fw-semibold font-monospace"
+                      x-text="sensor?.allsky?.exposure_s != null ? Number(sensor.allsky.exposure_s).toFixed(3) + 's' : '—'"></span>
+            </div>
+            <div class="small">
+                <i class="bi bi-aspect-ratio me-1 text-muted"></i>
+                <span class="text-muted">Frame </span>
+                <span class="fw-semibold font-monospace" x-text="_frameSizeText || '—'"></span>
+            </div>
+            <div class="small">
+                <i class="bi bi-collection me-1 text-muted"></i>
+                <span class="text-muted">Captures </span>
+                <span class="fw-semibold font-monospace" x-text="sensor?.allsky?.capture_count ?? 0"></span>
+            </div>
+        </div>
+    </div>
+</div>

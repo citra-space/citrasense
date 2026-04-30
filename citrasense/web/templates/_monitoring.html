@@ -78,6 +78,11 @@
                                 {% include "_radar_hardware_pills.html" %}
                             </span>
                         </template>
+                        <template x-if="sensor.type === 'allsky'">
+                            <span class="d-flex align-items-center gap-2 flex-wrap">
+                                {% include "_allsky_hardware_pills.html" %}
+                            </span>
+                        </template>
                         {# Explicit "Open" link.  Anchor with a real href so
                            right-click-copy-link yields a clean URL and
                            Cmd/Ctrl/middle-click opens the detail page in
@@ -100,7 +105,10 @@
                         <template x-if="sensor.type === 'passive_radar'">
                             <div>{% include "_monitoring_sensor_radar.html" %}</div>
                         </template>
-                        <template x-if="sensor.type !== 'telescope' && sensor.type !== 'passive_radar'">
+                        <template x-if="sensor.type === 'allsky'">
+                            <div>{% include "_monitoring_sensor_allsky.html" %}</div>
+                        </template>
+                        <template x-if="sensor.type !== 'telescope' && sensor.type !== 'passive_radar' && sensor.type !== 'allsky'">
                             <div class="text-muted small py-2">
                                 <i class="bi bi-cpu me-1"></i>
                                 No dashboard view for sensor type
