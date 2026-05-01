@@ -420,37 +420,44 @@ def test_post_config_rejects_duplicate_citra_sensor_id(client, mock_daemon):
 
 
 # ---------------------------------------------------------------------------
-# Hardware reconnect
+# Per-sensor reconnect (replaces the retired site-wide POST /api/hardware/reconnect).
+# Connect / disconnect / reconnect all flow through the same async init worker
+# in CitraSenseDaemon so a hung adapter never blocks an HTTP request.
 # ---------------------------------------------------------------------------
 
 
-def test_reconnect_hardware_success(client, mock_daemon):
-    mock_daemon.retry_connection.return_value = (True, None)
+def test_per_sensor_reconnect_queued(client, mock_daemon):
+    mock_daemon.request_sensor_reconnect.return_value = (True, None)
+    resp = client.post("/api/sensors/scope-a/reconnect")
+    assert resp.status_code == 202
+    body = resp.json()
+    assert body["init_state"] == "connecting"
+    mock_daemon.request_sensor_reconnect.assert_called_once_with("scope-a")
+
+
+def test_per_sensor_reconnect_unknown_sensor(client, mock_daemon):
+    mock_daemon.request_sensor_reconnect.return_value = (False, "Unknown sensor: ghost")
+    resp = client.post("/api/sensors/ghost/reconnect")
+    assert resp.status_code == 404
+
+
+def test_per_sensor_reconnect_already_in_flight(client, mock_daemon):
+    mock_daemon.request_sensor_reconnect.return_value = (
+        False,
+        "Reconnect already in flight for scope-a",
+    )
+    resp = client.post("/api/sensors/scope-a/reconnect")
+    assert resp.status_code == 409
+
+
+def test_site_reconnect_endpoint_removed(client):
+    # The old site-wide POST /api/hardware/reconnect endpoint was retired
+    # in favor of per-sensor reconnects + the existing Save & Reload path.
+    # FastAPI returns 404 if no route at that path exists at all, or 405
+    # if a different method on the same path exists — either signal is
+    # enough to confirm the POST handler is gone.
     resp = client.post("/api/hardware/reconnect")
-    assert resp.status_code == 200
-    assert resp.json()["status"] == "success"
-    mock_daemon.retry_connection.assert_called_once()
-
-
-def test_reconnect_hardware_failure(client, mock_daemon):
-    mock_daemon.retry_connection.return_value = (False, "NINA not reachable")
-    resp = client.post("/api/hardware/reconnect")
-    assert resp.status_code == 500
-    assert "NINA not reachable" in resp.json()["error"]
-
-
-def test_reconnect_hardware_no_daemon():
-    with patch("citrasense.web.app.StaticFiles"):
-        app = CitraSenseWebApp(daemon=None)
-    c = TestClient(app.app)
-    assert c.post("/api/hardware/reconnect").status_code == 503
-
-
-def test_reconnect_hardware_not_configured(client, mock_daemon):
-    mock_daemon.settings.is_configured.return_value = False
-    resp = client.post("/api/hardware/reconnect")
-    assert resp.status_code == 400
-    assert "incomplete" in resp.json()["error"].lower()
+    assert resp.status_code in (404, 405)
 
 
 # ---------------------------------------------------------------------------

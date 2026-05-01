@@ -202,7 +202,14 @@
          get _doppZeroY() { return this.yCoord(0); },
      }"
      x-init="init()">
-    <svg viewBox="0 0 1000 500" preserveAspectRatio="xMidYMid meet"
+    <!-- viewBox bottom grows from 500 to 525 only when axis labels are
+         rendered, so the X-axis title at y=515 stays inside the SVG.
+         The mini variant (no labels) keeps the original 2:1 aspect to
+         avoid adding empty space at the bottom of the monitoring hero
+         pane.  Plot area (y=20..480) and tick positions are unchanged
+         either way. -->
+    <svg viewBox="0 0 1000 {% if _show_axes %}525{% else %}500{% endif %}"
+         preserveAspectRatio="xMidYMid meet"
          width="100%" height="100%"
          style="display: block; background: #1b1f24;">
         <!-- Plot area bounds -->

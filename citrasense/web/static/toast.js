@@ -17,7 +17,9 @@ const TOAST_MAX_VISIBLE = 5;
  * @param {object}  [options]
  * @param {boolean} [options.autohide] - Override auto-hide (defaults: true for success/info, false for danger/warning).
  * @param {number}  [options.delay=5000] - Auto-hide delay in ms.
- * @param {string}  [options.id]       - Dedup key; skips if a toast with this id is already visible.
+ * @param {string}  [options.id]       - Dedup key; replaces any existing toast with this id so callers
+ *                                       can stream state updates ("connecting" → "connected") through
+ *                                       a single toast slot instead of stacking up.
  */
 export function showToast(message, type = 'info', { autohide, delay = 5000, id } = {}) {
     const toastContainer = document.getElementById('toastContainer');
@@ -26,7 +28,19 @@ export function showToast(message, type = 'info', { autohide, delay = 5000, id }
         return;
     }
 
-    if (id && toastContainer.querySelector(`[data-toast-id="${id}"]`)) return;
+    // Replace-by-id semantics: when a toast with this id is already on
+    // screen, dismiss it synchronously so the new state-update toast
+    // takes its slot.  Without this, an in-flight "Connecting Foo…"
+    // info toast (5s auto-hide) silently swallows a follow-up "Foo
+    // connected" success toast that arrives within the dismiss window.
+    if (id) {
+        const prev = toastContainer.querySelector(`[data-toast-id="${id}"]`);
+        if (prev) {
+            const prevToast = bootstrap.Toast.getInstance(prev);
+            if (prevToast) prevToast.dispose();
+            prev.remove();
+        }
+    }
 
     const shouldAutohide = autohide !== undefined ? autohide : (type === 'success' || type === 'info');
     const icon = TOAST_ICONS[type] || TOAST_ICONS.info;

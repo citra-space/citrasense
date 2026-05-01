@@ -56,11 +56,23 @@ class StatusCollector:
                 for stale_id in list(status.sensors.keys() - live_ids):
                     del status.sensors[stale_id]
                 for s in sm:
+                    # ``init_state`` / ``init_error`` come from the
+                    # SensorRuntime — populated by the async init worker
+                    # in citrasense_daemon.py.  Reading from the runtime
+                    # rather than the sensor lets the UI distinguish
+                    # ``pending`` (registered, not yet connected) from
+                    # ``failed`` / ``timed_out`` even though both
+                    # report ``sensor.is_connected() == False``.
+                    rt = td.get_runtime(s.sensor_id) if td else None
+                    init_state = rt.init_state if rt is not None else "pending"
+                    init_error = rt.init_error if rt is not None else None
                     status.sensors[s.sensor_id] = {
                         "type": s.sensor_type,
                         "connected": s.is_connected(),
                         "name": getattr(s, "name", s.sensor_id),
                         "adapter_key": getattr(s, "adapter_key", None),
+                        "init_state": init_state,
+                        "init_error": init_error,
                     }
 
             # Populate site-wide tasks_by_stage BEFORE enrichment so each

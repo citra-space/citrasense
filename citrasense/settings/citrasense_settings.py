@@ -157,6 +157,16 @@ class SensorConfig(BaseModel):
     calibration_frame_count: int = 30
     flat_frame_count: int = 15
 
+    # Watchdog deadline for the sensor's hardware ``connect()`` during
+    # daemon startup or operator-initiated reconnect.  When the deadline
+    # blows, the daemon flips this sensor's runtime to ``timed_out`` and
+    # keeps booting the rest — a hung USB device or unresponsive
+    # NINA/INDI server can no longer wedge the whole site.  Tunable
+    # per-sensor because some hardware genuinely takes longer to
+    # initialize (cameras with slow cooler ramps, mounts on flaky
+    # serial bridges).
+    connect_timeout_seconds: float = 60.0
+
     # Automated flat capture during twilight flat windows.  When
     # ``auto_capture_flats_enabled`` is True and the adapter has a wired
     # :class:`FlatCaptureBackend`, the :class:`CalibrationManager`
@@ -338,6 +348,25 @@ class SensorConfig(BaseModel):
         if v < 5 or v > 50:
             clamped = max(5, min(50, v))
             CITRASENSE_LOGGER.warning("flat_frame_count %d out of range [5, 50]. Clamped to %d.", v, clamped)
+            return clamped
+        return v
+
+    @field_validator("connect_timeout_seconds", mode="before")
+    @classmethod
+    def _validate_connect_timeout(cls, v: Any) -> float:
+        try:
+            v = float(v)
+        except (TypeError, ValueError):
+            CITRASENSE_LOGGER.warning("Invalid connect_timeout_seconds (%r). Falling back to 60.0.", v)
+            return 60.0
+        # Lower bound is generous — most adapter probes need several
+        # seconds; clamping below 5s would just churn the watchdog.
+        # Upper bound protects against an operator typing 'forever'.
+        if v < 5.0 or v > 600.0:
+            clamped = max(5.0, min(600.0, v))
+            CITRASENSE_LOGGER.warning(
+                "connect_timeout_seconds %.1f out of range [5, 600]. Clamped to %.1f.", v, clamped
+            )
             return clamped
         return v
 

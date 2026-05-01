@@ -147,6 +147,11 @@ class TestConfigReloadDropsInFlightStages:
         daemon.sensor_bus = MagicMock()
         daemon._retention_timer = None
         daemon._stop_requested = False
+        # Sensor init pipeline (introduced for issue #339 — parallel
+        # sensor init, refactored into SensorInitOrchestrator).  Real
+        # ``__init__`` wires this up; tests that ``__new__`` past the
+        # constructor have to fill it in manually.
+        daemon._init_orchestrator = None
         return daemon
 
     def test_processing_and_uploading_not_restored(self):
@@ -156,7 +161,7 @@ class TestConfigReloadDropsInFlightStages:
         old_uploading = {"task-u1": MagicMock(), "task-u2": MagicMock()}
 
         with (
-            patch("citrasense.citrasense_daemon.SensorRuntime") as MockRT,
+            patch("citrasense.sensors.telescope.runtime_builder.SensorRuntime") as MockRT,
             patch("citrasense.citrasense_daemon.TaskDispatcher") as MockTD,
             patch.object(daemon, "_initialize_safety_monitor"),
             patch.object(daemon, "save_filter_config"),

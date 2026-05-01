@@ -436,6 +436,12 @@ class TaskDispatcher:
         while not self._stop_event.is_set():
             try:
                 for rt in self._runtimes.values():
+                    # Observing-session and self-tasking both reach into
+                    # the adapter (location service, autofocus, etc.) —
+                    # don't fire them for sensors whose connect hasn't
+                    # completed yet.
+                    if not rt.is_ready:
+                        continue
                     if rt.observing_session_manager:
                         rt.observing_session_manager.update()
                     if rt.self_tasking_manager:
@@ -557,12 +563,24 @@ class TaskDispatcher:
     def task_runner(self) -> None:
         while not self._stop_event.is_set():
             for rt in self._runtimes.values():
-                rt.check_maintenance()
+                # Maintenance managers (autofocus, alignment, homing,
+                # calibration) all touch the hardware adapter; skip them
+                # for sensors whose adapter hasn't connected yet.
+                if rt.is_ready:
+                    rt.check_maintenance()
 
             try:
                 now = int(time.time())
                 completed = 0
                 for sid, rt in self._runtimes.items():
+                    # Skip sensors whose hardware-init pipeline hasn't
+                    # reached ``connected`` yet (still pending /
+                    # connecting / failed / timed_out).  The dispatcher
+                    # registers every runtime up front so per-sensor
+                    # status surfaces, but a runtime without a live
+                    # adapter can't run tasks.
+                    if not rt.is_ready:
+                        continue
                     # Per-runtime safety gate.  Evaluating scope-by-scope
                     # means one sensor's cable unwind (or any other
                     # sensor-scoped QUEUE_STOP/EMERGENCY) only freezes

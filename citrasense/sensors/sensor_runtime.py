@@ -14,12 +14,27 @@ single object.
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Any
+import threading
+from typing import TYPE_CHECKING, Any, Literal
 
 from citrasense.acquisition.acquisition_queue import AcquisitionQueue
 from citrasense.acquisition.processing_queue import ProcessingQueue
 from citrasense.acquisition.upload_queue import UploadQueue
 from citrasense.logging.sensor_logger import get_sensor_logger
+
+#: Lifecycle state of a sensor's hardware-init pipeline.
+#:
+#: - ``pending``: registered with the dispatcher but ``connect()`` has not
+#:   been attempted yet.
+#: - ``connecting``: a worker is currently inside ``connect()`` (or about
+#:   to call it).  Manual reconnect endpoints flip back to this state.
+#: - ``connected``: ``connect()`` returned True.  The dispatcher routes
+#:   tasks here.
+#: - ``failed``: ``connect()`` returned False or raised.  ``init_error``
+#:   carries the operator-visible reason.
+#: - ``timed_out``: the worker future blew its deadline.  The adapter
+#:   thread may still be alive but the daemon has moved on.
+SensorInitState = Literal["pending", "connecting", "connected", "failed", "timed_out"]
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -112,6 +127,26 @@ class SensorRuntime:
         # Per-sensor config (observation, processing tuning, autofocus, etc.)
         self._sensor_config = settings.get_sensor_config(sensor.sensor_id)
 
+        # ── Init-state machine ─────────────────────────────────────────
+        # Lifecycle for the sensor's hardware-init pipeline. Lives on the
+        # runtime (not the sensor) because runtimes are created up front
+        # by the daemon — even before connect() is attempted — so the
+        # dispatcher can register them in ``pending`` and gate routing
+        # until they flip to ``connected``.
+        self._init_state: SensorInitState = "pending"
+        self._init_error: str | None = None
+        self._init_state_lock = threading.Lock()
+        # Optional callback for init-state transitions. Wired by the daemon
+        # so toasts fire from one place regardless of whether the
+        # transition came from startup, manual reconnect, or a future
+        # auto-retry. Signature: ``(state, error_message_or_None)``.
+        self.on_init_state_change: Callable[[SensorInitState, str | None], None] | None = None
+        # The queue trio is started exactly once after the first
+        # successful connect(); reconnects don't re-start the queues
+        # (they're idempotent state machines).
+        self._queues_started = False
+        self._queues_started_lock = threading.Lock()
+
         # ── Queue trio ─────────────────────────────────────────────────
         # Pass the sensor-scoped logger (``self.logger``) so every record
         # emitted by the queues and their downstream pipeline contexts
@@ -191,6 +226,91 @@ class SensorRuntime:
     def set_dispatcher(self, dispatcher: TaskDispatcher) -> None:
         """Wire the parent dispatcher after construction (resolves circular dependency)."""
         self._dispatcher = dispatcher
+
+    # ── Init-state ─────────────────────────────────────────────────────
+
+    @property
+    def init_state(self) -> SensorInitState:
+        """Current hardware-init lifecycle state (thread-safe read)."""
+        with self._init_state_lock:
+            return self._init_state
+
+    @property
+    def init_error(self) -> str | None:
+        """Last init-error message, or ``None`` when healthy (thread-safe read)."""
+        with self._init_state_lock:
+            return self._init_error
+
+    @property
+    def is_ready(self) -> bool:
+        """True when the dispatcher should route tasks here.
+
+        Equivalent to ``init_state == 'connected'``; named to read
+        naturally in dispatcher gates (``if not rt.is_ready: continue``).
+        """
+        return self.init_state == "connected"
+
+    def _set_init_state(self, state: SensorInitState, error: str | None = None) -> None:
+        """Atomically transition init state and fire the on-change callback.
+
+        The callback is invoked **outside** the state lock so listeners
+        (toasts, status broadcasts) can call back into the runtime
+        without risking deadlock.  Errors raised by the callback are
+        logged and swallowed — a flaky toast handler must never break
+        the connect pipeline.
+        """
+        with self._init_state_lock:
+            prev = self._init_state
+            self._init_state = state
+            self._init_error = error if state in ("failed", "timed_out") else None
+        if prev != state:
+            self.logger.debug("init_state: %s -> %s%s", prev, state, f" ({error})" if error else "")
+        cb = self.on_init_state_change
+        if cb is None:
+            return
+        try:
+            cb(state, error)
+        except Exception:
+            self.logger.warning("on_init_state_change callback failed", exc_info=True)
+
+    def mark_connecting(self) -> None:
+        """Flip to ``connecting`` (called by the init worker before ``connect()``)."""
+        self._set_init_state("connecting", None)
+
+    def mark_connected(self) -> None:
+        """Flip to ``connected`` (called by the init worker on success)."""
+        self._set_init_state("connected", None)
+        self._ensure_queues_started()
+
+    def mark_failed(self, error: str) -> None:
+        """Flip to ``failed`` with an operator-visible error string."""
+        self._set_init_state("failed", error)
+
+    def mark_timed_out(self, error: str) -> None:
+        """Flip to ``timed_out`` (the watchdog gave up; adapter thread may still be alive)."""
+        self._set_init_state("timed_out", error)
+
+    def mark_disconnected(self) -> None:
+        """Reset to ``pending`` (called when the operator hits Disconnect)."""
+        self._set_init_state("pending", None)
+
+    def _ensure_queues_started(self) -> None:
+        """Start the queue trio + streaming subscription on first ``connected``.
+
+        Idempotent — every reconnect calls this, but the queues / bus
+        subscription are only spun up once.  Reconnects keep the same
+        worker threads alive, so an in-flight imaging task isn't dropped
+        when the adapter blips.
+        """
+        with self._queues_started_lock:
+            if self._queues_started:
+                return
+            self._queues_started = True
+        self.acquisition_queue.start()
+        self.processing_queue.start()
+        self.upload_queue.start()
+        self._subscribe_streaming()
+        self._start_streaming_sensor()
 
     def attach_calibration_library(self, library: Any) -> None:
         """Bind a CalibrationLibrary to this runtime and its CalibrationProcessor.
@@ -467,11 +587,22 @@ class SensorRuntime:
     # ── Lifecycle ──────────────────────────────────────────────────────
 
     def start(self) -> None:
-        self.acquisition_queue.start()
-        self.processing_queue.start()
-        self.upload_queue.start()
-        self._subscribe_streaming()
-        self._start_streaming_sensor()
+        """Bring the runtime online from the dispatcher.
+
+        Historically this started the queue trio + streaming
+        subscription unconditionally.  Under the parallel/async-init
+        model the dispatcher now starts every runtime up front in
+        ``pending`` state, *before* the per-sensor ``connect()`` worker
+        has run, so we can't blindly start the queues here — the
+        adapter may not be alive yet.  Instead, the queue trio is
+        started lazily by :meth:`mark_connected` (see
+        :meth:`_ensure_queues_started`).  If the sensor is already
+        connected by the time the dispatcher starts (e.g. tests that
+        flip the state synchronously), the call below is the no-op
+        idempotent path.
+        """
+        if self.is_ready:
+            self._ensure_queues_started()
 
     def stop(self) -> None:
         self._stop_streaming_sensor()
@@ -481,6 +612,8 @@ class SensorRuntime:
         if self._streaming_sub:
             self._streaming_sub.unsubscribe()
             self._streaming_sub = None
+        with self._queues_started_lock:
+            self._queues_started = False
 
     def _start_streaming_sensor(self) -> None:
         """Ask a STREAMING sensor to begin publishing to the bus.

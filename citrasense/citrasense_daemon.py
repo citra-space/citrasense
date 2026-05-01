@@ -23,11 +23,14 @@ from citrasense.location import LocationService
 from citrasense.logging import CITRASENSE_LOGGER
 from citrasense.logging._citrasense_logger import setup_file_logging
 from citrasense.pipelines.common.pipeline_registry import PipelineRegistry
-from citrasense.sensors.abstract_sensor import AbstractSensor
 from citrasense.sensors.bus import InProcessBus
+from citrasense.sensors.init_orchestrator import (
+    SensorInitOrchestrator,
+    resolve_canonical_ground_station,
+)
 from citrasense.sensors.preview_bus import PreviewBus
+from citrasense.sensors.runtime_builder import BuildContext, build_for_sensor
 from citrasense.sensors.sensor_manager import SensorManager
-from citrasense.sensors.sensor_runtime import SensorRuntime
 from citrasense.settings.citrasense_settings import CitraSenseSettings
 from citrasense.startup_checks import check_processor_runtime_deps
 from citrasense.tasks.task_dispatcher import TaskDispatcher
@@ -78,6 +81,14 @@ class CitraSenseDaemon:
         self.sensor_manager: SensorManager | None = None
         self._stop_requested = False
         self._shutdown_done = False
+
+        # ── Sensor init pipeline ───────────────────────────────────────
+        # The orchestrator owns the ThreadPoolExecutor + per-sensor
+        # watchdog that fans out ``adapter.connect()`` calls in the
+        # background (issue #339 — a hung adapter on one sensor no
+        # longer wedges every other sensor's startup).  Constructed
+        # in ``_initialize_telescopes`` once the dispatcher exists.
+        self._init_orchestrator: SensorInitOrchestrator | None = None
 
         # Cached list of banner-shape dicts for processor-layer missing
         # deps; populated once per startup in _initialize_components.
@@ -226,6 +237,15 @@ class CitraSenseDaemon:
             old_uploading_tasks = {}
 
             # Cleanup existing resources
+            # Tear the init executor down first so a reload doesn't pile
+            # up zombie connect futures for the previous dispatcher's
+            # runtimes.  ``cancel_futures=True`` only cancels queued
+            # work; in-flight connects keep running on their thread pool
+            # but their results are discarded.
+            if self._init_orchestrator is not None:
+                self._init_orchestrator.shutdown()
+                self._init_orchestrator = None
+
             if self.task_dispatcher:
                 CITRASENSE_LOGGER.info("Stopping existing task manager...")
                 # Capture task metadata before destruction
@@ -362,18 +382,6 @@ class CitraSenseDaemon:
         """Reload configuration from file and reinitialize all components."""
         return self._initialize_components(reload_settings=True)
 
-    def retry_connection(self) -> tuple[bool, str | None]:
-        """Retry hardware connection using current in-memory settings."""
-        CITRASENSE_LOGGER.info("\u2500" * 60)
-        CITRASENSE_LOGGER.info("Hardware reconnect requested")
-        CITRASENSE_LOGGER.info("\u2500" * 60)
-        success, error = self._initialize_components(reload_settings=False)
-        if success:
-            CITRASENSE_LOGGER.info("Hardware reconnect completed successfully")
-        else:
-            CITRASENSE_LOGGER.warning(f"Hardware reconnect failed: {error}")
-        return success, error
-
     def _initialize_telescopes(
         self,
         old_task_dict: dict | None = None,
@@ -381,16 +389,36 @@ class CitraSenseDaemon:
         old_processing_tasks: dict | None = None,
         old_uploading_tasks: dict | None = None,
     ) -> tuple[bool, str | None]:
-        """Initialize all telescope sensors, create TaskDispatcher, and start polling.
+        """Build site-level state, register every runtime in ``pending``, fan out per-sensor connect.
 
-        Args:
-            old_task_dict: Preserved task_dict from previous TaskDispatcher (for config reload)
-            old_imaging_tasks: Preserved imaging_tasks from previous TaskDispatcher (for config reload)
-            old_processing_tasks: Preserved processing_tasks from previous TaskDispatcher (for config reload)
-            old_uploading_tasks: Preserved uploading_tasks from previous TaskDispatcher (for config reload)
+        Site-level orchestration core for parallel/async sensor init
+        (issue #339).  The heavy lifting lives in
+        :class:`citrasense.sensors.init_orchestrator.SensorInitOrchestrator`
+        and the per-modality
+        :class:`citrasense.sensors.runtime_builder.RuntimeBuilder`
+        implementations.  This method is just the glue:
+
+        1. **Synchronous site-level setup** — API auth, safety monitor,
+           TaskDispatcher, duplicate-id check, deterministic
+           ground-station resolution.
+        2. **Synchronous runtime build** — each sensor gets a runtime
+           registered with the dispatcher in ``init_state="pending"``
+           via :func:`build_for_sensor`.  No ``adapter.connect()`` calls
+           happen here.
+        3. **Async connect fan-out** — the orchestrator submits one
+           ``connect()`` per sensor to a thread-pool executor and
+           updates each runtime's ``init_state``
+           (``connected`` / ``failed`` / ``timed_out``) as the futures
+           resolve.  A hung adapter only affects its own sensor.
+        4. **Dispatcher start** — the poll/runner threads run
+           immediately; they gate per-sensor task dispatch on
+           ``runtime.is_ready`` so unconnected sensors are simply
+           skipped until their connect future resolves.
 
         Returns:
-            Tuple of (success, error_message)
+            Tuple of (success, error_message). ``success=True`` means
+            the daemon is ready to operate; individual sensor connects
+            may still be in flight in the background.
         """
         old_task_dict = old_task_dict or {}
         old_imaging_tasks = old_imaging_tasks or {}
@@ -408,7 +436,6 @@ class CitraSenseDaemon:
 
             self._initialize_safety_monitor()
 
-            # Create TaskDispatcher (site-level orchestration)
             self.task_dispatcher = TaskDispatcher(
                 self.api_client,
                 CITRASENSE_LOGGER,
@@ -417,17 +444,14 @@ class CitraSenseDaemon:
                 elset_cache=self.elset_cache,
             )
 
-            # Wire backend→frontend toast notifications
             if self.web_server:
                 self.task_dispatcher.on_toast = self.web_server.send_toast
 
             # Pre-flight: reject duplicate citra_sensor_id across sensors.
             # TaskDispatcher._runtime_for_task resolves API ids by walking
             # the runtimes and returning the *first* match, so two sensors
-            # with the same backend id silently starve one scope — the
-            # scheduler quietly sends every task to whichever registered
-            # first, and the other telescope just sits idle with no error.
-            # Fail fast with a clear message instead.
+            # with the same backend id silently starve one scope.  Fail
+            # fast with a clear message instead.
             dupes = CitraSenseSettings.find_duplicate_citra_sensor_ids(self.settings.sensors)
             if dupes:
                 detail = "; ".join(
@@ -447,42 +471,90 @@ class CitraSenseDaemon:
                     )
                 return False, error_msg
 
-            # Init each telescope sensor
             assert self.sensor_manager is not None
-            for sensor in self.sensor_manager.iter_by_type("telescope"):
-                ok, err = self._init_one_telescope(cast("TelescopeSensor", sensor))
-                if not ok:
-                    return False, err
+            assert self.safety_monitor is not None
 
-            # Init each passive-radar sensor (independent of telescope init —
-            # radar-only sites are valid and telescope failures don't block radar).
-            for radar_sensor in self.sensor_manager.iter_by_type("passive_radar"):
+            # ── Pre-flight: deterministic ground-station resolution ──
+            # Iterate sensors in lexical id order and take the first
+            # one whose API record returns a usable ground station;
+            # divergent groundStationIds across sensors are rejected
+            # here.
+            ok, err, ground_station = resolve_canonical_ground_station(
+                sensor_manager=self.sensor_manager,
+                settings=self.settings,
+                api_client=self.api_client,
+                logger=CITRASENSE_LOGGER,
+                location_service=self.location_service,
+            )
+            if not ok:
+                return False, err
+            self.ground_station = ground_station
+
+            self._init_orchestrator = SensorInitOrchestrator(
+                logger=CITRASENSE_LOGGER,
+                web_server=self.web_server,
+                sensor_manager=self.sensor_manager,
+                settings=self.settings,
+                task_dispatcher=self.task_dispatcher,
+            )
+
+            build_ctx = BuildContext(
+                api_client=self.api_client,
+                task_dispatcher=self.task_dispatcher,
+                safety_monitor=self.safety_monitor,
+                settings=self.settings,
+                location_service=self.location_service,
+                elset_cache=self.elset_cache,
+                apass_catalog=self.apass_catalog,
+                ground_station=self.ground_station,
+                preview_bus=self.preview_bus,
+                task_index=self.task_index,
+                sensor_bus=self.sensor_bus,
+                web_server=self.web_server,
+                on_annotated_image=self._on_annotated_image,
+                save_filter_config=self.save_filter_config,
+                sync_filters_to_backend=self.sync_filters_to_backend,
+                logger=CITRASENSE_LOGGER,
+                init_state_callback_factory=self._init_orchestrator.make_init_state_toast_callback,
+            )
+
+            # ── Build every runtime up front in init_state="pending" ──
+            # Telescopes first (in lexical order so multi-sensor logs
+            # group consistently), then radar, then allsky.
+            sensors_in_build_order: list = []
+            sensors_in_build_order.extend(
+                sorted(self.sensor_manager.iter_by_type("telescope"), key=lambda s: s.sensor_id)
+            )
+            sensors_in_build_order.extend(self.sensor_manager.iter_by_type("passive_radar"))
+            sensors_in_build_order.extend(self.sensor_manager.iter_by_type("allsky"))
+
+            built: list = []
+            for sensor in sensors_in_build_order:
                 try:
-                    self._init_one_radar(radar_sensor)
+                    runtime, builder = build_for_sensor(sensor, build_ctx)
+                    built.append((runtime, builder))
                 except Exception as exc:
+                    # A failure to *build* the runtime (bad config,
+                    # missing SensorConfig) is different from a failed
+                    # adapter.connect(): the runtime can't even be
+                    # registered, so we surface it as a per-sensor
+                    # startup error.  Other sensors still get their
+                    # chance via the loop's continue.
                     CITRASENSE_LOGGER.error(
-                        "Failed to initialize radar sensor %s: %s",
-                        radar_sensor.sensor_id,
+                        "Failed to build runtime for sensor %s: %s",
+                        sensor.sensor_id,
                         exc,
                         exc_info=True,
                     )
+                    if self.web_server:
+                        self.web_server.send_toast(
+                            f"Could not initialize {sensor.sensor_id}: {exc}",
+                            "danger",
+                            f"sensor-init-{sensor.sensor_id}",
+                        )
 
-            # Init each allsky sensor.  Like radar, allsky doesn't go through
-            # the Citra tasks API — its only output today is the live preview
-            # stream.  Register a SensorRuntime regardless so SensorRuntime.start()
-            # invokes start_stream() and the capture loop kicks off.
-            for allsky_sensor in self.sensor_manager.iter_by_type("allsky"):
-                try:
-                    self._init_one_allsky(allsky_sensor)
-                except Exception as exc:
-                    CITRASENSE_LOGGER.error(
-                        "Failed to initialize allsky sensor %s: %s",
-                        allsky_sensor.sensor_id,
-                        exc,
-                        exc_info=True,
-                    )
-
-            # Restore preserved task metadata
+            # Restore preserved task metadata BEFORE starting the dispatcher
+            # so the poll loop sees the same heap shape as before reload.
             if old_task_dict:
                 CITRASENSE_LOGGER.info(f"Restoring {len(old_task_dict)} task(s) from previous TaskDispatcher")
                 self.task_dispatcher.restore_task_dict(old_task_dict)
@@ -496,274 +568,27 @@ class CitraSenseDaemon:
                     f"Dropping {dropped} in-flight processing/uploading task(s) — will be re-queued on next poll"
                 )
 
+            # Dispatcher starts NOW.  Pending sensors are gated out of
+            # task dispatch by ``runtime.is_ready``, so the poll/runner
+            # loops just skip them until the orchestrator's connect
+            # workers flip them to ``connected``.
             self.task_dispatcher.start()
             self._start_retention_timer()
 
-            CITRASENSE_LOGGER.info("All telescope sensors initialized successfully!")
+            # Async fan-out: submit every sensor's connect() to the
+            # orchestrator's executor.  Returns immediately — any
+            # sensor that connects quickly starts taking tasks within
+            # seconds; a hung sensor times out under its own watchdog
+            # without blocking the rest of the site.
+            self._init_orchestrator.fan_out(built)
+
+            CITRASENSE_LOGGER.info("Site initialized; %d sensor(s) connecting in background", len(built))
             return True, None
 
         except Exception as e:
             error_msg = f"Error initializing telescopes: {e!s}"
             CITRASENSE_LOGGER.error(error_msg, exc_info=True)
             return False, error_msg
-
-    def _init_one_telescope(self, telescope_sensor: TelescopeSensor) -> tuple[bool, str | None]:
-        """Initialize a single telescope sensor: API record, connect, runtime, managers."""
-        assert self.api_client is not None
-        adapter = telescope_sensor.adapter
-        sensor_cfg = self.settings.get_sensor_config(telescope_sensor.sensor_id)
-        assert sensor_cfg is not None, f"No SensorConfig for {telescope_sensor.sensor_id}"
-        citra_sensor_id = sensor_cfg.citra_sensor_id
-        CITRASENSE_LOGGER.info(
-            "Initializing telescope sensor %s (API id: %s)", telescope_sensor.sensor_id, citra_sensor_id
-        )
-
-        citra_telescope_record = self.api_client.get_telescope(citra_sensor_id)
-        if not citra_telescope_record:
-            error_msg = f"Sensor ID '{citra_sensor_id}' is not valid on the server."
-            CITRASENSE_LOGGER.error(error_msg)
-            return False, error_msg
-        telescope_sensor.citra_record = citra_telescope_record
-
-        ground_station = self.api_client.get_ground_station(citra_telescope_record["groundStationId"])
-        if not ground_station:
-            error_msg = "Could not get ground station info from the server."
-            CITRASENSE_LOGGER.error(error_msg)
-            return False, error_msg
-
-        # Site-level ground station: every telescope sensor at a CitraSense
-        # site is expected to sit at the same physical observatory, so
-        # treat the first-connected sensor as the canonical site. Reject
-        # subsequent sensors that come up with a different groundStationId
-        # — silently storing divergent values would corrupt location-based
-        # scheduling and visibility checks.
-        if not self.ground_station:
-            self.ground_station = ground_station
-            if self.location_service:
-                self.location_service.set_ground_station(self.ground_station)
-        elif self.ground_station.get("id") != ground_station.get("id"):
-            error_msg = (
-                f"Sensor '{citra_sensor_id}' is registered to ground station "
-                f"{ground_station.get('id')!r} ({ground_station.get('name', '?')}), "
-                f"but the daemon is already serving ground station "
-                f"{self.ground_station.get('id')!r} "
-                f"({self.ground_station.get('name', '?')}). "
-                "Multi-ground-station deployments are not supported — run a "
-                "separate CitraSense daemon per site."
-            )
-            CITRASENSE_LOGGER.error(error_msg)
-            return False, error_msg
-
-        if self.location_service:
-            adapter.set_location_service(self.location_service)
-
-        CITRASENSE_LOGGER.info(f"Connecting to hardware with {type(adapter).__name__}...")
-        if not adapter.connect():
-            error_msg = f"Failed to connect to hardware adapter: {type(adapter).__name__}"
-            CITRASENSE_LOGGER.error(error_msg)
-            return False, error_msg
-
-        adapter.scope_slew_rate_degrees_per_second = citra_telescope_record["maxSlewRate"]
-        adapter.telescope_record = citra_telescope_record
-        adapter.elset_cache = self.elset_cache
-        CITRASENSE_LOGGER.info(f"Hardware connected. Slew rate: {adapter.scope_slew_rate_degrees_per_second} deg/sec")
-
-        if self.location_service:
-            self.location_service.set_hardware_adapter_gps_provider(
-                adapter.get_gps_location, sensor_id=telescope_sensor.sensor_id
-            )
-
-        self.save_filter_config(telescope_sensor)
-        self.sync_filters_to_backend(telescope_sensor)
-
-        adapter_name = type(adapter).__name__
-        slew_rate = adapter.scope_slew_rate_degrees_per_second
-        filter_cfg = adapter.get_filter_config()
-        enabled = sum(1 for f in filter_cfg.values() if f.get("enabled", False)) if filter_cfg else 0
-        gs_name = ground_station.get("name", "?")
-        scope_name = citra_telescope_record.get("name", "?")
-        CITRASENSE_LOGGER.info(
-            f"Hardware ready: adapter={adapter_name}, slew={slew_rate} deg/s, "
-            f"filters={enabled}/{len(filter_cfg)}, "
-            f"station={gs_name}, telescope={scope_name}"
-        )
-
-        if not adapter.is_mount_homed():
-            CITRASENSE_LOGGER.info("Mount is not at home position — home via web UI if GoTo fails")
-
-        # Register telescope-specific safety checks (cable wrap).
-        # Cable-wrap state lives next to the rest of the daemon's data so
-        # custom data directories are honored.
-        data_dir = self.settings.directories.data_dir
-        data_dir.mkdir(parents=True, exist_ok=True)
-        state_file = data_dir / f"cable_wrap_state_{telescope_sensor.sensor_id}.json"
-
-        # Legacy single-telescope state file lived in platformdirs.user_data_dir;
-        # migrate it into the current data_dir the first time we boot.
-        # Two legacy locations exist because earlier versions mixed
-        # ``appauthor="citrasense"`` and the canonical
-        # ``APP_AUTHOR="citra-space"`` from ``citrasense.constants``.
-        import platformdirs
-
-        from citrasense.constants import APP_AUTHOR, APP_NAME
-
-        legacy_candidates = [
-            data_dir / "cable_wrap_state.json",
-            Path(platformdirs.user_data_dir(APP_NAME, appauthor=APP_AUTHOR)) / "cable_wrap_state.json",
-            Path(platformdirs.user_data_dir("citrasense", appauthor="citrasense")) / "cable_wrap_state.json",
-        ]
-        for legacy_state in legacy_candidates:
-            if legacy_state.exists() and not state_file.exists():
-                try:
-                    legacy_state.rename(state_file)
-                except OSError as exc:
-                    CITRASENSE_LOGGER.warning(
-                        "Failed to migrate cable wrap state file %s → %s: %s",
-                        legacy_state,
-                        state_file,
-                        exc,
-                    )
-                else:
-                    CITRASENSE_LOGGER.info("Migrated cable wrap state file → %s", state_file)
-                break
-
-        assert self.safety_monitor is not None
-        telescope_sensor.register_safety_checks(self.safety_monitor, logger=CITRASENSE_LOGGER, state_file=state_file)
-
-        # Create SensorRuntime. Each runtime builds its own PipelineRegistry
-        # (and CalibrationProcessor) so two telescopes don't share a single
-        # processor whose calibration_library gets clobbered on reconnect.
-        telescope_runtime = SensorRuntime(
-            telescope_sensor,
-            logger=CITRASENSE_LOGGER,
-            settings=self.settings,
-            api_client=self.api_client,
-            hardware_adapter=adapter,
-            elset_cache=self.elset_cache,
-            apass_catalog=self.apass_catalog,
-            location_service=self.location_service,
-            telescope_record=citra_telescope_record,
-            ground_station=ground_station,
-            on_annotated_image=lambda path, _sid=telescope_sensor.sensor_id: self._on_annotated_image(path, _sid),
-            preview_bus=self.preview_bus,
-            task_index=self.task_index,
-            safety_monitor=self.safety_monitor,
-            sensor_bus=self.sensor_bus,
-        )
-
-        assert self.task_dispatcher is not None
-        self.task_dispatcher.register_runtime(telescope_runtime)
-
-        if self.web_server and telescope_runtime.autofocus_manager:
-            telescope_runtime.autofocus_manager.on_toast = self.web_server.send_toast
-
-        # Wire session managers
-        from citrasense.sensors.telescope.observing_session import ObservingSessionManager
-        from citrasense.sensors.telescope.self_tasking_manager import SelfTaskingManager
-
-        def _get_location_tuple() -> tuple[float, float] | None:
-            if not self.location_service:
-                return None
-            loc = self.location_service.get_current_location()
-            if loc and loc.get("latitude") is not None and loc.get("longitude") is not None:
-                return loc["latitude"], loc["longitude"]
-            return None
-
-        can_park = adapter.supports_park()
-        alignment_mgr = telescope_runtime.alignment_manager
-        # Use the sensor-scoped runtime logger so ObservingSession /
-        # SelfTasking / Calibration manager records carry ``sensor_id``.
-        rt_logger = telescope_runtime.logger
-        osm = ObservingSessionManager(
-            sensor_config=sensor_cfg,
-            logger=rt_logger,
-            get_location=_get_location_tuple,
-            request_autofocus=telescope_runtime.autofocus_manager.request,
-            is_autofocus_running=telescope_runtime.autofocus_manager.is_running,
-            is_imaging_idle=telescope_runtime.acquisition_queue.is_idle,
-            are_queues_idle=telescope_runtime.are_queues_idle,
-            park_mount=adapter.park_mount if can_park else None,
-            unpark_mount=adapter.unpark_mount if can_park else None,
-            request_pointing_calibration=alignment_mgr.request_calibration,
-            is_pointing_calibration_running=alignment_mgr.is_calibrating,
-        )
-        stm = SelfTaskingManager(
-            api_client=self.api_client,
-            sensor_config=sensor_cfg,
-            logger=rt_logger,
-            ground_station_id=ground_station["id"],
-            sensor_id=citra_telescope_record["id"],
-            get_session_state=lambda osm=osm: osm.state,
-            get_observing_window=lambda osm=osm: osm.observing_window,
-        )
-        telescope_runtime.observing_session_manager = osm
-        telescope_runtime.self_tasking_manager = stm
-
-        # Wire pointing model to AlignmentManager
-        if adapter.pointing_model:
-            telescope_runtime.alignment_manager.set_pointing_model(adapter.pointing_model)
-
-        # Every telescope runtime gets a CalibrationLibrary so the
-        # CalibrationProcessor can apply masters regardless of how they
-        # were captured.  Library ownership lives on the runtime so two
-        # telescopes keep independent masters.  The CalibrationManager
-        # is wired with a :class:`FlatCaptureBackend` matching the
-        # adapter's capability so operators can still trigger flats on
-        # orchestrator adapters (NINA trained-flat wizard); bias/dark
-        # capture continues to require a direct camera.
-        from citrasense.calibration.calibration_library import CalibrationLibrary
-        from citrasense.calibration.flat_capture_backend import (
-            DirectCameraFlatBackend,
-            FlatCaptureBackend,
-        )
-
-        library = CalibrationLibrary(root=self.settings.directories.calibration_dir)
-        telescope_runtime.attach_calibration_library(library)
-
-        flat_backend: FlatCaptureBackend | None = None
-        if adapter.supports_direct_camera_control() and adapter.camera is not None:
-            flat_backend = DirectCameraFlatBackend(adapter.camera)
-        elif adapter.supports_flat_automation():
-            try:
-                from citrasense.calibration.nina_trained_flat_backend import NinaTrainedFlatBackend
-
-                flat_backend = NinaTrainedFlatBackend(adapter)  # type: ignore[arg-type]
-            except Exception as e:
-                CITRASENSE_LOGGER.warning(
-                    "Could not wire NinaTrainedFlatBackend for %s: %s",
-                    telescope_sensor.sensor_id,
-                    e,
-                )
-
-        needs_manager = (
-            adapter.supports_direct_camera_control() and adapter.camera is not None
-        ) or flat_backend is not None
-        if needs_manager:
-            from citrasense.sensors.telescope.managers.calibration_manager import CalibrationManager
-
-            loc_svc = getattr(self, "location_service", None)
-
-            def _loc_provider() -> dict[str, float] | None:
-                if loc_svc is None:
-                    return None
-                try:
-                    return loc_svc.get_current_location()
-                except Exception:
-                    return None
-
-            telescope_runtime.calibration_manager = CalibrationManager(
-                rt_logger,
-                adapter,
-                library,
-                imaging_queue=telescope_runtime.acquisition_queue,
-                flat_backend=flat_backend,
-                settings=self.settings,
-                sensor_id=telescope_sensor.sensor_id,
-                location_provider=_loc_provider,
-            )
-
-        CITRASENSE_LOGGER.info(f"Telescope sensor {telescope_sensor.sensor_id} initialized successfully!")
-        return True, None
 
     def _start_retention_timer(self) -> None:
         """Run retention cleanup once, then schedule the next run in 1 hour."""
@@ -780,101 +605,22 @@ class CitraSenseDaemon:
         self._retention_timer.daemon = True
         self._retention_timer.start()
 
-    def _init_one_radar(self, radar_sensor: AbstractSensor) -> None:
-        """Initialize a single passive-radar sensor: connect, build runtime, start queues.
+    def request_sensor_reconnect(self, sensor_id: str) -> tuple[bool, str | None]:
+        """Thin facade over :meth:`SensorInitOrchestrator.request_reconnect`.
 
-        Unlike telescope sensors, radar doesn't talk to the Citra tasks
-        API — there's no ``citra_record`` to fetch, no ground station
-        lookup.  The sensor-side ``citra_antenna_id`` is the only
-        backend identifier, and it's already loaded from the config.
+        Kept on the daemon so the FastAPI route handlers can keep
+        calling ``ctx.daemon.request_sensor_reconnect(...)`` — the web
+        layer stays oblivious to the orchestrator object's lifecycle.
         """
-        from citrasense.sensors.radar.passive_radar_sensor import PassiveRadarSensor
+        if self._init_orchestrator is None:
+            return False, "Daemon not initialized"
+        return self._init_orchestrator.request_reconnect(sensor_id)
 
-        assert isinstance(radar_sensor, PassiveRadarSensor)
-        assert self.task_dispatcher is not None
-        assert self.sensor_bus is not None
-
-        CITRASENSE_LOGGER.info("Initializing radar sensor %s", radar_sensor.sensor_id)
-
-        # Wire toast callback so staleness / error / announce events
-        # reach the operator.  Best-effort — a missing web server is
-        # fine (headless testing).
-        if self.web_server:
-            radar_sensor.on_toast = self.web_server.send_toast
-            # Live-broadcast every detection to browser clients via the
-            # web loop.  ``send_radar_detection`` is a thread-safe
-            # bridge (``run_coroutine_threadsafe``); the NATS asyncio
-            # thread never awaits here.
-            radar_sensor.on_detection_broadcast = self.web_server.send_radar_detection
-
-        try:
-            ok = radar_sensor.connect()
-        except Exception as exc:
-            CITRASENSE_LOGGER.error("Radar sensor %s connect() raised: %s", radar_sensor.sensor_id, exc, exc_info=True)
-            ok = False
-
-        runtime = SensorRuntime(
-            radar_sensor,
-            logger=CITRASENSE_LOGGER,
-            settings=self.settings,
-            api_client=self.api_client,
-            hardware_adapter=None,
-            ground_station=self.ground_station,
-            task_index=self.task_index,
-            safety_monitor=self.safety_monitor,
-            sensor_bus=self.sensor_bus,
-        )
-
-        self.task_dispatcher.register_runtime(runtime)
-
-        # ``SensorRuntime.start()`` will call ``start_stream`` once the
-        # dispatcher starts runtimes.  A later reconnect from inside
-        # NatsDetectionSource will start delivering events as soon as
-        # pr_sensor comes up, even if this initial connect() failed.
-
-        CITRASENSE_LOGGER.info("Radar sensor %s registered (connected=%s)", radar_sensor.sensor_id, ok)
-
-    def _init_one_allsky(self, allsky_sensor: AbstractSensor) -> None:
-        """Initialize a single allsky sensor: wire preview bus, connect, register runtime.
-
-        The capture loop starts inside ``SensorRuntime.start()`` →
-        ``start_stream()`` once the dispatcher boots all runtimes, matching
-        the radar lifecycle.  No Citra API record, no ground-station lookup.
-        """
-        from citrasense.sensors.allsky.allsky_camera_sensor import AllskyCameraSensor
-
-        assert isinstance(allsky_sensor, AllskyCameraSensor)
-        assert self.task_dispatcher is not None
-        assert self.sensor_bus is not None
-
-        CITRASENSE_LOGGER.info("Initializing allsky sensor %s", allsky_sensor.sensor_id)
-
-        allsky_sensor.preview_bus = self.preview_bus
-
-        try:
-            ok = allsky_sensor.connect()
-        except Exception as exc:
-            CITRASENSE_LOGGER.error(
-                "Allsky sensor %s connect() raised: %s", allsky_sensor.sensor_id, exc, exc_info=True
-            )
-            ok = False
-
-        runtime = SensorRuntime(
-            allsky_sensor,
-            logger=CITRASENSE_LOGGER,
-            settings=self.settings,
-            api_client=self.api_client,
-            hardware_adapter=None,
-            ground_station=self.ground_station,
-            preview_bus=self.preview_bus,
-            task_index=self.task_index,
-            safety_monitor=self.safety_monitor,
-            sensor_bus=self.sensor_bus,
-        )
-
-        self.task_dispatcher.register_runtime(runtime)
-
-        CITRASENSE_LOGGER.info("Allsky sensor %s registered (connected=%s)", allsky_sensor.sensor_id, ok)
+    def request_sensor_disconnect(self, sensor_id: str) -> tuple[bool, str | None]:
+        """Thin facade over :meth:`SensorInitOrchestrator.request_disconnect`."""
+        if self._init_orchestrator is None:
+            return False, "Daemon not initialized"
+        return self._init_orchestrator.request_disconnect(sensor_id)
 
     def _initialize_safety_monitor(self) -> None:
         """Create SafetyMonitor with site-level checks and wire to hardware.
@@ -1108,6 +854,13 @@ class CitraSenseDaemon:
         self._stop_requested = True
         if self._retention_timer:
             self._retention_timer.cancel()
+
+        # 0b. Tear down the sensor-init executor.  Daemon threads in the
+        # pool die with the process anyway, but explicitly shutting it
+        # down stops new reconnect submissions from the web layer (e.g.
+        # if a request lands during shutdown).
+        if self._init_orchestrator is not None:
+            self._init_orchestrator.shutdown()
 
         # 1. Stop sources of new motion
         if self.task_dispatcher:

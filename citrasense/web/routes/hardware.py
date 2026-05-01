@@ -109,26 +109,6 @@ def build_hardware_router(ctx: CitraSenseWebApp) -> APIRouter:
         """Get configuration schema for a specific hardware adapter."""
         return await _fetch_adapter_schema(adapter_name, current_settings)
 
-    @router.post("/hardware/reconnect")
-    async def reconnect_hardware():
-        """Retry hardware connection using current in-memory settings."""
-        if not ctx.daemon:
-            return JSONResponse({"error": "Daemon not available"}, status_code=503)
-        if not ctx.daemon.settings.is_configured():
-            return JSONResponse(
-                {"error": "Configuration incomplete — configure hardware adapter first"},
-                status_code=400,
-            )
-
-        success, error = await asyncio.to_thread(ctx.daemon.retry_connection)
-
-        if success:
-            return {"status": "success", "message": "Hardware reconnected successfully"}
-        return JSONResponse(
-            {"status": "error", "message": f"Reconnect failed: {error}", "error": error},
-            status_code=500,
-        )
-
     @router.post("/hardware/scan")
     async def scan_hardware(body: dict[str, Any]):
         """Clear hardware probe caches and return a fresh adapter schema.

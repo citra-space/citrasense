@@ -178,14 +178,15 @@ import { analysisTab } from './analysis.js';
             // Autofocus target presets (loaded from API)
             autofocusPresets: [],
 
-            // Loading states for async operations.  ``isSavingConfig``,
-            // ``isScanning``, and ``isReconnecting`` are intrinsically
-            // site-wide.  Per-sensor "is X happening" state lives in the
-            // maps below so one sensor's Snap/Save/Loop/Autofocus doesn't
-            // flip the same button on a different sensor's card.
+            // Loading states for async operations.  ``isSavingConfig``
+            // and ``isScanning`` are intrinsically site-wide.  Per-sensor
+            // "is X happening" state lives in the maps below so one
+            // sensor's Snap/Save/Loop/Autofocus doesn't flip the same
+            // button on a different sensor's card.  Per-sensor reconnect
+            // state lives on ``sensor.init_state`` (status feed), not a
+            // store flag.
             isSavingConfig: false,
             isScanning: false,
-            isReconnecting: false,
             captureResult: null,
 
             // Which sensor's focus loop is currently running (only one at a

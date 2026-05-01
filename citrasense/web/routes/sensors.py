@@ -73,35 +73,73 @@ def build_sensors_router(ctx: CitraSenseWebApp) -> APIRouter:
 
     @router.post("/api/sensors/{sensor_id}/connect")
     async def connect_sensor(sensor_id: str):
-        """Connect a sensor's hardware adapter."""
-        if not ctx.daemon or not ctx.daemon.sensor_manager:
-            return JSONResponse({"error": "Sensor manager not available"}, status_code=503)
-        sensor = ctx.daemon.sensor_manager.get_sensor(sensor_id)
-        if sensor is None:
-            return JSONResponse({"error": f"Unknown sensor: {sensor_id}"}, status_code=404)
-        try:
-            ok = sensor.connect()
-            if ok:
-                return {"success": True, "message": f"Sensor {sensor_id} connected"}
-            return JSONResponse({"error": "Connection failed"}, status_code=500)
-        except Exception as e:
-            CITRASENSE_LOGGER.error("Sensor %s connect error: %s", sensor_id, e, exc_info=True)
-            return JSONResponse({"error": str(e)}, status_code=500)
+        """Queue a sensor's hardware ``connect()`` on the async init worker.
+
+        Returns ``202 Accepted`` immediately — the operator watches the
+        toast / monitoring badge for the result.  This shape stops a
+        hung adapter from blocking the HTTP request itself, which is
+        the core of issue #339.
+        """
+        if not ctx.daemon:
+            return JSONResponse({"error": "Daemon not available"}, status_code=503)
+        ok, err = ctx.daemon.request_sensor_reconnect(sensor_id)
+        if not ok:
+            # ``Unknown sensor`` -> 404; in-flight reconnect -> 409;
+            # any other diagnostic message stays at 400.
+            if err and err.startswith("Unknown sensor"):
+                return JSONResponse({"error": err}, status_code=404)
+            if err and "already in flight" in err:
+                return JSONResponse({"error": err}, status_code=409)
+            return JSONResponse({"error": err or "Could not queue connect"}, status_code=400)
+        return JSONResponse(
+            {
+                "success": True,
+                "message": f"Sensor {sensor_id} connect queued",
+                "init_state": "connecting",
+            },
+            status_code=202,
+        )
+
+    @router.post("/api/sensors/{sensor_id}/reconnect")
+    async def reconnect_sensor(sensor_id: str):
+        """Queue a per-sensor disconnect + connect cycle on the async init worker.
+
+        Same shape as ``/connect`` — returns ``202`` and lets the toast
+        / status badge carry the result.  ``request_sensor_reconnect``
+        runs the disconnect inline (cheap) and submits the connect to
+        the executor with the per-sensor watchdog timeout, so a hung
+        adapter blows the deadline cleanly without blocking the
+        request.
+        """
+        if not ctx.daemon:
+            return JSONResponse({"error": "Daemon not available"}, status_code=503)
+        ok, err = ctx.daemon.request_sensor_reconnect(sensor_id)
+        if not ok:
+            if err and err.startswith("Unknown sensor"):
+                return JSONResponse({"error": err}, status_code=404)
+            if err and "already in flight" in err:
+                return JSONResponse({"error": err}, status_code=409)
+            return JSONResponse({"error": err or "Could not queue reconnect"}, status_code=400)
+        return JSONResponse(
+            {
+                "success": True,
+                "message": f"Sensor {sensor_id} reconnect queued",
+                "init_state": "connecting",
+            },
+            status_code=202,
+        )
 
     @router.post("/api/sensors/{sensor_id}/disconnect")
     async def disconnect_sensor(sensor_id: str):
-        """Disconnect a sensor's hardware adapter."""
-        if not ctx.daemon or not ctx.daemon.sensor_manager:
-            return JSONResponse({"error": "Sensor manager not available"}, status_code=503)
-        sensor = ctx.daemon.sensor_manager.get_sensor(sensor_id)
-        if sensor is None:
-            return JSONResponse({"error": f"Unknown sensor: {sensor_id}"}, status_code=404)
-        try:
-            sensor.disconnect()
-            return {"success": True, "message": f"Sensor {sensor_id} disconnected"}
-        except Exception as e:
-            CITRASENSE_LOGGER.error("Sensor %s disconnect error: %s", sensor_id, e, exc_info=True)
-            return JSONResponse({"error": str(e)}, status_code=500)
+        """Disconnect a sensor's hardware adapter and reset its init_state."""
+        if not ctx.daemon:
+            return JSONResponse({"error": "Daemon not available"}, status_code=503)
+        ok, err = ctx.daemon.request_sensor_disconnect(sensor_id)
+        if not ok:
+            if err and err.startswith("Unknown sensor"):
+                return JSONResponse({"error": err}, status_code=404)
+            return JSONResponse({"error": err or "Disconnect failed"}, status_code=500)
+        return {"success": True, "message": f"Sensor {sensor_id} disconnected"}
 
     # ── Sensor-type discovery (registry metadata, class-level schema) ─
 

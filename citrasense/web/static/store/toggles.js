@@ -84,21 +84,29 @@ export const toggleMethods = {
         }
     },
 
-    async reconnectHardware() {
-        if (this.isReconnecting) return;
-        this.isReconnecting = true;
+    async reconnectSensor(sensorId) {
+        // Per-sensor disconnect+connect cycle.  The HTTP request returns
+        // 202 immediately — the actual reconnect runs on the daemon's
+        // async init worker and the green/red toast on completion comes
+        // through the websocket toast channel via the runtime's
+        // ``on_init_state_change`` callback.  No client-side spinner
+        // here beyond what the per-sensor card already shows from
+        // ``sensor.init_state === 'connecting'``.
+        if (!sensorId) {
+            console.error('reconnectSensor called without sensorId');
+            showToast('Cannot reconnect: missing sensor_id', 'danger');
+            return;
+        }
         try {
-            const result = await api.reconnectHardware();
-            if (result.ok) {
-                showToast('Hardware reconnected successfully', 'success');
-            } else {
-                showToast(result.data?.error || 'Reconnect failed', 'danger');
+            const result = await api.reconnectSensor(sensorId);
+            if (!result.ok && result.status !== 409) {
+                // 409 means a reconnect is already in flight; don't toast
+                // an error since the existing one will resolve normally.
+                showToast(result.error || `Reconnect failed for ${sensorId}`, 'danger');
             }
         } catch (error) {
             console.error('Reconnect error:', error);
-            showToast('Reconnect failed: ' + error.message, 'danger');
-        } finally {
-            this.isReconnecting = false;
+            showToast(`Reconnect failed for ${sensorId}: ${error.message}`, 'danger');
         }
     },
 };

@@ -68,6 +68,33 @@
                          style="user-select: none;">
                         <span class="fw-semibold" x-text="sensor.name"></span>
                         <span class="badge bg-secondary rounded-pill" x-text="sensor.type"></span>
+                        {# Init-state badge: only shown for non-connected
+                           states so a healthy sensor stays uncluttered.
+                           ``init_state`` is wired up in StatusCollector
+                           from each runtime's lifecycle state machine. #}
+                        <template x-if="sensor.init_state && sensor.init_state !== 'connected'">
+                            <span class="badge rounded-pill"
+                                  :class="{
+                                    'bg-secondary': sensor.init_state === 'pending',
+                                    'bg-info text-dark': sensor.init_state === 'connecting',
+                                    'bg-danger': sensor.init_state === 'failed' || sensor.init_state === 'timed_out',
+                                  }"
+                                  data-bs-toggle="tooltip" data-bs-theme="dark"
+                                  :data-bs-title="sensor.init_error || sensor.init_state">
+                                <i class="bi"
+                                   :class="{
+                                     'bi-hourglass': sensor.init_state === 'pending',
+                                     'bi-arrow-repeat spin': sensor.init_state === 'connecting',
+                                     'bi-exclamation-triangle-fill': sensor.init_state === 'failed' || sensor.init_state === 'timed_out',
+                                   }"></i>
+                                <span x-text="{
+                                    'pending': 'Pending',
+                                    'connecting': 'Connecting…',
+                                    'failed': 'Connect failed',
+                                    'timed_out': 'Connect timed out',
+                                  }[sensor.init_state] || sensor.init_state"></span>
+                            </span>
+                        </template>
                         <template x-if="sensor.type === 'telescope'">
                             <span class="d-flex align-items-center gap-2 flex-wrap">
                                 {% include "_telescope_hardware_pills.html" %}
@@ -83,20 +110,36 @@
                                 {% include "_allsky_hardware_pills.html" %}
                             </span>
                         </template>
-                        {# Explicit "Open" link.  Anchor with a real href so
-                           right-click-copy-link yields a clean URL and
-                           Cmd/Ctrl/middle-click opens the detail page in
-                           a new tab.  ``navigateOnClick`` calls
-                           preventDefault only on plain left-clicks so
-                           modifier clicks fall through to the browser's
-                           native "open in new tab" behavior. #}
-                        <a :href="'/sensors/' + encodeURIComponent(sensor.id)"
-                           class="btn btn-sm btn-outline-light ms-auto"
-                           @click="$store.citrasense.navigateOnClick($event, '/sensors/' + encodeURIComponent(sensor.id))"
-                           data-bs-toggle="tooltip" data-bs-theme="dark"
-                           title="Open detail page for this sensor">
-                            Open <i class="bi bi-arrow-right"></i>
-                        </a>
+                        <div class="ms-auto d-flex align-items-center gap-1">
+                            {# Per-sensor Reconnect button.  Hits the
+                               async init worker so a hung adapter
+                               never blocks the HTTP request — the toast
+                               + init_state badge above carry the result. #}
+                            <button type="button"
+                                    class="btn btn-sm btn-outline-light"
+                                    :disabled="sensor.init_state === 'connecting'"
+                                    @click.stop="$store.citrasense.reconnectSensor(sensor.id)"
+                                    data-bs-toggle="tooltip" data-bs-theme="dark"
+                                    :title="sensor.init_state === 'connecting' ? 'Already connecting…' : 'Disconnect + reconnect this sensor'">
+                                <i class="bi"
+                                   :class="sensor.init_state === 'connecting' ? 'bi-arrow-repeat spin' : 'bi-arrow-repeat'"></i>
+                                Reconnect
+                            </button>
+                            {# Explicit "Open" link.  Anchor with a real href so
+                               right-click-copy-link yields a clean URL and
+                               Cmd/Ctrl/middle-click opens the detail page in
+                               a new tab.  ``navigateOnClick`` calls
+                               preventDefault only on plain left-clicks so
+                               modifier clicks fall through to the browser's
+                               native "open in new tab" behavior. #}
+                            <a :href="'/sensors/' + encodeURIComponent(sensor.id)"
+                               class="btn btn-sm btn-outline-light"
+                               @click="$store.citrasense.navigateOnClick($event, '/sensors/' + encodeURIComponent(sensor.id))"
+                               data-bs-toggle="tooltip" data-bs-theme="dark"
+                               title="Open detail page for this sensor">
+                                Open <i class="bi bi-arrow-right"></i>
+                            </a>
+                        </div>
                     </div>
                     <div class="card-body">
                         <template x-if="sensor.type === 'telescope'">

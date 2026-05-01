@@ -108,8 +108,16 @@ export async function getAdapterSchema(adapterName, settingsParam = '') {
     return r.data;
 }
 
-export async function reconnectHardware() {
-    return post('/api/hardware/reconnect');
+export async function reconnectSensor(sensorId) {
+    return post(sensorUrl(sensorId, '/reconnect'));
+}
+
+export async function connectSensor(sensorId) {
+    return post(sensorUrl(sensorId, '/connect'));
+}
+
+export async function disconnectSensor(sensorId) {
+    return post(sensorUrl(sensorId, '/disconnect'));
 }
 
 export async function scanHardware(adapterName, currentSettings = {}) {

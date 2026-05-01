@@ -36,14 +36,6 @@
             <i class="bi" :class="$store.citrasense.isScanning ? 'bi-arrow-repeat spin' : 'bi-search'"></i>
             <span x-text="$store.citrasense.isScanning ? 'Scanning...' : 'Scan Hardware'"></span>
         </button>
-        <button type="button" class="btn btn-sm btn-outline-secondary"
-                :disabled="$store.citrasense.isReconnecting || $store.citrasense.isSavingConfig"
-                @click="$store.citrasense.reconnectHardware()"
-                data-bs-toggle="tooltip" data-bs-theme="dark" data-bs-placement="bottom"
-                title="Reinitialize hardware and services (may briefly pause active tasks)">
-            <i class="bi" :class="$store.citrasense.isReconnecting ? 'bi-arrow-repeat spin' : 'bi-arrow-repeat'"></i>
-            <span x-text="$store.citrasense.isReconnecting ? 'Reconnecting...' : 'Reconnect'"></span>
-        </button>
     </div>
 </div>
 
