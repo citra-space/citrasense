@@ -460,6 +460,68 @@ def test_site_reconnect_endpoint_removed(client):
     assert resp.status_code in (404, 405)
 
 
+# Per-sensor connect: distinct from /reconnect — must NOT bounce a healthy
+# connection.  The orchestrator returns ("already connected") when the
+# runtime is in connected state; the route maps that to a 200 noop so
+# scripts hitting /connect against a healthy sensor don't kick off work.
+def test_per_sensor_connect_already_connected_is_noop(client, mock_daemon):
+    mock_daemon.request_sensor_connect.return_value = (True, "already connected")
+    resp = client.post("/api/sensors/scope-a/connect")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["init_state"] == "connected"
+    mock_daemon.request_sensor_connect.assert_called_once_with("scope-a")
+    # The connect-or-noop route must never reach the reconnect facade —
+    # otherwise an idempotent /connect would silently bounce the adapter.
+    mock_daemon.request_sensor_reconnect.assert_not_called()
+
+
+def test_per_sensor_connect_queued_when_disconnected(client, mock_daemon):
+    mock_daemon.request_sensor_connect.return_value = (True, None)
+    resp = client.post("/api/sensors/scope-a/connect")
+    assert resp.status_code == 202
+    body = resp.json()
+    assert body["init_state"] == "connecting"
+    mock_daemon.request_sensor_connect.assert_called_once_with("scope-a")
+
+
+def test_per_sensor_connect_unknown_sensor(client, mock_daemon):
+    mock_daemon.request_sensor_connect.return_value = (False, "Unknown sensor: ghost")
+    resp = client.post("/api/sensors/ghost/connect")
+    assert resp.status_code == 404
+
+
+def test_per_sensor_connect_already_in_flight(client, mock_daemon):
+    mock_daemon.request_sensor_connect.return_value = (
+        False,
+        "Connect already in flight for scope-a",
+    )
+    resp = client.post("/api/sensors/scope-a/connect")
+    assert resp.status_code == 409
+
+
+# 503 mapping: the daemon facade returns "Daemon not initialized" when
+# `_init_orchestrator is None` (early startup / mid-reload).  All three
+# of connect/reconnect/disconnect must surface that as 503, not 500 —
+# the latter looks like a server crash to operators and monitoring.
+def test_per_sensor_disconnect_returns_503_when_orchestrator_missing(client, mock_daemon):
+    mock_daemon.request_sensor_disconnect.return_value = (False, "Daemon not initialized")
+    resp = client.post("/api/sensors/scope-a/disconnect")
+    assert resp.status_code == 503
+
+
+def test_per_sensor_connect_returns_503_when_orchestrator_missing(client, mock_daemon):
+    mock_daemon.request_sensor_connect.return_value = (False, "Daemon not initialized")
+    resp = client.post("/api/sensors/scope-a/connect")
+    assert resp.status_code == 503
+
+
+def test_per_sensor_reconnect_returns_503_when_orchestrator_missing(client, mock_daemon):
+    mock_daemon.request_sensor_reconnect.return_value = (False, "Daemon not initialized")
+    resp = client.post("/api/sensors/scope-a/reconnect")
+    assert resp.status_code == 503
+
+
 # ---------------------------------------------------------------------------
 # Status
 # ---------------------------------------------------------------------------

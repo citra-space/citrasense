@@ -605,6 +605,18 @@ class CitraSenseDaemon:
         self._retention_timer.daemon = True
         self._retention_timer.start()
 
+    def request_sensor_connect(self, sensor_id: str) -> tuple[bool, str | None]:
+        """Thin facade over :meth:`SensorInitOrchestrator.request_connect`.
+
+        Connect-or-noop: returns ``(True, "already connected")`` when
+        the sensor is already up, otherwise queues a ``connect()`` on
+        the async init worker and returns ``(True, None)``.  Used by
+        ``POST /api/sensors/{id}/connect``.
+        """
+        if self._init_orchestrator is None:
+            return False, "Daemon not initialized"
+        return self._init_orchestrator.request_connect(sensor_id)
+
     def request_sensor_reconnect(self, sensor_id: str) -> tuple[bool, str | None]:
         """Thin facade over :meth:`SensorInitOrchestrator.request_reconnect`.
 

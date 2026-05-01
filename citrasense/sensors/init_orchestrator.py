@@ -167,6 +167,21 @@ class SensorInitOrchestrator:
         self._futures_lock = threading.Lock()
         self._init_thread: threading.Thread | None = None
 
+        # Sensors with a ``request_reconnect`` in mid-disconnect (lock
+        # released so other sensors aren't starved by a USB hang).  Acts
+        # as a reservation so a concurrent reconnect/connect on the same
+        # sensor still gets the in-flight rejection.  Always read /
+        # mutated under ``_futures_lock``.
+        self._reconnects_in_progress: set[str] = set()
+
+        # Set during :meth:`shutdown` to prevent in-flight
+        # ``_run_sensor_init`` workers from resurrecting torn-down
+        # runtimes (e.g., calling ``mark_connected`` after the
+        # dispatcher has already stopped them during a daemon
+        # reload).  Cleared in :meth:`fan_out` so a fresh boot cycle
+        # works after a reload.
+        self._shutdown_event = threading.Event()
+
         # ``RuntimeBuilder`` instances keyed by sensor_id.  Populated by
         # :meth:`fan_out`; reconnect lookups re-use them so the same
         # builder runs both the initial connect and any later
@@ -241,6 +256,12 @@ class SensorInitOrchestrator:
         executor is shut down before each ``_initialize_components``
         cycle.
 
+        Clears the shutdown event so a fresh boot cycle after a
+        :meth:`shutdown` (e.g., reload) can run normally.  Without the
+        clear, every worker submitted on the new executor would
+        immediately bail out at the shutdown gate inside
+        :meth:`_run_sensor_init`.
+
         Returns immediately; the per-sensor connects keep running on
         the executor's worker threads.  Spawns a daemon orchestrator
         thread that joins on each future just to log when the fan-out
@@ -249,6 +270,8 @@ class SensorInitOrchestrator:
         if not pairs:
             self.logger.info("No sensor runtimes registered; skipping connect fan-out")
             return
+
+        self._shutdown_event.clear()
 
         # Cap the pool: per-sensor parallelism above ~8 doesn't help
         # since most sensors block on serial / USB / HTTP I/O, and each
@@ -299,11 +322,21 @@ class SensorInitOrchestrator:
     def shutdown(self) -> None:
         """Tear down the executor.  Idempotent.
 
+        Sets ``_shutdown_event`` *before* tearing down the executor
+        so any in-flight ``_run_sensor_init`` worker that's currently
+        between checkpoints will see the flag and bail out before
+        calling ``mark_connected`` on a runtime the dispatcher is
+        about to stop.  Without this gate, a slow connect that
+        finished after :meth:`TaskDispatcher.stop` would resurrect
+        queues / streams on a torn-down runtime during a daemon reload.
+
         ``cancel_futures=True`` only cancels queued work; in-flight
         connects keep running on their worker threads but their results
-        are discarded.  Daemon threads in the pool die with the
+        are discarded by the shutdown-gate checkpoints inside
+        ``_run_sensor_init``.  Daemon threads in the pool die with the
         process anyway.
         """
+        self._shutdown_event.set()
         if self._executor is not None:
             self._executor.shutdown(wait=False, cancel_futures=True)
             self._executor = None
@@ -311,6 +344,45 @@ class SensorInitOrchestrator:
             self._futures.clear()
 
     # ── Per-sensor connect/disconnect API (web layer entry points) ───
+
+    def request_connect(self, sensor_id: str) -> tuple[bool, str | None]:
+        """Connect-or-noop: queue ``connect()`` only if not already connected.
+
+        Distinct from :meth:`request_reconnect`: this does **not**
+        run a pre-disconnect, so calling it on a healthy sensor is a
+        cheap no-op rather than a destructive bounce.  Returns:
+
+        * ``(True, "already connected")`` if the runtime is already
+          ``connected`` — the route layer maps this to a 200 noop.
+        * ``(True, None)`` after a connect future is queued — route
+          maps to 202 Accepted.
+        * ``(False, msg)`` for the usual rejection cases (unknown
+          sensor, no builder, in-flight init).
+        """
+        runtime = self.task_dispatcher.get_runtime(sensor_id)
+        if runtime is None:
+            return False, f"Unknown sensor: {sensor_id}"
+        builder = self._builders.get(sensor_id)
+        if builder is None:
+            return False, f"No runtime builder registered for {sensor_id}"
+
+        # Healthy-already short-circuit. ``is_ready`` reads through a
+        # lock on the runtime; we only consult it after we know the
+        # runtime exists.
+        if runtime.is_ready:
+            return True, "already connected"
+
+        with self._futures_lock:
+            existing = self._futures.get(sensor_id)
+            if existing is not None and not existing.done():
+                return False, f"Connect already in flight for {sensor_id}"
+            if sensor_id in self._reconnects_in_progress:
+                return False, f"Connect already in flight for {sensor_id}"
+            if self._executor is None:
+                self._executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="sensor-init")
+            fut = self._executor.submit(self._run_sensor_init, runtime, builder)
+            self._futures[sensor_id] = fut
+        return True, None
 
     def request_reconnect(self, sensor_id: str) -> tuple[bool, str | None]:
         """Submit a per-sensor reconnect to the same async init worker.
@@ -321,6 +393,14 @@ class SensorInitOrchestrator:
         ``(False, msg)`` when the reconnect can't be queued (sensor
         unknown, no builder registered, or another reconnect already
         in flight).
+
+        Concurrency note: the pre-reconnect ``runtime.sensor.disconnect()``
+        runs **outside** ``_futures_lock`` so a hung disconnect on one
+        sensor (USB driver deadlock, e.g.) doesn't starve unrelated
+        reconnect requests.  Concurrent reconnect/connect requests
+        for *this* sensor are still rejected via the
+        ``_reconnects_in_progress`` reservation set, which is read
+        and mutated only under the lock.
         """
         runtime = self.task_dispatcher.get_runtime(sensor_id)
         if runtime is None:
@@ -329,29 +409,41 @@ class SensorInitOrchestrator:
         if builder is None:
             return False, f"No runtime builder registered for {sensor_id}"
 
+        # Reservation phase: claim the sensor under the shared lock so
+        # nobody else (request_connect / another request_reconnect) can
+        # interleave a disconnect+submit with ours.  We deliberately do
+        # NOT call any sensor / runtime method here — anything that can
+        # block must wait for the lock-released phase below.
         with self._futures_lock:
             existing = self._futures.get(sensor_id)
             if existing is not None and not existing.done():
                 return False, f"Reconnect already in flight for {sensor_id}"
-
+            if sensor_id in self._reconnects_in_progress:
+                return False, f"Reconnect already in flight for {sensor_id}"
+            self._reconnects_in_progress.add(sensor_id)
             if self._executor is None:
                 # No live executor (rare: someone hit reconnect before
                 # fan_out finished, or after shutdown).  Spin one up
                 # just for this reconnect.
                 self._executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="sensor-init")
+            executor = self._executor
 
-            # Best-effort disconnect first so the reconnect picks up a
-            # fresh adapter state.  Ignore errors — we're about to
-            # connect anyway, and a stale adapter that won't disconnect
-            # cleanly will surface in the connect step.
+        # Lock-released phase: do the slow stuff (disconnect can hang
+        # for seconds on a stuck USB driver).  Other sensors' reconnect
+        # requests proceed normally during this window.
+        try:
             try:
                 runtime.sensor.disconnect()
             except Exception:
                 self.logger.debug("Pre-reconnect disconnect of %s raised", sensor_id, exc_info=True)
             runtime.mark_disconnected()
 
-            fut = self._executor.submit(self._run_sensor_init, runtime, builder)
-            self._futures[sensor_id] = fut
+            with self._futures_lock:
+                fut = executor.submit(self._run_sensor_init, runtime, builder)
+                self._futures[sensor_id] = fut
+        finally:
+            with self._futures_lock:
+                self._reconnects_in_progress.discard(sensor_id)
 
         return True, None
 
@@ -394,11 +486,24 @@ class SensorInitOrchestrator:
         post-connect-wiring step (filter discovery, calibration manager
         wiring) doesn't crash the worker pool.  The error is captured
         on the runtime instead.
+
+        Shutdown gating: ``shutdown()`` sets ``_shutdown_event``, and
+        we recheck it at three checkpoints to make sure a slow
+        connect that finishes after a daemon reload doesn't
+        resurrect a runtime the dispatcher has already torn down.
         """
         sensor = runtime.sensor
         sensor_id = runtime.sensor_id
         sensor_cfg = self.settings.get_sensor_config(sensor_id)
         timeout = sensor_cfg.connect_timeout_seconds if sensor_cfg else 60.0
+
+        # Gate 1: bail before any state mutation if a shutdown is
+        # already in flight (e.g., daemon reload landed between
+        # ``request_reconnect`` and the worker actually picking up
+        # the future).
+        if self._shutdown_event.is_set():
+            self.logger.debug("Sensor %s init skipped — orchestrator shutting down", sensor_id)
+            return
 
         runtime.mark_connecting()
 
@@ -407,29 +512,47 @@ class SensorInitOrchestrator:
         # sensor.connect() directly here would just block this worker
         # for ``timeout`` seconds — fine for a single hung sensor but
         # we'd lose the ability to detect the hang for status display.
-        with ThreadPoolExecutor(max_workers=1, thread_name_prefix=f"connect-{sensor_id}") as inner:
+        #
+        # We deliberately *don't* use ``with ThreadPoolExecutor(...)
+        # as inner:`` here.  The context manager's ``__exit__`` calls
+        # ``shutdown(wait=True)`` which would ``join()`` the connect
+        # thread — defeating the watchdog timeout entirely if
+        # ``connect()`` is genuinely hung.  Instead we manage
+        # lifecycle by hand: on timeout, ``shutdown(wait=False)``
+        # leaks the daemon connect thread (the OS reclaims it at
+        # process exit); on success/error, ``shutdown(wait=True)``
+        # drains cleanly.
+        inner = ThreadPoolExecutor(max_workers=1, thread_name_prefix=f"connect-{sensor_id}")
+        timed_out = False
+        try:
             connect_future = inner.submit(self._safe_connect, sensor)
             try:
                 ok = connect_future.result(timeout=timeout)
             except FuturesTimeout:
+                timed_out = True
                 err = f"connect timed out after {timeout:.0f}s"
                 self.logger.warning("Sensor %s: %s", sensor_id, err)
                 runtime.mark_timed_out(err)
-                # Don't wait for the inner executor to drain — the hung
-                # connect may genuinely never return.  Daemon threads
-                # are reclaimed by the OS on shutdown.
-                inner.shutdown(wait=False, cancel_futures=False)
                 return
             except Exception as exc:
                 err = f"connect raised: {exc}"
                 self.logger.error("Sensor %s: %s", sensor_id, err, exc_info=True)
                 runtime.mark_failed(err)
                 return
+        finally:
+            inner.shutdown(wait=not timed_out, cancel_futures=False)
 
         if not ok:
             err = f"adapter.connect() returned False ({type(getattr(sensor, 'adapter', sensor)).__name__})"
             self.logger.error("Sensor %s: %s", sensor_id, err)
             runtime.mark_failed(err)
+            return
+
+        # Gate 2: don't run post-wiring (filter sync, calibration lib,
+        # observing-session managers) on a runtime the dispatcher
+        # tore down while we were waiting for the connect to return.
+        if self._shutdown_event.is_set():
+            self.logger.debug("Sensor %s post-wiring skipped — orchestrator shutting down", sensor_id)
             return
 
         try:
@@ -438,6 +561,15 @@ class SensorInitOrchestrator:
             err = f"post-connect wiring failed: {exc}"
             self.logger.error("Sensor %s: %s", sensor_id, err, exc_info=True)
             runtime.mark_failed(err)
+            return
+
+        # Gate 3: most important — never call ``mark_connected`` after
+        # shutdown, because that triggers ``_ensure_queues_started`` +
+        # ``_start_streaming_sensor`` on a runtime the dispatcher
+        # has already stopped, leaving a zombie producer +
+        # subscriptions behind.
+        if self._shutdown_event.is_set():
+            self.logger.debug("Sensor %s mark_connected skipped — orchestrator shutting down", sensor_id)
             return
 
         runtime.mark_connected()

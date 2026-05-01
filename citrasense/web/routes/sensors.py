@@ -30,6 +30,30 @@ if TYPE_CHECKING:
 _SENSOR_ID_RE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9._-]{0,62}$")
 
 
+def _status_for_error(err: str | None, *, fallback: int) -> int:
+    """Map a ``(False, err)`` diagnostic from the daemon facade to an HTTP status.
+
+    Shared across the connect/reconnect/disconnect routes so the error
+    semantics stay in lockstep:
+
+    * ``Unknown sensor: …`` → 404
+    * ``… already in flight …`` → 409
+    * ``Daemon not initialized`` (and similar orchestration-not-ready
+      messages) → 503
+    * everything else → ``fallback`` (400 for queue-failures, 500 for
+      adapter-side disconnect failures)
+    """
+    if not err:
+        return fallback
+    if err.startswith("Unknown sensor"):
+        return 404
+    if "already in flight" in err:
+        return 409
+    if "not initialized" in err:
+        return 503
+    return fallback
+
+
 def build_sensors_router(ctx: CitraSenseWebApp) -> APIRouter:
     """Endpoints under ``/api/sensors`` and ``/api/config/sensors``."""
     router = APIRouter(tags=["sensors"])
@@ -73,24 +97,36 @@ def build_sensors_router(ctx: CitraSenseWebApp) -> APIRouter:
 
     @router.post("/api/sensors/{sensor_id}/connect")
     async def connect_sensor(sensor_id: str):
-        """Queue a sensor's hardware ``connect()`` on the async init worker.
+        """Connect-or-noop: queue ``connect()`` only when the sensor is idle.
 
-        Returns ``202 Accepted`` immediately — the operator watches the
-        toast / monitoring badge for the result.  This shape stops a
-        hung adapter from blocking the HTTP request itself, which is
-        the core of issue #339.
+        Distinct from ``/reconnect``: this endpoint never bounces a
+        healthy connection.  Returns:
+
+        * 200 if the sensor is already connected (no work queued).
+        * 202 once a fresh connect is queued on the async init worker.
+        * 404 / 409 / 503 / 400 via :func:`_status_for_error` on
+          rejections.
         """
         if not ctx.daemon:
             return JSONResponse({"error": "Daemon not available"}, status_code=503)
-        ok, err = ctx.daemon.request_sensor_reconnect(sensor_id)
+        ok, err = ctx.daemon.request_sensor_connect(sensor_id)
         if not ok:
-            # ``Unknown sensor`` -> 404; in-flight reconnect -> 409;
-            # any other diagnostic message stays at 400.
-            if err and err.startswith("Unknown sensor"):
-                return JSONResponse({"error": err}, status_code=404)
-            if err and "already in flight" in err:
-                return JSONResponse({"error": err}, status_code=409)
-            return JSONResponse({"error": err or "Could not queue connect"}, status_code=400)
+            return JSONResponse(
+                {"error": err or "Could not queue connect"},
+                status_code=_status_for_error(err, fallback=400),
+            )
+        # ``request_sensor_connect`` returns ``(True, "already connected")``
+        # when the runtime is already in the connected state; map that
+        # to a 200 noop so callers don't think they kicked off work.
+        if err == "already connected":
+            return JSONResponse(
+                {
+                    "success": True,
+                    "message": f"Sensor {sensor_id} already connected",
+                    "init_state": "connected",
+                },
+                status_code=200,
+            )
         return JSONResponse(
             {
                 "success": True,
@@ -104,22 +140,20 @@ def build_sensors_router(ctx: CitraSenseWebApp) -> APIRouter:
     async def reconnect_sensor(sensor_id: str):
         """Queue a per-sensor disconnect + connect cycle on the async init worker.
 
-        Same shape as ``/connect`` — returns ``202`` and lets the toast
-        / status badge carry the result.  ``request_sensor_reconnect``
-        runs the disconnect inline (cheap) and submits the connect to
-        the executor with the per-sensor watchdog timeout, so a hung
-        adapter blows the deadline cleanly without blocking the
-        request.
+        Returns ``202`` and lets the toast / status badge carry the
+        result.  ``request_sensor_reconnect`` runs the disconnect
+        inline (cheap) and submits the connect to the executor with
+        the per-sensor watchdog timeout, so a hung adapter blows the
+        deadline cleanly without blocking the request.
         """
         if not ctx.daemon:
             return JSONResponse({"error": "Daemon not available"}, status_code=503)
         ok, err = ctx.daemon.request_sensor_reconnect(sensor_id)
         if not ok:
-            if err and err.startswith("Unknown sensor"):
-                return JSONResponse({"error": err}, status_code=404)
-            if err and "already in flight" in err:
-                return JSONResponse({"error": err}, status_code=409)
-            return JSONResponse({"error": err or "Could not queue reconnect"}, status_code=400)
+            return JSONResponse(
+                {"error": err or "Could not queue reconnect"},
+                status_code=_status_for_error(err, fallback=400),
+            )
         return JSONResponse(
             {
                 "success": True,
@@ -136,9 +170,10 @@ def build_sensors_router(ctx: CitraSenseWebApp) -> APIRouter:
             return JSONResponse({"error": "Daemon not available"}, status_code=503)
         ok, err = ctx.daemon.request_sensor_disconnect(sensor_id)
         if not ok:
-            if err and err.startswith("Unknown sensor"):
-                return JSONResponse({"error": err}, status_code=404)
-            return JSONResponse({"error": err or "Disconnect failed"}, status_code=500)
+            return JSONResponse(
+                {"error": err or "Disconnect failed"},
+                status_code=_status_for_error(err, fallback=500),
+            )
         return {"success": True, "message": f"Sensor {sensor_id} disconnected"}
 
     # ── Sensor-type discovery (registry metadata, class-level schema) ─
