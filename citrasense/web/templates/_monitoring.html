@@ -111,20 +111,14 @@
                             </span>
                         </template>
                         <div class="ms-auto d-flex align-items-center gap-1">
-                            {# Per-sensor Reconnect button.  Hits the
-                               async init worker so a hung adapter
-                               never blocks the HTTP request — the toast
-                               + init_state badge above carry the result. #}
-                            <button type="button"
-                                    class="btn btn-sm btn-outline-light"
-                                    :disabled="sensor.init_state === 'connecting'"
-                                    @click.stop="$store.citrasense.reconnectSensor(sensor.id)"
-                                    data-bs-toggle="tooltip" data-bs-theme="dark"
-                                    :title="sensor.init_state === 'connecting' ? 'Already connecting…' : 'Disconnect + reconnect this sensor'">
-                                <i class="bi"
-                                   :class="sensor.init_state === 'connecting' ? 'bi-arrow-repeat spin' : 'bi-arrow-repeat'"></i>
-                                Reconnect
-                            </button>
+                            {# Monitoring intentionally has *no* Reconnect
+                               button.  Reconnect is a destructive operator
+                               action (it bounces whatever the adapter is
+                               doing), so it lives one click deeper on the
+                               sensor detail page where it can't be hit by
+                               accident.  The init_state badge above still
+                               surfaces failures here so operators know
+                               where to look. #}
                             {# Explicit "Open" link.  Anchor with a real href so
                                right-click-copy-link yields a clean URL and
                                Cmd/Ctrl/middle-click opens the detail page in

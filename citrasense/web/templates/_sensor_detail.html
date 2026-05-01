@@ -61,6 +61,9 @@
                 <div class="d-flex align-items-center flex-wrap gap-2 mb-3">
                     <h1 class="h4 mb-0" x-text="sensor?.name || 'Sensor'"></h1>
                     <span class="badge bg-secondary rounded-pill" x-text="sensor?.type"></span>
+                    <div class="d-flex flex-wrap align-items-center gap-2 ms-md-auto">
+                        {% include "_sensor_init_status.html" %}
+                    </div>
                 </div>
                 <div class="card bg-dark text-light border-secondary mb-3">
                     <div class="card-header"><i class="bi bi-cpu me-1"></i><span x-text="sensor.name"></span></div>

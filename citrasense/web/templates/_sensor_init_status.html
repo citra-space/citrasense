@@ -1,0 +1,56 @@
+{#
+    Per-sensor init-state badge + Reconnect button, included in the
+    header of every sensor detail page.
+
+    Why this lives on the detail page (and not on the monitoring card):
+    monitoring is glanceable, status-only.  A reconnect bounces the
+    adapter — it's a destructive operator action.  Putting it behind the
+    "Open" hop keeps the monitoring card uncluttered and avoids
+    accidental clicks for the common case where every sensor is healthy.
+    The init_state badge still appears on monitoring, so failures are
+    surfaced there; the action just lives one click deeper.
+
+    Requires the enclosing scope to expose a ``sensor`` Alpine alias
+    (every detail partial does this via the ``x-data`` wrapper in
+    ``_sensor_detail.html``).
+#}
+<template x-if="sensor?.init_state && sensor.init_state !== 'connected'">
+    <span class="badge rounded-pill"
+          :class="{
+            'bg-secondary': sensor.init_state === 'pending',
+            'bg-info text-dark': sensor.init_state === 'connecting',
+            'bg-danger': sensor.init_state === 'failed' || sensor.init_state === 'timed_out',
+          }"
+          data-bs-toggle="tooltip" data-bs-theme="dark"
+          :data-bs-title="sensor.init_error || sensor.init_state">
+        <i class="bi"
+           :class="{
+             'bi-hourglass': sensor.init_state === 'pending',
+             'bi-arrow-repeat spin': sensor.init_state === 'connecting',
+             'bi-exclamation-triangle-fill': sensor.init_state === 'failed' || sensor.init_state === 'timed_out',
+           }"></i>
+        <span x-text="{
+            'pending': 'Pending',
+            'connecting': 'Connecting…',
+            'failed': 'Connect failed',
+            'timed_out': 'Connect timed out',
+          }[sensor.init_state] || sensor.init_state"></span>
+    </span>
+</template>
+
+{# Reconnect button.  Always visible on the detail page (unlike the
+   monitoring card, where it lived previously) because the detail page
+   is opt-in — an operator who navigated here is specifically managing
+   this sensor and may want to bounce a connection that looks healthy
+   from the outside but has flaked internally.  Disabled while a
+   connect is already in flight. #}
+<button type="button"
+        class="btn btn-sm btn-outline-light"
+        :disabled="sensor?.init_state === 'connecting'"
+        @click="$store.citrasense.reconnectSensor(sensor.id)"
+        data-bs-toggle="tooltip" data-bs-theme="dark"
+        :title="sensor?.init_state === 'connecting' ? 'Already connecting…' : 'Disconnect + reconnect this sensor'">
+    <i class="bi"
+       :class="sensor?.init_state === 'connecting' ? 'bi-arrow-repeat spin' : 'bi-arrow-repeat'"></i>
+    Reconnect
+</button>

@@ -278,9 +278,20 @@ class SensorRuntime:
         self._set_init_state("connecting", None)
 
     def mark_connected(self) -> None:
-        """Flip to ``connected`` (called by the init worker on success)."""
+        """Flip to ``connected`` (called by the init worker on success).
+
+        On every successful connect (initial *and* reconnect), we ask
+        the underlying sensor to (re)start its stream — STREAMING
+        sensors stop their producer inside ``disconnect()``, so a
+        reconnect needs an explicit kick to bring the producer back.
+        The sensor's own ``start_stream`` is idempotent, so calling
+        this on every connect is safe even when the producer is
+        already running.  The queue trio + bus subscription, by
+        contrast, are one-shot (see :meth:`_ensure_queues_started`).
+        """
         self._set_init_state("connected", None)
         self._ensure_queues_started()
+        self._start_streaming_sensor()
 
     def mark_failed(self, error: str) -> None:
         """Flip to ``failed`` with an operator-visible error string."""
@@ -297,10 +308,15 @@ class SensorRuntime:
     def _ensure_queues_started(self) -> None:
         """Start the queue trio + streaming subscription on first ``connected``.
 
-        Idempotent — every reconnect calls this, but the queues / bus
-        subscription are only spun up once.  Reconnects keep the same
-        worker threads alive, so an in-flight imaging task isn't dropped
-        when the adapter blips.
+        Idempotent and one-shot: reconnects keep the same worker
+        threads alive (so an in-flight imaging task isn't dropped when
+        the adapter blips) and keep the same bus subscription (so we
+        don't end up double-handling streaming events).
+
+        Restarting the sensor's *producer* on every reconnect is
+        handled separately by :meth:`mark_connected` — see that
+        method's docstring for why streaming start is per-connect
+        rather than one-shot.
         """
         with self._queues_started_lock:
             if self._queues_started:
@@ -310,7 +326,6 @@ class SensorRuntime:
         self.processing_queue.start()
         self.upload_queue.start()
         self._subscribe_streaming()
-        self._start_streaming_sensor()
 
     def attach_calibration_library(self, library: Any) -> None:
         """Bind a CalibrationLibrary to this runtime and its CalibrationProcessor.

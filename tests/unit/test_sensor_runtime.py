@@ -27,6 +27,11 @@ class _FakeStreamingSensor:
 
     def __init__(self, sensor_id: str = "radar-0") -> None:
         self.sensor_id = sensor_id
+        # ``mark_connected`` reaches into ``start_stream`` on every
+        # connect (see SensorRuntime docstring) — record calls so
+        # tests can verify the reconnect-restarts-stream behavior.
+        self.start_stream_calls: int = 0
+        self.stop_stream_calls: int = 0
 
     def get_capabilities(self) -> SensorCapabilities:
         return SensorCapabilities(
@@ -45,6 +50,13 @@ class _FakeStreamingSensor:
 
     def get_settings_schema(self):
         return []
+
+    def start_stream(self, bus, ctx) -> None:
+        del bus, ctx
+        self.start_stream_calls += 1
+
+    def stop_stream(self) -> None:
+        self.stop_stream_calls += 1
 
 
 class _FakeTelescopeSensor:
@@ -248,6 +260,56 @@ class TestStreamingIngestion:
 
 
 # ── Queue idle helpers ────────────────────────────────────────────────────
+
+
+class TestStreamingRestartOnReconnect:
+    """Regression coverage for the allsky-stays-idle-after-reconnect bug.
+
+    Before the fix, ``_ensure_queues_started`` was the only path that
+    invoked ``sensor.start_stream``, and its one-shot guard meant
+    reconnects skipped the producer-restart even though the sensor's
+    ``disconnect()`` had stopped its stream.  ``mark_connected`` now
+    runs the producer restart on every connect; the queue trio + bus
+    subscription stay one-shot.
+    """
+
+    def test_first_connect_starts_stream(self):
+        bus = InMemoryCaptureBus()
+        sensor = _FakeStreamingSensor("radar-0")
+        rt = _make_runtime(sensor, sensor_bus=bus, hardware_adapter=None)
+        rt.mark_connected()
+        assert sensor.start_stream_calls == 1
+
+    def test_reconnect_restarts_stream(self):
+        bus = InMemoryCaptureBus()
+        sensor = _FakeStreamingSensor("radar-0")
+        rt = _make_runtime(sensor, sensor_bus=bus, hardware_adapter=None)
+
+        rt.mark_connected()
+        rt.mark_disconnected()
+        rt.mark_connected()
+
+        # Two successful connects -> two start_stream invocations.
+        # If the one-shot guard ever creeps back, this drops to 1.
+        assert sensor.start_stream_calls == 2
+
+    def test_queue_trio_starts_only_once_across_reconnects(self):
+        bus = InMemoryCaptureBus()
+        sensor = _FakeStreamingSensor("radar-0")
+        rt = _make_runtime(sensor, sensor_bus=bus, hardware_adapter=None)
+        # Replace the queues with mocks so we can see exactly how many
+        # times ``.start()`` fires across the reconnect cycle.
+        rt.acquisition_queue = MagicMock()
+        rt.processing_queue = MagicMock()
+        rt.upload_queue = MagicMock()
+
+        rt.mark_connected()
+        rt.mark_disconnected()
+        rt.mark_connected()
+
+        rt.acquisition_queue.start.assert_called_once()
+        rt.processing_queue.start.assert_called_once()
+        rt.upload_queue.start.assert_called_once()
 
 
 class TestQueueHelpers:

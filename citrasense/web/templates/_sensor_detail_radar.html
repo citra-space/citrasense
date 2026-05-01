@@ -11,6 +11,9 @@
             <h1 class="h4 mb-0" x-text="sensor?.name || 'Sensor'"></h1>
             <span class="badge bg-secondary rounded-pill" x-text="sensor?.type"></span>
             {% include "_radar_hardware_pills.html" %}
+            <div class="d-flex flex-wrap align-items-center gap-2 ms-md-auto">
+                {% include "_sensor_init_status.html" %}
+            </div>
         </div>
 
             <div x-data="radarControl(sensor.id)" x-init="init()">
