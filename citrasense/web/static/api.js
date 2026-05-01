@@ -206,6 +206,12 @@ export async function capturePreview(sensorId, duration, flipHorizontal = false)
     });
 }
 
+// ─── Allsky ───────────────────────────────────────────────────────────────────
+
+export async function setAllskyStreaming(sensorId, enabled) {
+    return jsonPost(sensorUrl(sensorId, '/allsky/streaming'), { enabled });
+}
+
 // ─── Filters ──────────────────────────────────────────────────────────────────
 
 export async function getFilters(sensorId) {

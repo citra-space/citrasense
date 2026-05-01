@@ -1,0 +1,26 @@
+{#
+    Allsky operational-switches cluster: just the Streaming on/off
+    today (issue #342).  Mirrors ``_telescope_switches.html``'s
+    rendering so a mixed-modality dashboard reads consistently.
+
+    Included from the allsky monitoring hero
+    (``_monitoring_sensor_allsky.html``) and the allsky sensor detail
+    body (``_sensor_detail_allsky.html``).  Each parent wraps this
+    partial's children in its own outer flex container.
+
+    Contract: the including template provides an allsky ``sensor`` in
+    Alpine scope and bindings use ``sensor?.`` throughout so a null
+    ``sensor`` during initial load is safe.  ``sensor.id`` without the
+    null-safe operator is used only inside ``@change`` — that only
+    fires on user interaction, by which point ``sensor`` is populated.
+#}
+<div class="d-flex align-items-center gap-1"
+     data-bs-toggle="tooltip" data-bs-theme="dark"
+     title="Streaming — capture loop runs continuously when on">
+    <small class="text-muted text-nowrap">Streaming</small>
+    <div class="form-check form-switch mb-0">
+        <input class="form-check-input" type="checkbox"
+               :checked="sensor?.streaming_enabled"
+               @change="$store.citrasense.toggleStreaming($event.target.checked, sensor.id)">
+    </div>
+</div>

@@ -64,6 +64,31 @@ export const toggleMethods = {
         }
     },
 
+    async toggleStreaming(enabled, sensorId) {
+        // Allsky capture-loop on/off (issue #342).  The backend route
+        // is allsky-scoped (POST /api/sensors/{id}/allsky/streaming)
+        // and the persisted flag lives on the generic
+        // ``SensorConfig.streaming_enabled`` so a future radar/audio
+        // streaming sensor can opt in with a UI-only change.
+        if (!sensorId) {
+            console.error('toggleStreaming called without sensorId');
+            showToast('Cannot toggle streaming: missing sensor_id', 'danger');
+            return;
+        }
+        try {
+            const result = await api.setAllskyStreaming(sensorId, enabled);
+            if (!result.ok) {
+                showToast(result.error || 'Failed to toggle streaming', 'danger');
+                if (sensorId && this.status?.sensors?.[sensorId]) {
+                    this.status.sensors[sensorId].streaming_enabled = !enabled;
+                }
+            }
+        } catch (error) {
+            console.error('Error toggling streaming:', error);
+            showToast('Error toggling streaming', 'danger');
+        }
+    },
+
     async toggleAutomatedScheduling(enabled, sensorId) {
         if (!sensorId) {
             console.error('toggleAutomatedScheduling called without sensorId');

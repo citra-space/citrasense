@@ -10,6 +10,10 @@
     ``$store.citrasense.previewDataUrls[sensor.id]`` for the live frame
     (same path the telescope card uses).
 #}
+<div class="d-flex flex-wrap align-items-center gap-2 gap-md-3">
+    {% include "_allsky_switches.html" %}
+</div>
+
 <div class="mt-3"
      x-data="{
          get _preview() { return $store.citrasense.previewDataUrls?.[sensor.id]; },

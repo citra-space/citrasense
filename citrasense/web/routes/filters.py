@@ -11,7 +11,27 @@ from citrasense.logging import CITRASENSE_LOGGER
 from citrasense.web.helpers import FILTER_NAME_OPTIONS, get_sensor_context
 
 if TYPE_CHECKING:
+    from citrasense.sensors.abstract_sensor import AbstractSensor
     from citrasense.web.app import CitraSenseWebApp
+
+
+def _resolve_filter_adapter(sensor: AbstractSensor) -> Any | JSONResponse:
+    """Return the sensor's hardware adapter or a 404 ``JSONResponse``.
+
+    Filter management is a telescope concept — :class:`AllskyCameraSensor`
+    and :class:`PassiveRadarSensor` have no ``.adapter`` attribute, so a
+    naive ``sensor.adapter`` access raises ``AttributeError`` and the
+    request bubbles a 500 (issue #342).  The frontend already treats 404
+    as "this sensor does not have filters" and hides the panel cleanly,
+    so 404 is the right code here.
+    """
+    adapter = getattr(sensor, "adapter", None)
+    if adapter is None:
+        return JSONResponse(
+            {"error": "Sensor does not support filter management"},
+            status_code=404,
+        )
+    return adapter
 
 
 def build_filters_router(ctx: CitraSenseWebApp) -> APIRouter:
@@ -22,7 +42,9 @@ def build_filters_router(ctx: CitraSenseWebApp) -> APIRouter:
     async def get_filters(sensor_id: str):
         """Get current filter configuration."""
         sensor, _runtime = get_sensor_context(ctx, sensor_id)
-        adapter = sensor.adapter
+        adapter = _resolve_filter_adapter(sensor)
+        if isinstance(adapter, JSONResponse):
+            return adapter
 
         if not adapter.supports_filter_management():
             return JSONResponse({"error": "Adapter does not support filter management"}, status_code=404)
@@ -42,7 +64,9 @@ def build_filters_router(ctx: CitraSenseWebApp) -> APIRouter:
     async def update_filters_batch(sensor_id: str, updates: list[dict[str, Any]]):
         """Update multiple filters atomically with single disk write."""
         sensor, _runtime = get_sensor_context(ctx, sensor_id)
-        adapter = sensor.adapter
+        adapter = _resolve_filter_adapter(sensor)
+        if isinstance(adapter, JSONResponse):
+            return adapter
 
         if not updates or not isinstance(updates, list):
             return JSONResponse({"error": "Updates must be a non-empty array"}, status_code=400)
@@ -147,6 +171,9 @@ def build_filters_router(ctx: CitraSenseWebApp) -> APIRouter:
     async def sync_filters_to_backend(sensor_id: str):
         """Explicitly sync filter configuration to backend API."""
         sensor, _runtime = get_sensor_context(ctx, sensor_id)
+        adapter = _resolve_filter_adapter(sensor)
+        if isinstance(adapter, JSONResponse):
+            return adapter
         if not ctx.daemon:
             return JSONResponse({"error": "Daemon not available"}, status_code=503)
         try:
@@ -160,9 +187,11 @@ def build_filters_router(ctx: CitraSenseWebApp) -> APIRouter:
     async def set_filter_position(sensor_id: str, body: dict[str, Any]):
         """Command the filter wheel to move to a specific position."""
         sensor, _runtime = get_sensor_context(ctx, sensor_id)
+        adapter = _resolve_filter_adapter(sensor)
+        if isinstance(adapter, JSONResponse):
+            return adapter
         if busy := ctx.require_sensor_idle(_runtime):
             return busy
-        adapter = sensor.adapter
 
         if not adapter.filter_map:
             return JSONResponse({"error": "No filter wheel available"}, status_code=404)

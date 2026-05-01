@@ -167,6 +167,16 @@ class SensorConfig(BaseModel):
     # serial bridges).
     connect_timeout_seconds: float = 60.0
 
+    # Operator-facing pause for STREAMING-capable sensors (allsky today,
+    # radar tomorrow).  When ``False``, the runtime keeps the hardware
+    # connected but skips ``sensor.start_stream`` so the capture loop
+    # stays parked.  Defaults to ``True`` so already-configured allskies
+    # keep capturing through the upgrade.  Generic on purpose — gated in
+    # :meth:`SensorRuntime._start_streaming_sensor`, which already
+    # no-ops for non-STREAMING sensors, so this field is harmless on
+    # telescope/radar configs that never read it.
+    streaming_enabled: bool = True
+
     # Automated flat capture during twilight flat windows.  When
     # ``auto_capture_flats_enabled`` is True and the adapter has a wired
     # :class:`FlatCaptureBackend`, the :class:`CalibrationManager`

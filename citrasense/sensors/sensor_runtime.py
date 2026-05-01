@@ -424,6 +424,38 @@ class SensorRuntime:
             sc.task_processing_paused = value
             self.settings.save()
 
+    @property
+    def streaming_enabled(self) -> bool:
+        """Operator pause flag for STREAMING-capable sensors (allsky today).
+
+        Defaults to ``True`` when no config is wired so the runtime
+        behaves the same as before this flag existed.  See
+        :meth:`_start_streaming_sensor` for where the gate fires.
+        """
+        sc = self.sensor_config
+        return sc.streaming_enabled if sc else True
+
+    def set_streaming_enabled(self, value: bool) -> None:
+        """Toggle the operator pause and act on the change.
+
+        Persists to config, then either kicks the producer
+        (:meth:`_start_streaming_sensor`) or asks it to stop
+        (:meth:`_stop_streaming_sensor`).  Both helpers already no-op
+        on non-STREAMING sensors and on disconnected sensors, so this
+        is safe to call regardless of ``init_state`` — the gate inside
+        ``_start_streaming_sensor`` will pick up the new flag value on
+        the next reconnect even if the sensor is offline right now.
+        """
+        sc = self.sensor_config
+        if not sc:
+            return
+        sc.streaming_enabled = value
+        self.settings.save()
+        if value:
+            self._start_streaming_sensor()
+        else:
+            self._stop_streaming_sensor()
+
     # ── Task submission ────────────────────────────────────────────────
 
     def submit_task(self, task: Task, on_complete: Callable) -> None:
@@ -638,6 +670,13 @@ class SensorRuntime:
         them.  Safe to call on ON_DEMAND sensors — they raise
         :class:`NotImplementedError` on ``start_stream`` and we treat
         that as the expected signal that there's nothing to do.
+
+        Honours the operator pause flag (``SensorConfig.streaming_enabled``):
+        when an operator has flipped the switch off we keep the queue
+        trio alive but skip kicking the producer, so the camera idles
+        instead of capturing.  The check lives here (single chokepoint)
+        so both initial-connect and reconnect paths in
+        :meth:`mark_connected` honour the flag without further plumbing.
         """
         if not self._sensor_bus:
             return
@@ -645,6 +684,12 @@ class SensorRuntime:
 
         caps = self.sensor.get_capabilities()
         if caps.acquisition_mode != SensorAcquisitionMode.STREAMING:
+            return
+        if not self.streaming_enabled:
+            self.logger.info(
+                "%s: streaming paused by operator; not starting capture loop",
+                self.sensor_id,
+            )
             return
         try:
             self.sensor.start_stream(self._sensor_bus, AcquisitionContext())

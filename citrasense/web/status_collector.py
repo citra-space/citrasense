@@ -327,6 +327,19 @@ class StatusCollector:
                 sd["current_task"] = None
                 sd["processing_active"] = False
 
+            # Operator pause flag (issue #342) — surfaced for every sensor
+            # type, not just telescopes, because the allsky monitoring +
+            # detail templates bind their on/off switch to it.  Lives at
+            # the top of the loop because the per-modality branches
+            # below ``continue`` past the telescope-only enrichment.
+            #
+            # Read from the runtime's cached ``SensorConfig`` rather
+            # than re-scanning ``settings.sensors`` per sensor — keeps
+            # ``_enrich_sensors`` linear in sensor count instead of
+            # quadratic (PR #344 review).  Falls back to ``True`` when
+            # no runtime exists yet so the UI defaults to "on".
+            sd["streaming_enabled"] = s_runtime.streaming_enabled if s_runtime else True
+
             # Per-runtime pipeline stats.  For radar sensors we also
             # flatten the :class:`RadarPipeline`'s per-processor stats
             # into the same ``processors`` slot telescope sensors use —
