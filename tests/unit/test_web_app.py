@@ -808,6 +808,35 @@ def test_get_filters_no_sensor():
     assert c.get("/api/sensors/scope-0/filters").status_code == 503
 
 
+def test_filters_get_returns_404_for_non_telescope_sensor(client_allsky):
+    """Regression test for issue #342.
+
+    Before the fix, ``GET /api/sensors/{allsky_id}/filters`` raised
+    ``AttributeError: 'AllskyCameraSensor' object has no attribute 'adapter'``
+    and bubbled to a 500.  The fix returns 404 with a clear error so
+    the frontend's existing ``status === 404`` handler hides the panel
+    cleanly.
+    """
+    resp = client_allsky.get("/api/sensors/allsky-0/filters")
+    assert resp.status_code == 404
+    assert "filter management" in resp.json().get("error", "").lower()
+
+
+def test_filters_batch_returns_404_for_non_telescope_sensor(client_allsky):
+    """Same guard on the batch-update path so a stray frontend POST
+    doesn't trip a 500."""
+    resp = client_allsky.post(
+        "/api/sensors/allsky-0/filters/batch",
+        json=[{"filter_id": "0", "enabled": True}],
+    )
+    assert resp.status_code == 404
+
+
+def test_filter_set_returns_404_for_non_telescope_sensor(client_allsky):
+    resp = client_allsky.post("/api/sensors/allsky-0/filter/set", json={"position": 0})
+    assert resp.status_code == 404
+
+
 # ---------------------------------------------------------------------------
 # Processors
 # ---------------------------------------------------------------------------
@@ -1547,6 +1576,11 @@ def mock_daemon_allsky(mock_settings):
     allsky_sensor.sensor_id = "allsky-0"
     allsky_sensor.sensor_type = "allsky"
     allsky_sensor.name = "Allsky 0"
+    # Real ``AllskyCameraSensor`` has no ``.adapter`` (telescope-only).
+    # Drop the auto-vivified MagicMock attribute so accessing it raises
+    # the same AttributeError production code paths see — important for
+    # the filters-route 404 regression test below.
+    del allsky_sensor.adapter
     allsky_sensor.get_live_status.return_value = {
         "sensor_id": "allsky-0",
         "camera_type": "usb_camera",
@@ -1655,4 +1689,54 @@ def test_allsky_status_409s_when_sensor_is_not_allsky(mock_daemon):
         app = CitraSenseWebApp(daemon=mock_daemon)
     client = TestClient(app.app)
     resp = client.get("/api/sensors/scope-0/allsky/status")
+    assert resp.status_code == 409
+
+
+def test_allsky_streaming_toggle_off_persists_and_stops(client_allsky, mock_daemon_allsky):
+    """Successful toggle returns 200 and forwards to runtime.set_streaming_enabled."""
+    resp = client_allsky.post(
+        "/api/sensors/allsky-0/allsky/streaming",
+        json={"enabled": False},
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["success"] is True
+    assert body["streaming_enabled"] is False
+    rt = mock_daemon_allsky.task_dispatcher.get_runtime("allsky-0")
+    rt.set_streaming_enabled.assert_called_once_with(False)
+
+
+def test_allsky_streaming_toggle_on_persists_and_starts(client_allsky, mock_daemon_allsky):
+    resp = client_allsky.post(
+        "/api/sensors/allsky-0/allsky/streaming",
+        json={"enabled": True},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["streaming_enabled"] is True
+    rt = mock_daemon_allsky.task_dispatcher.get_runtime("allsky-0")
+    rt.set_streaming_enabled.assert_called_once_with(True)
+
+
+def test_allsky_streaming_toggle_rejects_non_bool_body(client_allsky):
+    """``enabled`` must be a real bool — strings, ints, and missing all 400."""
+    for bad in [{"enabled": "yes"}, {"enabled": 1}, {}, {"enabled": None}]:
+        resp = client_allsky.post("/api/sensors/allsky-0/allsky/streaming", json=bad)
+        assert resp.status_code == 400, bad
+        assert "boolean" in resp.json().get("error", "").lower()
+
+
+def test_allsky_streaming_toggle_404s_for_unknown_sensor(client_allsky):
+    resp = client_allsky.post(
+        "/api/sensors/does-not-exist/allsky/streaming",
+        json={"enabled": True},
+    )
+    assert resp.status_code == 404
+
+
+def test_allsky_streaming_toggle_409s_when_sensor_is_not_allsky(mock_daemon):
+    """Refuse to toggle streaming on a telescope (or anything non-allsky)."""
+    with patch("citrasense.web.app.StaticFiles"):
+        app = CitraSenseWebApp(daemon=mock_daemon)
+    client = TestClient(app.app)
+    resp = client.post("/api/sensors/scope-0/allsky/streaming", json={"enabled": True})
     assert resp.status_code == 409

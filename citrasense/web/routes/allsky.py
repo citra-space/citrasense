@@ -14,7 +14,7 @@ state to the web UI:
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from fastapi import APIRouter
 from fastapi.responses import JSONResponse, Response
@@ -72,6 +72,31 @@ def build_allsky_router(ctx: CitraSenseWebApp) -> APIRouter:
         except Exception as exc:
             CITRASENSE_LOGGER.warning("allsky_capture(%s) failed: %s", sensor_id, exc, exc_info=True)
             return JSONResponse({"error": str(exc)}, status_code=500)
+
+    @router.post("/allsky/streaming")
+    async def set_allsky_streaming(sensor_id: str, body: dict[str, Any]):
+        """Toggle the operator pause flag for the allsky capture loop.
+
+        Body: ``{"enabled": bool}``.  Persists to
+        :attr:`SensorConfig.streaming_enabled` and immediately
+        starts/stops the producer via
+        :meth:`SensorRuntime.set_streaming_enabled`.  No-op if the
+        camera is currently disconnected — the flag still persists and
+        will be honoured on the next reconnect.
+
+        Returns ``{"success": True, "streaming_enabled": bool}`` on
+        success.  404 for unknown sensors and 409 for non-allsky
+        sensors are inherited from :func:`_get_allsky_sensor`.
+        """
+        sensor = _get_allsky_sensor(sensor_id)
+        if isinstance(sensor, JSONResponse):
+            return sensor
+        enabled = body.get("enabled")
+        if not isinstance(enabled, bool):
+            return JSONResponse({"error": "enabled must be a boolean"}, status_code=400)
+        _, runtime = get_sensor_context(ctx, sensor_id)
+        runtime.set_streaming_enabled(enabled)
+        return {"success": True, "streaming_enabled": enabled}
 
     @router.get("/allsky/latest.jpg")
     async def allsky_latest_jpg(sensor_id: str):

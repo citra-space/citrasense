@@ -312,6 +312,64 @@ class TestStreamingRestartOnReconnect:
         rt.upload_queue.start.assert_called_once()
 
 
+class TestStreamingEnabledToggle:
+    """Coverage for the operator on/off switch (issue #342).
+
+    The ``streaming_enabled`` flag lives on ``SensorConfig`` (generic)
+    and gates :meth:`SensorRuntime._start_streaming_sensor` (single
+    chokepoint).  These tests exercise both the gate (initial connect
+    skipped when paused) and the runtime setter (which persists the
+    flag and starts/stops the producer immediately).
+    """
+
+    def test_start_streaming_skips_when_streaming_disabled(self):
+        bus = InMemoryCaptureBus()
+        sensor = _FakeStreamingSensor("allsky-0")
+        rt = _make_runtime(sensor, sensor_bus=bus, hardware_adapter=None)
+        # Operator paused before this connect: producer should stay
+        # parked even though the queue trio still spins up.  ``_sensor_config``
+        # is a MagicMock (settings is mocked) so attribute assignment is fine.
+        cfg = cast(MagicMock, rt._sensor_config)
+        cfg.streaming_enabled = False
+
+        rt.mark_connected()
+
+        assert sensor.start_stream_calls == 0
+
+    def test_set_streaming_enabled_false_stops_running_stream(self):
+        bus = InMemoryCaptureBus()
+        sensor = _FakeStreamingSensor("allsky-0")
+        rt = _make_runtime(sensor, sensor_bus=bus, hardware_adapter=None)
+        cfg = cast(MagicMock, rt._sensor_config)
+        cfg.streaming_enabled = True
+        rt.mark_connected()
+        assert sensor.start_stream_calls == 1
+
+        rt.set_streaming_enabled(False)
+
+        assert cfg.streaming_enabled is False
+        cast(MagicMock, rt.settings).save.assert_called()
+        assert sensor.stop_stream_calls == 1
+        # No additional start in the toggle-off path.
+        assert sensor.start_stream_calls == 1
+
+    def test_set_streaming_enabled_true_starts_stream(self):
+        bus = InMemoryCaptureBus()
+        sensor = _FakeStreamingSensor("allsky-0")
+        rt = _make_runtime(sensor, sensor_bus=bus, hardware_adapter=None)
+        cfg = cast(MagicMock, rt._sensor_config)
+        cfg.streaming_enabled = False
+        rt.mark_connected()
+        # Paused at connect time: no producer kick-off yet.
+        assert sensor.start_stream_calls == 0
+
+        rt.set_streaming_enabled(True)
+
+        assert cfg.streaming_enabled is True
+        cast(MagicMock, rt.settings).save.assert_called()
+        assert sensor.start_stream_calls == 1
+
+
 class TestQueueHelpers:
     def test_are_queues_idle_all_idle(self):
         rt = _make_runtime()
